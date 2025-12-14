@@ -43,10 +43,6 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         add_top_level_rust_modules(&slang_file_names, &mut generated_source_files);
     }
 
-    if std::fs::exists(&config.compiled_shaders_dir)? {
-        std::fs::remove_dir_all(&config.compiled_shaders_dir)?;
-    }
-
     // generate per-shader files
     for slang_file_name in &slang_file_names {
         let ReflectedShader {
@@ -76,11 +72,6 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         let spv_frag_file_name = source_file_name.replace(SHADER_FILE_SUFFIX, ".frag.spv");
         let frag_path = &config.compiled_shaders_dir.join(&spv_frag_file_name);
         std::fs::write(frag_path, fragment_shader.shader_bytecode.as_slice())?;
-    }
-
-    let generated_dir = config.rust_source_dir.join("generated");
-    if std::fs::exists(&generated_dir)? {
-        std::fs::remove_dir_all(generated_dir)?;
     }
 
     for source_file in &generated_source_files {

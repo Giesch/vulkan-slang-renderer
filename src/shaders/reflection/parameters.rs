@@ -72,7 +72,7 @@ pub fn reflect_entry_points(
 
                     EntryPointParameter::Struct(StructEntryPointParameter {
                         parameter_name,
-                        binding: param_binding(param).unwrap(),
+                        binding: param_binding(param),
                         type_name,
                         fields,
                     })

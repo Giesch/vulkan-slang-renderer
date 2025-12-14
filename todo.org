@@ -1,15 +1,7 @@
 #+title: Todo
 
 * Current
-- [ ] support more parameter types
-  - [ ] write-only storage buffers
-  - [ ] read-write storage buffers
-  - [ ] push constants?
-
-- [ ] use do_not_recommend for Game subtraits
-  https://blog.rust-lang.org/2025/02/20/Rust-1.85.0/#hiding-trait-implementations-from-diagnostics
-
-* Next
+- [ ] fix the cleaning up before recompiling
 - [ ] 2D signed distance fields / animated rick example
   [[https://danielchasehooper.com/posts/code-animated-rick]]
   - this will be an example that needs no extra resources
@@ -22,8 +14,28 @@
   - could there be a good way to control the sdf shapes from the cpu?
     ie provide storage/structured buffer(s) circles/ellipses/etc
 
+- [ ] support more parameter types
+  - [ ] write-only storage buffers (StructuredBuffer)
+  - [ ] read-write storage buffers (RWStructuredBuffer)
+  - [ ] push constants?
+
+- [ ] make reflection part into its own library?
+  - usable from zig
+
+* Next
 - [ ] 3D signed distance fields / shape up clone
   - requires read/write storage buffers (for gpu-based object picking)
+
+- [ ] sprite batch example from SDL_gpu
+
+- [ ] is align(16) doing the right thing for Vertex?
+  or is it doing anything?
+- [ ] do we not have to be doing align(16)?
+  - an extension promoted in 1.2 allows not using 16-byte alignment
+    https://www.reddit.com/r/vulkan/comments/1dlvapz/problems_with_memory_layout_in_storage_buffer/l9t99ba/
+    https://www.reddit.com/r/vulkan/comments/u5jiws/glsl_std140_layout_for_arrays_of_scalars/
+  - see VK_KHR_uniform_buffer_standard_layout and VK_EXT_scalar_block_layout
+- [ ] add tests or static assertions for matching struct layout
 
 - [-] handle slang modules in codegen
   ie, allow a shared MVPMatrices type
@@ -34,14 +46,6 @@
     got no response; is there a workaround?
     - recognize when an equivalent struct is generated multiple times
       move all shared rust structs to one shared rust module
-
-- [ ] is align(16) doing the right thing for Vertex?
-  or is it doing anything?
-- [ ] do we not have to be doing align(16)?
-  - an extension promoted in 1.2 allows not using 16-byte alignment
-    https://www.reddit.com/r/vulkan/comments/1dlvapz/problems_with_memory_layout_in_storage_buffer/l9t99ba/
-    https://www.reddit.com/r/vulkan/comments/u5jiws/glsl_std140_layout_for_arrays_of_scalars/
-  - see VK_KHR_uniform_buffer_standard_layout and VK_EXT_scalar_block_layout
 
 - [ ] post a request for SDL_gpu to support later vulkan versions
   do I plan on using that, or continuing with vulkan?
@@ -62,7 +66,6 @@
   https://docs.shader-slang.org/en/latest/shader-cursors.html
   can we do a strongly-typed version of this?
 
-- [ ] sprite batch example from SDL_gpu
 - [ ] go through 'learn opengl' with this renderer
 - [ ] do the official vulkan compute shader tutorial
   make it one of the examples here

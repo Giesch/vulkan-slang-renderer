@@ -51,7 +51,7 @@ pub enum EntryPointParameter {
 #[serde(rename_all = "camelCase")]
 pub struct StructEntryPointParameter {
     pub parameter_name: String,
-    pub binding: Binding,
+    pub binding: Option<Binding>,
     pub type_name: String,
     pub fields: Vec<StructField>,
 }

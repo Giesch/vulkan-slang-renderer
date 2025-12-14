@@ -1,5 +1,5 @@
 [toolchain]
-channel = "nightly-2025-09-20"
+channel = "nightly-2025-11-22"
 
 # specifying components explicitly in order to always include rust-analyzer
 # component availability by nightly version:

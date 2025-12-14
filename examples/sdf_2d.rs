@@ -1,43 +1,51 @@
-use glam::{Mat4, Vec3};
+use std::time::{Duration, Instant};
+
+use glam::{Mat4, Vec2, Vec3};
 
 use ash_sdl_vulkan_tutorial::game::Game;
-use ash_sdl_vulkan_tutorial::renderer::{PipelineHandle, Renderer, UniformBufferHandle};
+use ash_sdl_vulkan_tutorial::renderer::{
+    PipelineHandle, Renderer, TextureHandle, UniformBufferHandle,
+};
 use ash_sdl_vulkan_tutorial::shaders::COLUMN_MAJOR;
+use ash_sdl_vulkan_tutorial::util::load_image;
 
 use ash_sdl_vulkan_tutorial::generated::shader_atlas::ShaderAtlas;
-use ash_sdl_vulkan_tutorial::generated::shader_atlas::basic_triangle::*;
+use ash_sdl_vulkan_tutorial::generated::shader_atlas::sdf_2d::*;
 
 fn main() -> Result<(), anyhow::Error> {
-    BasicTriangle::run()
+    SDF2DGame::run()
 }
 
-pub struct BasicTriangle {
+#[allow(unused)]
+pub struct SDF2DGame {
+    start_time: Instant,
     pipeline: PipelineHandle,
-    uniform_buffer: UniformBufferHandle<MVPMatrices>,
+    uniform_buffer: UniformBufferHandle<SDF2D>,
 }
 
-impl Game for BasicTriangle {
+impl Game for SDF2DGame {
     fn window_title() -> &'static str {
-        "Basic Triangle"
+        "SDF 2D"
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
-        let uniform_buffer = renderer.create_uniform_buffer::<MVPMatrices>()?;
+        let uniform_buffer = renderer.create_uniform_buffer::<SDF2D>()?;
 
         let resources = Resources {
             vertices: VERTICES.to_vec(),
             indices: INDICES.to_vec(),
-            mvp_buffer: &uniform_buffer,
+            sdf2d_buffer: &uniform_buffer,
         };
 
-        let shader = ShaderAtlas::init().basic_triangle;
+        let shader = ShaderAtlas::init().sdf_2d;
         let pipeline_config = shader.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         Ok(Self {
+            start_time: Instant::now(),
             pipeline,
             uniform_buffer,
         })
@@ -46,9 +54,11 @@ impl Game for BasicTriangle {
     fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
         let aspect_ratio = renderer.aspect_ratio();
         let mvp = make_basic_mvp_matrices(aspect_ratio, COLUMN_MAJOR);
+        let time = self.start_time.elapsed().as_secs_f32();
+        let sdf_2d = SDF2D { mvp, time };
 
         renderer.draw_frame(&self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.uniform_buffer, mvp);
+            gpu.write_uniform(&mut self.uniform_buffer, sdf_2d);
         })
     }
 }
@@ -56,15 +66,12 @@ impl Game for BasicTriangle {
 const VERTICES: [Vertex; 3] = [
     Vertex {
         position: Vec3::new(-1.0, -1.0, 0.0),
-        color: Vec3::new(1.0, 0.0, 0.0),
     },
     Vertex {
         position: Vec3::new(1.0, -1.0, 0.0),
-        color: Vec3::new(0.0, 1.0, 0.0),
     },
     Vertex {
         position: Vec3::new(0.0, 1.0, 0.0),
-        color: Vec3::new(0.0, 0.0, 1.0),
     },
 ];
 

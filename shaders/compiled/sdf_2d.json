@@ -1,0 +1,155 @@
+{
+  "sourceFileName": "sdf_2d.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "sdf2d",
+      "elementType": {
+        "typeName": "SDF2D",
+        "fields": [
+          {
+            "kind": "struct",
+            "fieldName": "mvp",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 192
+            },
+            "structType": {
+              "typeName": "MVPMatrices",
+              "fields": [
+                {
+                  "kind": "matrix",
+                  "fieldName": "model",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "matrix",
+                  "fieldName": "view",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 64,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "matrix",
+                  "fieldName": "proj",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 128,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "time",
+            "binding": {
+              "kind": "uniform",
+              "offset": 192,
+              "size": 4
+            },
+            "scalarType": "float32"
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertexMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "vertex",
+        "binding": {
+          "kind": "varyingInput",
+          "index": 0,
+          "count": 1
+        },
+        "typeName": "Vertex",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 0,
+              "count": 1
+            },
+            "elementCount": 3,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragmentMain",
+    "stage": "fragment",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "fragVertex",
+        "binding": null,
+        "typeName": "FragVertex",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "semanticName": "SV_POSITION",
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 208
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}
