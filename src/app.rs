@@ -5,6 +5,7 @@ use sdl3::sys::timer::SDL_DelayPrecise;
 
 use crate::game::traits::RuntimeGame;
 use crate::renderer::Renderer;
+use crate::traits::{Input, Key};
 
 pub struct App {
     renderer: Renderer,
@@ -104,6 +105,22 @@ impl App {
 
                     WindowEvent::None => {}
                 },
+
+                Event::KeyDown { scancode, .. } => {
+                    let Some(key) = scancode.and_then(Key::from_sdl_scancode) else {
+                        continue;
+                    };
+                    let input = Input::KeyDown(key);
+                    self.game.input(input);
+                }
+
+                Event::KeyUp { scancode, .. } => {
+                    let Some(key) = scancode.and_then(Key::from_sdl_scancode) else {
+                        continue;
+                    };
+                    let input = Input::KeyUp(key);
+                    self.game.input(input);
+                }
 
                 _ => {}
             }

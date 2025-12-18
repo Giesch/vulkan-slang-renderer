@@ -159,7 +159,8 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
                         // TODO use an enum for supported glam types
                         "glam::Vec3" => "ash::vk::Format::R32G32B32_SFLOAT",
                         "glam::Vec2" => "ash::vk::Format::R32G32_SFLOAT",
-                        _ => todo!(),
+                        "u32" => "ash::vk::Format::R32_UINT",
+                        unexpected => todo!("field without vk format: {:?}", unexpected),
                     };
 
                     let attr = VertexAttributeDescription {

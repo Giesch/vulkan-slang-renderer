@@ -1,7 +1,18 @@
 #+title: Todo
 
-* Current
-- [ ] fix the cleaning up before recompiling
+* Now
+- [ ] Space Invaders example
+  - [ ] make a controllable moving triangle
+    - [ ] make vertex & index buffers optional
+      allow using only storage buffers like the SDL_gpu pull sprite batch example
+    - [ ] add storage / 'structured' buffers to reflection
+    - [ ] switch to sprites from shape primitives?
+
+* Next
+- [ ] find a way to make newly-optional fields more type-safe
+  - assume that a shader with no vertex arg does not use vertex buffer?
+  - assume that all shaders with vertex buffers also use index buffers?
+
 - [ ] 2D signed distance fields / animated rick example
   [[https://danielchasehooper.com/posts/code-animated-rick]]
   - this will be an example that needs no extra resources
@@ -19,11 +30,7 @@
   - [ ] read-write storage buffers (RWStructuredBuffer)
   - [ ] push constants?
 
-- [ ] make reflection part into its own library?
-  - usable from zig
-
-* Next
-- [ ] 3D signed distance fields / shape up clone
+- [ ] 3D signed distance fields / Shape Up clone
   - requires read/write storage buffers (for gpu-based object picking)
 
 - [ ] sprite batch example from SDL_gpu
@@ -78,7 +85,7 @@
   - what's the right way to get the size of a vector or matrix?
     slang gives us an index and count rather than a size & offset
     std::mem::size_of::<glam::Vec3>() ?
-    the offset_of! macro that VertexDescription uses?
+    the offset_of! macro?
     it seems like these would be testing the code against my guess at the layout,
     rather than against the actual layout
   - assert on order before writing generated source (leave the game runnable)

@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use sdl3::keyboard::Scancode as SDLScancode;
+
 use crate::app::App;
 use crate::renderer::Renderer;
 
@@ -61,6 +63,8 @@ pub trait Game {
         let event_pump = sdl.event_pump()?;
         app.run_loop(event_pump)
     }
+
+    fn input(&mut self, _input: Input) {}
 }
 
 /// parameters passed through to SDL to create a window
@@ -76,6 +80,36 @@ pub trait RuntimeGame {
     fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()>;
 
     fn frame_delay(&self) -> Duration;
+
+    fn input(&mut self, input: Input);
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Input {
+    KeyUp(Key),
+    KeyDown(Key),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Key {
+    W,
+    A,
+    S,
+    D,
+    Space,
+}
+
+impl Key {
+    pub fn from_sdl_scancode(scancode: SDLScancode) -> Option<Self> {
+        match scancode {
+            SDLScancode::W => Some(Key::W),
+            SDLScancode::A => Some(Key::A),
+            SDLScancode::S => Some(Key::S),
+            SDLScancode::D => Some(Key::D),
+            SDLScancode::Space => Some(Key::Space),
+            _ => None,
+        }
+    }
 }
 
 impl<G> RuntimeGame for G
@@ -88,5 +122,9 @@ where
 
     fn frame_delay(&self) -> Duration {
         self.frame_delay()
+    }
+
+    fn input(&mut self, input: Input) {
+        self.input(input);
     }
 }
