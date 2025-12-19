@@ -1,11 +1,11 @@
 use glam::{Mat4, Vec3};
 
-use ash_sdl_vulkan_tutorial::game::Game;
-use ash_sdl_vulkan_tutorial::renderer::{PipelineHandle, Renderer, UniformBufferHandle};
-use ash_sdl_vulkan_tutorial::shaders::COLUMN_MAJOR;
+use vulkan_slang_renderer::game::Game;
+use vulkan_slang_renderer::renderer::{PipelineHandle, Renderer, UniformBufferHandle};
+use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
 
-use ash_sdl_vulkan_tutorial::generated::shader_atlas::ShaderAtlas;
-use ash_sdl_vulkan_tutorial::generated::shader_atlas::basic_triangle::*;
+use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
+use vulkan_slang_renderer::generated::shader_atlas::basic_triangle::*;
 
 fn main() -> Result<(), anyhow::Error> {
     BasicTriangle::run()

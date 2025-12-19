@@ -3,15 +3,15 @@ use std::time::{Duration, Instant};
 
 use glam::{Mat4, Vec2, Vec3};
 
-use ash_sdl_vulkan_tutorial::game::Game;
-use ash_sdl_vulkan_tutorial::renderer::{
+use vulkan_slang_renderer::game::Game;
+use vulkan_slang_renderer::renderer::{
     PipelineHandle, Renderer, TextureHandle, UniformBufferHandle,
 };
-use ash_sdl_vulkan_tutorial::shaders::COLUMN_MAJOR;
-use ash_sdl_vulkan_tutorial::util::load_image;
+use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
+use vulkan_slang_renderer::util::load_image;
 
-use ash_sdl_vulkan_tutorial::generated::shader_atlas::ShaderAtlas;
-use ash_sdl_vulkan_tutorial::generated::shader_atlas::depth_texture::*;
+use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
+use vulkan_slang_renderer::generated::shader_atlas::depth_texture::*;
 
 fn main() -> Result<(), anyhow::Error> {
     VikingRoom::run()

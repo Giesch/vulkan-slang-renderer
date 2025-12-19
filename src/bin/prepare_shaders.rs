@@ -1,5 +1,5 @@
-use ash_sdl_vulkan_tutorial::build_tasks::{self, Config};
-use ash_sdl_vulkan_tutorial::util::manifest_path;
+use vulkan_slang_renderer::build_tasks::{self, Config};
+use vulkan_slang_renderer::util::manifest_path;
 
 pub fn main() {
     let arg = std::env::var("GENERATE_RUST_SOURCE").ok();
