@@ -8,6 +8,7 @@ pub trait GPUWrite {}
 
 impl GPUWrite for u8 {} // image bytes
 impl GPUWrite for u32 {} // index buffer
+impl GPUWrite for ! {}
 
 pub(super) unsafe fn write_to_gpu_buffer<T: GPUWrite>(
     device: &ash::Device,

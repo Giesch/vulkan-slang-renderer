@@ -1,3 +1,5 @@
+#![feature(never_type)]
+
 pub mod app;
 pub mod game;
 pub mod generated;

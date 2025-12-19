@@ -10,6 +10,7 @@ use ash::vk;
 use serde::Serialize;
 
 use crate::renderer::gpu_write::GPUWrite;
+#[allow(unused)]
 use crate::renderer::vertex_description::VertexDescription;
 use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};

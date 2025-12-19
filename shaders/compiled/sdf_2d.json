@@ -1,8 +1,3 @@
----
-source: src/shaders/build_tasks.rs
-info:
-  relative_path: shaders/compiled/sdf_2d.json
----
 {
   "sourceFileName": "sdf_2d.shader.slang",
   "globalParameters": [

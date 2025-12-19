@@ -227,12 +227,16 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
 
     struct_defs.reverse();
 
-    let vertex_type_name = vertex_type_name.expect("no struct parameter for vertex entry point");
     let resources_fields = required_resources
         .iter()
         .map(|r| {
             let type_name = match &r.resource_type {
-                RequiredResourceType::VertexBuffer => format!("Vec<{vertex_type_name}>"),
+                RequiredResourceType::VertexBuffer => {
+                    let vertex_type_name = vertex_type_name
+                        .as_ref()
+                        .expect("no struct parameter for vertex entry point");
+                    format!("Vec<{vertex_type_name}>")
+                }
                 RequiredResourceType::IndexBuffer => "Vec<u32>".to_string(),
                 RequiredResourceType::VertexCount => "u32".to_string(),
                 RequiredResourceType::Texture => "&'a TextureHandle".to_string(),
@@ -320,7 +324,7 @@ struct ShaderAtlasEntryModule {
 struct GeneratedShaderImpl {
     shader_name: String,
     shader_type_name: String,
-    vertex_type_name: String,
+    vertex_type_name: Option<String>,
     resources_texture_fields: Vec<String>,
     resources_uniform_buffer_fields: Vec<String>,
 }

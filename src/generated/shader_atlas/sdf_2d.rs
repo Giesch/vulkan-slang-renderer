@@ -1,6 +1,6 @@
 // GENERATED FILE (do not edit directly)
 
-//! generated from slang shader: depth_texture.shader.slang
+//! generated from slang shader: sdf_2d.shader.slang
 
 use std::ffi::CString;
 use std::io::Cursor;
@@ -18,68 +18,15 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
-pub struct DepthTexture {
-    pub mvp: MVPMatrices,
+pub struct SDF2DUniform {
+    pub time: f32,
 }
 
-impl GPUWrite for DepthTexture {}
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct MVPMatrices {
-    pub model: glam::Mat4,
-    pub view: glam::Mat4,
-    pub proj: glam::Mat4,
-}
-
-impl GPUWrite for MVPMatrices {}
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct Vertex {
-    pub position: glam::Vec3,
-    pub color: glam::Vec3,
-    pub tex_coord: glam::Vec2,
-}
-
-impl GPUWrite for Vertex {}
+impl GPUWrite for SDF2DUniform {}
 
 pub struct Resources<'a> {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
-    pub texture: &'a TextureHandle,
-    pub depth_texture_buffer: &'a UniformBufferHandle<DepthTexture>,
-}
-
-impl VertexDescription for Vertex {
-    fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
-        let binding_description = ash::vk::VertexInputBindingDescription::default()
-            .binding(0)
-            .stride(std::mem::size_of::<Self>() as u32)
-            .input_rate(ash::vk::VertexInputRate::VERTEX);
-
-        vec![binding_description]
-    }
-
-    fn attribute_descriptions() -> Vec<ash::vk::VertexInputAttributeDescription> {
-        vec![
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, position) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(0),
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, color) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(1),
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, tex_coord) as u32)
-                .format(ash::vk::Format::R32G32_SFLOAT)
-                .binding(0)
-                .location(2),
-        ]
-    }
+    pub vertex_count: u32,
+    pub sdf_uniform_buffer: &'a UniformBufferHandle<SDF2DUniform>,
 }
 
 pub struct Shader {
@@ -90,7 +37,7 @@ impl Shader {
     pub fn init() -> Self {
         let json_str = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/depth_texture.json"
+            "/shaders/compiled/sdf_2d.json"
         ));
 
         let reflection_json: ReflectionJson = serde_json::from_str(json_str).unwrap();
@@ -98,21 +45,19 @@ impl Shader {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config(self, resources: Resources<'_>) -> PipelineConfig<'_, Vertex> {
+    pub fn pipeline_config(self, resources: Resources<'_>) -> PipelineConfig<'_, !> {
         // NOTE this must be in descriptor set layout order in the reflection json
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.texture,
         ];
 
         // NOTE this must be in descriptor set layout order in the reflection json
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
-            RawUniformBufferHandle::from_typed(resources.depth_texture_buffer),
+            RawUniformBufferHandle::from_typed(resources.sdf_uniform_buffer),
         ];
 
-        let vertex_config =
-            VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
+        let vertex_config = VertexConfig::VertexCount(resources.vertex_count);
 
         PipelineConfig {
             shader: Box::new(self),
@@ -145,7 +90,7 @@ impl Shader {
     fn vert_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/depth_texture.vert.spv"
+            "/shaders/compiled/sdf_2d.vert.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")
@@ -154,7 +99,7 @@ impl Shader {
     fn frag_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/depth_texture.frag.spv"
+            "/shaders/compiled/sdf_2d.frag.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")
@@ -167,11 +112,11 @@ impl ShaderAtlasEntry for Shader {
     }
 
     fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
-        Vertex::binding_descriptions()
+        vec![]
     }
 
     fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription> {
-        Vertex::attribute_descriptions()
+        vec![]
     }
 
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {

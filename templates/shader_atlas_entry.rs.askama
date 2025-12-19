@@ -12,6 +12,7 @@ use ash::vk;
 use serde::Serialize;
 
 use crate::renderer::gpu_write::GPUWrite;
+#[allow(unused)]
 use crate::renderer::vertex_description::VertexDescription;
 use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
@@ -78,7 +79,7 @@ impl {{ shader_impl.shader_type_name }} {
     pub fn pipeline_config(
         self,
         resources: Resources<'_>,
-    ) -> PipelineConfig<'_, {{ shader_impl.vertex_type_name }}> {
+    ) -> PipelineConfig<'_, {{ shader_impl.vertex_type_name.as_deref().unwrap_or("!") }}> {
         // NOTE this must be in descriptor set layout order in the reflection json
         #[rustfmt::skip]
         let texture_handles = vec![
@@ -94,10 +95,12 @@ impl {{ shader_impl.shader_type_name }} {
             RawUniformBufferHandle::from_typed(resources.{{ buffer_field }}),
 {%- endfor +%}
         ];
-
+{%+ if shader_impl.vertex_type_name.is_some() +%}
         let vertex_config =
             VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
-
+{%~ else +%}
+        let vertex_config = VertexConfig::VertexCount(resources.vertex_count);
+{%~ endif +%}
         PipelineConfig {
             shader: Box::new(self),
             vertex_config,
@@ -151,11 +154,21 @@ impl ShaderAtlasEntry for {{ shader_impl.shader_type_name }} {
     }
 
     fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
-        {{ shader_impl.vertex_type_name }}::binding_descriptions()
+{%- match shader_impl.vertex_type_name -%}
+{%- when Some with (vertex_type_name) +%}
+        {{ vertex_type_name }}::binding_descriptions()
+{%- when None +%}
+        vec![]
+{%- endmatch +%}
     }
 
     fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription> {
-        {{ shader_impl.vertex_type_name }}::attribute_descriptions()
+{%- match shader_impl.vertex_type_name -%}
+{%- when Some with (vertex_type_name) +%}
+        {{ vertex_type_name }}::attribute_descriptions()
+{%- when None +%}
+        vec![]
+{%- endmatch +%}
     }
 
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
