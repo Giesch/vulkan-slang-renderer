@@ -9,12 +9,21 @@
       - [X] generate Resources structs based on whether the vert shader takes an arg
         assume that any shader with a vertex buffer also wants an index buffer
       - [ ] require a vertex count for draw if there's no vi buffers
+        and remove todo tags
     - [ ] add storage / 'structured' buffers to reflection
     - [ ] switch to sprites from shape primitives?
 
 * Next
 - [ ] simplify basic triangle example
   avoid needing an mvp matrix
+
+- [ ] come up with a nicer way to handle different draw calls
+  - ie, cmd_draw vs cmd_draw_indexed vs *_indirect variants
+    want to be able to pass the counts directly
+  - the enum is awkward to deal with
+    and it's better not to store the counts
+  - can the enum be fine if you fall back to a default transparent sprite/sdf?
+    ie, for VertexCount basic cmd_draw call with a stored count
 
 - [ ] 2D signed distance fields / animated rick example
   [[https://danielchasehooper.com/posts/code-animated-rick]]

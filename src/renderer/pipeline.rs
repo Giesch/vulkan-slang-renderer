@@ -52,7 +52,7 @@ pub(super) struct RendererPipeline {
     pub layout: ShaderPipelineLayout,
     pub pipeline: vk::Pipeline,
 
-    pub vertex_and_index_buffers: Option<VertexAndIndexBuffers>,
+    pub vertex_pipeline_config: VertexPipelineConfig,
 
     pub descriptor_pool: vk::DescriptorPool,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
@@ -61,23 +61,21 @@ pub(super) struct RendererPipeline {
     pub shader: Box<dyn ShaderAtlasEntry>,
 }
 
+pub(super) enum VertexPipelineConfig {
+    VertexAndIndexBuffers(VertexAndIndexBuffers),
+    VertexCount(u32),
+}
+
 impl RendererPipeline {
     pub(super) fn draw(&self, device: &ash::Device, command_buffer: vk::CommandBuffer) {
-        if let Some(vi_bufs) = &self.vertex_and_index_buffers {
-            unsafe {
-                device.cmd_draw_indexed(command_buffer, vi_bufs.index_count as u32, 1, 0, 0, 0);
-            }
-        } else {
-            // TODO FIXME
-            // require a vertex count from resources/config for shaders without a vertex type
-            // then do a normal non-indexed draw here
+        match &self.vertex_pipeline_config {
+            VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs) => unsafe {
+                device.cmd_draw_indexed(command_buffer, vi_bufs.index_count, 1, 0, 0, 0);
+            },
 
-            let vertex_count = 0;
-            unsafe {
-                device.cmd_draw(command_buffer, vertex_count, 1, 0, 0);
-            }
-
-            todo!();
+            VertexPipelineConfig::VertexCount(vertex_count) => unsafe {
+                device.cmd_draw(command_buffer, *vertex_count, 1, 0, 0);
+            },
         }
     }
 }
@@ -89,15 +87,18 @@ pub(super) struct VertexAndIndexBuffers {
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
 
-    pub index_count: usize,
+    pub index_count: u32,
 }
 
 /// the generic arguments for creating a pipeline
 pub struct PipelineConfig<'t, V: VertexDescription> {
     pub shader: Box<dyn ShaderAtlasEntry>,
-    // TODO make vertex/index buffers optional?
-    //   is there a way to make that type-safe?
-    pub vertices_and_indices: Option<(Vec<V>, Vec<u32>)>,
+    pub vertex_config: VertexConfig<V>,
     pub texture_handles: Vec<&'t TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
+}
+
+pub enum VertexConfig<V> {
+    VertexAndIndexBuffers(Vec<V>, Vec<u32>),
+    VertexCount(u32),
 }

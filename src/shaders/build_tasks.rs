@@ -138,7 +138,10 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
             },
         ]
     } else {
-        vec![]
+        vec![RequiredResource {
+            field_name: "vertex_count".to_string(),
+            resource_type: RequiredResourceType::VertexCount,
+        }]
     };
 
     let mut vertex_type_name = None;
@@ -218,7 +221,6 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
         let element_type_name = parameter_block.element_type.type_name.clone();
         required_resources.push(RequiredResource {
             field_name: format!("{param_name}_buffer"),
-            // TODO type name
             resource_type: RequiredResourceType::UniformBuffer(element_type_name),
         })
     }
@@ -232,6 +234,7 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
             let type_name = match &r.resource_type {
                 RequiredResourceType::VertexBuffer => format!("Vec<{vertex_type_name}>"),
                 RequiredResourceType::IndexBuffer => "Vec<u32>".to_string(),
+                RequiredResourceType::VertexCount => "u32".to_string(),
                 RequiredResourceType::Texture => "&'a TextureHandle".to_string(),
                 RequiredResourceType::UniformBuffer(element_type_name) => {
                     format!("&'a UniformBufferHandle<{element_type_name}>")
@@ -469,6 +472,7 @@ struct RequiredResource {
 enum RequiredResourceType {
     VertexBuffer,
     IndexBuffer,
+    VertexCount,
     Texture,
     UniformBuffer(String),
 }

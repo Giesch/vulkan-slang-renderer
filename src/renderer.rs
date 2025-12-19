@@ -399,12 +399,16 @@ impl Renderer {
                     .destroy_descriptor_set_layout(desc_set_layout, None);
             }
 
-            if let Some(vi_bufs) = pipeline.vertex_and_index_buffers {
-                self.device.destroy_buffer(vi_bufs.index_buffer, None);
-                self.device.free_memory(vi_bufs.index_buffer_memory, None);
+            match &pipeline.vertex_pipeline_config {
+                VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs) => {
+                    self.device.destroy_buffer(vi_bufs.index_buffer, None);
+                    self.device.free_memory(vi_bufs.index_buffer_memory, None);
 
-                self.device.destroy_buffer(vi_bufs.vertex_buffer, None);
-                self.device.free_memory(vi_bufs.vertex_buffer_memory, None);
+                    self.device.destroy_buffer(vi_bufs.vertex_buffer, None);
+                    self.device.free_memory(vi_bufs.vertex_buffer_memory, None);
+                }
+
+                VertexPipelineConfig::VertexCount(_) => {}
             }
 
             self.device.destroy_pipeline(pipeline.pipeline, None);
@@ -428,36 +432,41 @@ impl Renderer {
             &config.shader.vertex_attribute_descriptions(),
         )?;
 
-        let mut vertex_and_index_buffers: Option<VertexAndIndexBuffers> = None;
-        if let Some((vertices, indices)) = &config.vertices_and_indices {
-            let (vertex_buffer, vertex_buffer_memory) = create_vertex_buffer(
-                &self.instance,
-                &self.device,
-                self.physical_device,
-                self.command_pool,
-                self.graphics_queue,
-                vertices,
-            )?;
+        let vertex_pipeline_config = match &config.vertex_config {
+            VertexConfig::VertexAndIndexBuffers(vertices, indices) => {
+                let (vertex_buffer, vertex_buffer_memory) = create_vertex_buffer(
+                    &self.instance,
+                    &self.device,
+                    self.physical_device,
+                    self.command_pool,
+                    self.graphics_queue,
+                    vertices,
+                )?;
 
-            let (index_buffer, index_buffer_memory) = create_index_buffer(
-                &self.instance,
-                &self.device,
-                self.physical_device,
-                self.command_pool,
-                self.graphics_queue,
-                indices,
-            )?;
+                let (index_buffer, index_buffer_memory) = create_index_buffer(
+                    &self.instance,
+                    &self.device,
+                    self.physical_device,
+                    self.command_pool,
+                    self.graphics_queue,
+                    indices,
+                )?;
 
-            let index_count = indices.len();
+                let index_count = indices.len() as u32;
 
-            vertex_and_index_buffers = Some(VertexAndIndexBuffers {
-                vertex_buffer,
-                vertex_buffer_memory,
-                index_buffer,
-                index_buffer_memory,
-                index_count,
-            })
-        }
+                let vi_bufs = VertexAndIndexBuffers {
+                    vertex_buffer,
+                    vertex_buffer_memory,
+                    index_buffer,
+                    index_buffer_memory,
+                    index_count,
+                };
+
+                VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs)
+            }
+
+            VertexConfig::VertexCount(count) => VertexPipelineConfig::VertexCount(*count),
+        };
 
         let layout_bindings = config.shader.layout_bindings();
 
@@ -490,7 +499,7 @@ impl Renderer {
         Ok(RendererPipeline {
             layout: pipeline_layout,
             pipeline,
-            vertex_and_index_buffers,
+            vertex_pipeline_config,
             descriptor_pool,
             descriptor_sets,
             shader: config.shader,
@@ -567,22 +576,26 @@ impl Renderer {
         unsafe { self.device.cmd_set_scissor(command_buffer, 0, &scissors) };
 
         unsafe {
-            if let Some(vi_bufs) = &self
+            match &self
                 .renderer_pipeline(pipeline_handle)
-                .vertex_and_index_buffers
+                .vertex_pipeline_config
             {
-                let buffers = [vi_bufs.vertex_buffer];
-                let offsets = [0];
-                self.device
-                    .cmd_bind_vertex_buffers(command_buffer, 0, &buffers, &offsets);
+                VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs) => {
+                    let buffers = [vi_bufs.vertex_buffer];
+                    let offsets = [0];
+                    self.device
+                        .cmd_bind_vertex_buffers(command_buffer, 0, &buffers, &offsets);
 
-                self.device.cmd_bind_index_buffer(
-                    command_buffer,
-                    vi_bufs.index_buffer,
-                    0,
-                    vk::IndexType::UINT32,
-                );
-            };
+                    self.device.cmd_bind_index_buffer(
+                        command_buffer,
+                        vi_bufs.index_buffer,
+                        0,
+                        vk::IndexType::UINT32,
+                    );
+                }
+
+                VertexPipelineConfig::VertexCount(_) => {}
+            }
 
             let descriptor_sets = self.descriptor_sets_for_frame(pipeline_handle);
             self.device.cmd_bind_descriptor_sets(
