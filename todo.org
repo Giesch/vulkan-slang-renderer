@@ -1,17 +1,20 @@
 #+title: Todo
 
 * Now
-- [ ] Space Invaders example
-  - [ ] make a controllable moving triangle
-    - [ ] make vertex & index buffers optional
+- [-] Space Invaders example
+  - [-] make a controllable moving triangle
+    - [-] make vertex & index buffers optional
       allow using only storage buffers like the SDL_gpu pull sprite batch example
+      - [X] make both optional within PipelineConfig
+      - [X] generate Resources structs based on whether the vert shader takes an arg
+        assume that any shader with a vertex buffer also wants an index buffer
+      - [ ] require a vertex count for draw if there's no vi buffers
     - [ ] add storage / 'structured' buffers to reflection
     - [ ] switch to sprites from shape primitives?
 
 * Next
-- [ ] find a way to make newly-optional fields more type-safe
-  - assume that a shader with no vertex arg does not use vertex buffer?
-  - assume that all shaders with vertex buffers also use index buffers?
+- [ ] simplify basic triangle example
+  avoid needing an mvp matrix
 
 - [ ] 2D signed distance fields / animated rick example
   [[https://danielchasehooper.com/posts/code-animated-rick]]

@@ -119,16 +119,27 @@ fn add_top_level_rust_modules(
 fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFile {
     let mut struct_defs = vec![];
     let mut vertex_impl_blocks = vec![];
-    let mut required_resources = vec![
-        RequiredResource {
-            field_name: "vertices".to_string(),
-            resource_type: RequiredResourceType::VertexBuffer,
-        },
-        RequiredResource {
-            field_name: "indices".to_string(),
-            resource_type: RequiredResourceType::IndexBuffer,
-        },
-    ];
+
+    let has_vertex_struct = reflection_json
+        .vertex_entry_point
+        .parameters
+        .iter()
+        .any(|param| matches!(param, EntryPointParameter::Struct(_)));
+
+    let mut required_resources = if has_vertex_struct {
+        vec![
+            RequiredResource {
+                field_name: "vertices".to_string(),
+                resource_type: RequiredResourceType::VertexBuffer,
+            },
+            RequiredResource {
+                field_name: "indices".to_string(),
+                resource_type: RequiredResourceType::IndexBuffer,
+            },
+        ]
+    } else {
+        vec![]
+    };
 
     let mut vertex_type_name = None;
     for vert_param in &reflection_json.vertex_entry_point.parameters {

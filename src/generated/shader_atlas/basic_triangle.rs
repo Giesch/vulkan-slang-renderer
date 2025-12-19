@@ -94,10 +94,11 @@ impl Shader {
             RawUniformBufferHandle::from_typed(resources.mvp_buffer),
         ];
 
+        let vertices_and_indices = Some((resources.vertices, resources.indices));
+
         PipelineConfig {
             shader: Box::new(self),
-            vertices: resources.vertices,
-            indices: resources.indices,
+            vertices_and_indices,
             texture_handles,
             uniform_buffer_handles,
         }
