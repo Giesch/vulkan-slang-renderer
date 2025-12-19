@@ -16,6 +16,62 @@
               "size": 4
             },
             "scalarType": "float32"
+          },
+          {
+            "kind": "resource",
+            "fieldName": "circles",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": {
+              "structuredBuffer": "Circle"
+            },
+            "resultType": {
+              "kind": "struct",
+              "typeName": "Circle",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "radius",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
           }
         ]
       }
@@ -48,6 +104,13 @@
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 16
+          },
+          {
+            "binding": 1,
+            "descriptorType": "storageBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 0
           }
         ]
       }

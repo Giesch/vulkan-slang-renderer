@@ -320,6 +320,7 @@ impl ReflectedBindingType {
             slang::BindingType::Texture => Self::Texture,
             slang::BindingType::ConstantBuffer => Self::ConstantBuffer,
             slang::BindingType::CombinedTextureSampler => Self::CombinedTextureSampler,
+            slang::BindingType::RawBuffer => Self::StorageBuffer,
 
             slang::BindingType::PushConstant => todo!(),
             slang::BindingType::ParameterBlock => todo!(),
@@ -327,7 +328,6 @@ impl ReflectedBindingType {
             slang::BindingType::VaryingInput => todo!(),
             slang::BindingType::VaryingOutput => todo!(),
             slang::BindingType::TypedBuffer => todo!(),
-            slang::BindingType::RawBuffer => todo!(),
             slang::BindingType::InputRenderTarget => todo!(),
             slang::BindingType::InlineUniformData => todo!(),
             slang::BindingType::RayTracingAccelerationStructure => todo!(),

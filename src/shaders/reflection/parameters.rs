@@ -181,6 +181,7 @@ fn reflect_struct_fields(
                 let vec_element_type_layout = field_type_layout.element_type_layout();
 
                 let slang_scalar_type = vec_element_type_layout.scalar_type().unwrap();
+
                 let scalar_type = scalar_from_slang(slang_scalar_type);
                 let vec_elem_type =
                     VectorElementType::Scalar(ScalarVectorElementType { scalar_type });
@@ -253,6 +254,11 @@ fn reflect_struct_fields(
 
                 let resource_shape = match slang_base_shape {
                     slang::ResourceShape::SlangTexture2d => ResourceShape::Texture2D,
+                    slang::ResourceShape::SlangStructuredBuffer => {
+                        let element_type_layout = field_type_layout.element_type_layout();
+                        let element_type_name = element_type_layout.name();
+                        ResourceShape::StructuredBuffer(element_type_name.unwrap().to_string())
+                    }
                     s => todo!("unhandled slang base shape: {s:?}"),
                 };
 
@@ -270,6 +276,21 @@ fn reflect_struct_fields(
                             element_type,
                         })
                     }
+
+                    slang::TypeKind::Struct => {
+                        let element_type_layout = field_type_layout.element_type_layout();
+                        let element_type_name = element_type_layout.name().unwrap().to_string();
+
+                        let struct_fields = reflect_struct_fields(element_type_layout)?;
+
+                        let struct_result_type = StructResultType {
+                            type_name: element_type_name,
+                            fields: struct_fields,
+                        };
+
+                        ResourceResultType::Struct(struct_result_type)
+                    }
+
                     k => todo!("result type kind not handled: {k:?}"),
                 };
 

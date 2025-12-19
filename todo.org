@@ -3,14 +3,24 @@
 * Now
 - [-] Space Invaders example
   - [-] make a controllable moving triangle
-    - [-] make vertex & index buffers optional
+    - [X] make vertex & index buffers optional
       allow using only storage buffers like the SDL_gpu pull sprite batch example
       - [X] make both optional within PipelineConfig
       - [X] generate Resources structs based on whether the vert shader takes an arg
         assume that any shader with a vertex buffer also wants an index buffer
-      - [ ] require a vertex count for draw if there's no vi buffers
+      - [X] require a vertex count for draw if there's no vi buffers
         and remove todo tags
-    - [ ] add storage / 'structured' buffers to reflection
+    - [-] add storage / 'structured' buffers to reflection
+      - [X] add storage buffers to renderer
+      - [ ] generate matching cpu struct type in askama template
+      - [ ] add storage buffer to generated required resources
+      - [ ] make sure descriptor set bindings work
+        - add case ReflectionJson::layout_bindings()
+          why is the StorageBuffer variant not already hitting the todo?
+        - add 'layout_frame_order' storage buffers to create_descriptor_sets
+          in init_pipeline
+        - does this mean the pipeline layout builders needs changes?
+
     - [ ] switch to sprites from shape primitives?
 
 * Next

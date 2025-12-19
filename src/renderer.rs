@@ -33,6 +33,9 @@ pub use texture::*;
 pub mod uniform_buffer;
 pub use uniform_buffer::*;
 
+pub mod storage_buffer;
+pub use storage_buffer::*;
+
 pub mod pipeline;
 pub use pipeline::*;
 
@@ -101,6 +104,7 @@ pub struct Renderer {
     pipelines: PipelineStorage,
     textures: TextureStorage,
     uniform_buffers: UniformBufferStorage,
+    storage_buffers: StorageBufferStorage,
 }
 
 impl Renderer {
@@ -237,6 +241,7 @@ impl Renderer {
         let pipelines = PipelineStorage::new();
         let textures = TextureStorage::new();
         let uniform_buffers = UniformBufferStorage::new();
+        let storage_buffers = StorageBufferStorage::new();
 
         Ok(Self {
             aspect_ratio,
@@ -283,6 +288,7 @@ impl Renderer {
             pipelines,
             textures,
             uniform_buffers,
+            storage_buffers,
         })
     }
 
@@ -369,6 +375,56 @@ impl Renderer {
         unsafe {
             self.device.destroy_buffer(uniform_buffer.buffer, None);
             self.device.free_memory(uniform_buffer.device_mem, None);
+        }
+    }
+
+    pub fn create_storage_buffer<T: GPUWrite>(
+        &mut self,
+        len: usize,
+    ) -> anyhow::Result<StorageBufferHandle<T>> {
+        let buffer_size = (len * std::mem::size_of::<T>()) as u64;
+
+        let mut buffers_per_frame = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
+        for _ in 0..MAX_FRAMES_IN_FLIGHT {
+            let (buffer, device_mem) = create_memory_buffer(
+                &self.instance,
+                &self.device,
+                self.physical_device,
+                buffer_size,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            )?;
+
+            let mapped_mem = unsafe {
+                self.device
+                    .map_memory(device_mem, 0, buffer_size, Default::default())?
+            };
+
+            let raw_storage_buffer = RawStorageBuffer {
+                buffer,
+                device_mem,
+                mapped_mem,
+            };
+
+            buffers_per_frame.push(raw_storage_buffer);
+        }
+
+        let handle = self.storage_buffers.add(buffers_per_frame);
+
+        Ok(handle)
+    }
+
+    pub fn drop_storage_buffer<T>(&mut self, storage_buffer: StorageBufferHandle<T>) {
+        let buffers_per_frame = self.storage_buffers.take(storage_buffer);
+        for raw_storage_buffer in buffers_per_frame {
+            self.destroy_storage_buffer(raw_storage_buffer);
+        }
+    }
+
+    fn destroy_storage_buffer(&mut self, storage_buffer: RawStorageBuffer) {
+        unsafe {
+            self.device.destroy_buffer(storage_buffer.buffer, None);
+            self.device.free_memory(storage_buffer.device_mem, None);
         }
     }
 
@@ -669,6 +725,7 @@ impl Renderer {
         let mut gpu = Gpu {
             current_frame: self.current_frame,
             uniform_buffers: &mut self.uniform_buffers,
+            storage_buffers: &mut self.storage_buffers,
         };
         gpu_update(&mut gpu);
 
@@ -971,8 +1028,6 @@ impl Drop for Renderer {
 
             self.cleanup_swapchain();
 
-            // NOTE the game 'should' clean these up,
-            // but we try to be good gpu citizens
             for texture in self.textures.take_all() {
                 self.destroy_texture(texture);
             }
@@ -982,6 +1037,11 @@ impl Drop for Renderer {
             for buffers_per_frame in self.uniform_buffers.take_all() {
                 for uniform_buffer in buffers_per_frame {
                     self.destroy_uniform_buffer(uniform_buffer);
+                }
+            }
+            for buffers_per_frame in self.storage_buffers.take_all() {
+                for storage_buffer in buffers_per_frame {
+                    self.destroy_storage_buffer(storage_buffer);
                 }
             }
 
@@ -2860,6 +2920,7 @@ impl shaders::json::ReflectedBindingType {
             Self::Texture => vk::DescriptorType::SAMPLED_IMAGE,
             Self::ConstantBuffer => vk::DescriptorType::UNIFORM_BUFFER,
             Self::CombinedTextureSampler => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            Self::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
         }
     }
 }
@@ -2916,6 +2977,7 @@ impl shaders::json::ReflectedStageFlags {
 pub struct Gpu<'frame> {
     current_frame: usize,
     uniform_buffers: &'frame mut UniformBufferStorage,
+    storage_buffers: &'frame mut StorageBufferStorage,
 }
 
 impl<'frame> Gpu<'frame> {
@@ -2923,6 +2985,14 @@ impl<'frame> Gpu<'frame> {
         let mapped_mem = self
             .uniform_buffers
             .get_mapped_mem_for_frame(uniform_buffer, self.current_frame);
+
+        *mapped_mem = data;
+    }
+
+    pub fn write_ssbo<T>(&mut self, storage_buffer: &mut StorageBufferHandle<T>, data: T) {
+        let mapped_mem = self
+            .storage_buffers
+            .get_mapped_mem_for_frame(storage_buffer, self.current_frame);
 
         *mapped_mem = data;
     }

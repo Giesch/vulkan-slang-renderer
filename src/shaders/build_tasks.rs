@@ -243,6 +243,9 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
                 RequiredResourceType::UniformBuffer(element_type_name) => {
                     format!("&'a UniformBufferHandle<{element_type_name}>")
                 }
+                RequiredResourceType::StructuredBuffer(element_type_name) => {
+                    format!("&'a StorageBufferHandle<{element_type_name}>")
+                }
             };
 
             GeneratedStructFieldDefinition {
@@ -405,10 +408,15 @@ fn gather_struct_defs(
 
 fn required_resource(field: &StructField) -> Option<RequiredResource> {
     match field {
-        StructField::Resource(res) => match res.resource_shape {
+        StructField::Resource(res) => match &res.resource_shape {
             ResourceShape::Texture2D => Some(RequiredResource {
                 field_name: res.field_name.to_snake_case(),
                 resource_type: RequiredResourceType::Texture,
+            }),
+
+            ResourceShape::StructuredBuffer(element_type_name) => Some(RequiredResource {
+                field_name: res.field_name.to_snake_case(),
+                resource_type: RequiredResourceType::StructuredBuffer(element_type_name.clone()),
             }),
         },
 
@@ -479,6 +487,7 @@ enum RequiredResourceType {
     VertexCount,
     Texture,
     UniformBuffer(String),
+    StructuredBuffer(String),
 }
 
 #[cfg(test)]

@@ -6,6 +6,13 @@ ParameterBlock<SDF2DUniform> sdfUniform;
 
 struct SDF2DUniform {
     float time;
+    StructuredBuffer<Circle> circles;
+}
+
+struct Circle {
+    float3 color;
+    float radius;
+    float2 position;
 }
 
 [shader("vertex")]

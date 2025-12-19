@@ -173,12 +173,14 @@ pub struct ResourceStructField {
 #[serde(rename_all = "camelCase")]
 pub enum ResourceShape {
     Texture2D,
+    StructuredBuffer(String), // element type name
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ResourceResultType {
     Vector(VectorResultType),
+    Struct(StructResultType),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -186,6 +188,13 @@ pub enum ResourceResultType {
 pub struct VectorResultType {
     pub element_count: usize,
     pub element_type: VectorElementType,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StructResultType {
+    pub type_name: String,
+    pub fields: Vec<StructField>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
