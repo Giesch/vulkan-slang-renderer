@@ -1,6 +1,21 @@
 #+title: Todo
 
 * Now
+- [-] add storage / 'structured' buffers to reflection
+  - [X] add storage buffers to renderer
+  - [X] generate matching cpu struct type in askama template
+  - [ ] make sure descriptor set bindings work
+    - add case ReflectionJson::layout_bindings()
+      why is the StorageBuffer variant not already hitting the todo?
+    - add 'layout_frame_order' storage buffers to create_descriptor_sets
+      in init_pipeline
+    - does this mean the pipeline layout builders needs changes?
+  - [ ] add storage buffer to generated required resources
+  - [ ] handle repr/alignment correctly for storage buffers
+    storage buffers use std 430 instead of std 140
+    - this means that align(16) is wrong, we want only repr(C)
+      and maybe manual padding in the shader-side definition
+
 - [-] Space Invaders example
   - [-] make a controllable moving triangle
     - [X] make vertex & index buffers optional
@@ -11,16 +26,7 @@
       - [X] require a vertex count for draw if there's no vi buffers
         and remove todo tags
     - [-] add storage / 'structured' buffers to reflection
-      - [X] add storage buffers to renderer
-      - [ ] generate matching cpu struct type in askama template
-      - [ ] make sure descriptor set bindings work
-        - add case ReflectionJson::layout_bindings()
-          why is the StorageBuffer variant not already hitting the todo?
-        - add 'layout_frame_order' storage buffers to create_descriptor_sets
-          in init_pipeline
-        - does this mean the pipeline layout builders needs changes?
-      - [ ] add storage buffer to generated required resources
-
+      see above
     - [ ] switch to sprites from shape primitives?
 
 * Next

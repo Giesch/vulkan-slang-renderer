@@ -254,11 +254,7 @@ fn reflect_struct_fields(
 
                 let resource_shape = match slang_base_shape {
                     slang::ResourceShape::SlangTexture2d => ResourceShape::Texture2D,
-                    slang::ResourceShape::SlangStructuredBuffer => {
-                        let element_type_layout = field_type_layout.element_type_layout();
-                        let element_type_name = element_type_layout.name();
-                        ResourceShape::StructuredBuffer(element_type_name.unwrap().to_string())
-                    }
+                    slang::ResourceShape::SlangStructuredBuffer => ResourceShape::StructuredBuffer,
                     s => todo!("unhandled slang base shape: {s:?}"),
                 };
 

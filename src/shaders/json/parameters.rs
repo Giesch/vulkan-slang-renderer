@@ -173,7 +173,7 @@ pub struct ResourceStructField {
 #[serde(rename_all = "camelCase")]
 pub enum ResourceShape {
     Texture2D,
-    StructuredBuffer(String), // element type name
+    StructuredBuffer,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

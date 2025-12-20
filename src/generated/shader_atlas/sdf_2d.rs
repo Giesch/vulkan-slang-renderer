@@ -24,8 +24,19 @@ pub struct SDF2DUniform {
 
 impl GPUWrite for SDF2DUniform {}
 
+#[derive(Debug, Clone, Serialize)]
+#[repr(C, align(16))]
+pub struct Circle {
+    pub color: glam::Vec3,
+    pub radius: f32,
+    pub position: glam::Vec2,
+}
+
+impl GPUWrite for Circle {}
+
 pub struct Resources<'a> {
     pub vertex_count: u32,
+    pub circles: &'a StorageBufferHandle<Circle>,
     pub sdf_uniform_buffer: &'a UniformBufferHandle<SDF2DUniform>,
 }
 

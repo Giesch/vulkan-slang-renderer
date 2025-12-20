@@ -337,7 +337,40 @@ fn gather_struct_defs(
     struct_defs: &mut Vec<GeneratedStructDefinition>,
 ) -> Option<GeneratedStructFieldDefinition> {
     match field {
-        StructField::Resource(_) => None,
+        StructField::Resource(res) => {
+            match &res.resource_shape {
+                ResourceShape::Texture2D => None,
+
+                ResourceShape::StructuredBuffer => {
+                    match &res.result_type {
+                        ResourceResultType::Vector(vector_result_type) => {
+                            match vector_result_type.element_type {
+                                VectorElementType::Scalar(_) => {}
+                            };
+                        }
+
+                        ResourceResultType::Struct(struct_result_type) => {
+                            let fields = struct_result_type
+                                .fields
+                                .iter()
+                                .filter_map(|sf| gather_struct_defs(sf, struct_defs))
+                                .collect();
+
+                            struct_defs.push(GeneratedStructDefinition {
+                                type_name: struct_result_type.type_name.clone(),
+                                fields,
+                                gpu_write: true,
+                                trait_derives: vec!["Debug", "Clone", "Serialize"],
+                            });
+                        }
+                    }
+
+                    // NOTE handled via resoruces;
+                    // not a field of the uniform buffer struct
+                    None
+                }
+            }
+        }
 
         StructField::Scalar(scalar) => {
             let field_type = match scalar.scalar_type {
@@ -414,13 +447,32 @@ fn required_resource(field: &StructField) -> Option<RequiredResource> {
                 resource_type: RequiredResourceType::Texture,
             }),
 
-            ResourceShape::StructuredBuffer(element_type_name) => Some(RequiredResource {
+            ResourceShape::StructuredBuffer => Some(RequiredResource {
                 field_name: res.field_name.to_snake_case(),
-                resource_type: RequiredResourceType::StructuredBuffer(element_type_name.clone()),
+                resource_type: RequiredResourceType::StructuredBuffer(resource_type_name(
+                    &res.result_type,
+                )),
             }),
         },
 
         _ => None,
+    }
+}
+
+fn resource_type_name(result_type: &ResourceResultType) -> String {
+    match result_type {
+        ResourceResultType::Vector(v) => match &v.element_type {
+            VectorElementType::Scalar(s) => {
+                let element_type = match s.scalar_type {
+                    ScalarType::Float32 => "f32",
+                    ScalarType::Uint32 => "u32",
+                };
+
+                format!("Vec<{element_type}>")
+            }
+        },
+
+        ResourceResultType::Struct(s) => s.type_name.clone(),
     }
 }
 

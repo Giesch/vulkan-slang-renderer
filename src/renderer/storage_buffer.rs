@@ -35,6 +35,7 @@ impl StorageBufferStorage {
         handle
     }
 
+    #[expect(unused)] // TODO
     pub fn get_raw(&self, handle: &RawStorageBufferHandle) -> &[RawStorageBuffer] {
         self.0[handle.index].as_ref().unwrap()
     }
