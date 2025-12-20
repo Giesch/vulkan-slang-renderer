@@ -49,7 +49,6 @@ pub struct Vertex {
 
 impl GPUWrite for Vertex {}
 
-
 pub struct Resources<'a> {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,

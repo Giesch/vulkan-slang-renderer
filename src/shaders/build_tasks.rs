@@ -155,7 +155,9 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
 
                 let mut generated_fields = vec![];
                 for field in &struct_param.fields {
-                    if let Some(generated_field) = gather_struct_defs(field, &mut struct_defs) {
+                    if let Some(generated_field) =
+                        gather_struct_defs(field, &mut struct_defs, Some(Alignment::Std140))
+                    {
                         generated_fields.push(generated_field);
                     };
                 }
@@ -163,8 +165,8 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
                 let def = GeneratedStructDefinition {
                     type_name: struct_param.type_name.to_string(),
                     fields: generated_fields,
-                    gpu_write: true,
                     trait_derives: vec!["Debug", "Clone", "Serialize"],
+                    alignment: Some(Alignment::Std140),
                 };
 
                 let mut attribute_descriptions = vec![];
@@ -199,7 +201,9 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
     for GlobalParameter::ParameterBlock(parameter_block) in &reflection_json.global_parameters {
         let mut param_block_fields = vec![];
         for field in &parameter_block.element_type.fields {
-            if let Some(generated_field) = gather_struct_defs(field, &mut struct_defs) {
+            if let Some(generated_field) =
+                gather_struct_defs(field, &mut struct_defs, Some(Alignment::Std140))
+            {
                 param_block_fields.push(generated_field);
             };
 
@@ -212,8 +216,8 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
         struct_defs.push(GeneratedStructDefinition {
             type_name: type_name.to_string(),
             fields: param_block_fields,
-            gpu_write: true,
             trait_derives: vec!["Debug", "Clone", "Serialize"],
+            alignment: Some(Alignment::Std140),
         });
 
         // the default-added parameter block uniform buffer
@@ -258,8 +262,8 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
     let resources_struct = GeneratedStructDefinition {
         type_name: "Resources<'a>".to_string(),
         fields: resources_fields,
-        gpu_write: false,
         trait_derives: vec![],
+        alignment: None,
     };
     struct_defs.push(resources_struct);
 
@@ -335,6 +339,7 @@ struct GeneratedShaderImpl {
 fn gather_struct_defs(
     field: &StructField,
     struct_defs: &mut Vec<GeneratedStructDefinition>,
+    alignment: Option<Alignment>,
 ) -> Option<GeneratedStructFieldDefinition> {
     match field {
         StructField::Resource(res) => {
@@ -350,17 +355,20 @@ fn gather_struct_defs(
                         }
 
                         ResourceResultType::Struct(struct_result_type) => {
+                            // NOTE for now, the only resource this can be is a storage buffer
+                            let alignment = Some(Alignment::Std430);
+
                             let fields = struct_result_type
                                 .fields
                                 .iter()
-                                .filter_map(|sf| gather_struct_defs(sf, struct_defs))
+                                .filter_map(|sf| gather_struct_defs(sf, struct_defs, alignment))
                                 .collect();
 
                             struct_defs.push(GeneratedStructDefinition {
                                 type_name: struct_result_type.type_name.clone(),
                                 fields,
-                                gpu_write: true,
                                 trait_derives: vec!["Debug", "Clone", "Serialize"],
+                                alignment,
                             });
                         }
                     }
@@ -403,15 +411,15 @@ fn gather_struct_defs(
             let type_name = struct_field.struct_type.type_name.to_string();
             let mut generated_sub_fields = vec![];
             for sub_field in &struct_field.struct_type.fields {
-                if let Some(field_def) = gather_struct_defs(sub_field, struct_defs) {
+                if let Some(field_def) = gather_struct_defs(sub_field, struct_defs, alignment) {
                     generated_sub_fields.push(field_def);
                 };
             }
             let sub_struct_def = GeneratedStructDefinition {
                 type_name: type_name.clone(),
                 fields: generated_sub_fields,
-                gpu_write: true,
                 trait_derives: vec!["Debug", "Clone", "Serialize"],
+                alignment,
             };
             struct_defs.push(sub_struct_def);
 
@@ -480,8 +488,8 @@ fn resource_type_name(result_type: &ResourceResultType) -> String {
 struct GeneratedStructDefinition {
     type_name: String,
     fields: Vec<GeneratedStructFieldDefinition>,
-    gpu_write: bool,
     trait_derives: Vec<&'static str>,
+    alignment: Option<Alignment>, // None = CPU only
 }
 
 impl GeneratedStructDefinition {
@@ -493,6 +501,14 @@ impl GeneratedStructDefinition {
         let trait_list = self.trait_derives.join(", ");
 
         Some(format!("#[derive({trait_list})]"))
+    }
+
+    fn gpu_write(&self) -> bool {
+        self.alignment.is_some()
+    }
+
+    fn repr(&self) -> Option<&str> {
+        self.alignment.as_ref().map(Alignment::annotation)
     }
 }
 
@@ -540,6 +556,26 @@ enum RequiredResourceType {
     Texture,
     UniformBuffer(String),
     StructuredBuffer(String),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Alignment {
+    // #[repr(C, align(16))]
+    // used for uniform buffers
+    Std140,
+    // #[repr(C)]
+    // used for storage buffers
+    // manual padding may be necessary
+    Std430,
+}
+
+impl Alignment {
+    fn annotation(&self) -> &str {
+        match self {
+            Self::Std140 => "#[repr(C, align(16))]",
+            Self::Std430 => "#[repr(C)]",
+        }
+    }
 }
 
 #[cfg(test)]

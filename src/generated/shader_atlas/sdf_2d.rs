@@ -25,7 +25,7 @@ pub struct SDF2DUniform {
 impl GPUWrite for SDF2DUniform {}
 
 #[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
+#[repr(C)]
 pub struct Circle {
     pub color: glam::Vec3,
     pub radius: f32,

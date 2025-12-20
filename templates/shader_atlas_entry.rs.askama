@@ -22,15 +22,17 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 {%- when Some with (derive_line) -%}
 {{derive_line}}
 {%- when None -%}
-{%- endmatch %}
-{%~ if def.gpu_write -%}
-#[repr(C, align(16))]
-{%~ endif -%}
+{%- endmatch +%}
+{%- match def.repr() -%}
+{%- when Some with (repr) +%}
+{{ repr }}
+{%~ when None -%}
+{%- endmatch -%}
 pub struct {{ def.type_name }} {
 {%~ for field in def.fields +%}    pub {{ field.field_name }}: {{ field.type_name }},
 {% endfor -%}
 }
-{%- if def.gpu_write +%}
+{%- if def.gpu_write() +%}
 
 impl GPUWrite for {{ def.type_name }} {}
 {%- endif %}

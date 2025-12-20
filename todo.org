@@ -4,17 +4,19 @@
 - [-] add storage / 'structured' buffers to reflection
   - [X] add storage buffers to renderer
   - [X] generate matching cpu struct type in askama template
+  - [X] handle repr/alignment correctly for storage buffers
+    storage buffers use std 430 instead of std 140
+    - this means that align(16) is wrong, we want only repr(C)
+      and maybe manual padding in the shader-side definition
+  - [X] add storage buffer to generated required resources
+  - [ ] storage buffers need a length
+  - [ ] storage buffers can be cpu-readable?
   - [ ] make sure descriptor set bindings work
     - add case ReflectionJson::layout_bindings()
       why is the StorageBuffer variant not already hitting the todo?
     - add 'layout_frame_order' storage buffers to create_descriptor_sets
       in init_pipeline
     - does this mean the pipeline layout builders needs changes?
-  - [ ] add storage buffer to generated required resources
-  - [ ] handle repr/alignment correctly for storage buffers
-    storage buffers use std 430 instead of std 140
-    - this means that align(16) is wrong, we want only repr(C)
-      and maybe manual padding in the shader-side definition
 
 - [-] Space Invaders example
   - [-] make a controllable moving triangle
