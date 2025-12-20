@@ -115,13 +115,13 @@ impl Game for VikingRoom {
         let aspect_ratio = renderer.aspect_ratio();
         renderer.draw_frame(&self.pipeline, |gpu| {
             let elapsed = Instant::now() - self.start_time;
-            let mvp = make_mvp_matrices(elapsed, aspect_ratio, COLUMN_MAJOR);
+            let mvp = make_mvp_matrices(elapsed, aspect_ratio);
             gpu.write_uniform(&mut self.uniform_buffer, DepthTexture { mvp });
         })
     }
 }
 
-fn make_mvp_matrices(elapsed: Duration, aspect_ratio: f32, column_major: bool) -> MVPMatrices {
+fn make_mvp_matrices(elapsed: Duration, aspect_ratio: f32) -> MVPMatrices {
     const TURN_DEGREES_PER_SECOND: f32 = 5.0;
     const STARTING_ANGLE_DEGREES: f32 = 45.0;
 
@@ -133,8 +133,10 @@ fn make_mvp_matrices(elapsed: Duration, aspect_ratio: f32, column_major: bool) -
     let fov_y_radians = STARTING_ANGLE_DEGREES.to_radians();
     let proj = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 10.0);
 
-    let mut mvp = MVPMatrices { model, view, proj };
+    normalize_mvp(MVPMatrices { model, view, proj })
+}
 
+fn normalize_mvp(mut mvp: MVPMatrices) -> MVPMatrices {
     // "GLM was originally designed for OpenGL,
     // where the Y coordinate of the clip coordinates is inverted.
     // The easiest way to compensate for that is to flip the sign
@@ -146,7 +148,7 @@ fn make_mvp_matrices(elapsed: Duration, aspect_ratio: f32, column_major: bool) -
     // GLM & glam use column-major matrices, but D3D12 and Slang use row-major by default
     // it's also possible to avoid the transpose by reversing the mul() calls in shaders
     // https://discord.com/channels/1303735196696445038/1395879559827816458/1396913440584634499
-    if !column_major {
+    if !COLUMN_MAJOR {
         mvp.model = mvp.model.transpose();
         mvp.view = mvp.view.transpose();
         mvp.proj = mvp.proj.transpose();

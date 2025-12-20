@@ -45,7 +45,7 @@ impl Game for BasicTriangle {
 
     fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
         let aspect_ratio = renderer.aspect_ratio();
-        let mvp = make_basic_mvp_matrices(aspect_ratio, COLUMN_MAJOR);
+        let mvp = make_basic_mvp_matrices(aspect_ratio);
 
         renderer.draw_frame(&self.pipeline, |gpu| {
             gpu.write_uniform(&mut self.uniform_buffer, mvp);
@@ -70,7 +70,7 @@ const VERTICES: [Vertex; 3] = [
 
 const INDICES: [u32; 3] = [0, 1, 2];
 
-fn make_basic_mvp_matrices(aspect_ratio: f32, column_major: bool) -> MVPMatrices {
+fn make_basic_mvp_matrices(aspect_ratio: f32) -> MVPMatrices {
     let model = Mat4::IDENTITY;
 
     let eye = Vec3::new(0.0, 0.0, 6.0);
@@ -79,10 +79,10 @@ fn make_basic_mvp_matrices(aspect_ratio: f32, column_major: bool) -> MVPMatrices
     let fov_degrees: f32 = 45.0;
     let proj = Mat4::perspective_rh(fov_degrees.to_radians(), aspect_ratio, 0.1, 10.0);
 
-    normalize_mvp(MVPMatrices { model, view, proj }, column_major)
+    normalize_mvp(MVPMatrices { model, view, proj })
 }
 
-fn normalize_mvp(mut mvp: MVPMatrices, column_major: bool) -> MVPMatrices {
+fn normalize_mvp(mut mvp: MVPMatrices) -> MVPMatrices {
     // "GLM was originally designed for OpenGL,
     // where the Y coordinate of the clip coordinates is inverted.
     // The easiest way to compensate for that is to flip the sign
@@ -94,7 +94,7 @@ fn normalize_mvp(mut mvp: MVPMatrices, column_major: bool) -> MVPMatrices {
     // GLM & glam use column-major matrices, but D3D12 and Slang use row-major by default
     // it's also possible to avoid the transpose by reversing the mul() calls in shaders
     // https://discord.com/channels/1303735196696445038/1395879559827816458/1396913440584634499
-    if !column_major {
+    if !COLUMN_MAJOR {
         mvp.model = mvp.model.transpose();
         mvp.view = mvp.view.transpose();
         mvp.proj = mvp.proj.transpose();
