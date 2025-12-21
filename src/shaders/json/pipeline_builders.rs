@@ -40,7 +40,7 @@ pub struct ReflectedPushConstantRange {
 }
 
 // a slang BindingType or vulkan DescriptorType
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ReflectedBindingType {
     Sampler,

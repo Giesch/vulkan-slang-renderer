@@ -1,11 +1,11 @@
 ---
 source: src/shaders/build_tasks.rs
 info:
-  relative_path: src/generated/shader_atlas/sdf_2d.rs
+  relative_path: src/generated/shader_atlas/sprite_batch.rs
 ---
 // GENERATED FILE (do not edit directly)
 
-//! generated from slang shader: sdf_2d.shader.slang
+//! generated from slang shader: sprite_batch.shader.slang
 
 use std::ffi::CString;
 use std::io::Cursor;
@@ -23,26 +23,33 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
-pub struct SDF2DUniform {
-    pub time: f32,
+pub struct SpriteBatchParams {
+    pub projection_matrix: glam::Mat4,
 }
 
-impl GPUWrite for SDF2DUniform {}
+impl GPUWrite for SpriteBatchParams {}
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C)]
-pub struct Circle {
-    pub color: glam::Vec3,
-    pub radius: f32,
-    pub position: glam::Vec2,
+pub struct Sprite {
+    pub position: glam::Vec3,
+    pub rotation: f32,
+    pub scale: glam::Vec2,
+    pub padding: glam::Vec2,
+    pub tex_u: f32,
+    pub tex_v: f32,
+    pub tex_w: f32,
+    pub tex_h: f32,
+    pub color: glam::Vec4,
 }
 
-impl GPUWrite for Circle {}
+impl GPUWrite for Sprite {}
 
 pub struct Resources<'a> {
     pub vertex_count: u32,
-    pub circles: &'a StorageBufferHandle<Circle>,
-    pub sdf_uniform_buffer: &'a UniformBufferHandle<SDF2DUniform>,
+    pub sprites: &'a StorageBufferHandle<Sprite>,
+    pub texture: &'a TextureHandle,
+    pub params_buffer: &'a UniformBufferHandle<SpriteBatchParams>,
 }
 
 
@@ -55,7 +62,7 @@ impl Shader {
     pub fn init() -> Self {
         let json_str = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/sdf_2d.json"
+            "/shaders/compiled/sprite_batch.json"
         ));
 
         let reflection_json: ReflectionJson = serde_json::from_str(json_str).unwrap();
@@ -67,15 +74,21 @@ impl Shader {
         self,
         resources: Resources<'_>,
     ) -> PipelineConfig<'_, !> {
-        // NOTE this must be in descriptor set layout order in the reflection json
+        // NOTE each of these must be in descriptor set layout order in the reflection json
+
         #[rustfmt::skip]
         let texture_handles = vec![
+            resources.texture,
         ];
 
-        // NOTE this must be in descriptor set layout order in the reflection json
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
-            RawUniformBufferHandle::from_typed(resources.sdf_uniform_buffer),
+            RawUniformBufferHandle::from_typed(resources.params_buffer),
+        ];
+
+        #[rustfmt::skip]
+        let storage_buffer_handles = vec![
+            RawStorageBufferHandle::from_typed(resources.sprites),
         ];
 
         let vertex_config = VertexConfig::VertexCount(resources.vertex_count);
@@ -85,6 +98,7 @@ impl Shader {
             vertex_config,
             texture_handles,
             uniform_buffer_handles,
+            storage_buffer_handles,
         }
     }
 
@@ -111,7 +125,7 @@ impl Shader {
     fn vert_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/sdf_2d.vert.spv"
+            "/shaders/compiled/sprite_batch.vert.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")
@@ -120,7 +134,7 @@ impl Shader {
     fn frag_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/sdf_2d.frag.spv"
+            "/shaders/compiled/sprite_batch.frag.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")

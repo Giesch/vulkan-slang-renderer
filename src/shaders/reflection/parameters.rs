@@ -196,7 +196,7 @@ fn reflect_struct_fields(
                         })
                     }
 
-                    (Some(field_binding), None) => {
+                    (Some(field_binding), _optional_semantic) => {
                         VectorStructField::Bound(BoundVectorStructField {
                             field_name,
                             binding: field_binding,

@@ -243,7 +243,12 @@ impl DescriptorSetLayoutBuilder {
         let vk_binding_index = self.binding_ranges.len() as u32;
         let descriptor_type = ReflectedBindingType::from_slang(binding_type);
 
-        let size = type_layout.size(type_layout.parameter_category());
+        // the cpp library uses 'Uniform' as a default arg for size()
+        // TODO
+        // Figure out whether (or how) we should use the type's parameter categories here.
+        //   The 'Mixed' one returned by storage buffer always gives as size of 0.
+        let size = type_layout.size(slang::ParameterCategory::Uniform);
+
         let descriptor_set_layout_binding = ReflectedDescriptorSetLayoutBinding {
             binding: vk_binding_index,
             descriptor_type,
@@ -320,6 +325,7 @@ impl ReflectedBindingType {
             slang::BindingType::Texture => Self::Texture,
             slang::BindingType::ConstantBuffer => Self::ConstantBuffer,
             slang::BindingType::CombinedTextureSampler => Self::CombinedTextureSampler,
+            // FIXME this includes uniform buffers as well?
             slang::BindingType::RawBuffer => Self::StorageBuffer,
 
             slang::BindingType::PushConstant => todo!(),

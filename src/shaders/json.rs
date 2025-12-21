@@ -27,7 +27,9 @@ impl ReflectionJson {
             .map(|dsl| {
                 use ash::vk;
 
-                use crate::renderer::{TextureDescription, UniformBufferDescription};
+                use crate::renderer::{
+                    StorageBufferDescription, TextureDescription, UniformBufferDescription,
+                };
                 use crate::shaders::json::ReflectedBindingType;
 
                 // NOTE this depends on the order from 'pipeline_config'
@@ -37,6 +39,14 @@ impl ReflectionJson {
                     .map(|b| match b.descriptor_type {
                         ReflectedBindingType::ConstantBuffer => {
                             LayoutDescription::Uniform(UniformBufferDescription {
+                                size: b.size as u64,
+                                binding: b.binding,
+                                descriptor_count: 1,
+                            })
+                        }
+
+                        ReflectedBindingType::StorageBuffer => {
+                            LayoutDescription::Storage(StorageBufferDescription {
                                 size: b.size as u64,
                                 binding: b.binding,
                                 descriptor_count: 1,

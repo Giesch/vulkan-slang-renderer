@@ -116,6 +116,7 @@ fn add_top_level_rust_modules(
     generated_source_files.push(top_generated_module);
 }
 
+/// generate the matching rust source for a specific slang shader
 fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFile {
     let mut struct_defs = vec![];
     let mut vertex_impl_blocks = vec![];
@@ -276,16 +277,25 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
     let relative_file_path = relative_path(["generated", "shader_atlas", &file_name]);
 
     // NOTE these must be in descriptor set layout order in the reflection json
-    let resources_texture_fields: Vec<String> = required_resources
-        .iter()
-        .filter(|r| matches!(r.resource_type, RequiredResourceType::Texture))
-        .map(|r| r.field_name.clone())
-        .collect();
-    let resources_uniform_buffer_fields: Vec<String> = required_resources
-        .iter()
-        .filter(|r| matches!(r.resource_type, RequiredResourceType::UniformBuffer(_)))
-        .map(|r| r.field_name.clone())
-        .collect();
+    let mut resources_texture_fields: Vec<String> = vec![];
+    let mut resources_uniform_buffer_fields: Vec<String> = vec![];
+    let mut resources_storage_buffer_fields: Vec<String> = vec![];
+    for res in &required_resources {
+        match res.resource_type {
+            RequiredResourceType::VertexBuffer => {}
+            RequiredResourceType::IndexBuffer => {}
+            RequiredResourceType::VertexCount => {}
+            RequiredResourceType::Texture => {
+                resources_texture_fields.push(res.field_name.clone());
+            }
+            RequiredResourceType::UniformBuffer(_) => {
+                resources_uniform_buffer_fields.push(res.field_name.clone());
+            }
+            RequiredResourceType::StructuredBuffer(_) => {
+                resources_storage_buffer_fields.push(res.field_name.clone());
+            }
+        }
+    }
 
     let shader_impl = GeneratedShaderImpl {
         shader_name: shader_name.clone(),
@@ -293,21 +303,26 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
         vertex_type_name,
         resources_texture_fields,
         resources_uniform_buffer_fields,
+        resources_storage_buffer_fields,
     };
+
+    let module_doc_lines = vec![format!(
+        "generated from slang shader: {}",
+        reflection_json.source_file_name
+    )];
+
+    let content = ShaderAtlasEntryModule {
+        module_doc_lines,
+        struct_defs,
+        vertex_impl_blocks,
+        shader_impl,
+    }
+    .render()
+    .unwrap();
 
     GeneratedFile {
         relative_path: relative_file_path,
-        content: ShaderAtlasEntryModule {
-            module_doc_lines: vec![format!(
-                "generated from slang shader: {}",
-                reflection_json.source_file_name
-            )],
-            struct_defs,
-            vertex_impl_blocks,
-            shader_impl,
-        }
-        .render()
-        .unwrap(),
+        content,
     }
 }
 
@@ -334,6 +349,8 @@ struct GeneratedShaderImpl {
     vertex_type_name: Option<String>,
     resources_texture_fields: Vec<String>,
     resources_uniform_buffer_fields: Vec<String>,
+    // TODO
+    resources_storage_buffer_fields: Vec<String>,
 }
 
 fn gather_struct_defs(
@@ -396,6 +413,7 @@ fn gather_struct_defs(
         StructField::Vector(VectorStructField::Bound(vector)) => {
             let VectorElementType::Scalar(element_type) = &vector.element_type;
             let field_type = match (element_type.scalar_type, vector.element_count) {
+                (ScalarType::Float32, 4) => "glam::Vec4",
                 (ScalarType::Float32, 3) => "glam::Vec3",
                 (ScalarType::Float32, 2) => "glam::Vec2",
                 (t, c) => panic!("vector not supported: type: {t:?}, count: {c}"),

@@ -82,7 +82,8 @@ impl {{ shader_impl.shader_type_name }} {
         self,
         resources: Resources<'_>,
     ) -> PipelineConfig<'_, {{ shader_impl.vertex_type_name.as_deref().unwrap_or("!") }}> {
-        // NOTE this must be in descriptor set layout order in the reflection json
+        // NOTE each of these must be in descriptor set layout order in the reflection json
+
         #[rustfmt::skip]
         let texture_handles = vec![
 {%- for texture_field in shader_impl.resources_texture_fields +%}
@@ -90,11 +91,17 @@ impl {{ shader_impl.shader_type_name }} {
 {%- endfor +%}
         ];
 
-        // NOTE this must be in descriptor set layout order in the reflection json
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
 {%- for buffer_field in shader_impl.resources_uniform_buffer_fields +%}
             RawUniformBufferHandle::from_typed(resources.{{ buffer_field }}),
+{%- endfor +%}
+        ];
+
+        #[rustfmt::skip]
+        let storage_buffer_handles = vec![
+{%- for buffer_field in shader_impl.resources_storage_buffer_fields +%}
+            RawStorageBufferHandle::from_typed(resources.{{ buffer_field }}),
 {%- endfor +%}
         ];
 {%+ if shader_impl.vertex_type_name.is_some() +%}
@@ -108,6 +115,7 @@ impl {{ shader_impl.shader_type_name }} {
             vertex_config,
             texture_handles,
             uniform_buffer_handles,
+            storage_buffer_handles,
         }
     }
 

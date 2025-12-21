@@ -1,19 +1,19 @@
 pub mod basic_triangle;
 pub mod depth_texture;
-pub mod sdf_2d;
+pub mod sprite_batch;
 
 pub struct ShaderAtlas {
-    pub sdf_2d: sdf_2d::Shader,
     pub basic_triangle: basic_triangle::Shader,
     pub depth_texture: depth_texture::Shader,
+    pub sprite_batch: sprite_batch::Shader,
 }
 
 impl ShaderAtlas {
     pub fn init() -> Self {
         Self {
-            sdf_2d: sdf_2d::Shader::init(),
             basic_triangle: basic_triangle::Shader::init(),
             depth_texture: depth_texture::Shader::init(),
+            sprite_batch: sprite_batch::Shader::init(),
         }
     }
 }

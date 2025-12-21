@@ -380,9 +380,9 @@ impl Renderer {
 
     pub fn create_storage_buffer<T: GPUWrite>(
         &mut self,
-        len: usize,
+        len: u32,
     ) -> anyhow::Result<StorageBufferHandle<T>> {
-        let buffer_size = (len * std::mem::size_of::<T>()) as u64;
+        let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
 
         let mut buffers_per_frame = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
         for _ in 0..MAX_FRAMES_IN_FLIGHT {
@@ -409,7 +409,7 @@ impl Renderer {
             buffers_per_frame.push(raw_storage_buffer);
         }
 
-        let handle = self.storage_buffers.add(buffers_per_frame);
+        let handle = self.storage_buffers.add(buffers_per_frame, len);
 
         Ok(handle)
     }
@@ -543,11 +543,18 @@ impl Renderer {
             .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
             .collect();
 
+        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer]> = config
+            .storage_buffer_handles
+            .iter()
+            .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
+            .collect();
+
         let descriptor_sets = create_descriptor_sets(
             &self.device,
             descriptor_pool,
             &pipeline_layout.descriptor_set_layouts,
             &uniform_buffers_in_layout_frame_order,
+            &storage_buffers_in_layout_frame_order,
             &textures,
             layout_bindings,
         )?;
@@ -2008,11 +2015,18 @@ fn create_descriptor_pool(
     let uniform_buffer_pool_size = vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::UNIFORM_BUFFER)
         .descriptor_count(descriptor_set_count);
+    let storage_buffer_pool_size = vk::DescriptorPoolSize::default()
+        .ty(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(descriptor_set_count);
     let sampler_pool_size = vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
         .descriptor_count(descriptor_set_count);
 
-    let pool_sizes = [uniform_buffer_pool_size, sampler_pool_size];
+    let pool_sizes = [
+        uniform_buffer_pool_size,
+        storage_buffer_pool_size,
+        sampler_pool_size,
+    ];
     let pool_create_info = vk::DescriptorPoolCreateInfo::default()
         .pool_sizes(&pool_sizes)
         .max_sets(descriptor_set_count);
@@ -2026,10 +2040,19 @@ fn create_descriptor_pool(
 pub enum LayoutDescription {
     Uniform(UniformBufferDescription),
     Texture(TextureDescription),
+    Storage(StorageBufferDescription),
 }
 
 #[derive(Debug)]
 pub struct UniformBufferDescription {
+    pub size: u64,
+    pub binding: u32,
+    // the number of descriptors in the descriptor set
+    pub descriptor_count: u32,
+}
+
+#[derive(Debug)]
+pub struct StorageBufferDescription {
     pub size: u64,
     pub binding: u32,
     // the number of descriptors in the descriptor set
@@ -2049,6 +2072,7 @@ fn create_descriptor_sets(
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layouts: &[vk::DescriptorSetLayout],
     uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer]],
+    storage_buffers_in_layout_frame_order: &[&[RawStorageBuffer]],
     textures: &[&Texture],
     layout_bindings: Vec<Vec<LayoutDescription>>,
 ) -> Result<Vec<vk::DescriptorSet>, anyhow::Error> {
@@ -2098,6 +2122,30 @@ fn create_descriptor_sets(
                             .buffer_info(&buffer_info);
 
                         let writes = [uniform_buffer_write];
+                        unsafe { device.update_descriptor_sets(&writes, &[]) };
+                    }
+
+                    LayoutDescription::Storage(storage_buffer_description) => {
+                        // TODO double check that this should actually be the same
+
+                        let raw_storage_buffers_by_frame =
+                            storage_buffers_in_layout_frame_order[layout_offset];
+                        let storage_buffer = raw_storage_buffers_by_frame[frame].buffer;
+
+                        let buffer_info = vk::DescriptorBufferInfo::default()
+                            .offset(0)
+                            .buffer(storage_buffer)
+                            .range(storage_buffer_description.size);
+                        let buffer_info = [buffer_info];
+                        let storage_buffer_write = vk::WriteDescriptorSet::default()
+                            .dst_set(dst_set)
+                            .dst_binding(storage_buffer_description.binding)
+                            .dst_array_element(0)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                            .descriptor_count(storage_buffer_description.descriptor_count)
+                            .buffer_info(&buffer_info);
+
+                        let writes = [storage_buffer_write];
                         unsafe { device.update_descriptor_sets(&writes, &[]) };
                     }
 
@@ -2989,11 +3037,15 @@ impl<'frame> Gpu<'frame> {
         *mapped_mem = data;
     }
 
-    pub fn write_ssbo<T>(&mut self, storage_buffer: &mut StorageBufferHandle<T>, data: T) {
+    pub fn write_storage<T>(&mut self, storage_buffer: &mut StorageBufferHandle<T>, data: &[T]) {
+        debug_assert_eq!(data.len(), storage_buffer.len() as usize);
+
         let mapped_mem = self
             .storage_buffers
             .get_mapped_mem_for_frame(storage_buffer, self.current_frame);
 
-        *mapped_mem = data;
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, storage_buffer.len() as usize);
+        }
     }
 }

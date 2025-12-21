@@ -81,7 +81,7 @@
     "parameters": [
       {
         "kind": "scalar",
-        "parameterName": "vertexIndex",
+        "parameterName": "id",
         "semanticName": "SV_VERTEXID",
         "scalarType": "uint32"
       }
@@ -90,7 +90,26 @@
   "fragmentEntryPoint": {
     "entryPointName": "fragMain",
     "stage": "fragment",
-    "parameters": []
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "fragVertex",
+        "binding": null,
+        "typeName": "FragVertex",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "semanticName": "SV_POSITION",
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    ]
   },
   "pipelineLayout": {
     "descriptorSetLayouts": [
@@ -108,7 +127,7 @@
             "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 0
+            "size": 16
           }
         ]
       }

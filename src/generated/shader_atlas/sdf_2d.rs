@@ -57,15 +57,20 @@ impl Shader {
     }
 
     pub fn pipeline_config(self, resources: Resources<'_>) -> PipelineConfig<'_, !> {
-        // NOTE this must be in descriptor set layout order in the reflection json
+        // NOTE each of these must be in descriptor set layout order in the reflection json
+
         #[rustfmt::skip]
         let texture_handles = vec![
         ];
 
-        // NOTE this must be in descriptor set layout order in the reflection json
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
             RawUniformBufferHandle::from_typed(resources.sdf_uniform_buffer),
+        ];
+
+        #[rustfmt::skip]
+        let storage_buffer_handles = vec![
+            RawStorageBufferHandle::from_typed(resources.circles),
         ];
 
         let vertex_config = VertexConfig::VertexCount(resources.vertex_count);
@@ -75,6 +80,7 @@ impl Shader {
             vertex_config,
             texture_handles,
             uniform_buffer_handles,
+            storage_buffer_handles,
         }
     }
 

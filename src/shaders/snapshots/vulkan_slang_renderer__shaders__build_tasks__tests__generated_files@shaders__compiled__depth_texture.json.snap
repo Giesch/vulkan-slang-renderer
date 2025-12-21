@@ -231,7 +231,7 @@ info:
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 0
+            "size": 192
           }
         ]
       }

@@ -6,7 +6,15 @@ use ash::vk;
 #[derive(Debug)]
 pub struct StorageBufferHandle<T> {
     index: usize,
+    len: u32,
     _phantom_data: PhantomData<T>,
+}
+
+#[expect(clippy::len_without_is_empty)] // vulkan does not allow allocating an empty buffer
+impl<T> StorageBufferHandle<T> {
+    pub fn len(&self) -> u32 {
+        self.len
+    }
 }
 
 pub(super) struct RawStorageBuffer {
@@ -24,9 +32,14 @@ impl StorageBufferStorage {
         Self(Default::default())
     }
 
-    pub fn add<T>(&mut self, buffers_per_frame: Vec<RawStorageBuffer>) -> StorageBufferHandle<T> {
+    pub fn add<T>(
+        &mut self,
+        buffers_per_frame: Vec<RawStorageBuffer>,
+        len: u32,
+    ) -> StorageBufferHandle<T> {
         let handle = StorageBufferHandle {
             index: self.0.len(),
+            len,
             _phantom_data: PhantomData::<T>,
         };
 
@@ -35,19 +48,17 @@ impl StorageBufferStorage {
         handle
     }
 
-    #[expect(unused)] // TODO
     pub fn get_raw(&self, handle: &RawStorageBufferHandle) -> &[RawStorageBuffer] {
         self.0[handle.index].as_ref().unwrap()
     }
 
-    pub fn get_mapped_mem_for_frame<T>(
+    pub(super) fn get_mapped_mem_for_frame<T>(
         &mut self,
         handle: &mut StorageBufferHandle<T>,
         frame: usize,
-    ) -> &mut T {
+    ) -> *mut T {
         let raw_storage_buffer = &mut self.0[handle.index].as_mut().unwrap()[frame];
-        let mut_ptr = raw_storage_buffer.mapped_mem as *mut T;
-        unsafe { &mut *mut_ptr }
+        raw_storage_buffer.mapped_mem as *mut T
     }
 
     pub fn take<T>(&mut self, handle: StorageBufferHandle<T>) -> Vec<RawStorageBuffer> {

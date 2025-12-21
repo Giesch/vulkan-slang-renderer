@@ -2,9 +2,8 @@ use ash::vk;
 
 use crate::shaders::atlas::ShaderAtlasEntry;
 
-use super::ShaderPipelineLayout;
 use super::vertex_description::VertexDescription;
-use super::{RawUniformBufferHandle, TextureHandle};
+use super::{RawStorageBufferHandle, RawUniformBufferHandle, ShaderPipelineLayout, TextureHandle};
 
 #[derive(Debug)]
 pub struct PipelineHandle {
@@ -96,9 +95,15 @@ pub struct PipelineConfig<'t, V: VertexDescription> {
     pub vertex_config: VertexConfig<V>,
     pub texture_handles: Vec<&'t TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
+    pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
 }
 
+/// which type of draw call to use, and the necessary data for it
 pub enum VertexConfig<V> {
+    // use a cmd_draw_indexed call, with prepared vertex and index buffers,
+    // and an associated Vertex type
     VertexAndIndexBuffers(Vec<V>, Vec<u32>),
+    // use a basic cmd_draw call passing a vertex count, with no vertex or index buffers,
+    // and so no Vertex type
     VertexCount(u32),
 }
