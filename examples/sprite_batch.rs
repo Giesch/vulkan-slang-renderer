@@ -25,7 +25,7 @@ pub struct SpriteBatch {
     pipeline: PipelineHandle,
     uniform_buffer: UniformBufferHandle<SpriteBatchParams>,
     storage_buffer: StorageBufferHandle<Sprite>,
-    sprites: [Sprite; SPRITE_COUNT],
+    sprites: Vec<Sprite>,
 }
 
 const SPRITE_COUNT: usize = 8192;
@@ -39,7 +39,11 @@ impl Game for SpriteBatch {
     where
         Self: Sized,
     {
-        let sprites = std::array::from_fn(|_| init_sprite());
+        let mut sprites = Vec::with_capacity(SPRITE_COUNT);
+        for _ in 0..SPRITE_COUNT {
+            let sprite = init_sprite();
+            sprites.push(sprite);
+        }
 
         let uniform_buffer = renderer.create_uniform_buffer::<SpriteBatchParams>()?;
         let storage_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
