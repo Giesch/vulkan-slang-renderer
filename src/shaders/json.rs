@@ -19,7 +19,6 @@ pub struct ReflectionJson {
 }
 
 impl ReflectionJson {
-    // TODO replace this with directly inlining the data in generated code?
     pub fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
         self.pipeline_layout
             .descriptor_set_layouts

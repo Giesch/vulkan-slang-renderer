@@ -34,6 +34,7 @@ impl App {
             }
 
             if !self.minimized {
+                self.game.update();
                 self.game.draw_frame(&mut self.renderer)?;
             }
 

@@ -173,11 +173,10 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
                 let mut attribute_descriptions = vec![];
                 for (location, field) in def.fields.iter().enumerate() {
                     let format = match field.type_name.as_str() {
-                        // TODO use an enum for supported glam types
                         "glam::Vec3" => "ash::vk::Format::R32G32B32_SFLOAT",
                         "glam::Vec2" => "ash::vk::Format::R32G32_SFLOAT",
                         "u32" => "ash::vk::Format::R32_UINT",
-                        unexpected => todo!("field without vk format: {:?}", unexpected),
+                        other => todo!("field without vk format in entry point parameter: {other}"),
                     };
 
                     let attr = VertexAttributeDescription {
@@ -349,7 +348,6 @@ struct GeneratedShaderImpl {
     vertex_type_name: Option<String>,
     resources_texture_fields: Vec<String>,
     resources_uniform_buffer_fields: Vec<String>,
-    // TODO
     resources_storage_buffer_fields: Vec<String>,
 }
 

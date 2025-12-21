@@ -71,23 +71,18 @@ impl Game for SpriteBatch {
         })
     }
 
-    fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
-        // update
-        // TODO add a separate 'update' function to RuntimeGame
+    fn update(&mut self) {
         let window_size = Self::window_size();
+
         for sprite in &mut self.sprites {
             randomize_sprite(sprite, window_size);
         }
+    }
 
-        // draw
-        let projection_matrix = Mat4::orthographic_lh(
-            0.0,
-            window_size.0 as f32,
-            window_size.1 as f32,
-            0.0,
-            0.0,
-            -1.0,
-        );
+    fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
+        let (width, height) = Self::window_size();
+        let projection_matrix =
+            Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0);
         let uniform_data = SpriteBatchParams { projection_matrix };
 
         renderer.draw_frame(&self.pipeline, |gpu| {

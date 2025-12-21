@@ -18,12 +18,14 @@
   - [X] make sure descriptor set bindings work
     - figure out if the uniform parameter category for non-uniform buffer sizes is right
 
-  - [-] storage buffers need a length
+  - [X] storage buffers need a length
     - [X] it should be ergonomic for the game; keep it in the handle?
-    - [ ] this needs to be correct in the reflected binding? size != len
-      is its size dynamic by definition? is the 'uniform' size from slang just a fat pointer?
+    - [X] this needs to be correct in the reflected binding? size != len
+      is its size dynamic by definition? is the 'uniform' size from slang just a fat pointer? yeah
 
-- [ ] clean up / address in-code todos & fixmes
+- [X] clean up / address in-code todos & fixmes
+
+- [ ] fix perf/correctness bugs on windows
 
 - [-] Space Invaders example
   - [-] make a controllable moving triangle
@@ -37,6 +39,10 @@
     - [-] add storage / 'structured' buffers to reflection
       see above
     - [ ] switch to sprites from shape primitives?
+
+- [ ] SDF 2D example
+  - is this possible with a single fullscreen quad?
+    ie, no texture or second render pass; just do everything in the fragment shader
 
 
 * Next
@@ -293,6 +299,11 @@
   - how to implement? the playground examples use typescript & webgpu
     https://github.com/shader-slang/slang-playground/blob/1b97fa8bdf2a6cb2b18ca2d8e8d5e4b54b6eba51/public/demos/image-from-url.slang
     https://github.com/shader-slang/slang-playground/blob/main/engine/slang-compilation-engine/src/slang/playground.slang
+
+- [ ] move the vk color format restriction on entry point fields out of codegen
+  make the enum of supported glam types / primitives part of StructEntryPointParameter
+
+- [ ] replace ReflectionJson::layout_bindings with directly inlining data in generated code
 
 
 * Roc Questions

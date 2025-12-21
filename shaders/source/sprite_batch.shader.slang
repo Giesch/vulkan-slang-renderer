@@ -34,11 +34,6 @@ struct Sprite {
 }
 
 struct VertexOutput {
-    // TODO
-    // why does color use the tex coord semantic in the sdl gpu example?
-    //   is it for matching up with the fragment shader?
-    // why is it ok to use a float2 instead of a float4 for position?
-    //   it just discards the rest?
     float2 texCoord : TEXCOORD0;
     float4 color : TEXCOORD1;
     float4 position : SV_Position;
@@ -83,7 +78,12 @@ VertexOutput vertMain(uint id : SV_VertexID) {
     return VertexOutput(texCoord, sprite.color, position);
 }
 
+struct FragInput {
+    float2 texCoord : TEXCOORD0;
+    float4 color : TEXCOORD1;
+}
+
 [shader("fragment")]
-float4 fragMain(VertexOutput input) : SV_TARGET {
+float4 fragMain(FragInput input) : SV_Target {
     return input.color * params.texture.Sample(input.texCoord);
 }

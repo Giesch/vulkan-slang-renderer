@@ -2126,8 +2126,6 @@ fn create_descriptor_sets(
                     }
 
                     LayoutDescription::Storage(storage_buffer_description) => {
-                        // TODO double check that this should actually be the same
-
                         let raw_storage_buffers_by_frame =
                             storage_buffers_in_layout_frame_order[layout_offset];
                         let storage_buffer = raw_storage_buffers_by_frame[frame].buffer;

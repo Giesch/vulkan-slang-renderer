@@ -15,6 +15,8 @@ pub trait Game {
     where
         Self: Sized;
 
+    fn update(&mut self) {}
+
     fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()>;
 
     fn window_title() -> &'static str {
@@ -77,6 +79,8 @@ pub struct WindowDescription {
 /// methods used after initialization
 /// this trait needs to be object-safe
 pub trait RuntimeGame {
+    fn update(&mut self);
+
     fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()>;
 
     fn frame_delay(&self) -> Duration;
@@ -116,6 +120,10 @@ impl<G> RuntimeGame for G
 where
     G: Game,
 {
+    fn update(&mut self) {
+        self.update()
+    }
+
     fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
         self.draw_frame(renderer)
     }
