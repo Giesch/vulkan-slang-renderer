@@ -6,7 +6,10 @@
 //! which uses the method described in this blog post:
 //! https://moonside.games/posts/sdl-gpu-sprite-batcher/
 
+use std::f32::consts::TAU;
+
 use glam::{Mat4, Vec2, Vec3, Vec4};
+use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
@@ -44,6 +47,8 @@ impl Game for SpriteBatch {
             let sprite = init_sprite();
             sprites.push(sprite);
         }
+
+        unsafe { SDL_srand(0) };
 
         let uniform_buffer = renderer.create_uniform_buffer::<SpriteBatchParams>()?;
         let storage_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
@@ -93,8 +98,6 @@ impl Game for SpriteBatch {
 }
 
 fn randomize_sprite(sprite: &mut Sprite, (width, height): (u32, u32)) {
-    use sdl3::sys::everything::{SDL_rand, SDL_randf};
-
     // the U and V offsets into the sprite sheet for the 4 sprites
     const U_COORDS: [f32; 4] = [0.0, 0.5, 0.0, 0.5];
     const V_COORDS: [f32; 4] = [0.0, 0.0, 0.5, 0.5];
@@ -102,7 +105,7 @@ fn randomize_sprite(sprite: &mut Sprite, (width, height): (u32, u32)) {
     sprite.position.x = unsafe { SDL_rand(width as i32) } as f32;
     sprite.position.y = unsafe { SDL_rand(height as i32) } as f32;
 
-    sprite.rotation = unsafe { SDL_randf() } * std::f32::consts::TAU;
+    sprite.rotation = unsafe { SDL_randf() } * TAU;
 
     let sprite_index = unsafe { SDL_rand(4) } as usize;
     sprite.tex_u = U_COORDS[sprite_index];

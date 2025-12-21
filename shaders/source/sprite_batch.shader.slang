@@ -85,5 +85,6 @@ struct FragInput {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
-    return input.color * params.texture.Sample(input.texCoord);
+    let sampledColor = params.texture.Sample(input.texCoord);
+    return input.color * sampledColor;
 }
