@@ -3037,13 +3037,14 @@ impl<'frame> Gpu<'frame> {
 
     pub fn write_storage<T>(&mut self, storage_buffer: &mut StorageBufferHandle<T>, data: &[T]) {
         debug_assert_eq!(data.len(), storage_buffer.len() as usize);
+        let len = data.len().min(storage_buffer.len() as usize);
 
         let mapped_mem = self
             .storage_buffers
             .get_mapped_mem_for_frame(storage_buffer, self.current_frame);
 
         unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, storage_buffer.len() as usize);
+            std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len);
         }
     }
 }

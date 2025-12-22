@@ -53,9 +53,9 @@ impl Game for SpriteBatch {
         let uniform_buffer = renderer.create_uniform_buffer::<SpriteBatchParams>()?;
         let storage_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
 
-        const IMAGE_FILE_NAME: &str = "ravioli_atlas.bmp";
-        let image = load_image(IMAGE_FILE_NAME)?;
-        let texture = renderer.create_texture(IMAGE_FILE_NAME, &image)?;
+        let image_file_name = "ravioli_atlas.bmp";
+        let image = load_image(image_file_name)?;
+        let texture = renderer.create_texture(image_file_name, &image)?;
 
         let resources = Resources {
             vertex_count: sprites.len() as u32 * 6,

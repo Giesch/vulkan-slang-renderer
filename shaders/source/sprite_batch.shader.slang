@@ -68,10 +68,10 @@ VertexOutput vertMain(uint id : SV_VertexID) {
     let position = mul(params.projectionMatrix, coordWithDepth);
 
     float2 texCoordsByVert[4] = {
-        float2(sprite.texU,               sprite.texV              ),
-        float2(sprite.texU + sprite.texW, sprite.texV              ),
-        float2(sprite.texU,               sprite.texV + sprite.texH),
-        float2(sprite.texU + sprite.texW, sprite.texV + sprite.texH)
+        {sprite.texU,               sprite.texV              },
+        {sprite.texU + sprite.texW, sprite.texV              },
+        {sprite.texU,               sprite.texV + sprite.texH},
+        {sprite.texU + sprite.texW, sprite.texV + sprite.texH}
     };
     let texCoord = texCoordsByVert[vert];
 
@@ -85,6 +85,6 @@ struct FragInput {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
-    let sampledColor = params.texture.Sample(input.texCoord);
-    return input.color * sampledColor;
+    let textureColor = params.texture.Sample(input.texCoord);
+    return input.color * textureColor;
 }
