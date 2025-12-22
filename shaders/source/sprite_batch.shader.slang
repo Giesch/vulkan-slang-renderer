@@ -2,9 +2,9 @@
 
 module sprite_batch;
 
-// Based on the official example in C here:
+// Based on the official SDL_gpu example here:
 // https://github.com/TheSpydog/SDL_gpu_examples/blob/main/Examples/PullSpriteBatch.c
-// https://github.com/TheSpydog/SDL_gpu_examples/blob/main/Content/Shaders/Source/TexturedQuad.frag.hlsl
+// https://github.com/TheSpydog/SDL_gpu_examples/blob/main/Content/Shaders/Source/PullSpriteBatch.vert.hlsl
 // https://github.com/TheSpydog/SDL_gpu_examples/blob/main/Content/Shaders/Source/TexturedQuad.frag.hlsl
 //
 // which uses the method described in this blog post:
