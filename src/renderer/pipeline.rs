@@ -58,6 +58,9 @@ pub(super) struct RendererPipeline {
 
     #[cfg_attr(not(debug_assertions), expect(unused))]
     pub shader: Box<dyn ShaderAtlasEntry>,
+
+    #[cfg_attr(not(debug_assertions), expect(unused))]
+    pub disable_depth_test: bool,
 }
 
 pub(super) enum VertexPipelineConfig {
@@ -91,11 +94,14 @@ pub(super) struct VertexAndIndexBuffers {
 
 /// the generic arguments for creating a pipeline
 pub struct PipelineConfig<'t, V: VertexDescription> {
+    // TODO is it a problem/solvable that these are public to the game?
+    //   is there a way to restrict them to generated code?
     pub shader: Box<dyn ShaderAtlasEntry>,
     pub vertex_config: VertexConfig<V>,
     pub texture_handles: Vec<&'t TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
+    pub disable_depth_test: bool,
 }
 
 /// which type of draw call to use, and the necessary data for it

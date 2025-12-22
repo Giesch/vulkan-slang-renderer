@@ -486,6 +486,7 @@ impl Renderer {
             &pipeline_layout,
             &config.shader.vertex_binding_descriptions(),
             &config.shader.vertex_attribute_descriptions(),
+            !config.disable_depth_test,
         )?;
 
         let vertex_pipeline_config = match &config.vertex_config {
@@ -566,6 +567,7 @@ impl Renderer {
             descriptor_pool,
             descriptor_sets,
             shader: config.shader,
+            disable_depth_test: config.disable_depth_test,
         })
     }
 
@@ -973,6 +975,7 @@ impl Renderer {
             &render_pipeline_mut.layout,
             &render_pipeline_mut.shader.vertex_binding_descriptions(),
             &render_pipeline_mut.shader.vertex_attribute_descriptions(),
+            !render_pipeline_mut.disable_depth_test,
         )?;
 
         info!("finished recompiling shaders");
@@ -1660,6 +1663,7 @@ fn create_graphics_pipeline(
     pipeline_layout: &ShaderPipelineLayout,
     vertex_binding_descriptions: &[vk::VertexInputBindingDescription],
     vertex_attribute_descriptions: &[vk::VertexInputAttributeDescription],
+    depth_test_enable: bool,
 ) -> Result<vk::Pipeline, anyhow::Error> {
     let vert_shader_spv = &pipeline_layout.vertex_shader.spv_bytes;
     let frag_shader_spv = &pipeline_layout.fragment_shader.spv_bytes;
@@ -1713,8 +1717,15 @@ fn create_graphics_pipeline(
 
     // color blend per attached framebuffer
     let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
-        .blend_enable(false)
+        .blend_enable(true)
+        .color_blend_op(vk::BlendOp::ADD)
+        .alpha_blend_op(vk::BlendOp::ADD)
+        .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .src_alpha_blend_factor(vk::BlendFactor::SRC_ALPHA)
+        .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
         .color_write_mask(vk::ColorComponentFlags::RGBA);
+
     let color_attachments = [color_blend_attachment];
     // global color blending
     let color_blend_state = vk::PipelineColorBlendStateCreateInfo::default()
@@ -1722,7 +1733,7 @@ fn create_graphics_pipeline(
         .attachments(&color_attachments);
 
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
-        .depth_test_enable(true)
+        .depth_test_enable(depth_test_enable)
         .depth_write_enable(true)
         .depth_compare_op(vk::CompareOp::LESS)
         .depth_bounds_test_enable(false)

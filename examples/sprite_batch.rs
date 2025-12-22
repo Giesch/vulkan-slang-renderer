@@ -65,7 +65,8 @@ impl Game for SpriteBatch {
         };
 
         let shader = ShaderAtlas::init().sprite_batch;
-        let pipeline_config = shader.pipeline_config(resources);
+        let mut pipeline_config = shader.pipeline_config(resources);
+        pipeline_config.disable_depth_test = true;
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         Ok(Self {

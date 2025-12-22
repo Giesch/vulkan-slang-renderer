@@ -1,7 +1,7 @@
 #+title: Todo
 
 * Now
-- [ ] fix transparency/depth bug
+- [X] fix transparency/depth bug
   sprite backgrounds should be transparent, not black
 
 - [ ] fix drawing on windows

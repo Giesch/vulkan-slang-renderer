@@ -124,6 +124,7 @@ impl Shader {
             texture_handles,
             uniform_buffer_handles,
             storage_buffer_handles,
+            disable_depth_test: false,
         }
     }
 
