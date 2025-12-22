@@ -25,6 +25,9 @@ alias d := dev
 shader-debug example="viking_room":
     RUST_LOG=info VK_LAYER_PRINTF_ONLY_PRESET=1 cargo run --example {{example}}
 
+[windows]
+shader-debug example="viking_room":
+    pwsh -Command { $env:RUST_LOG='info'; $env:VK_LAYER_PRINTF_ONLY_PRESET='1'; cargo run --example {{example}}; }
 
 # run a release build
 release: shaders
