@@ -1,12 +1,6 @@
 #+title: Todo
 
 * Now
-- [X] fix transparency/depth bug
-  sprite backgrounds should be transparent, not black
-
-- [ ] fix drawing on windows
-  only drawing one sprite per frame?
-
 - [-] Space Invaders example
   - [-] make a controllable moving sprite
     - [X] make vertex & index buffers optional
@@ -17,9 +11,13 @@
       - [X] require a vertex count for draw if there's no vi buffers
         and remove todo tags
     - [X] add storage / 'structured' buffers to reflection
+
+    - [ ] add a sprite sheet
+
     - [ ] add a player with a sprite
       - [ ] add a sprite
       - [ ] make it controllable
+
     - [ ] add enemies with sprites
       - [ ] add a sprite
       - [ ] move them in a pattern
@@ -28,78 +26,82 @@
   - is this possible with a single fullscreen quad?
     ie, no texture or second render pass; just do everything in the fragment shader
 
+- [ ] fix drawing on windows
+  only drawing one sprite per frame?
+
 - [ ] remove per-frame duplication of non-image resources
   https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
 
 
 * Next
 - [ ] why is this tutorial renderer so much slower than SDL_gpu at sprites?
+  duplicating resources? only 2 swapchain images in flight?
 
 - [ ] simplify basic triangle example
   avoid needing a full mvp matrix?
   make it more like the sdl example
 
 - [ ] come up with a nicer way to handle different draw calls
- - ie, cmd_draw vs cmd_draw_indexed vs *_indirect variants
-   want to be able to pass the counts directly
- - the enum is awkward to deal with
-   and it's better not to store the counts
- - can the enum be fine if you fall back to a default transparent sprite/sdf?
-   ie, for VertexCount basic cmd_draw call with a stored count
+  - ie, cmd_draw vs cmd_draw_indexed vs *_indirect variants
+    want to be able to pass the counts directly
+  - the enum is awkward to deal with
+    and it's better not to store the counts
+  - can the enum be fine if you fall back to a default transparent sprite/sdf?
+    ie, for VertexCount basic cmd_draw call with a stored count
 
 - [ ] add docs to Resources fields
- - explain the different draw call types
-   ie, why vertex_count shows up and that it should be a multiple of 3
-   maybe change it to 'triangle count' and do the mult?
-   or make different topology options available besides triangle list
+  - explain the different draw call types
+    ie, why vertex_count shows up and that it should be a multiple of 3
+    maybe change it to 'triangle count' and do the mult?
+    or make different topology options available besides triangle list
 
 - [ ] 2D signed distance fields / animated rick example
  [[https://danielchasehooper.com/posts/code-animated-rick]]
- - need multiple render passes (or a subpass?) to be able to render to a texture
+  - need multiple render passes (or a subpass?) to be able to render to a texture
 
 - [ ] support more parameter types
- - [ ] write-only storage buffers (StructuredBuffer)
- - [ ] read-write storage buffers (RWStructuredBuffer)
- - [ ] push constants?
+  - [ ] write-only storage buffers (StructuredBuffer)
+  - [ ] read-write storage buffers (RWStructuredBuffer)
+  - [ ] push constants?
 
 - [ ] 3D signed distance fields / Shape Up clone
- - requires read/write storage buffers (for gpu-based object picking)
+  - requires read/write storage buffers (for gpu-based object picking)
 
 - [ ] sprite batch example from SDL_gpu
 
 - [ ] is align(16) doing the right thing for Vertex?
  or is it doing anything?
 - [ ] do we not have to be doing align(16)?
- - an extension promoted in 1.2 allows not using 16-byte alignment
-   https://www.reddit.com/r/vulkan/comments/1dlvapz/problems_with_memory_layout_in_storage_buffer/l9t99ba/
-   https://www.reddit.com/r/vulkan/comments/u5jiws/glsl_std140_layout_for_arrays_of_scalars/
- - see VK_KHR_uniform_buffer_standard_layout and VK_EXT_scalar_block_layout
+  - an extension promoted in 1.2 allows not using 16-byte alignment
+    https://www.reddit.com/r/vulkan/comments/1dlvapz/problems_with_memory_layout_in_storage_buffer/l9t99ba/
+    https://www.reddit.com/r/vulkan/comments/u5jiws/glsl_std140_layout_for_arrays_of_scalars/
+  - see VK_KHR_uniform_buffer_standard_layout and VK_EXT_scalar_block_layout
 - [ ] add tests or static assertions for matching struct layout
 
 - [-] handle slang modules in codegen
  ie, allow a shared MVPMatrices type
- - [X] use a suffix to designate which slang files are shaders
- - [X] move MVP types to a module
- - [ ] generate a single rust type for the module
-   https://discord.com/channels/1303735196696445038/1437915884034326608/1437915884034326608
-   got no response; is there a workaround?
-   - recognize when an equivalent struct is generated multiple times
-     move all shared rust structs to one shared rust module
+  - [X] use a suffix to designate which slang files are shaders
+  - [X] move MVP types to a module
+  - [ ] generate a single rust type for the module
+    https://discord.com/channels/1303735196696445038/1437915884034326608/1437915884034326608
+    got no response; is there a workaround?
+    - recognize when an equivalent struct is generated multiple times
+      move all shared rust structs to one shared rust module
 
 - [ ] post a request for SDL_gpu to support later vulkan versions
  do I plan on using that, or continuing with vulkan?
  sticking with vulkan:
- - bindless textures; buffer device addresses
- - avoiding std140 layout / weird hlsl constant buffer rules
-   ie use the scalar_block_layout extension
- using SDL_gpu:
- - easier mac support
- - quicker to implement
- - access to SDL/MoonWorks community support
+  - bindless textures; buffer device addresses
+  - avoiding std140 layout / weird hlsl constant buffer rules
+    ie use the scalar_block_layout extension
+  using SDL_gpu:
+  - easier mac support
+  - quicker to implement
+  - access to SDL/MoonWorks community support
 
 - [ ] PR to slang docs for pipeline builders example fixes
  see docs_notes.org
- - [ ] ask in discord about skipping nested ParameterBlocks
+  - [ ] ask in discord about skipping nested ParameterBlocks
 
 - [ ] read through shader cursor docs
  https://docs.shader-slang.org/en/latest/shader-cursors.html
@@ -112,76 +114,72 @@
  https://www.youtube.com/watch?v=-Xb3Kk3HhIw
 
 - [ ] add assertions/tests that struct fields are laid out correctly
- - this needs a more complex example, probably with nested structs
-   align(16) solves the problem for the depth texture shader
- - what's the right way to get the size of a vector or matrix?
-   slang gives us an index and count rather than a size & offset
-   std::mem::size_of::<glam::Vec3>() ?
-   the offset_of! macro?
-   it seems like these would be testing the code against my guess at the layout,
-   rather than against the actual layout
- - assert on order before writing generated source (leave the game runnable)
- - unit test this with a 'bad' slang file
+  - this needs a more complex example, probably with nested structs
+    align(16) solves the problem for the depth texture shader
+  - what's the right way to get the size of a vector or matrix?
+    slang gives us an index and count rather than a size & offset
+    std::mem::size_of::<glam::Vec3>() ?
+    the offset_of! macro?
+    it seems like these would be testing the code against my guess at the layout,
+    rather than against the actual layout
+  - assert on order before writing generated source (leave the game runnable)
+  - unit test this with a 'bad' slang file
 
 - [ ] change ShaderAtlasEntry to allow optional vert/frag entry points
- how does that work with vertex descriptions
+  how does that work with vertex descriptions
 
 - [ ] split GPUWrite into different traits
- create_uniform_buffer should only take types declared in uniform buffers
- in the shader; not Vertex or bytes or whatever
- - [ ] add the trait
- - [ ] generate impl for the trait conditionally
- - [ ] update create_uniform_buffer restriction
- - [ ] consider similar situations
-   is there value in having the restriction within the renderer?
+  create_uniform_buffer should only take types declared in uniform   buffers
+  storage buffers have a different layout convention
 
 - [ ] handle shaders with different entry points in reflection
- ie, only compute, only fragment, etc
+  ie, only compute, only fragment, etc
 
 - [ ] add cargo feature flags
- - [ ] build-from-source-static for sdl3 on windows
- - [ ] shader hot reload for notify & shader_slang
-   - [ ] figure out if slang precompile needs to be a workspace crate or something
+  - [ ] build-from-source-static for sdl3 on windows
+  - [ ] shader hot reload for notify & shader_slang
+    - [ ] figure out if slang precompile needs to be a workspace crate or something
 - [ ] use a config module or cli params for stuff like COLUMN_MAJOR?
 
 - [ ] handle nested ParameterBlocks
- - [ ] should add_descriptor_range also skip ParameterBlock like PushConstant?
-   if we don't, it changes the binding numbers assigned to the double-wrapped items,
-   which seems wrong
-   but that actually happens if we early return there as well? is something else wrong?
-   also, does slang even support nested ParameterBlocks right now
+  - [ ] should add_descriptor_range also skip ParameterBlock like PushConstant?
+    if we don't, it changes the binding numbers assigned to the double-wrapped items,
+    which seems wrong
+    but that actually happens if we early return there as well? is something else wrong?
+    also, does slang even support nested ParameterBlocks right now
 
 - [ ] slang reflection codegen
- - [ ] does create_descriptor_sets overwrite what we want to reflect?
-   ie, with update_descriptor_sets in the loop
-   - still need the texture sampler & image view somehow
-     could get these fields from slang user attributes?
-   - need to hold on to reflected data in shader module, merge with updates?
-   - other resource-related things (ie, the image)
-     will have to be handled by generated rust methods
- - [ ] handle regenerated binding code in dev mode somehow
-   - just panic for now
-   - later, move compilation to a background thread
-     send a message to rebuild the pipeline
-     need some way to ensure hot reload of the rust/script happens first
-     use hash of input shader source in output dir for dependency tracking?
+  - [ ] does create_descriptor_sets overwrite what we want to reflect?
+    ie, with update_descriptor_sets in the loop
+    - still need the texture sampler & image view somehow
+      could get these fields from slang user attributes?
+    - need to hold on to reflected data in shader module, merge with updates?
+    - other resource-related things (ie, the image)
+      will have to be handled by generated rust methods
+  - [ ] handle regenerated binding code in dev mode somehow
+    - just panic for now
+    - later, move compilation to a background thread
+      send a message to rebuild the pipeline
+      need some way to ensure hot reload of the rust/script happens first
+      use hash of input shader source in output dir for dependency tracking?
 
-- [ ] Figure out Windows HDR / SRGB bug
- why does TEXTURE_IMAGE_FORMAT need to be unorm on windows?
- is it my monitor or graphics card, or the OS?
- is there a 'proper' way to detect what it should be at runtime?
- - could be similar to this wgpu bug?
-   https://github.com/gfx-rs/wgpu/issues/4842#issuecomment-1858018132
+- [X] Figure out Windows HDR / SRGB bug
+  why does TEXTURE_IMAGE_FORMAT need to be unorm on windows?
+  is it my monitor or graphics card, or the OS?
+  is there a 'proper' way to detect what it should be at runtime?
+  - could be similar to this wgpu bug?
+    https://github.com/gfx-rs/wgpu/issues/4842#issuecomment-1858018132
+  it was incorrect alpha blending somehow - default color mask behavior is bad?
 
 - [ ] split shader println into its own example
 - [ ] split up depth texture & viking room shaders
 
 - [ ] re-evaluate having different resources per frame
- like, is it necessary / is there a smarter way
- especially uniform/storage buffers
+  like, is it necessary / is there a smarter way
+  especially uniform/storage buffers
 
 - [ ] add a way to make storage buffers and/or textures cpu-readable
- this is useful for gpu-driven mouse 'picking'
+  this is useful for gpu-driven mouse 'picking'
 
 * Future
 - [ ] read about dynamic rendering

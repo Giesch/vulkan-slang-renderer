@@ -102,7 +102,7 @@ impl Shader {
         let vertex_config =
             VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
 
-        PipelineConfig {
+        PipelineConfigBuilder {
             shader: Box::new(self),
             vertex_config,
             texture_handles,
@@ -110,6 +110,7 @@ impl Shader {
             storage_buffer_handles,
             disable_depth_test: false,
         }
+        .build()
     }
 
     fn vert_entry_point_name(&self) -> CString {

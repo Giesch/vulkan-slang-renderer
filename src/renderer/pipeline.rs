@@ -29,8 +29,7 @@ impl PipelineStorage {
         self.0[handle.index].as_ref().unwrap()
     }
 
-    // used only for hot reload
-    #[cfg(debug_assertions)]
+    #[cfg(debug_assertions)] // used only during hot reload
     pub fn get_mut(&mut self, handle: &PipelineHandle) -> &mut RendererPipeline {
         self.0[handle.index].as_mut().unwrap()
     }
@@ -56,10 +55,10 @@ pub(super) struct RendererPipeline {
     pub descriptor_pool: vk::DescriptorPool,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
 
-    #[cfg_attr(not(debug_assertions), expect(unused))]
+    #[cfg_attr(not(debug_assertions), expect(unused))] // used only during hot reload
     pub shader: Box<dyn ShaderAtlasEntry>,
 
-    #[cfg_attr(not(debug_assertions), expect(unused))]
+    #[cfg_attr(not(debug_assertions), expect(unused))] // used only during hot reload
     pub disable_depth_test: bool,
 }
 
@@ -94,13 +93,12 @@ pub(super) struct VertexAndIndexBuffers {
 
 /// the generic arguments for creating a pipeline
 pub struct PipelineConfig<'t, V: VertexDescription> {
-    // TODO is it a problem/solvable that these are public to the game?
-    //   is there a way to restrict them to generated code?
-    pub shader: Box<dyn ShaderAtlasEntry>,
-    pub vertex_config: VertexConfig<V>,
-    pub texture_handles: Vec<&'t TextureHandle>,
-    pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
-    pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
+    pub(super) shader: Box<dyn ShaderAtlasEntry>,
+    pub(super) vertex_config: VertexConfig<V>,
+    pub(super) texture_handles: Vec<&'t TextureHandle>,
+    pub(super) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
+    pub(super) storage_buffer_handles: Vec<RawStorageBufferHandle>,
+
     pub disable_depth_test: bool,
 }
 
@@ -112,4 +110,27 @@ pub enum VertexConfig<V> {
     // use a basic cmd_draw call passing a vertex count, with no vertex or index buffers,
     // and so no Vertex type
     VertexCount(u32),
+}
+
+pub struct PipelineConfigBuilder<'t, V: VertexDescription> {
+    pub shader: Box<dyn ShaderAtlasEntry>,
+    pub vertex_config: VertexConfig<V>,
+    pub texture_handles: Vec<&'t TextureHandle>,
+    pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
+    pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
+
+    pub disable_depth_test: bool,
+}
+
+impl<'t, V: VertexDescription> PipelineConfigBuilder<'t, V> {
+    pub fn build(self) -> PipelineConfig<'t, V> {
+        PipelineConfig {
+            shader: self.shader,
+            vertex_config: self.vertex_config,
+            texture_handles: self.texture_handles,
+            uniform_buffer_handles: self.uniform_buffer_handles,
+            storage_buffer_handles: self.storage_buffer_handles,
+            disable_depth_test: self.disable_depth_test,
+        }
+    }
 }
