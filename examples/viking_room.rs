@@ -5,7 +5,7 @@ use glam::{Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
-    PipelineHandle, Renderer, TextureHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, PipelineHandle, Renderer, TextureHandle, UniformBufferHandle,
 };
 use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
 use vulkan_slang_renderer::util::load_image;
@@ -111,8 +111,9 @@ impl Game for VikingRoom {
         })
     }
 
-    fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
+
         renderer.draw_frame(&self.pipeline, |gpu| {
             let elapsed = Instant::now() - self.start_time;
             let mvp = make_mvp_matrices(elapsed, aspect_ratio);

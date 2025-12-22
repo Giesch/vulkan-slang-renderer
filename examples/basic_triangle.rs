@@ -1,7 +1,9 @@
 use glam::{Mat4, Vec3};
 
 use vulkan_slang_renderer::game::Game;
-use vulkan_slang_renderer::renderer::{PipelineHandle, Renderer, UniformBufferHandle};
+use vulkan_slang_renderer::renderer::{
+    DrawError, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
+};
 use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
@@ -43,7 +45,7 @@ impl Game for BasicTriangle {
         })
     }
 
-    fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
         let mvp = make_basic_mvp_matrices(aspect_ratio);
 

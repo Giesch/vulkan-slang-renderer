@@ -4,7 +4,7 @@ use glam::{Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
-    PipelineHandle, Renderer, TextureHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, PipelineHandle, Renderer, TextureHandle, UniformBufferHandle,
 };
 use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
 use vulkan_slang_renderer::util::load_image;
@@ -109,13 +109,14 @@ impl Game for DepthTextureGame {
         })
     }
 
-    fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
         let elapsed = Instant::now() - self.start_time;
         let mvp = make_mvp_matrices(elapsed, aspect_ratio, COLUMN_MAJOR);
+        let uniform_data = DepthTexture { mvp };
 
         renderer.draw_frame(&self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.uniform_buffer, DepthTexture { mvp });
+            gpu.write_uniform(&mut self.uniform_buffer, uniform_data);
         })
     }
 }

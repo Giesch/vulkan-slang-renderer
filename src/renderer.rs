@@ -991,10 +991,6 @@ impl Renderer {
 
         Ok(())
     }
-
-    pub fn aspect_ratio(&self) -> f32 {
-        self.aspect_ratio
-    }
 }
 
 impl Drop for Renderer {
@@ -3033,13 +3029,14 @@ impl shaders::json::ReflectedStageFlags {
     }
 }
 
-pub struct Gpu<'frame> {
+/// the interface a game uses to update gpu resources during a renderer draw call
+pub struct Gpu<'f> {
     current_frame: usize,
-    uniform_buffers: &'frame mut UniformBufferStorage,
-    storage_buffers: &'frame mut StorageBufferStorage,
+    uniform_buffers: &'f mut UniformBufferStorage,
+    storage_buffers: &'f mut StorageBufferStorage,
 }
 
-impl<'frame> Gpu<'frame> {
+impl<'f> Gpu<'f> {
     pub fn write_uniform<T>(&mut self, uniform_buffer: &mut UniformBufferHandle<T>, data: T) {
         let mapped_mem = self
             .uniform_buffers
@@ -3050,14 +3047,44 @@ impl<'frame> Gpu<'frame> {
 
     pub fn write_storage<T>(&mut self, storage_buffer: &mut StorageBufferHandle<T>, data: &[T]) {
         debug_assert_eq!(data.len(), storage_buffer.len() as usize);
-        let len = data.len().min(storage_buffer.len() as usize);
+        let len_to_copy = data.len().min(storage_buffer.len() as usize);
 
         let mapped_mem = self
             .storage_buffers
             .get_mapped_mem_for_frame(storage_buffer, self.current_frame);
 
         unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len);
+            std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len_to_copy);
         }
+    }
+}
+
+/// a one-time-use reference to the renderer,
+/// for making a frame's single draw call
+pub struct FrameRenderer<'f>(&'f mut Renderer);
+
+#[derive(thiserror::Error, Debug)]
+pub enum DrawError {
+    #[error("error drawing frame: {0}")]
+    DrawError(#[from] anyhow::Error),
+}
+
+impl<'f> FrameRenderer<'f> {
+    pub fn new(renderer: &'f mut Renderer) -> Self {
+        Self(renderer)
+    }
+
+    pub fn aspect_ratio(&self) -> f32 {
+        self.0.aspect_ratio
+    }
+
+    pub fn draw_frame(
+        self,
+        pipeline_handle: &PipelineHandle,
+        gpu_update: impl FnOnce(&mut Gpu),
+    ) -> Result<(), DrawError> {
+        self.0
+            .draw_frame(pipeline_handle, gpu_update)
+            .map_err(DrawError::DrawError)
     }
 }

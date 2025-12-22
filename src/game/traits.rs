@@ -3,7 +3,7 @@ use std::time::Duration;
 use sdl3::keyboard::Scancode as SDLScancode;
 
 use crate::app::App;
-use crate::renderer::Renderer;
+use crate::renderer::{DrawError, FrameRenderer, Renderer};
 
 const DEFAULT_FRAME_DELAY: Duration = Duration::from_millis(15); // about 60 fps
 const DEFAULT_WINDOW_SIZE: (u32, u32) = (800, 600);
@@ -17,7 +17,7 @@ pub trait Game {
 
     fn update(&mut self) {}
 
-    fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()>;
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
 
     fn window_title() -> &'static str {
         DEFAULT_WINDOW_TITLE
@@ -81,7 +81,7 @@ pub struct WindowDescription {
 pub trait RuntimeGame {
     fn update(&mut self);
 
-    fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()>;
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
 
     fn frame_delay(&self) -> Duration;
 
@@ -124,7 +124,7 @@ where
         self.update()
     }
 
-    fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         self.draw_frame(renderer)
     }
 

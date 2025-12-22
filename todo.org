@@ -182,6 +182,11 @@
   this is useful for gpu-driven mouse 'picking'
 
 * Future
+- [ ] migrate off of anyhow
+  - use thiserror for game api
+  - use miette or a similar crate internally
+    is it possible to get structured data (ie line numbers) out of slangc?
+
 - [ ] read about dynamic rendering
   - [ ] sascha's 1.3 triangle
   - [ ] vkguide?

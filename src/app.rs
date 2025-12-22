@@ -4,7 +4,7 @@ use sdl3::keyboard::Keycode;
 use sdl3::sys::timer::SDL_DelayPrecise;
 
 use crate::game::traits::RuntimeGame;
-use crate::renderer::Renderer;
+use crate::renderer::{FrameRenderer, Renderer};
 use crate::traits::{Input, Key};
 
 pub struct App {
@@ -35,7 +35,9 @@ impl App {
 
             if !self.minimized {
                 self.game.update();
-                self.game.draw_frame(&mut self.renderer)?;
+
+                let frame_renderer = FrameRenderer::new(&mut self.renderer);
+                self.game.draw_frame(frame_renderer)?;
             }
 
             let frame_delay = self.game.frame_delay().as_nanos() as u64;

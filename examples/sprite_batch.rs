@@ -13,7 +13,7 @@ use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
-    PipelineHandle, Renderer, StorageBufferHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle, UniformBufferHandle,
 };
 use vulkan_slang_renderer::util::load_image;
 
@@ -85,7 +85,7 @@ impl Game for SpriteBatch {
         }
     }
 
-    fn draw_frame(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let (width, height) = Self::window_size();
         let projection_matrix =
             Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0);
