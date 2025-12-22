@@ -2185,6 +2185,8 @@ fn create_descriptor_sets(
     Ok(descriptor_sets)
 }
 
+const TEXTURE_IMAGE_FORMAT: ash::vk::Format = ash::vk::Format::R8G8B8A8_SRGB;
+
 fn create_texture(
     source_file_name: String,
     input_image: &image::DynamicImage,
@@ -2207,7 +2209,7 @@ fn create_texture(
     let texture_image_view = create_image_view(
         device,
         texture_image,
-        platform::TEXTURE_IMAGE_FORMAT,
+        TEXTURE_IMAGE_FORMAT,
         vk::ImageAspectFlags::COLOR,
         mip_levels,
     )?;
@@ -2257,7 +2259,7 @@ fn create_texture_image(
         .height(image.height());
     let image_options = ImageOptions {
         extent,
-        format: platform::TEXTURE_IMAGE_FORMAT,
+        format: TEXTURE_IMAGE_FORMAT,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::SAMPLED
@@ -2274,7 +2276,7 @@ fn create_texture_image(
         command_pool,
         graphics_queue,
         vk_image,
-        platform::TEXTURE_IMAGE_FORMAT,
+        TEXTURE_IMAGE_FORMAT,
         vk::ImageLayout::UNDEFINED,
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         mip_levels,
@@ -2298,7 +2300,7 @@ fn create_texture_image(
         mip_levels,
         instance,
         physical_device,
-        platform::TEXTURE_IMAGE_FORMAT,
+        TEXTURE_IMAGE_FORMAT,
     )?;
 
     unsafe {

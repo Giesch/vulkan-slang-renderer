@@ -23,8 +23,3 @@ pub fn instance_create_flags() -> ash::vk::InstanceCreateFlags {
 pub fn instance_create_flags() -> ash::vk::InstanceCreateFlags {
     ash::vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
 }
-
-#[cfg(target_os = "windows")]
-pub const TEXTURE_IMAGE_FORMAT: ash::vk::Format = ash::vk::Format::R8G8B8A8_UNORM;
-#[cfg(target_os = "linux")]
-pub const TEXTURE_IMAGE_FORMAT: ash::vk::Format = ash::vk::Format::R8G8B8A8_SRGB;

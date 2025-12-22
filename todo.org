@@ -8,7 +8,7 @@
   only drawing one sprite per frame?
 
 - [-] Space Invaders example
-  - [-] make a controllable moving triangle
+  - [-] make a controllable moving sprite
     - [X] make vertex & index buffers optional
       allow using only storage buffers like the SDL_gpu pull sprite batch example
       - [X] make both optional within PipelineConfig
@@ -16,9 +16,13 @@
         assume that any shader with a vertex buffer also wants an index buffer
       - [X] require a vertex count for draw if there's no vi buffers
         and remove todo tags
-    - [-] add storage / 'structured' buffers to reflection
-      see above
-    - [ ] switch to sprites from shape primitives?
+    - [X] add storage / 'structured' buffers to reflection
+    - [ ] add a player with a sprite
+      - [ ] add a sprite
+      - [ ] make it controllable
+    - [ ] add enemies with sprites
+      - [ ] add a sprite
+      - [ ] move them in a pattern
 
 - [ ] SDF 2D example
   - is this possible with a single fullscreen quad?
