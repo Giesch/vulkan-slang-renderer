@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use vulkan_slang_renderer::game::*;
@@ -20,7 +22,8 @@ struct SpaceInvaders {
     uniform_buffer: UniformBufferHandle<SpaceInvadersParams>,
     storage_buffer: StorageBufferHandle<Sprite>,
     sprites: Vec<Sprite>,
-    player_intent: PlayerIntent,
+    player: Player,
+    enemies: Vec<Enemy>,
 }
 
 impl Game for SpaceInvaders {
@@ -48,9 +51,24 @@ impl Game for SpaceInvaders {
             y: 64.0,
         };
 
-        let player_sprite = init_sprite(sprite_sheet_size, ship_frame, Vec3::ZERO);
-        let bug_sprite = init_sprite(sprite_sheet_size, bug_frame, Vec3::new(400.0, 700.0, 0.0));
-        let sprites = vec![player_sprite, bug_sprite];
+        let mut sprites = vec![];
+        let player_sprite = init_sprite(&mut sprites, sprite_sheet_size, ship_frame);
+        let bug_sprite = init_sprite(&mut sprites, sprite_sheet_size, bug_frame);
+
+        let player = Player {
+            sprite_id: player_sprite,
+            intent: Default::default(),
+            speed: 10.0,
+            position: Vec2::ZERO,
+        };
+
+        let bug = Enemy {
+            sprite_id: bug_sprite,
+            position: Vec2::new(400.0, 700.0),
+            intent: Default::default(),
+            timer: Enemy::TURN_TIME,
+        };
+        let enemies = vec![bug];
 
         let uniform_buffer = renderer.create_uniform_buffer::<SpaceInvadersParams>()?;
         let storage_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
@@ -74,40 +92,69 @@ impl Game for SpaceInvaders {
             uniform_buffer,
             storage_buffer,
             sprites,
-            player_intent: Default::default(),
+            player,
+            enemies,
         })
     }
 
     fn input(&mut self, input: Input) {
         match input {
             Input::KeyUp(key) => match key {
-                Key::W => self.player_intent.up = false,
-                Key::A => self.player_intent.left = false,
-                Key::S => self.player_intent.down = false,
-                Key::D => self.player_intent.right = false,
+                Key::W => self.player.intent.up = false,
+                Key::A => self.player.intent.left = false,
+                Key::S => self.player.intent.down = false,
+                Key::D => self.player.intent.right = false,
                 Key::Space => {}
             },
 
             Input::KeyDown(key) => match key {
-                Key::W => self.player_intent.up = true,
-                Key::A => self.player_intent.left = true,
-                Key::S => self.player_intent.down = true,
-                Key::D => self.player_intent.right = true,
+                Key::W => self.player.intent.up = true,
+                Key::A => self.player.intent.left = true,
+                Key::S => self.player.intent.down = true,
+                Key::D => self.player.intent.right = true,
                 Key::Space => {}
             },
         }
     }
 
     fn update(&mut self) {
-        let player_movement = self.player_intent.to_vec();
+        let player_movement = self.player.intent.movement() * self.player.speed;
+        self.player.position.x += player_movement.x;
+        self.player.position.y += player_movement.y;
 
-        // TODO find a better way to distinguish this?
-        let player_sprite = &mut self.sprites[0];
-        player_sprite.position.x += player_movement.x;
-        player_sprite.position.y += player_movement.y;
+        let elapsed = self.frame_delay();
+        for enemy in &mut self.enemies {
+            if elapsed >= enemy.timer {
+                enemy.timer = Enemy::TURN_TIME;
+                enemy.intent = match enemy.intent {
+                    EnemyIntent::Up => EnemyIntent::Right,
+                    EnemyIntent::Down => EnemyIntent::Left,
+                    EnemyIntent::Left => EnemyIntent::Up,
+                    EnemyIntent::Right => EnemyIntent::Down,
+                }
+            } else {
+                enemy.timer -= elapsed;
+            }
+
+            let enemy_movement = enemy.intent.movement();
+            enemy.position.x += enemy_movement.x;
+            enemy.position.y += enemy_movement.y;
+        }
     }
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+        // update sprites
+        let player_sprite = &mut self.sprites[self.player.sprite_id];
+        player_sprite.position.x = self.player.position.x;
+        player_sprite.position.y = self.player.position.y;
+
+        for enemy in &self.enemies {
+            let enemy_sprite = &mut self.sprites[enemy.sprite_id];
+            enemy_sprite.position.x = enemy.position.x;
+            enemy_sprite.position.y = enemy.position.y;
+        }
+
+        // make projection matrix
         let (width, height) = renderer.window_size();
         let mut projection_matrix = Mat4::orthographic_lh(0.0, width, height, 0.0, 0.0, -1.0);
         if !COLUMN_MAJOR {
@@ -115,11 +162,19 @@ impl Game for SpaceInvaders {
         }
         let uniform_data = SpaceInvadersParams { projection_matrix };
 
+        // draw
         renderer.draw_frame(&mut self.pipeline, |gpu| {
             gpu.write_uniform(&mut self.uniform_buffer, uniform_data);
             gpu.write_storage(&mut self.storage_buffer, &self.sprites);
         })
     }
+}
+
+struct Player {
+    sprite_id: usize,
+    intent: PlayerIntent,
+    speed: f32,
+    position: Vec2,
 }
 
 #[derive(Default)]
@@ -131,24 +186,53 @@ struct PlayerIntent {
 }
 
 impl PlayerIntent {
-    fn to_vec(&self) -> Vec2 {
-        let mut player_intent = Vec2::ZERO;
+    fn movement(&self) -> Vec2 {
+        let mut direction = Vec2::ZERO;
         if self.up {
-            player_intent.y += 1.0;
+            direction.y += 1.0;
         }
         if self.down {
-            player_intent.y -= 1.0;
+            direction.y -= 1.0;
         }
         if self.right {
-            player_intent.x += 1.0;
+            direction.x += 1.0;
         }
         if self.left {
-            player_intent.x -= 1.0;
+            direction.x -= 1.0;
         }
 
-        let player_speed = 10.0;
+        direction.normalize_or_zero()
+    }
+}
 
-        player_intent.normalize_or_zero() * player_speed
+struct Enemy {
+    sprite_id: usize,
+    position: Vec2,
+    intent: EnemyIntent,
+    timer: Duration,
+}
+
+impl Enemy {
+    const TURN_TIME: Duration = Duration::from_secs(1);
+}
+
+#[derive(Default)]
+enum EnemyIntent {
+    Up,
+    #[default]
+    Down,
+    Left,
+    Right,
+}
+
+impl EnemyIntent {
+    fn movement(&self) -> Vec2 {
+        match self {
+            EnemyIntent::Up => Vec2::Y,
+            EnemyIntent::Down => -Vec2::Y * 1.5,
+            EnemyIntent::Left => -Vec2::X,
+            EnemyIntent::Right => Vec2::X,
+        }
     }
 }
 
@@ -162,15 +246,15 @@ struct SpriteFrameOffsets {
 }
 
 fn init_sprite(
+    sprites: &mut Vec<Sprite>,
     (sheet_width, sheet_height): (f32, f32),
     frame: SpriteFrameOffsets,
-    position: Vec3,
-) -> Sprite {
-    Sprite {
+) -> usize {
+    let sprite = Sprite {
         scale: Vec2::splat(frame.width * SPRITE_SCALE),
         padding: Vec2::ZERO,
 
-        position,
+        position: Vec3::ZERO,
         rotation: 0.0,
 
         tex_u: frame.x / sheet_width,
@@ -179,7 +263,12 @@ fn init_sprite(
         tex_h: frame.height / sheet_height,
 
         color: Vec4::splat(1.0),
-    }
+    };
+
+    let sprite_id = sprites.len();
+    sprites.push(sprite);
+
+    sprite_id
 }
 
 fn load_texture(renderer: &mut Renderer, file_name: &str) -> anyhow::Result<TextureHandle> {

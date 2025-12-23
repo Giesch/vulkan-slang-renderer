@@ -2,7 +2,7 @@
 
 * Now
 - [-] Space Invaders example
-  - [-] make a controllable moving sprite
+  - [X] make a controllable moving sprite
     - [X] make vertex & index buffers optional
       allow using only storage buffers like the SDL_gpu pull sprite batch example
       - [X] make both optional within PipelineConfig
@@ -17,25 +17,22 @@
       - [X] add a sprite
       - [X] make it controllable
 
-    - [-] add enemies with sprites
-      - [X] add a sprite
-      - [ ] move them in a pattern
+  - [X] add enemies with sprites
+    - [X] add a sprite
+    - [X] move them in a pattern
 
-    - [ ] animations
-    - [ ] bullet
-    - [ ] bomb
-    - [ ] rotation based on movement?
+  - [X] split sprite position from object position
 
-
-- [ ] remove per-frame duplication of non-image resources
-  https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
-
+  - [ ] parse aseprite json
+  - [ ] animations
+  - [ ] bullet
+  - [ ] bomb
+  - [ ] rotation based on movement?
 
 * Next
 - [ ] fix sprite drawing on windows
   only drawing one sprite per frame?
 
-- [ ] parse sprite offsets out of generated aseprite json
 - [ ] find a better way to handle depth than 'disable_depth_test'
 - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
 - [ ] binding multiple textures results in only being able to sample the first one
@@ -43,6 +40,9 @@
 
 - [ ] why is this tutorial renderer so much slower than SDL_gpu at sprites?
   duplicating resources? only 2 swapchain images in flight?
+
+- [ ] remove per-frame duplication of non-image resources
+  https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
 
 - [ ] SDF 2D example
   - is this possible with a single fullscreen quad?

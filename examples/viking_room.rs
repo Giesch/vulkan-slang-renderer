@@ -112,7 +112,7 @@ impl Game for VikingRoom {
         })
     }
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
 
         renderer.draw_frame(&self.pipeline, |gpu| {

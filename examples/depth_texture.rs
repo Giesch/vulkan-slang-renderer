@@ -110,7 +110,7 @@ impl Game for DepthTextureGame {
         })
     }
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
         let elapsed = Instant::now() - self.start_time;
         let mvp = make_mvp_matrices(elapsed, aspect_ratio, COLUMN_MAJOR);

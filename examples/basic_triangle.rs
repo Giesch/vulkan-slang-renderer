@@ -45,7 +45,7 @@ impl Game for BasicTriangle {
         })
     }
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
         let mvp = make_basic_mvp_matrices(aspect_ratio);
 

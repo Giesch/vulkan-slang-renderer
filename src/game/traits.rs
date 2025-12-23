@@ -17,7 +17,7 @@ pub trait Game {
 
     fn update(&mut self) {}
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
 
     fn window_title() -> &'static str {
         DEFAULT_WINDOW_TITLE
@@ -125,7 +125,7 @@ where
     }
 
     fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
-        self.draw_frame(renderer)
+        self.draw(renderer)
     }
 
     fn frame_delay(&self) -> Duration {

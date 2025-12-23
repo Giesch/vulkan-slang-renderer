@@ -86,7 +86,7 @@ impl Game for SpriteBatch {
         }
     }
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let (width, height) = Self::window_size();
         let projection_matrix =
             Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0);
