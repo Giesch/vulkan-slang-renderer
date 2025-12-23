@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use anyhow::anyhow;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use vulkan_slang_renderer::game::*;
@@ -8,7 +9,7 @@ use vulkan_slang_renderer::renderer::{
     TextureHandle, UniformBufferHandle,
 };
 use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
-use vulkan_slang_renderer::util::load_image;
+use vulkan_slang_renderer::util::{load_image, manifest_path};
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
 use vulkan_slang_renderer::generated::shader_atlas::space_invaders::*;
@@ -35,25 +36,14 @@ impl Game for SpaceInvaders {
     where
         Self: Sized,
     {
-        // from 'meta' section of sprite_sheet.json
-        let sprite_sheet_size = (480.0, 160.0);
-        // from the 'frames' section of sprite_sheet.json
-        let ship_frame = SpriteFrameOffsets {
-            width: 32.0,
-            height: 32.0,
-            x: 0.0,
-            y: 128.0,
-        };
-        let bug_frame = SpriteFrameOffsets {
-            width: 32.0,
-            height: 32.0,
-            x: 0.0,
-            y: 64.0,
-        };
+        let sprite_atlas = load_sprite_atlas()?;
+        let player_offsets =
+            first_frame_matching(&sprite_atlas, |f| f.filename.starts_with("ship"))?;
+        let enemy_offsets = first_frame_matching(&sprite_atlas, |f| f.filename.starts_with("bug"))?;
 
         let mut sprites = vec![];
-        let player_sprite = init_sprite(&mut sprites, sprite_sheet_size, ship_frame);
-        let bug_sprite = init_sprite(&mut sprites, sprite_sheet_size, bug_frame);
+        let player_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, player_offsets);
+        let bug_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, enemy_offsets);
 
         let player = Player {
             sprite_id: player_sprite,
@@ -66,7 +56,7 @@ impl Game for SpaceInvaders {
             sprite_id: bug_sprite,
             position: Vec2::new(400.0, 700.0),
             intent: Default::default(),
-            timer: Enemy::TURN_TIME,
+            timer: Enemy::TRAVEL_TIME,
         };
         let enemies = vec![bug];
 
@@ -118,7 +108,7 @@ impl Game for SpaceInvaders {
     }
 
     fn update(&mut self) {
-        let player_movement = self.player.intent.movement() * self.player.speed;
+        let player_movement = self.player.intent.direction() * self.player.speed;
         self.player.position.x += player_movement.x;
         self.player.position.y += player_movement.y;
 
@@ -132,15 +122,15 @@ impl Game for SpaceInvaders {
                     EnemyIntent::Right => EnemyIntent::Down,
                 };
 
-                enemy.timer = Enemy::TURN_TIME;
-                if enemy.intent == EnemyIntent::Down {
-                    enemy.timer *= 2;
-                }
+                enemy.timer = match enemy.intent {
+                    EnemyIntent::Down => Enemy::TRAVEL_TIME,
+                    _ => Enemy::TRAVEL_TIME_DOWN,
+                };
             } else {
                 enemy.timer -= elapsed;
             }
 
-            let enemy_movement = enemy.intent.movement();
+            let enemy_movement = enemy.intent.direction();
             enemy.position.x += enemy_movement.x;
             enemy.position.y += enemy_movement.y;
         }
@@ -190,7 +180,7 @@ struct PlayerIntent {
 }
 
 impl PlayerIntent {
-    fn movement(&self) -> Vec2 {
+    fn direction(&self) -> Vec2 {
         let mut direction = Vec2::ZERO;
         if self.up {
             direction.y += 1.0;
@@ -217,10 +207,11 @@ struct Enemy {
 }
 
 impl Enemy {
-    const TURN_TIME: Duration = Duration::from_secs(1);
+    const TRAVEL_TIME: Duration = Duration::from_secs(1);
+    const TRAVEL_TIME_DOWN: Duration = Duration::from_millis(1500);
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Default)]
 enum EnemyIntent {
     Up,
     #[default]
@@ -230,7 +221,7 @@ enum EnemyIntent {
 }
 
 impl EnemyIntent {
-    fn movement(&self) -> Vec2 {
+    fn direction(&self) -> Vec2 {
         match self {
             EnemyIntent::Up => Vec2::Y,
             EnemyIntent::Down => -Vec2::Y,
@@ -242,29 +233,25 @@ impl EnemyIntent {
 
 const SPRITE_SCALE: f32 = 5.0;
 
-struct SpriteFrameOffsets {
-    width: f32,
-    height: f32,
-    x: f32,
-    y: f32,
-}
-
 fn init_sprite(
     sprites: &mut Vec<Sprite>,
-    (sheet_width, sheet_height): (f32, f32),
-    frame: SpriteFrameOffsets,
+    sprite_atlas_size: &SpriteAtlasSize,
+    frame: &SpriteAtlasFrameOffsets,
 ) -> usize {
+    let sheet_width = sprite_atlas_size.w as f32;
+    let sheet_height = sprite_atlas_size.h as f32;
+
     let sprite = Sprite {
-        scale: Vec2::splat(frame.width * SPRITE_SCALE),
+        scale: Vec2::splat(frame.w as f32 * SPRITE_SCALE),
         padding: Vec2::ZERO,
 
         position: Vec3::ZERO,
         rotation: 0.0,
 
-        tex_u: frame.x / sheet_width,
-        tex_v: frame.y / sheet_height,
-        tex_w: frame.width / sheet_width,
-        tex_h: frame.height / sheet_height,
+        tex_u: frame.x as f32 / sheet_width,
+        tex_v: frame.y as f32 / sheet_height,
+        tex_w: frame.w as f32 / sheet_width,
+        tex_h: frame.h as f32 / sheet_height,
 
         color: Vec4::splat(1.0),
     };
@@ -282,4 +269,58 @@ fn load_texture(renderer: &mut Renderer, file_name: &str) -> anyhow::Result<Text
     let texture = renderer.create_texture(asset_name, &image, TextureFilter::Nearest)?;
 
     Ok(texture)
+}
+
+// Aseprite integration
+
+fn load_sprite_atlas() -> anyhow::Result<SpriteAtlas> {
+    let sprite_atlas_path = manifest_path(["textures", "space_invaders", "sprite_sheet.json"]);
+
+    let sprite_atlas_json = std::fs::read_to_string(&sprite_atlas_path)?;
+    let sprite_atlas: SpriteAtlas = serde_json::from_str(&sprite_atlas_json)?;
+
+    Ok(sprite_atlas)
+}
+
+fn first_frame_matching(
+    sprite_atlas: &SpriteAtlas,
+    condition: impl Fn(&SpriteFrame) -> bool,
+) -> anyhow::Result<&SpriteAtlasFrameOffsets> {
+    sprite_atlas
+        .frames
+        .iter()
+        .find(|f| condition(f))
+        .map(|f| &f.frame)
+        .ok_or_else(|| anyhow!("no matching sprite frame found"))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SpriteAtlas {
+    meta: SpriteAtlasMeta,
+    frames: Vec<SpriteFrame>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SpriteAtlasMeta {
+    size: SpriteAtlasSize,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SpriteAtlasSize {
+    w: usize,
+    h: usize,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SpriteFrame {
+    filename: String,
+    frame: SpriteAtlasFrameOffsets,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SpriteAtlasFrameOffsets {
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
 }

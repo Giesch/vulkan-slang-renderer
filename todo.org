@@ -1,12 +1,12 @@
 #+title: Todo
 
 * Now
-- [ ] Space Invaders example
+- [-] Space Invaders example
   - [ ] collisions
     - [ ] lose if enemy reaches the bottom
     - [ ] lose if enemy touches the player
 
-  - [ ] parse aseprite json
+  - [X] parse aseprite json
   - [ ] animations
 
   - [ ] bullet
