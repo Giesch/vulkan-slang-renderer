@@ -5,7 +5,8 @@ use glam::{Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
-    DrawError, FrameRenderer, PipelineHandle, Renderer, TextureHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
+    UniformBufferHandle,
 };
 use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
 use vulkan_slang_renderer::util::load_image;
@@ -90,7 +91,7 @@ impl Game for VikingRoom {
         let shader_atlas = ShaderAtlas::init();
         let shader = shader_atlas.depth_texture;
 
-        let texture = renderer.create_texture(IMAGE_FILE_NAME, &image)?;
+        let texture = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
         let uniform_buffer = renderer.create_uniform_buffer::<DepthTexture>()?;
         let resources = Resources {
             vertices,

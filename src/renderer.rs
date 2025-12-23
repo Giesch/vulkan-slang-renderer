@@ -49,6 +49,8 @@ const MAX_FRAMES_IN_FLIGHT: usize = 2;
 pub struct Renderer {
     // fields that are created once
     aspect_ratio: f32,
+    width: f32,
+    height: f32,
     total_frames: usize,
     #[cfg(debug_assertions)]
     shader_changes: shader_watcher::ShaderChanges,
@@ -245,6 +247,8 @@ impl Renderer {
 
         Ok(Self {
             aspect_ratio,
+            width: window_width as f32,
+            height: window_height as f32,
             total_frames: 0,
             #[cfg(debug_assertions)]
             shader_changes,
@@ -300,6 +304,7 @@ impl Renderer {
         &mut self,
         source_file_name: impl Into<String>,
         image: &image::DynamicImage,
+        texture_filter: TextureFilter,
     ) -> anyhow::Result<TextureHandle> {
         let texture = create_texture(
             source_file_name.into(),
@@ -310,6 +315,7 @@ impl Renderer {
             self.physical_device_properties,
             self.command_pool,
             self.graphics_queue,
+            texture_filter,
         )?;
 
         let handle = self.textures.add(texture);
@@ -438,7 +444,7 @@ impl Renderer {
         Ok(handle)
     }
 
-    /// NOTE call this after draining gpu commands
+    /// NOTE call this only after draining gpu commands
     pub fn drop_pipeline(&mut self, pipeline_handle: PipelineHandle) {
         let pipeline = self.pipelines.take(pipeline_handle);
         self.destroy_pipeline(pipeline);
@@ -988,6 +994,8 @@ impl Renderer {
 
         let (width, height) = (self.image_extent.width, self.image_extent.height);
         self.aspect_ratio = width as f32 / height as f32;
+        self.width = width as f32;
+        self.height = height as f32;
 
         Ok(())
     }
@@ -1067,6 +1075,11 @@ impl Drop for Renderer {
             self.instance.destroy_instance(None);
         }
     }
+}
+
+pub enum TextureFilter {
+    Linear,
+    Nearest,
 }
 
 fn get_required_layers() -> Vec<&'static std::ffi::CStr> {
@@ -2192,6 +2205,7 @@ fn create_texture(
     physical_device_properties: vk::PhysicalDeviceProperties,
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
+    texture_filter: TextureFilter,
 ) -> anyhow::Result<Texture> {
     let (texture_image, texture_image_memory, mip_levels) = create_texture_image(
         input_image,
@@ -2210,7 +2224,8 @@ fn create_texture(
         mip_levels,
     )?;
 
-    let texture_sampler = create_texture_sampler(device, physical_device_properties)?;
+    let texture_sampler =
+        create_texture_sampler(device, physical_device_properties, texture_filter)?;
 
     Ok(Texture {
         source_file_name,
@@ -2554,11 +2569,16 @@ fn create_image_view(
 fn create_texture_sampler(
     device: &ash::Device,
     physical_device_properties: vk::PhysicalDeviceProperties,
+    texture_filter: TextureFilter,
 ) -> Result<vk::Sampler, anyhow::Error> {
+    let filter = match texture_filter {
+        TextureFilter::Linear => vk::Filter::LINEAR,
+        TextureFilter::Nearest => vk::Filter::NEAREST,
+    };
     let max_anisotropy = physical_device_properties.limits.max_sampler_anisotropy;
     let create_info = vk::SamplerCreateInfo::default()
-        .mag_filter(vk::Filter::LINEAR)
-        .min_filter(vk::Filter::LINEAR)
+        .mag_filter(filter)
+        .min_filter(filter)
         .address_mode_u(vk::SamplerAddressMode::REPEAT)
         .address_mode_v(vk::SamplerAddressMode::REPEAT)
         .address_mode_w(vk::SamplerAddressMode::REPEAT)
@@ -3076,6 +3096,10 @@ impl<'f> FrameRenderer<'f> {
 
     pub fn aspect_ratio(&self) -> f32 {
         self.0.aspect_ratio
+    }
+
+    pub fn window_size(&self) -> (f32, f32) {
+        (self.0.width, self.0.height)
     }
 
     pub fn draw_frame(

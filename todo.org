@@ -34,6 +34,8 @@
 
 
 * Next
+- [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
+
 - [ ] why is this tutorial renderer so much slower than SDL_gpu at sprites?
   duplicating resources? only 2 swapchain images in flight?
 

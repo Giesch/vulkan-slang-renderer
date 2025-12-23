@@ -13,7 +13,8 @@ use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
-    DrawError, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle, TextureFilter,
+    UniformBufferHandle,
 };
 use vulkan_slang_renderer::util::load_image;
 
@@ -55,7 +56,7 @@ impl Game for SpriteBatch {
 
         let image_file_name = "ravioli_atlas.bmp";
         let image = load_image(image_file_name)?;
-        let texture = renderer.create_texture(image_file_name, &image)?;
+        let texture = renderer.create_texture(image_file_name, &image, TextureFilter::Nearest)?;
 
         let resources = Resources {
             vertex_count: sprites.len() as u32 * 6,

@@ -1,2 +1,2 @@
 pub(crate) mod traits;
-pub use traits::{Game, WindowDescription};
+pub use traits::{Game, Input, Key, WindowDescription};

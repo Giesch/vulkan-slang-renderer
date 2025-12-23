@@ -88,13 +88,13 @@ pub trait RuntimeGame {
     fn input(&mut self, input: Input);
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Input {
     KeyUp(Key),
     KeyDown(Key),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Key {
     W,
     A,
