@@ -1,5 +1,6 @@
-{ "frames": {
-   "space_invaders_bomb_explosion 0.aseprite": {
+{ "frames": [
+   {
+    "filename": "space_invaders_bomb_explosion 0.aseprite",
     "frame": { "x": 0, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -7,7 +8,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bomb_explosion 1.aseprite": {
+   {
+    "filename": "space_invaders_bomb_explosion 1.aseprite",
     "frame": { "x": 32, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -15,7 +17,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bomb_explosion 2.aseprite": {
+   {
+    "filename": "space_invaders_bomb_explosion 2.aseprite",
     "frame": { "x": 64, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -23,7 +26,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bomb_explosion 3.aseprite": {
+   {
+    "filename": "space_invaders_bomb_explosion 3.aseprite",
     "frame": { "x": 96, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -31,7 +35,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bomb_explosion 4.aseprite": {
+   {
+    "filename": "space_invaders_bomb_explosion 4.aseprite",
     "frame": { "x": 128, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -39,7 +44,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bomb_explosion 5.aseprite": {
+   {
+    "filename": "space_invaders_bomb_explosion 5.aseprite",
     "frame": { "x": 160, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -47,7 +53,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bomb_explosion 6.aseprite": {
+   {
+    "filename": "space_invaders_bomb_explosion 6.aseprite",
     "frame": { "x": 192, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -55,7 +62,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bomb_explosion 7.aseprite": {
+   {
+    "filename": "space_invaders_bomb_explosion 7.aseprite",
     "frame": { "x": 224, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -63,7 +71,7 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    }
- },
+ ],
  "meta": {
   "app": "https://www.aseprite.org/",
   "version": "1.3.16.1-x64",

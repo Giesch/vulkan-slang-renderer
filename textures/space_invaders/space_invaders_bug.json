@@ -1,5 +1,6 @@
-{ "frames": {
-   "space_invaders_bug 0.aseprite": {
+{ "frames": [
+   {
+    "filename": "space_invaders_bug 0.aseprite",
     "frame": { "x": 0, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -7,7 +8,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bug 1.aseprite": {
+   {
+    "filename": "space_invaders_bug 1.aseprite",
     "frame": { "x": 32, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -15,7 +17,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bug 2.aseprite": {
+   {
+    "filename": "space_invaders_bug 2.aseprite",
     "frame": { "x": 64, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -23,7 +26,8 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    },
-   "space_invaders_bug 3.aseprite": {
+   {
+    "filename": "space_invaders_bug 3.aseprite",
     "frame": { "x": 96, "y": 0, "w": 32, "h": 32 },
     "rotated": false,
     "trimmed": false,
@@ -31,7 +35,7 @@
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
    }
- },
+ ],
  "meta": {
   "app": "https://www.aseprite.org/",
   "version": "1.3.16.1-x64",
