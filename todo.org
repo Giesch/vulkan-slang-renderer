@@ -1,45 +1,39 @@
 #+title: Todo
 
 * Now
-- [-] Space Invaders example
-  - [X] make a controllable moving sprite
-    - [X] make vertex & index buffers optional
-      allow using only storage buffers like the SDL_gpu pull sprite batch example
-      - [X] make both optional within PipelineConfig
-      - [X] generate Resources structs based on whether the vert shader takes an arg
-        assume that any shader with a vertex buffer also wants an index buffer
-      - [X] require a vertex count for draw if there's no vi buffers
-        and remove todo tags
-    - [X] add storage / 'structured' buffers to reflection
-    - [X] add a sprite sheet
-
-    - [X] add a player with a sprite
-      - [X] add a sprite
-      - [X] make it controllable
-
-  - [X] add enemies with sprites
-    - [X] add a sprite
-    - [X] move them in a pattern
-
-  - [X] split sprite position from object position
+- [ ] Space Invaders example
+  - [ ] collisions
+    - [ ] lose if enemy reaches the bottom
+    - [ ] lose if enemy touches the player
 
   - [ ] parse aseprite json
   - [ ] animations
+
   - [ ] bullet
+
   - [ ] bomb
   - [ ] rotation based on movement?
+
+  - [ ] full game loop
+    - [ ] screen transitions
+    - [ ] score
 
 * Next
 - [ ] fix sprite drawing on windows
   only drawing one sprite per frame?
-
+  could this be related to depth / draw order somehow?
 - [ ] find a better way to handle depth than 'disable_depth_test'
+  see if fixing this fixes drawing on windows/amd
+
 - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
 - [ ] binding multiple textures results in only being able to sample the first one
   is this a reflection problem, or a renderer descriptor set problem?
 
 - [ ] why is this tutorial renderer so much slower than SDL_gpu at sprites?
   duplicating resources? only 2 swapchain images in flight?
+  copying memory vs updating mapped mem in place?
+  - get a CPU flamegraph
+  - look around in renderdoc
 
 - [ ] remove per-frame duplication of non-image resources
   https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
@@ -184,10 +178,6 @@
 - [ ] split shader println into its own example
 - [ ] split up depth texture & viking room shaders
 
-- [ ] re-evaluate having different resources per frame
-  like, is it necessary / is there a smarter way
-  especially uniform/storage buffers
-
 - [ ] add a way to make storage buffers and/or textures cpu-readable
   this is useful for gpu-driven mouse 'picking'
 
@@ -210,6 +200,7 @@
 
 - [ ] global param usage by entry point
   https://discord.com/channels/1303735196696445038/1428804639523868794/1428919601688871075
+  this would fix using stage 'all'
 
 - [ ] rewrite renderer in a new repo
   how much of this could be done gradually in this one?

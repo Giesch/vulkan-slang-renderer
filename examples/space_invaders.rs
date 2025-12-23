@@ -125,12 +125,16 @@ impl Game for SpaceInvaders {
         let elapsed = self.frame_delay();
         for enemy in &mut self.enemies {
             if elapsed >= enemy.timer {
-                enemy.timer = Enemy::TURN_TIME;
                 enemy.intent = match enemy.intent {
                     EnemyIntent::Up => EnemyIntent::Right,
                     EnemyIntent::Down => EnemyIntent::Left,
                     EnemyIntent::Left => EnemyIntent::Up,
                     EnemyIntent::Right => EnemyIntent::Down,
+                };
+
+                enemy.timer = Enemy::TURN_TIME;
+                if enemy.intent == EnemyIntent::Down {
+                    enemy.timer *= 2;
                 }
             } else {
                 enemy.timer -= elapsed;
@@ -216,7 +220,7 @@ impl Enemy {
     const TURN_TIME: Duration = Duration::from_secs(1);
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 enum EnemyIntent {
     Up,
     #[default]
@@ -229,7 +233,7 @@ impl EnemyIntent {
     fn movement(&self) -> Vec2 {
         match self {
             EnemyIntent::Up => Vec2::Y,
-            EnemyIntent::Down => -Vec2::Y * 1.5,
+            EnemyIntent::Down => -Vec2::Y,
             EnemyIntent::Left => -Vec2::X,
             EnemyIntent::Right => Vec2::X,
         }
