@@ -9,13 +9,12 @@ ParameterBlock<SpaceInvadersParams> params;
 struct SpaceInvadersParams {
     StructuredBuffer<Sprite> sprites;
     float4x4 projectionMatrix;
-    Sampler2D playerTexture;
+    Sampler2D spriteSheet;
 }
 
 struct Sprite {
     float2 scale;
-    uint textureId;
-    uint padding;
+    float2 padding;
 
     float3 position;
     float rotation;
@@ -81,6 +80,6 @@ struct FragInput {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
-    let textureColor = params.playerTexture.Sample(input.texCoord);
+    let textureColor = params.spriteSheet.Sample(input.texCoord);
     return input.color * textureColor;
 }

@@ -35,24 +35,18 @@
                   }
                 },
                 {
-                  "kind": "scalar",
-                  "fieldName": "textureId",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 8,
-                    "size": 4
-                  },
-                  "scalarType": "uint32"
-                },
-                {
-                  "kind": "scalar",
+                  "kind": "vector",
                   "fieldName": "padding",
                   "binding": {
                     "kind": "uniform",
-                    "offset": 12,
-                    "size": 4
+                    "offset": 8,
+                    "size": 8
                   },
-                  "scalarType": "uint32"
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
                 },
                 {
                   "kind": "vector",
@@ -152,7 +146,7 @@
           },
           {
             "kind": "resource",
-            "fieldName": "playerTexture",
+            "fieldName": "spriteSheet",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 2,

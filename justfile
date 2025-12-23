@@ -41,6 +41,11 @@ shaders:
     cargo fmt
 alias s := shaders
 
+# export space invaders aseprite files as one sprite sheet
+[unix]
+sprites:
+    cd textures/space_invaders && aseprite --batch *.aseprite --sheet sprite_sheet.png --data sprite_sheet.json --format json-array
+
 # run all unit tests
 test:
     INSTA_UPDATE=no cargo test

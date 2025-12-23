@@ -28,8 +28,7 @@ impl GPUWrite for SpaceInvadersParams {}
 #[repr(C)]
 pub struct Sprite {
     pub scale: glam::Vec2,
-    pub texture_id: u32,
-    pub padding: u32,
+    pub padding: glam::Vec2,
     pub position: glam::Vec3,
     pub rotation: f32,
     pub tex_u: f32,
@@ -44,7 +43,7 @@ impl GPUWrite for Sprite {}
 pub struct Resources<'a> {
     pub vertex_count: u32,
     pub sprites: &'a StorageBufferHandle<Sprite>,
-    pub player_texture: &'a TextureHandle,
+    pub sprite_sheet: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<SpaceInvadersParams>,
 }
 
@@ -69,7 +68,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.player_texture,
+            resources.sprite_sheet,
         ];
 
         #[rustfmt::skip]

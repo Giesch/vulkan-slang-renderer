@@ -11,37 +11,45 @@
       - [X] require a vertex count for draw if there's no vi buffers
         and remove todo tags
     - [X] add storage / 'structured' buffers to reflection
+    - [X] add a sprite sheet
 
-    - [ ] add a sprite sheet
+    - [X] add a player with a sprite
+      - [X] add a sprite
+      - [X] make it controllable
 
-    - [ ] add a player with a sprite
-      - [ ] add a sprite
-      - [ ] make it controllable
-
-    - [ ] add enemies with sprites
-      - [ ] add a sprite
+    - [-] add enemies with sprites
+      - [X] add a sprite
       - [ ] move them in a pattern
 
-- [ ] SDF 2D example
-  - is this possible with a single fullscreen quad?
-    ie, no texture or second render pass; just do everything in the fragment shader
+    - [ ] animations
+    - [ ] bullet
+    - [ ] bomb
+    - [ ] rotation based on movement?
 
-- [ ] fix drawing on windows
-  only drawing one sprite per frame?
 
 - [ ] remove per-frame duplication of non-image resources
   https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
 
 
 * Next
+- [ ] fix sprite drawing on windows
+  only drawing one sprite per frame?
+
+- [ ] parse sprite offsets out of generated aseprite json
+- [ ] find a better way to handle depth than 'disable_depth_test'
 - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
+- [ ] binding multiple textures results in only being able to sample the first one
+  is this a reflection problem, or a renderer descriptor set problem?
 
 - [ ] why is this tutorial renderer so much slower than SDL_gpu at sprites?
   duplicating resources? only 2 swapchain images in flight?
 
+- [ ] SDF 2D example
+  - is this possible with a single fullscreen quad?
+    ie, no texture or second render pass; just do everything in the fragment shader
+
 - [ ] simplify basic triangle example
-  avoid needing a full mvp matrix?
-  make it more like the sdl example
+  use an orthographic projection instead of mvp?
 
 - [ ] come up with a nicer way to handle different draw calls
   - ie, cmd_draw vs cmd_draw_indexed vs *_indirect variants
