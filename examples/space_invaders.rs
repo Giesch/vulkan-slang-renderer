@@ -25,6 +25,9 @@ struct SpaceInvaders {
     sprites: Vec<Sprite>,
     player: Player,
     enemies: Vec<Enemy>,
+    sprite_atlas_size: SpriteAtlasSize,
+    player_animation_frames: Vec<SpriteFrame>,
+    enemy_animation_frames: Vec<SpriteFrame>,
 }
 
 impl Game for SpaceInvaders {
@@ -41,24 +44,32 @@ impl Game for SpaceInvaders {
             first_frame_matching(&sprite_atlas, |f| f.filename.starts_with("ship"))?;
         let enemy_offsets = first_frame_matching(&sprite_atlas, |f| f.filename.starts_with("bug"))?;
 
+        let player_animation_frames = get_animation_frames(&sprite_atlas, "ship");
+        let enemy_animation_frames = get_animation_frames(&sprite_atlas, "bug");
+
         let mut sprites = vec![];
         let player_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, player_offsets);
-        let bug_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, enemy_offsets);
+        let enemy_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, enemy_offsets);
+        let sprite_atlas_size = sprite_atlas.meta.size;
 
         let player = Player {
             sprite_id: player_sprite,
             intent: Default::default(),
             speed: 10.0,
             position: Vec2::ZERO,
+            animation: Animation::from_frames(&player_animation_frames),
         };
 
-        let bug = Enemy {
-            sprite_id: bug_sprite,
-            position: Vec2::new(400.0, 700.0),
-            intent: Default::default(),
-            timer: Enemy::TRAVEL_TIME,
-        };
-        let enemies = vec![bug];
+        let enemies = vec![
+            //
+            Enemy {
+                sprite_id: enemy_sprite,
+                position: Vec2::new(400.0, 700.0),
+                intent: EnemyIntent::Right,
+                movement_timer: Duration::ZERO,
+                animation: Animation::from_frames(&enemy_animation_frames),
+            },
+        ];
 
         let uniform_buffer = renderer.create_uniform_buffer::<SpaceInvadersParams>()?;
         let storage_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
@@ -84,6 +95,9 @@ impl Game for SpaceInvaders {
             sprites,
             player,
             enemies,
+            sprite_atlas_size,
+            player_animation_frames,
+            enemy_animation_frames,
         })
     }
 
@@ -108,26 +122,36 @@ impl Game for SpaceInvaders {
     }
 
     fn update(&mut self) {
+        // timers
+        let elapsed = self.frame_delay();
+        self.player.animation.tick(elapsed);
+        for enemy in &mut self.enemies {
+            enemy.animation.tick(elapsed);
+        }
+
+        // player movement
         let player_movement = self.player.intent.direction() * self.player.speed;
         self.player.position.x += player_movement.x;
         self.player.position.y += player_movement.y;
 
-        let elapsed = self.frame_delay();
+        // enemy movement
         for enemy in &mut self.enemies {
-            if elapsed >= enemy.timer {
+            enemy.movement_timer += elapsed;
+
+            let travel_time = match enemy.intent {
+                EnemyIntent::Down => Enemy::TRAVEL_TIME_DOWN,
+                _ => Enemy::TRAVEL_TIME,
+            };
+
+            if enemy.movement_timer >= travel_time {
+                enemy.movement_timer = mod_duration(enemy.movement_timer, travel_time);
+
                 enemy.intent = match enemy.intent {
                     EnemyIntent::Up => EnemyIntent::Right,
                     EnemyIntent::Down => EnemyIntent::Left,
                     EnemyIntent::Left => EnemyIntent::Up,
                     EnemyIntent::Right => EnemyIntent::Down,
                 };
-
-                enemy.timer = match enemy.intent {
-                    EnemyIntent::Down => Enemy::TRAVEL_TIME,
-                    _ => Enemy::TRAVEL_TIME_DOWN,
-                };
-            } else {
-                enemy.timer -= elapsed;
             }
 
             let enemy_movement = enemy.intent.direction();
@@ -142,10 +166,16 @@ impl Game for SpaceInvaders {
         player_sprite.position.x = self.player.position.x;
         player_sprite.position.y = self.player.position.y;
 
+        let player_frame = self.player.animation.frame(&self.player_animation_frames);
+        set_sprite_frame(player_sprite, player_frame, &self.sprite_atlas_size);
+
         for enemy in &self.enemies {
             let enemy_sprite = &mut self.sprites[enemy.sprite_id];
             enemy_sprite.position.x = enemy.position.x;
             enemy_sprite.position.y = enemy.position.y;
+
+            let enemy_frame = enemy.animation.frame(&self.enemy_animation_frames);
+            set_sprite_frame(enemy_sprite, enemy_frame, &self.sprite_atlas_size);
         }
 
         // make projection matrix
@@ -169,6 +199,7 @@ struct Player {
     intent: PlayerIntent,
     speed: f32,
     position: Vec2,
+    animation: Animation,
 }
 
 #[derive(Default)]
@@ -203,7 +234,8 @@ struct Enemy {
     sprite_id: usize,
     position: Vec2,
     intent: EnemyIntent,
-    timer: Duration,
+    movement_timer: Duration,
+    animation: Animation,
 }
 
 impl Enemy {
@@ -211,10 +243,8 @@ impl Enemy {
     const TRAVEL_TIME_DOWN: Duration = Duration::from_millis(1500);
 }
 
-#[derive(Default)]
 enum EnemyIntent {
     Up,
-    #[default]
     Down,
     Left,
     Right,
@@ -311,16 +341,97 @@ struct SpriteAtlasSize {
     h: usize,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, Clone)]
 struct SpriteFrame {
     filename: String,
     frame: SpriteAtlasFrameOffsets,
+    duration: u64,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, Clone)]
 struct SpriteAtlasFrameOffsets {
     x: usize,
     y: usize,
     w: usize,
     h: usize,
+}
+
+fn get_animation_frames(sprite_atlas: &SpriteAtlas, name: &str) -> Vec<SpriteFrame> {
+    sprite_atlas
+        .frames
+        .iter()
+        .filter(|f| match f.filename.rsplit_once(" ") {
+            Some((title, _)) => title == name,
+            None => f.filename == name,
+        })
+        .cloned()
+        .collect()
+}
+
+struct Animation {
+    current_frame: usize,
+    frame_millis: usize,
+    timer: Duration,
+    total_duration: Duration,
+    frame_durations: Vec<u64>,
+}
+
+impl Animation {
+    fn from_frames(frames: &[SpriteFrame]) -> Self {
+        let frame_durations: Vec<_> = frames.iter().map(|f| f.duration).collect();
+        let total_duration = Duration::from_millis(frame_durations.iter().sum());
+
+        Self {
+            current_frame: 0,
+            frame_millis: 0,
+            timer: Duration::ZERO,
+            total_duration,
+            frame_durations,
+        }
+    }
+
+    fn tick(&mut self, elapsed: Duration) {
+        self.timer += elapsed;
+        self.timer = mod_duration(self.timer, self.total_duration);
+
+        self.frame_millis += elapsed.as_millis() as usize;
+        let mut current_frame = self.current_frame;
+        loop {
+            let current_frame_duration = self.frame_durations[current_frame] as usize;
+
+            if self.frame_millis >= current_frame_duration {
+                self.frame_millis %= current_frame_duration;
+                current_frame += 1;
+                current_frame %= self.frame_durations.len();
+            } else {
+                break;
+            }
+        }
+
+        self.current_frame = current_frame;
+    }
+
+    fn frame<'f>(&self, frames: &'f [SpriteFrame]) -> &'f SpriteFrame {
+        &frames[self.current_frame % frames.len()]
+    }
+}
+
+fn mod_duration(timer: Duration, limit: Duration) -> Duration {
+    let millis = timer.as_millis() % limit.as_millis();
+    Duration::from_millis(millis as u64)
+}
+
+fn set_sprite_frame(
+    sprite: &mut Sprite,
+    sprite_frame: &SpriteFrame,
+    sprite_atlas_size: &SpriteAtlasSize,
+) {
+    let sheet_width = sprite_atlas_size.w as f32;
+    let sheet_height = sprite_atlas_size.h as f32;
+    let frame = &sprite_frame.frame;
+
+    sprite.tex_u = frame.x as f32 / sheet_width;
+    sprite.tex_v = frame.y as f32 / sheet_height;
+    sprite.tex_w = frame.w as f32 / sheet_width;
+    sprite.tex_h = frame.h as f32 / sheet_height;
 }

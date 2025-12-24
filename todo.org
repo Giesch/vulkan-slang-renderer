@@ -7,7 +7,7 @@
     - [ ] lose if enemy touches the player
 
   - [X] parse aseprite json
-  - [ ] animations
+  - [X] animations
 
   - [ ] bullet
 
