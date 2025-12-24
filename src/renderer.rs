@@ -1,5 +1,6 @@
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
 
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ffi::{CStr, CString, c_char};
 use std::fs::File;
@@ -3076,6 +3077,20 @@ impl<'f> Gpu<'f> {
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len_to_copy);
         }
+    }
+
+    pub fn sort_storage_by<T, F>(&mut self, storage_buffer: &mut StorageBufferHandle<T>, compare: F)
+    where
+        F: FnMut(&T, &T) -> Ordering,
+    {
+        let mapped_mem = self
+            .storage_buffers
+            .get_mapped_mem_for_frame(storage_buffer, self.current_frame);
+
+        let len = storage_buffer.len() as usize;
+        let items = unsafe { std::slice::from_raw_parts_mut(mapped_mem, len) };
+
+        items.sort_by(compare);
     }
 }
 

@@ -13,6 +13,7 @@
 
   - [ ] bomb
   - [ ] rotation based on movement?
+  - [ ] destructible shields
 
   - [ ] full game loop
     - [ ] screen transitions
@@ -22,8 +23,13 @@
 - [ ] fix sprite drawing on windows
   only drawing one sprite per frame?
   could this be related to depth / draw order somehow?
-- [ ] find a better way to handle depth than 'disable_depth_test'
-  see if fixing this fixes drawing on windows/amd
+- [X] find a better way to handle depth than 'disable_depth_test'
+  - just use sprite draw order? this is kind of what it already does
+    does this mean re-sorting the mapped buffer every frame?
+    that'd be fine for this demo
+- [ ] sort sprites by 'object' position instead of 'sprite' position
+  - this will matter for small sprites like the projectiles
+  - could add a 'draw order' field to the gpu sprite itself
 
 - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
 - [ ] binding multiple textures results in only being able to sample the first one

@@ -190,6 +190,12 @@ impl Game for SpaceInvaders {
         renderer.draw_frame(&mut self.pipeline, |gpu| {
             gpu.write_uniform(&mut self.uniform_buffer, uniform_data);
             gpu.write_storage(&mut self.storage_buffer, &self.sprites);
+
+            gpu.sort_storage_by(&mut self.storage_buffer, |a, b| {
+                let ay = a.position.y;
+                let by = b.position.y;
+                by.total_cmp(&ay)
+            });
         })
     }
 }
