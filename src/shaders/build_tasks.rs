@@ -450,6 +450,8 @@ fn gather_struct_defs(
 
             let field_type = match (scalar.scalar_type, matrix.row_count, matrix.column_count) {
                 (ScalarType::Float32, 4, 4) => "glam::Mat4",
+                (ScalarType::Float32, 3, 3) => "glam::Mat3",
+                (ScalarType::Float32, 2, 2) => "glam::Mat2",
                 (s, r, c) => {
                     panic!("matrix not supported: scalar_type: {s:?}, rows: {r}, cols: {c}")
                 }

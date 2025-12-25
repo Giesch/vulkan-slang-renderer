@@ -23,13 +23,13 @@ pub trait Game {
         DEFAULT_WINDOW_TITLE
     }
 
-    fn window_size() -> (u32, u32) {
+    fn initial_window_size() -> (u32, u32) {
         DEFAULT_WINDOW_SIZE
     }
 
     fn window_description() -> WindowDescription {
         let title = Self::window_title();
-        let (width, height) = Self::window_size();
+        let (width, height) = Self::initial_window_size();
 
         WindowDescription {
             title,

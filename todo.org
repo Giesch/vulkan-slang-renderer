@@ -19,9 +19,16 @@
     - [ ] screen transitions
     - [ ] score
 
+- [-] SDF 2D example
+  [[https://danielchasehooper.com/posts/code-animated-rick]]
+  - [X] add fullscreen quad/triangle
+  - [X] super-sampling
+  - [ ] complete the examples
+    - fill in all the necessary primitives
+  - [ ] add a custom final example
+
 * Next
-- [ ] handle the slang column/row-major matrix transpose in codegen
-  and the y_axis.y inversion?
+- [ ] set up dioxus' hot patching
 
 - [ ] fix sprite drawing on windows
   only drawing one sprite per frame?
@@ -44,10 +51,6 @@
 - [ ] remove per-frame duplication of non-image resources
   https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
 
-- [ ] SDF 2D example
-  - is this possible with a single fullscreen quad?
-    ie, no texture or second render pass; just do everything in the fragment shader
-
 - [ ] simplify basic triangle example
   use an orthographic projection instead of mvp?
 
@@ -64,10 +67,6 @@
     ie, why vertex_count shows up and that it should be a multiple of 3
     maybe change it to 'triangle count' and do the mult?
     or make different topology options available besides triangle list
-
-- [ ] 2D signed distance fields / animated rick example
- [[https://danielchasehooper.com/posts/code-animated-rick]]
-  - need multiple render passes (or a subpass?) to be able to render to a texture
 
 - [ ] support more parameter types
   - [ ] write-only storage buffers (StructuredBuffer)
@@ -97,6 +96,7 @@
     got no response; is there a workaround?
     - recognize when an equivalent struct is generated multiple times
       move all shared rust structs to one shared rust module
+  - [ ] handle y-axis inversion and column-major transpose in the shared type
 
 - [ ] post a request for SDL_gpu to support later vulkan versions
  do I plan on using that, or continuing with vulkan?
@@ -192,6 +192,10 @@
   - use thiserror for game api
   - use miette or a similar crate internally
     is it possible to get structured data (ie line numbers) out of slangc?
+
+- [ ] is there a nice way to use slang's reinterpret<T> in codegen?
+  ie, use an attribute to declare color format for a type
+  https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/03-convenience-features.html#reinterpret-t-operation
 
 - [ ] read about dynamic rendering
   - [ ] sascha's 1.3 triangle

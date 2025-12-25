@@ -1,5 +1,6 @@
-use glam::Mat4;
+use std::time::Instant;
 
+use glam::Vec2;
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     DrawError, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
@@ -13,8 +14,9 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 struct SDF2D {
+    start_time: Instant,
     pipeline: PipelineHandle,
-    uniform_buffer: UniformBufferHandle<SDF2DParams>,
+    params_buffer: UniformBufferHandle<SDF2DParams>,
 }
 
 impl Game for SDF2D {
@@ -26,31 +28,35 @@ impl Game for SDF2D {
     where
         Self: Sized,
     {
-        let uniform_buffer = renderer.create_uniform_buffer::<SDF2DParams>()?;
+        let start_time = Instant::now();
 
+        let params_buffer = renderer.create_uniform_buffer::<SDF2DParams>()?;
         let resources = Resources {
             vertex_count: 3,
-            params_buffer: &uniform_buffer,
+            params_buffer: &params_buffer,
         };
 
         let shader = ShaderAtlas::init().sdf_2d;
-        let mut pipeline_config = shader.pipeline_config(resources);
-        pipeline_config.disable_depth_test = true;
+        let pipeline_config = shader.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         Ok(Self {
+            start_time,
             pipeline,
-            uniform_buffer,
+            params_buffer,
         })
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+        let time = (Instant::now() - self.start_time).as_secs_f32();
+
         let (width, height) = renderer.window_size();
-        let projection_matrix = Mat4::orthographic_lh(0.0, width, height, 0.0, 0.0, -1.0);
-        let uniform_data = SDF2DParams { projection_matrix };
+        let resolution = Vec2::new(width as f32, height as f32);
+
+        let params = SDF2DParams { time, resolution };
 
         renderer.draw_frame(&mut self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.uniform_buffer, uniform_data);
+            gpu.write_uniform(&mut self.params_buffer, params);
         })
     }
 }

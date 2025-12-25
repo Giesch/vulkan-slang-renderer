@@ -20,8 +20,8 @@ fn main() -> Result<(), anyhow::Error> {
 
 struct SpaceInvaders {
     pipeline: PipelineHandle,
-    uniform_buffer: UniformBufferHandle<SpaceInvadersParams>,
-    storage_buffer: StorageBufferHandle<Sprite>,
+    params_buffer: UniformBufferHandle<SpaceInvadersParams>,
+    sprites_buffer: StorageBufferHandle<Sprite>,
     sprites: Vec<Sprite>,
     player: Player,
     enemies: Vec<Enemy>,
@@ -71,16 +71,16 @@ impl Game for SpaceInvaders {
             },
         ];
 
-        let uniform_buffer = renderer.create_uniform_buffer::<SpaceInvadersParams>()?;
-        let storage_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
+        let params_buffer = renderer.create_uniform_buffer::<SpaceInvadersParams>()?;
+        let sprites_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
 
         let sprite_sheet_texture = load_texture(renderer, "sprite_sheet.png")?;
 
         let resources = Resources {
             vertex_count: sprites.len() as u32 * 6,
-            sprites: &storage_buffer,
+            sprites: &sprites_buffer,
             sprite_sheet: &sprite_sheet_texture,
-            params_buffer: &uniform_buffer,
+            params_buffer: &params_buffer,
         };
 
         let shader = ShaderAtlas::init().space_invaders;
@@ -90,8 +90,8 @@ impl Game for SpaceInvaders {
 
         Ok(Self {
             pipeline,
-            uniform_buffer,
-            storage_buffer,
+            params_buffer,
+            sprites_buffer,
             sprites,
             player,
             enemies,
@@ -188,10 +188,10 @@ impl Game for SpaceInvaders {
 
         // draw
         renderer.draw_frame(&mut self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.uniform_buffer, uniform_data);
-            gpu.write_storage(&mut self.storage_buffer, &self.sprites);
+            gpu.write_uniform(&mut self.params_buffer, uniform_data);
+            gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
 
-            gpu.sort_storage_by(&mut self.storage_buffer, |a, b| {
+            gpu.sort_storage_by(&mut self.sprites_buffer, |a, b| {
                 let ay = a.position.y;
                 let by = b.position.y;
                 by.total_cmp(&ay)

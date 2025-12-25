@@ -79,7 +79,7 @@ impl Game for SpriteBatch {
     }
 
     fn update(&mut self) {
-        let window_size = Self::window_size();
+        let window_size = Self::initial_window_size();
 
         for sprite in &mut self.sprites {
             randomize_sprite(sprite, window_size);
@@ -87,7 +87,7 @@ impl Game for SpriteBatch {
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
-        let (width, height) = Self::window_size();
+        let (width, height) = Self::initial_window_size();
         let projection_matrix =
             Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0);
         let uniform_data = SpriteBatchParams { projection_matrix };
