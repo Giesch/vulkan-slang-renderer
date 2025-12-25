@@ -20,6 +20,9 @@
     - [ ] score
 
 * Next
+- [ ] handle the slang column/row-major matrix transpose in codegen
+  and the y_axis.y inversion?
+
 - [ ] fix sprite drawing on windows
   only drawing one sprite per frame?
   could this be related to depth / draw order somehow?

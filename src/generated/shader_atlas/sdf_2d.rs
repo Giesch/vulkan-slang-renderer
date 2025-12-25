@@ -18,26 +18,15 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
-pub struct SDF2DUniform {
-    pub time: f32,
+pub struct SDF2DParams {
+    pub projection_matrix: glam::Mat4,
 }
 
-impl GPUWrite for SDF2DUniform {}
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C)]
-pub struct Circle {
-    pub color: glam::Vec3,
-    pub radius: f32,
-    pub position: glam::Vec2,
-}
-
-impl GPUWrite for Circle {}
+impl GPUWrite for SDF2DParams {}
 
 pub struct Resources<'a> {
     pub vertex_count: u32,
-    pub circles: &'a StorageBufferHandle<Circle>,
-    pub sdf_uniform_buffer: &'a UniformBufferHandle<SDF2DUniform>,
+    pub params_buffer: &'a UniformBufferHandle<SDF2DParams>,
 }
 
 pub struct Shader {
@@ -65,17 +54,16 @@ impl Shader {
 
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
-            RawUniformBufferHandle::from_typed(resources.sdf_uniform_buffer),
+            RawUniformBufferHandle::from_typed(resources.params_buffer),
         ];
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
-            RawStorageBufferHandle::from_typed(resources.circles),
         ];
 
         let vertex_config = VertexConfig::VertexCount(resources.vertex_count);
 
-        PipelineConfig {
+        PipelineConfigBuilder {
             shader: Box::new(self),
             vertex_config,
             texture_handles,
@@ -83,6 +71,7 @@ impl Shader {
             storage_buffer_handles,
             disable_depth_test: false,
         }
+        .build()
     }
 
     fn vert_entry_point_name(&self) -> CString {
