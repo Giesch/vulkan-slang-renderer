@@ -35,11 +35,8 @@
 - [ ] binding multiple textures results in only being able to sample the first one
   is this a reflection problem, or a renderer descriptor set problem?
 
-- [ ] why is this tutorial renderer so much slower than SDL_gpu at sprites?
-  duplicating resources? only 2 swapchain images in flight?
-  copying memory vs updating mapped mem in place?
-  - get a CPU flamegraph
-  - look around in renderdoc
+- [X] why is this tutorial renderer so much slower than SDL_gpu at sprites?
+  it looks like it was the linear filtering by default instead of nearest
 
 - [ ] remove per-frame duplication of non-image resources
   https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
