@@ -117,7 +117,8 @@ func panningCircles(pixel: float2, time: float) -> float3 {
         return background;
     }
 
-    let time = (time + 1.0 / slowMo) * slowMo;
+    let screenWidth = 2.0;
+    let time = (time + screenWidth / slowMo) * slowMo;
     let tiledPixel = fmod(pixel + time, tileWidth);
     let radius = tileWidth / 2.0 - tileWidth / 10.0;
 
