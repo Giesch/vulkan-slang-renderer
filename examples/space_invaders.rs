@@ -19,6 +19,7 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 struct SpaceInvaders {
+    frame_counter: usize,
     pipeline: PipelineHandle,
     params_buffer: UniformBufferHandle<SpaceInvadersParams>,
     sprites_buffer: StorageBufferHandle<Sprite>,
@@ -28,11 +29,44 @@ struct SpaceInvaders {
     sprite_atlas_size: SpriteAtlasSize,
     player_animation_frames: Vec<SpriteFrame>,
     enemy_animation_frames: Vec<SpriteFrame>,
+    game_over: bool,
+}
+
+struct BoundingBox {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+impl BoundingBox {
+    fn overlaps(&self, other: &BoundingBox) -> bool {
+        let our_bottom = self.y;
+        let our_top = self.y + self.h;
+        let our_left = self.x;
+        let our_right = self.x + self.w;
+
+        let their_bottom = other.y;
+        let their_top = other.y + other.h;
+        let their_left = other.x;
+        let their_right = other.x + other.w;
+
+        let vert_overlap = (our_bottom < their_top && our_bottom > their_bottom)
+            || (our_top > their_bottom && our_top < their_top);
+        let horz_overlap = (our_left < their_right && our_left > their_left)
+            || (our_right > their_right && our_right < their_left);
+
+        vert_overlap && horz_overlap
+    }
 }
 
 impl Game for SpaceInvaders {
     fn window_title() -> &'static str {
         "Space Invaders"
+    }
+
+    fn frame_delay(&self) -> Duration {
+        Duration::from_millis(3)
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
@@ -56,17 +90,27 @@ impl Game for SpaceInvaders {
             sprite_id: player_sprite,
             intent: Default::default(),
             speed: 10.0,
-            position: Vec2::ZERO,
             animation: Animation::from_frames(&player_animation_frames),
+            bounding_box: BoundingBox {
+                x: 0.0,
+                y: 0.0,
+                w: 32.0,
+                h: 32.0,
+            },
         };
 
         let enemies = vec![
             //
             Enemy {
                 sprite_id: enemy_sprite,
-                position: Vec2::new(400.0, 700.0),
+                bounding_box: BoundingBox {
+                    x: 400.0,
+                    y: 700.0,
+                    w: 32.0,
+                    h: 32.0,
+                },
                 intent: EnemyIntent::Right,
-                movement_timer: Duration::ZERO,
+                movement_timer: 0,
                 animation: Animation::from_frames(&enemy_animation_frames),
             },
         ];
@@ -89,6 +133,7 @@ impl Game for SpaceInvaders {
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         Ok(Self {
+            frame_counter: 0,
             pipeline,
             params_buffer,
             sprites_buffer,
@@ -98,6 +143,7 @@ impl Game for SpaceInvaders {
             sprite_atlas_size,
             player_animation_frames,
             enemy_animation_frames,
+            game_over: false,
         })
     }
 
@@ -123,20 +169,25 @@ impl Game for SpaceInvaders {
 
     fn update(&mut self) {
         // timers
+        self.frame_counter += 1;
         let elapsed = self.frame_delay();
         self.player.animation.tick(elapsed);
         for enemy in &mut self.enemies {
             enemy.animation.tick(elapsed);
         }
 
+        if self.game_over {
+            return;
+        }
+
         // player movement
         let player_movement = self.player.intent.direction() * self.player.speed;
-        self.player.position.x += player_movement.x;
-        self.player.position.y += player_movement.y;
+        self.player.bounding_box.x += player_movement.x;
+        self.player.bounding_box.y += player_movement.y;
 
         // enemy movement
         for enemy in &mut self.enemies {
-            enemy.movement_timer += elapsed;
+            enemy.movement_timer += 1;
 
             let travel_time = match enemy.intent {
                 EnemyIntent::Down => Enemy::TRAVEL_TIME_DOWN,
@@ -144,7 +195,7 @@ impl Game for SpaceInvaders {
             };
 
             if enemy.movement_timer >= travel_time {
-                enemy.movement_timer = mod_duration(enemy.movement_timer, travel_time);
+                enemy.movement_timer = enemy.movement_timer % travel_time;
 
                 enemy.intent = match enemy.intent {
                     EnemyIntent::Up => EnemyIntent::Right,
@@ -155,24 +206,38 @@ impl Game for SpaceInvaders {
             }
 
             let enemy_movement = enemy.intent.direction();
-            enemy.position.x += enemy_movement.x;
-            enemy.position.y += enemy_movement.y;
+            enemy.bounding_box.x += enemy_movement.x;
+            enemy.bounding_box.y += enemy_movement.y;
+        }
+
+        for enemy in &self.enemies {
+            if enemy.bounding_box.y <= 0.0 {
+                self.game_over = true;
+            }
+
+            if enemy.bounding_box.overlaps(&self.player.bounding_box) {
+                self.game_over = true;
+            }
+        }
+
+        if self.game_over {
+            println!("Game OVER!");
         }
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         // update sprites
         let player_sprite = &mut self.sprites[self.player.sprite_id];
-        player_sprite.position.x = self.player.position.x;
-        player_sprite.position.y = self.player.position.y;
+        player_sprite.position.x = self.player.bounding_box.x;
+        player_sprite.position.y = self.player.bounding_box.y;
 
         let player_frame = self.player.animation.frame(&self.player_animation_frames);
         set_sprite_frame(player_sprite, player_frame, &self.sprite_atlas_size);
 
         for enemy in &self.enemies {
             let enemy_sprite = &mut self.sprites[enemy.sprite_id];
-            enemy_sprite.position.x = enemy.position.x;
-            enemy_sprite.position.y = enemy.position.y;
+            enemy_sprite.position.x = enemy.bounding_box.x;
+            enemy_sprite.position.y = enemy.bounding_box.y;
 
             let enemy_frame = enemy.animation.frame(&self.enemy_animation_frames);
             set_sprite_frame(enemy_sprite, enemy_frame, &self.sprite_atlas_size);
@@ -204,8 +269,8 @@ struct Player {
     sprite_id: usize,
     intent: PlayerIntent,
     speed: f32,
-    position: Vec2,
     animation: Animation,
+    bounding_box: BoundingBox,
 }
 
 #[derive(Default)]
@@ -238,15 +303,15 @@ impl PlayerIntent {
 
 struct Enemy {
     sprite_id: usize,
-    position: Vec2,
     intent: EnemyIntent,
-    movement_timer: Duration,
+    movement_timer: usize,
     animation: Animation,
+    bounding_box: BoundingBox,
 }
 
 impl Enemy {
-    const TRAVEL_TIME: Duration = Duration::from_secs(1);
-    const TRAVEL_TIME_DOWN: Duration = Duration::from_millis(1500);
+    const TRAVEL_TIME: usize = 100;
+    const TRAVEL_TIME_DOWN: usize = Self::TRAVEL_TIME * 2;
 }
 
 enum EnemyIntent {
