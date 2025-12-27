@@ -21,11 +21,16 @@ dev example="basic_triangle":
 # run with shader printf and vk validation layers at 'info'
 [unix]
 shader-debug example="viking_room":
-    RUST_LOG=info VK_LAYER_PRINTF_ONLY_PRESET=1 cargo run --example {{example}}
+    RUST_LOG=info VK_LAYER_PRINTF_ONLY_PRESET=1 \
+      cargo run --example {{example}}
 
 [windows]
 shader-debug example="viking_room":
-    pwsh -Command { $env:RUST_LOG='info'; $env:VK_LAYER_PRINTF_ONLY_PRESET='1'; cargo run --example {{example}}; }
+    pwsh -Command { \
+      $env:RUST_LOG='info'; \
+      $env:VK_LAYER_PRINTF_ONLY_PRESET='1'; \
+      cargo run --example {{example}}; \
+    }
 
 # run a release build
 release: shaders
@@ -33,9 +38,19 @@ release: shaders
 
 
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
+[unix]
 shaders:
     GENERATE_RUST_SOURCE=true cargo run --bin prepare_shaders
     cargo fmt
+
+# write precompiled shader bytecode, json metadata, and generated rust source to disk
+[windows]
+shaders:
+    pwsh -Command { \
+      $env:GENERATE_RUST_SOURCE='true'; \
+      cargo run --bin prepare_shaders; \
+      cargo fmt; \
+    }
 
 # export space invaders aseprite files as one sprite sheet
 [unix]
