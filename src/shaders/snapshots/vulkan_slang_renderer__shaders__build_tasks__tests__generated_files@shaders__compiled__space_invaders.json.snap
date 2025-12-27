@@ -193,7 +193,7 @@ info:
         "binding": {
           "kind": "varyingInput",
           "index": 0,
-          "count": 2
+          "count": 3
         },
         "typeName": "FragInput",
         "fields": [
@@ -220,6 +220,20 @@ info:
               "count": 1
             },
             "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "spriteCoord",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 2,
+              "count": 1
+            },
+            "elementCount": 2,
             "elementType": {
               "kind": "scalar",
               "scalarType": "float32"

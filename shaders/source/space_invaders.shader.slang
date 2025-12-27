@@ -31,6 +31,7 @@ struct VertexOutput {
     float2 texCoord : TEXCOORD0;
     float4 color : TEXCOORD1;
     float4 position : SV_Position;
+    float2 spriteCoord : TEXCOORD2;
 }
 
 // a list of two clockwise triangle indicies into quadCorners to make a quad
@@ -50,6 +51,7 @@ VertexOutput vertMain(uint id : SV_VertexID) {
 
     let vert = triangleIndices[id % 6];
     var coord = quadCorners[vert];
+    let spriteCoord = coord;
 
     coord *= sprite.scale;
 
@@ -70,16 +72,28 @@ VertexOutput vertMain(uint id : SV_VertexID) {
     };
     let texCoord = texCoordsByVert[vert];
 
-    return VertexOutput(texCoord, sprite.color, position);
+    return VertexOutput(texCoord, sprite.color, position, spriteCoord);
 }
 
 struct FragInput {
     float2 texCoord : TEXCOORD0;
     float4 color : TEXCOORD1;
+    float2 spriteCoord : TEXCOORD2;
 }
+
+static const bool debugSpriteEdges = false;
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
+    if (debugSpriteEdges) {
+        let distToSidesX = min(input.spriteCoord.x, abs(input.spriteCoord.x - 1.0));
+        let distToSidesY = min(input.spriteCoord.y, abs(input.spriteCoord.y - 1.0));
+        let distToSides = min(distToSidesX, distToSidesY);
+        if (distToSides < 0.01) {
+            return float4(1.0, 0.0, 0.0, 1.0);
+        }
+    }
+
     let textureColor = params.spriteSheet.Sample(input.texCoord);
     return input.color * textureColor;
 }

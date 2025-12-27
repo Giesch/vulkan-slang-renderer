@@ -32,6 +32,7 @@ struct SpaceInvaders {
     game_over: bool,
 }
 
+#[derive(Debug)]
 struct BoundingBox {
     x: f32,
     y: f32,
@@ -54,7 +55,7 @@ impl BoundingBox {
         let vert_overlap = (our_bottom < their_top && our_bottom > their_bottom)
             || (our_top > their_bottom && our_top < their_top);
         let horz_overlap = (our_left < their_right && our_left > their_left)
-            || (our_right > their_right && our_right < their_left);
+            || (our_right > their_left && our_right < their_right);
 
         vert_overlap && horz_overlap
     }
@@ -63,10 +64,6 @@ impl BoundingBox {
 impl Game for SpaceInvaders {
     fn window_title() -> &'static str {
         "Space Invaders"
-    }
-
-    fn frame_delay(&self) -> Duration {
-        Duration::from_millis(3)
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
@@ -94,8 +91,8 @@ impl Game for SpaceInvaders {
             bounding_box: BoundingBox {
                 x: 0.0,
                 y: 0.0,
-                w: 32.0,
-                h: 32.0,
+                w: 32.0 * SPRITE_SCALE,
+                h: 32.0 * SPRITE_SCALE,
             },
         };
 
@@ -106,8 +103,8 @@ impl Game for SpaceInvaders {
                 bounding_box: BoundingBox {
                     x: 400.0,
                     y: 700.0,
-                    w: 32.0,
-                    h: 32.0,
+                    w: 32.0 * SPRITE_SCALE,
+                    h: 32.0 * SPRITE_SCALE,
                 },
                 intent: EnemyIntent::Right,
                 movement_timer: 0,
