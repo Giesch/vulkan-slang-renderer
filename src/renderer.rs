@@ -389,8 +389,6 @@ impl Renderer {
         &mut self,
         len: u32,
     ) -> anyhow::Result<StorageBufferHandle<T>> {
-        debug_assert!(len <= MAX_STORAGE_BUFFER_LEN as u32);
-
         let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
 
         let mut buffers_per_frame = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
@@ -2090,9 +2088,6 @@ pub struct TextureDescription {
     pub descriptor_count: u32,
 }
 
-// TODO handle this better
-const MAX_STORAGE_BUFFER_LEN: u64 = 256;
-
 fn create_descriptor_sets(
     device: &ash::Device,
     descriptor_pool: vk::DescriptorPool,
@@ -2154,12 +2149,16 @@ fn create_descriptor_sets(
                     LayoutDescription::Storage(storage_buffer_description) => {
                         let raw_storage_buffers_by_frame =
                             storage_buffers_in_layout_frame_order[layout_offset];
-                        let storage_buffer = raw_storage_buffers_by_frame[frame].buffer;
+                        let storage_buffer: vk::Buffer = raw_storage_buffers_by_frame[frame].buffer;
 
+                        // "If range is not equal to VK_WHOLE_SIZE, range must be less than or equal to the size of buffer minus offset"
+                        // https://docs.vulkan.org/refpages/latest/refpages/source/VkDescriptorBufferInfo.html
+                        let mem_reqs =
+                            unsafe { device.get_buffer_memory_requirements(storage_buffer) };
                         let buffer_info = vk::DescriptorBufferInfo::default()
                             .offset(0)
                             .buffer(storage_buffer)
-                            .range(storage_buffer_description.size * MAX_STORAGE_BUFFER_LEN);
+                            .range(mem_reqs.size);
                         let buffer_info = [buffer_info];
                         let storage_buffer_write = vk::WriteDescriptorSet::default()
                             .dst_set(dst_set)

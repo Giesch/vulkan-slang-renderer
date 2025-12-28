@@ -37,6 +37,10 @@ impl Game for SpaceInvaders {
         "Space Invaders"
     }
 
+    fn initial_window_size() -> (u32, u32) {
+        (800, 900)
+    }
+
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
     where
         Self: Sized,
@@ -47,13 +51,16 @@ impl Game for SpaceInvaders {
         let enemy_offsets = first_frame_matching(&sprite_atlas, |f| f.filename.starts_with("bug"))?;
 
         let player_animation_frames = get_animation_frames(&sprite_atlas, "ship");
+        assert!(!player_animation_frames.is_empty());
         let enemy_animation_frames = get_animation_frames(&sprite_atlas, "bug");
+        assert!(!enemy_animation_frames.is_empty());
 
         let mut sprites = vec![];
         let player_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, player_offsets);
         let enemy_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, enemy_offsets);
         let sprite_atlas_size = sprite_atlas.meta.size;
 
+        let player_frame = &player_animation_frames[0].frame;
         let player = Player {
             sprite_id: player_sprite,
             intent: Default::default(),
@@ -62,11 +69,12 @@ impl Game for SpaceInvaders {
             bounding_box: BoundingBox {
                 x: 0.0,
                 y: 0.0,
-                w: 32.0 * SPRITE_SCALE,
-                h: 32.0 * SPRITE_SCALE,
+                w: player_frame.w as f32 * SPRITE_SCALE,
+                h: player_frame.h as f32 * SPRITE_SCALE,
             },
         };
 
+        let enemy_frame = &enemy_animation_frames[0].frame;
         let enemies = vec![
             //
             Enemy {
@@ -74,8 +82,8 @@ impl Game for SpaceInvaders {
                 bounding_box: BoundingBox {
                     x: 400.0,
                     y: 700.0,
-                    w: 32.0 * SPRITE_SCALE,
-                    h: 32.0 * SPRITE_SCALE,
+                    w: enemy_frame.w as f32 * SPRITE_SCALE,
+                    h: enemy_frame.h as f32 * SPRITE_SCALE,
                 },
                 intent: EnemyIntent::Right,
                 movement_timer: 0,
@@ -217,17 +225,15 @@ impl Game for SpaceInvaders {
         if !COLUMN_MAJOR {
             projection_matrix = projection_matrix.transpose();
         }
-        let uniform_data = SpaceInvadersParams { projection_matrix };
+        let params = SpaceInvadersParams { projection_matrix };
 
         // draw
         renderer.draw_frame(&mut self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.params_buffer, uniform_data);
+            gpu.write_uniform(&mut self.params_buffer, params);
             gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
 
             gpu.sort_storage_by(&mut self.sprites_buffer, |a, b| {
-                let ay = a.position.y;
-                let by = b.position.y;
-                by.total_cmp(&ay)
+                b.position.y.total_cmp(&a.position.y)
             });
         })
     }
