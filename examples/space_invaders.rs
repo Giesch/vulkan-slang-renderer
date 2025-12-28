@@ -30,6 +30,7 @@ struct SpaceInvaders {
     player_animation_frames: Vec<SpriteFrame>,
     enemy_animation_frames: Vec<SpriteFrame>,
     game_over: bool,
+    game_over_sprite: usize,
 }
 
 impl Game for SpaceInvaders {
@@ -56,6 +57,11 @@ impl Game for SpaceInvaders {
         assert!(!enemy_animation_frames.is_empty());
 
         let mut sprites = vec![];
+
+        let game_over_frames = get_animation_frames(&sprite_atlas, "game_over");
+        let game_over_frame = &game_over_frames[0].frame;
+        let game_over_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, game_over_frame);
+
         let player_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, player_offsets);
         let enemy_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, enemy_offsets);
         let sprite_atlas_size = sprite_atlas.meta.size;
@@ -120,6 +126,7 @@ impl Game for SpaceInvaders {
             player_animation_frames,
             enemy_animation_frames,
             game_over: false,
+            game_over_sprite,
         })
     }
 
@@ -144,16 +151,16 @@ impl Game for SpaceInvaders {
     }
 
     fn update(&mut self) {
+        if self.game_over {
+            return;
+        }
+
         // timers
         self.frame_counter += 1;
         let elapsed = self.frame_delay();
         self.player.animation.tick(elapsed);
         for enemy in &mut self.enemies {
             enemy.animation.tick(elapsed);
-        }
-
-        if self.game_over {
-            return;
         }
 
         // player movement
@@ -195,13 +202,11 @@ impl Game for SpaceInvaders {
                 self.game_over = true;
             }
         }
-
-        if self.game_over {
-            println!("Game OVER!");
-        }
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+        let (width, height) = renderer.window_size();
+
         // update sprites
         let player_sprite = &mut self.sprites[self.player.sprite_id];
         player_sprite.position.x = self.player.bounding_box.x;
@@ -219,8 +224,18 @@ impl Game for SpaceInvaders {
             set_sprite_frame(enemy_sprite, enemy_frame, &self.sprite_atlas_size);
         }
 
+        if self.game_over {
+            let game_over_sprite = &mut self.sprites[self.game_over_sprite];
+            game_over_sprite.scale = Vec2::new(400.0, 64.0);
+            game_over_sprite.position.x = (width - game_over_sprite.scale.x) / 2.0;
+            game_over_sprite.position.y = 400.0;
+        } else {
+            // TODO come up with a better way to avoid using a sprite
+            self.sprites[self.game_over_sprite].position.x = 1000.0;
+            self.sprites[self.game_over_sprite].position.y = 1000.0;
+        }
+
         // make projection matrix
-        let (width, height) = renderer.window_size();
         let mut projection_matrix = Mat4::orthographic_lh(0.0, width, height, 0.0, 0.0, -1.0);
         if !COLUMN_MAJOR {
             projection_matrix = projection_matrix.transpose();
@@ -346,7 +361,7 @@ fn init_sprite(
     let sheet_height = sprite_atlas_size.h as f32;
 
     let sprite = Sprite {
-        scale: Vec2::splat(frame.w as f32 * SPRITE_SCALE),
+        scale: Vec2::new(frame.w as f32 * SPRITE_SCALE, frame.h as f32 * SPRITE_SCALE),
         padding: Vec2::ZERO,
 
         position: Vec3::ZERO,
