@@ -2,22 +2,21 @@
 
 * Now
 - [-] Space Invaders example
-  - [ ] collisions
-    - [ ] lose if enemy reaches the bottom
-    - [ ] lose if enemy touches the player
-
   - [X] parse aseprite json
   - [X] animations
-
+  - [X] collisions
+    - [X] lose if enemy reaches the bottom
+    - [X] lose if enemy touches the player
   - [ ] bullet
-
-  - [ ] bomb
-  - [ ] rotation based on movement?
-  - [ ] destructible shields
-
+    - [ ] track enemy damage
+    - [ ] remove dead enemy
+    - [ ] blinking death animation
   - [ ] full game loop
-    - [ ] screen transitions
-    - [ ] score
+    - [ ] title screen/intro reel
+    - [ ] game over screen
+      - [ ] score
+  - [ ] bomb?
+  - [ ] destructible shields?
 
 - [-] SDF 2D example
   [[https://danielchasehooper.com/posts/code-animated-rick]]
@@ -28,15 +27,12 @@
   - [ ] add a custom final example
 
 * Next
+- [ ] fix sprite drawing on windows - only drawing one sprite per frame
+  - only the first sprite is always drawn (including when sprites are re-sorted)
+  - removing depth entirely does not affect the behavior at all
+
 - [ ] set up dioxus' hot patching
 
-- [ ] fix sprite drawing on windows
-  only drawing one sprite per frame?
-  could this be related to depth / draw order somehow?
-- [X] find a better way to handle depth than 'disable_depth_test'
-  - just use sprite draw order? this is kind of what it already does
-    does this mean re-sorting the mapped buffer every frame?
-    that'd be fine for this demo
 - [ ] sort sprites by 'object' position instead of 'sprite' position
   - this will matter for small sprites like the projectiles
   - could add a 'draw order' field to the gpu sprite itself

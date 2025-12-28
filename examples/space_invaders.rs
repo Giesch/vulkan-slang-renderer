@@ -32,35 +32,6 @@ struct SpaceInvaders {
     game_over: bool,
 }
 
-#[derive(Debug)]
-struct BoundingBox {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-}
-
-impl BoundingBox {
-    fn overlaps(&self, other: &BoundingBox) -> bool {
-        let our_bottom = self.y;
-        let our_top = self.y + self.h;
-        let our_left = self.x;
-        let our_right = self.x + self.w;
-
-        let their_bottom = other.y;
-        let their_top = other.y + other.h;
-        let their_left = other.x;
-        let their_right = other.x + other.w;
-
-        let vert_overlap = (our_bottom < their_top && our_bottom > their_bottom)
-            || (our_top > their_bottom && our_top < their_top);
-        let horz_overlap = (our_left < their_right && our_left > their_left)
-            || (our_right > their_left && our_right < their_right);
-
-        vert_overlap && horz_overlap
-    }
-}
-
 impl Game for SpaceInvaders {
     fn window_title() -> &'static str {
         "Space Invaders"
@@ -328,6 +299,36 @@ impl EnemyIntent {
         }
     }
 }
+
+#[derive(Debug)]
+struct BoundingBox {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+impl BoundingBox {
+    fn overlaps(&self, other: &BoundingBox) -> bool {
+        let our_bottom = self.y;
+        let our_top = self.y + self.h;
+        let our_left = self.x;
+        let our_right = self.x + self.w;
+
+        let their_bottom = other.y;
+        let their_top = other.y + other.h;
+        let their_left = other.x;
+        let their_right = other.x + other.w;
+
+        let vert_overlap = (our_bottom < their_top && our_bottom > their_bottom)
+            || (our_top > their_bottom && our_top < their_top);
+        let horz_overlap = (our_left < their_right && our_left > their_left)
+            || (our_right > their_left && our_right < their_right);
+
+        vert_overlap && horz_overlap
+    }
+}
+
 
 const SPRITE_SCALE: f32 = 5.0;
 
