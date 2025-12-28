@@ -27,9 +27,14 @@
   - [ ] add a custom final example
 
 * Next
-- [ ] fix sprite drawing on windows - only drawing one sprite per frame
+- [X] fix sprite drawing on windows - only drawing one sprite per frame
   - only the first sprite is always drawn (including when sprites are re-sorted)
   - removing depth entirely does not affect the behavior at all
+  - it's reading all 0.0 for the x,y of the second sprite
+  - The fix is to include the real buffer (max) length in the storage buffer descriptor set
+    D3D requires a real buffer size in a way the other APIs don't:
+    https://github.com/gfx-rs/wgpu/issues/914
+
 
 - [ ] set up dioxus' hot patching
 

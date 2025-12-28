@@ -47,7 +47,8 @@ static const float2 quadCorners[4] = {
 
 [shader("vertex")]
 VertexOutput vertMain(uint id : SV_VertexID) {
-    let sprite = params.sprites[id / 6];
+    let spriteId = id / 6;
+    let sprite = params.sprites[spriteId];
 
     let vert = triangleIndices[id % 6];
     var coord = quadCorners[vert];
@@ -63,28 +64,23 @@ VertexOutput vertMain(uint id : SV_VertexID) {
     let coordWithDepth = float4(coord + sprite.position.xy, sprite.position.z, 1.0);
     let position = mul(params.projectionMatrix, coordWithDepth);
 
+    let left = sprite.texU;
+    let right = sprite.texU + sprite.texW;
+    let top = sprite.texV;
+    let bottom = sprite.texV + sprite.texH;
     float2 texCoordsByVert[4] = {
-        // NOTE V coordinates are flipped to match the projection
-        {sprite.texU,               sprite.texV + sprite.texH},
-        {sprite.texU + sprite.texW, sprite.texV + sprite.texH},
-        {sprite.texU,               sprite.texV              },
-        {sprite.texU + sprite.texW, sprite.texV              }
+        // NOTE the y-axis is flipped to match the OpenGL-style projection
+        {left, bottom}, {right, bottom},
+        {left, top}, {right, top}
     };
     let texCoord = texCoordsByVert[vert];
 
     return VertexOutput(texCoord, sprite.color, position, spriteCoord);
 }
 
-struct FragInput {
-    float2 texCoord : TEXCOORD0;
-    float4 color : TEXCOORD1;
-    float2 spriteCoord : TEXCOORD2;
-}
-
-static const bool debugSpriteEdges = false;
-
 [shader("fragment")]
-float4 fragMain(FragInput input) : SV_Target {
+float4 fragMain(VertexOutput input) : SV_Target {
+    let debugSpriteEdges = false;
     if (debugSpriteEdges) {
         let distToSidesX = min(input.spriteCoord.x, abs(input.spriteCoord.x - 1.0));
         let distToSidesY = min(input.spriteCoord.y, abs(input.spriteCoord.y - 1.0));
@@ -95,5 +91,6 @@ float4 fragMain(FragInput input) : SV_Target {
     }
 
     let textureColor = params.spriteSheet.Sample(input.texCoord);
+
     return input.color * textureColor;
 }

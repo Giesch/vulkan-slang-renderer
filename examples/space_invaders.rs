@@ -329,7 +329,6 @@ impl BoundingBox {
     }
 }
 
-
 const SPRITE_SCALE: f32 = 5.0;
 
 fn init_sprite(

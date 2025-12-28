@@ -389,6 +389,8 @@ impl Renderer {
         &mut self,
         len: u32,
     ) -> anyhow::Result<StorageBufferHandle<T>> {
+        debug_assert!(len <= MAX_STORAGE_BUFFER_LEN as u32);
+
         let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
 
         let mut buffers_per_frame = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
@@ -2088,6 +2090,9 @@ pub struct TextureDescription {
     pub descriptor_count: u32,
 }
 
+// TODO handle this better
+const MAX_STORAGE_BUFFER_LEN: u64 = 256;
+
 fn create_descriptor_sets(
     device: &ash::Device,
     descriptor_pool: vk::DescriptorPool,
@@ -2154,7 +2159,7 @@ fn create_descriptor_sets(
                         let buffer_info = vk::DescriptorBufferInfo::default()
                             .offset(0)
                             .buffer(storage_buffer)
-                            .range(storage_buffer_description.size);
+                            .range(storage_buffer_description.size * MAX_STORAGE_BUFFER_LEN);
                         let buffer_info = [buffer_info];
                         let storage_buffer_write = vk::WriteDescriptorSet::default()
                             .dst_set(dst_set)
