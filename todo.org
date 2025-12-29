@@ -35,7 +35,6 @@
     D3D requires a real buffer size in a way the other APIs don't:
     https://github.com/gfx-rs/wgpu/issues/914
 
-
 - [ ] set up dioxus' hot patching
 
 - [ ] sort sprites by 'object' position instead of 'sprite' position
@@ -51,6 +50,11 @@
 
 - [ ] remove per-frame duplication of non-image resources
   https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
+
+- [ ] fix linux perf bug in sprite batch example
+  sprite batch example matches the SDL_gpu framerate on windows,
+  but has a slower framerate on linux for some reason
+
 
 - [ ] simplify basic triangle example
   use an orthographic projection instead of mvp?

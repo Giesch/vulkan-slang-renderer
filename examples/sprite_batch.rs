@@ -7,6 +7,7 @@
 //! https://moonside.games/posts/sdl-gpu-sprite-batcher/
 
 use std::f32::consts::TAU;
+use std::time::Duration;
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
@@ -37,6 +38,10 @@ const SPRITE_COUNT: usize = 8192;
 impl Game for SpriteBatch {
     fn window_title() -> &'static str {
         "Sprite Batch"
+    }
+
+    fn frame_delay(&self) -> Duration {
+        Duration::from_nanos(10)
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
