@@ -351,6 +351,20 @@ struct GeneratedShaderImpl {
     resources_storage_buffer_fields: Vec<String>,
 }
 
+impl GeneratedShaderImpl {
+    fn draw_call(&self) -> &str {
+        if self.vertex_type_name.is_some() {
+            "DrawIndexed"
+        } else {
+            "DrawVertexCount"
+        }
+    }
+
+    fn vertex_type_or_never(&self) -> &str {
+        self.vertex_type_name.as_deref().unwrap_or("!")
+    }
+}
+
 fn gather_struct_defs(
     field: &StructField,
     struct_defs: &mut Vec<GeneratedStructDefinition>,

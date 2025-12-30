@@ -81,7 +81,7 @@ impl {{ shader_impl.shader_type_name }} {
     pub fn pipeline_config(
         self,
         resources: Resources<'_>,
-    ) -> PipelineConfig<'_, {{ shader_impl.vertex_type_name.as_deref().unwrap_or("!") }}> {
+    ) -> PipelineConfig<'_, {{ shader_impl.vertex_type_or_never() }}, {{ shader_impl.draw_call() }}> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]

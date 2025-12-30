@@ -3,7 +3,7 @@ use std::time::Instant;
 use glam::Vec2;
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
-    DrawError, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
+    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
 };
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
@@ -15,7 +15,7 @@ fn main() -> Result<(), anyhow::Error> {
 
 struct SDF2D {
     start_time: Instant,
-    pipeline: PipelineHandle,
+    pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<SDF2DParams>,
 }
 
@@ -55,7 +55,7 @@ impl Game for SDF2D {
 
         let params = SDF2DParams { time, resolution };
 
-        renderer.draw_frame(&mut self.pipeline, |gpu| {
+        renderer.draw_vertex_count(&mut self.pipeline, 3, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
         })
     }

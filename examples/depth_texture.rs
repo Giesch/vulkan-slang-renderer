@@ -4,7 +4,7 @@ use glam::{Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
-    DrawError, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
+    DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
     UniformBufferHandle,
 };
 use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
@@ -20,11 +20,13 @@ fn main() -> Result<(), anyhow::Error> {
 #[allow(unused)]
 pub struct DepthTextureGame {
     start_time: Instant,
-    pipeline: PipelineHandle,
+    pipeline: PipelineHandle<DrawIndexed>,
     texture: TextureHandle,
-    uniform_buffer: UniformBufferHandle<DepthTexture>,
+    params_buffer: UniformBufferHandle<DepthTexture>,
 }
 
+// two squares at different z values,
+// each in clockwise order
 const VERTICES: [Vertex; 8] = [
     Vertex {
         position: Vec3::new(-0.5, -0.5, 0.0),
@@ -68,6 +70,8 @@ const VERTICES: [Vertex; 8] = [
     },
 ];
 
+// 2 quads of clockwise triangles,
+// using the vertices above
 #[rustfmt::skip]
 const INDICES: [u32; 12] = [
     0, 1, 2, 2, 3, 0,
@@ -90,12 +94,12 @@ impl Game for DepthTextureGame {
         let shader = shader_atlas.depth_texture;
 
         let texture = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
-        let uniform_buffer = renderer.create_uniform_buffer::<DepthTexture>()?;
+        let params_buffer = renderer.create_uniform_buffer::<DepthTexture>()?;
         let resources = Resources {
             vertices: VERTICES.to_vec(),
             indices: INDICES.to_vec(),
             texture: &texture,
-            depth_texture_buffer: &uniform_buffer,
+            depth_texture_buffer: &params_buffer,
         };
         let pipeline_config = shader.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
@@ -106,7 +110,7 @@ impl Game for DepthTextureGame {
             start_time,
             pipeline,
             texture,
-            uniform_buffer,
+            params_buffer,
         })
     }
 
@@ -114,10 +118,10 @@ impl Game for DepthTextureGame {
         let aspect_ratio = renderer.aspect_ratio();
         let elapsed = Instant::now() - self.start_time;
         let mvp = make_mvp_matrices(elapsed, aspect_ratio, COLUMN_MAJOR);
-        let uniform_data = DepthTexture { mvp };
+        let params = DepthTexture { mvp };
 
-        renderer.draw_frame(&self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.uniform_buffer, uniform_data);
+        renderer.draw_indexed(&self.pipeline, |gpu| {
+            gpu.write_uniform(&mut self.params_buffer, params);
         })
     }
 }

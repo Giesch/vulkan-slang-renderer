@@ -5,7 +5,7 @@ use glam::{Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
-    DrawError, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
+    DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
     UniformBufferHandle,
 };
 use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
@@ -21,7 +21,7 @@ fn main() -> Result<(), anyhow::Error> {
 #[allow(unused)]
 pub struct VikingRoom {
     start_time: Instant,
-    pipeline: PipelineHandle,
+    pipeline: PipelineHandle<DrawIndexed>,
     texture: TextureHandle,
     uniform_buffer: UniformBufferHandle<DepthTexture>,
 }
@@ -115,7 +115,7 @@ impl Game for VikingRoom {
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
 
-        renderer.draw_frame(&self.pipeline, |gpu| {
+        renderer.draw_indexed(&self.pipeline, |gpu| {
             let elapsed = Instant::now() - self.start_time;
             let mvp = make_mvp_matrices(elapsed, aspect_ratio);
             gpu.write_uniform(&mut self.uniform_buffer, DepthTexture { mvp });

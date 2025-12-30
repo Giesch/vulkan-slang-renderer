@@ -24,6 +24,7 @@ shader-debug example="viking_room":
     RUST_LOG=info VK_LAYER_PRINTF_ONLY_PRESET=1 \
       cargo run --example {{example}}
 
+# run with shader printf and vk validation layers at 'info'
 [windows]
 shader-debug example="viking_room":
     pwsh -Command { \
@@ -67,10 +68,10 @@ test:
 
 # run and review snapshot tests interactively
 insta:
-  cargo insta test --review
+    cargo insta test --review
 
 
-# lint in debug and release with warnings denied
+# lint in debug and release, with warnings denied
 lint:
     cargo clippy -- -D warnings
     cargo clippy --release -- -D warnings

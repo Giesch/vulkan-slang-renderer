@@ -98,7 +98,10 @@ impl Shader {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config(self, resources: Resources<'_>) -> PipelineConfig<'_, Vertex> {
+    pub fn pipeline_config(
+        self,
+        resources: Resources<'_>,
+    ) -> PipelineConfig<'_, Vertex, DrawIndexed> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]

@@ -2,7 +2,7 @@ use glam::{Mat4, Vec3};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
-    DrawError, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
+    DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
 };
 use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
 
@@ -14,7 +14,7 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 pub struct BasicTriangle {
-    pipeline: PipelineHandle,
+    pipeline: PipelineHandle<DrawIndexed>,
     uniform_buffer: UniformBufferHandle<MVPMatrices>,
 }
 
@@ -49,7 +49,7 @@ impl Game for BasicTriangle {
         let aspect_ratio = renderer.aspect_ratio();
         let mvp = make_basic_mvp_matrices(aspect_ratio);
 
-        renderer.draw_frame(&self.pipeline, |gpu| {
+        renderer.draw_indexed(&self.pipeline, |gpu| {
             gpu.write_uniform(&mut self.uniform_buffer, mvp);
         })
     }

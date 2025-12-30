@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use ash::vk;
 
 use crate::shaders::atlas::ShaderAtlasEntry;
@@ -5,9 +7,23 @@ use crate::shaders::atlas::ShaderAtlasEntry;
 use super::vertex_description::VertexDescription;
 use super::{RawStorageBufferHandle, RawUniformBufferHandle, ShaderPipelineLayout, TextureHandle};
 
+/// A marker trait for different draw call types
+pub trait DrawCall {}
+
+/// A marker that the pipeline uses basic cmd_draw draw calls,
+/// passing a vertex count with no other vertex data
+pub struct DrawVertexCount;
+impl DrawCall for DrawVertexCount {}
+
+/// A marker that the pipeline uses cmd_draw_indexed draw calls,
+/// using pre-allocated vertex and index buffers
+pub struct DrawIndexed;
+impl DrawCall for DrawIndexed {}
+
 #[derive(Debug)]
-pub struct PipelineHandle {
+pub struct PipelineHandle<T> {
     index: usize,
+    _phantom_data: PhantomData<T>,
 }
 
 pub(super) struct PipelineStorage(Vec<Option<RendererPipeline>>);
@@ -17,24 +33,27 @@ impl PipelineStorage {
         Self(Default::default())
     }
 
-    pub fn add(&mut self, pipeline: RendererPipeline) -> PipelineHandle {
-        let index = self.0.len();
-        let handle = PipelineHandle { index };
+    pub fn add<T: DrawCall>(&mut self, pipeline: RendererPipeline) -> PipelineHandle<T> {
+        let handle = PipelineHandle {
+            index: self.0.len(),
+            _phantom_data: PhantomData,
+        };
+
         self.0.push(Some(pipeline));
 
         handle
     }
 
-    pub fn get(&self, handle: &PipelineHandle) -> &RendererPipeline {
+    pub fn get<T>(&self, handle: &PipelineHandle<T>) -> &RendererPipeline {
         self.0[handle.index].as_ref().unwrap()
     }
 
     #[cfg(debug_assertions)] // used only during hot reload
-    pub fn get_mut(&mut self, handle: &PipelineHandle) -> &mut RendererPipeline {
+    pub fn get_mut<T>(&mut self, handle: &PipelineHandle<T>) -> &mut RendererPipeline {
         self.0[handle.index].as_mut().unwrap()
     }
 
-    pub fn take(&mut self, handle: PipelineHandle) -> RendererPipeline {
+    pub fn take<T>(&mut self, handle: PipelineHandle<T>) -> RendererPipeline {
         self.0[handle.index].take().unwrap()
     }
 
@@ -64,37 +83,26 @@ pub(super) struct RendererPipeline {
 
 pub(super) enum VertexPipelineConfig {
     VertexAndIndexBuffers(VertexAndIndexBuffers),
-    VertexCount(u32),
+    VertexCount, // this count is now passed in every time
 }
 
-impl RendererPipeline {
-    pub(super) fn draw(&self, device: &ash::Device, command_buffer: vk::CommandBuffer) {
-        match &self.vertex_pipeline_config {
-            VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs) => unsafe {
-                device.cmd_draw_indexed(command_buffer, vi_bufs.index_count, 1, 0, 0, 0);
-            },
-
-            VertexPipelineConfig::VertexCount(vertex_count) => unsafe {
-                device.cmd_draw(command_buffer, *vertex_count, 1, 0, 0);
-            },
-        }
-    }
-}
+pub struct VertexAndIndexBuffersHandle;
 
 pub(super) struct VertexAndIndexBuffers {
-    pub vertex_buffer: vk::Buffer,
-    pub vertex_buffer_memory: vk::DeviceMemory,
+    pub(super) vertex_buffer: vk::Buffer,
+    pub(super) vertex_buffer_memory: vk::DeviceMemory,
 
-    pub index_buffer: vk::Buffer,
-    pub index_buffer_memory: vk::DeviceMemory,
+    pub(super) index_buffer: vk::Buffer,
+    pub(super) index_buffer_memory: vk::DeviceMemory,
 
-    pub index_count: u32,
+    pub(super) index_count: u32,
 }
 
 /// the generic arguments for creating a pipeline
-pub struct PipelineConfig<'t, V: VertexDescription> {
+pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall> {
     pub(super) shader: Box<dyn ShaderAtlasEntry>,
     pub(super) vertex_config: VertexConfig<V>,
+    _draw_call: PhantomData<D>,
     pub(super) texture_handles: Vec<&'t TextureHandle>,
     pub(super) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub(super) storage_buffer_handles: Vec<RawStorageBufferHandle>,
@@ -123,10 +131,12 @@ pub struct PipelineConfigBuilder<'t, V: VertexDescription> {
 }
 
 impl<'t, V: VertexDescription> PipelineConfigBuilder<'t, V> {
-    pub fn build(self) -> PipelineConfig<'t, V> {
+    // NOTE this inferred generic relies on the correctness of generated code
+    pub fn build<D: DrawCall>(self) -> PipelineConfig<'t, V, D> {
         PipelineConfig {
             shader: self.shader,
             vertex_config: self.vertex_config,
+            _draw_call: PhantomData,
             texture_handles: self.texture_handles,
             uniform_buffer_handles: self.uniform_buffer_handles,
             storage_buffer_handles: self.storage_buffer_handles,

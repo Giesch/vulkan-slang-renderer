@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use ash::vk;
 use sdl3::sys::vulkan::SDL_Vulkan_DestroySurface;
 use sdl3::video::Window;
-use vertex_description::VertexDescription;
 
 use crate::shaders;
 use crate::shaders::atlas::{PrecompiledShader, ShaderAtlasEntry};
@@ -27,6 +26,7 @@ pub mod gpu_write;
 use gpu_write::{GPUWrite, write_to_gpu_buffer};
 
 pub mod vertex_description;
+use vertex_description::VertexDescription;
 
 pub mod texture;
 pub use texture::*;
@@ -297,7 +297,7 @@ impl Renderer {
         })
     }
 
-    fn renderer_pipeline(&self, handle: &PipelineHandle) -> &RendererPipeline {
+    fn renderer_pipeline<D>(&self, handle: &PipelineHandle<D>) -> &RendererPipeline {
         self.pipelines.get(handle)
     }
 
@@ -435,10 +435,10 @@ impl Renderer {
         }
     }
 
-    pub fn create_pipeline<V: VertexDescription>(
+    pub fn create_pipeline<V: VertexDescription, D: DrawCall>(
         &mut self,
-        config: PipelineConfig<V>,
-    ) -> anyhow::Result<PipelineHandle> {
+        config: PipelineConfig<V, D>,
+    ) -> anyhow::Result<PipelineHandle<D>> {
         let pipeline = self.init_pipeline(config)?;
         let handle = self.pipelines.add(pipeline);
 
@@ -446,7 +446,7 @@ impl Renderer {
     }
 
     /// NOTE call this only after draining gpu commands
-    pub fn drop_pipeline(&mut self, pipeline_handle: PipelineHandle) {
+    pub fn drop_pipeline<D>(&mut self, pipeline_handle: PipelineHandle<D>) {
         let pipeline = self.pipelines.take(pipeline_handle);
         self.destroy_pipeline(pipeline);
     }
@@ -471,7 +471,7 @@ impl Renderer {
                     self.device.free_memory(vi_bufs.vertex_buffer_memory, None);
                 }
 
-                VertexPipelineConfig::VertexCount(_) => {}
+                VertexPipelineConfig::VertexCount => {}
             }
 
             self.device.destroy_pipeline(pipeline.pipeline, None);
@@ -480,9 +480,9 @@ impl Renderer {
         }
     }
 
-    fn init_pipeline<V: VertexDescription>(
+    fn init_pipeline<V: VertexDescription, D: DrawCall>(
         &mut self,
-        config: PipelineConfig<V>,
+        config: PipelineConfig<V, D>,
     ) -> anyhow::Result<RendererPipeline> {
         let pipeline_layout =
             ShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
@@ -529,7 +529,7 @@ impl Renderer {
                 VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs)
             }
 
-            VertexConfig::VertexCount(count) => VertexPipelineConfig::VertexCount(*count),
+            VertexConfig::VertexCount(_count) => VertexPipelineConfig::VertexCount,
         };
 
         let layout_bindings = config.shader.layout_bindings();
@@ -578,10 +578,11 @@ impl Renderer {
         })
     }
 
-    fn record_command_buffer(
+    fn record_command_buffer<D>(
         &mut self,
-        pipeline_handle: &PipelineHandle,
+        pipeline_handle: &PipelineHandle<D>,
         image_index: u32,
+        draw_call: DrawCallConfig,
     ) -> Result<(), anyhow::Error> {
         let command_buffer = self.command_buffers[self.current_frame];
 
@@ -647,14 +648,14 @@ impl Renderer {
         let scissors = [scissor];
         unsafe { self.device.cmd_set_scissor(command_buffer, 0, &scissors) };
 
-        unsafe {
-            match &self
-                .renderer_pipeline(pipeline_handle)
-                .vertex_pipeline_config
-            {
-                VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs) => {
-                    let buffers = [vi_bufs.vertex_buffer];
-                    let offsets = [0];
+        match &self
+            .renderer_pipeline(pipeline_handle)
+            .vertex_pipeline_config
+        {
+            VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs) => {
+                let buffers = [vi_bufs.vertex_buffer];
+                let offsets = [0];
+                unsafe {
                     self.device
                         .cmd_bind_vertex_buffers(command_buffer, 0, &buffers, &offsets);
 
@@ -665,11 +666,13 @@ impl Renderer {
                         vk::IndexType::UINT32,
                     );
                 }
-
-                VertexPipelineConfig::VertexCount(_) => {}
             }
 
-            let descriptor_sets = self.descriptor_sets_for_frame(pipeline_handle);
+            VertexPipelineConfig::VertexCount => {}
+        }
+
+        let descriptor_sets = self.descriptor_sets_for_frame(pipeline_handle);
+        unsafe {
             self.device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -680,9 +683,17 @@ impl Renderer {
                 descriptor_sets,
                 &[],
             );
+        }
 
-            self.renderer_pipeline(pipeline_handle)
-                .draw(&self.device, command_buffer);
+        match draw_call {
+            DrawCallConfig::VertexCount(vertex_count) => unsafe {
+                self.device.cmd_draw(command_buffer, vertex_count, 1, 0, 0);
+            },
+
+            DrawCallConfig::IndexCount(index_count) => unsafe {
+                self.device
+                    .cmd_draw_indexed(command_buffer, index_count, 1, 0, 0, 0);
+            },
         }
 
         // END RENDER PASS
@@ -693,7 +704,10 @@ impl Renderer {
         Ok(())
     }
 
-    fn descriptor_sets_for_frame(&self, pipeline_handle: &PipelineHandle) -> &[vk::DescriptorSet] {
+    fn descriptor_sets_for_frame<D>(
+        &self,
+        pipeline_handle: &PipelineHandle<D>,
+    ) -> &[vk::DescriptorSet] {
         // see create_descriptor_sets
         let descriptor_sets_per_frame = self
             .renderer_pipeline(pipeline_handle)
@@ -707,9 +721,10 @@ impl Renderer {
             .unwrap()
     }
 
-    pub fn draw_frame(
+    fn draw_frame<D>(
         &mut self,
-        pipeline_handle: &PipelineHandle,
+        pipeline_handle: &PipelineHandle<D>,
+        draw_call: DrawCallConfig,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), anyhow::Error> {
         self.total_frames += 1;
@@ -753,7 +768,7 @@ impl Renderer {
             self.device
                 .reset_command_buffer(command_buffer, Default::default())?;
         }
-        self.record_command_buffer(pipeline_handle, image_index)?;
+        self.record_command_buffer(pipeline_handle, image_index, draw_call)?;
 
         let wait_semaphores = [self.image_available[self.current_frame]];
         let wait_dst_stage_mask = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -903,9 +918,9 @@ impl Renderer {
     }
 
     #[cfg(debug_assertions)]
-    fn check_for_shader_recompile(
+    fn check_for_shader_recompile<D>(
         &mut self,
-        pipeline_handle: &PipelineHandle,
+        pipeline_handle: &PipelineHandle<D>,
     ) -> Result<(), anyhow::Error> {
         // drop old graphics reloaded pipelines for frames that are no longer needed
         let mut to_remove = vec![];
@@ -948,9 +963,9 @@ impl Renderer {
 
     // shader hot reload
     #[cfg(debug_assertions)]
-    fn try_shader_recompile(
+    fn try_shader_recompile<D>(
         &mut self,
-        pipeline_handle: &PipelineHandle,
+        pipeline_handle: &PipelineHandle<D>,
         _edit_events: &[notify::Event],
     ) -> Result<(), anyhow::Error> {
         let mut tmp_pipeline_layout = match ShaderPipelineLayout::create_from_atlas(
@@ -3071,7 +3086,7 @@ impl<'f> Gpu<'f> {
     }
 
     pub fn write_storage<T>(&mut self, storage_buffer: &mut StorageBufferHandle<T>, data: &[T]) {
-        debug_assert_eq!(data.len(), storage_buffer.len() as usize);
+        debug_assert!(data.len() <= storage_buffer.len() as usize);
         let len_to_copy = data.len().min(storage_buffer.len() as usize);
 
         let mapped_mem = self
@@ -3121,13 +3136,49 @@ impl<'f> FrameRenderer<'f> {
         (self.0.width, self.0.height)
     }
 
-    pub fn draw_frame(
+    pub fn draw_indexed(
         self,
-        pipeline_handle: &PipelineHandle,
+        pipeline_handle: &PipelineHandle<DrawIndexed>,
+        gpu_update: impl FnOnce(&mut Gpu),
+    ) -> Result<(), DrawError> {
+        let index_count = match &self
+            .0
+            .renderer_pipeline(pipeline_handle)
+            .vertex_pipeline_config
+        {
+            VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs) => vi_bufs.index_count,
+            _ => panic!("unexpected draw_indexed call for non-index pipeline"),
+        };
+
+        let draw_call = DrawCallConfig::IndexCount(index_count);
+
+        self.draw_frame(pipeline_handle, draw_call, gpu_update)
+    }
+
+    pub fn draw_vertex_count(
+        self,
+        pipeline_handle: &PipelineHandle<DrawVertexCount>,
+        vertex_count: u32,
+        gpu_update: impl FnOnce(&mut Gpu),
+    ) -> Result<(), DrawError> {
+        let draw_call = DrawCallConfig::VertexCount(vertex_count);
+        self.draw_frame(pipeline_handle, draw_call, gpu_update)
+    }
+
+    fn draw_frame<D>(
+        self,
+        pipeline_handle: &PipelineHandle<D>,
+        draw_call: DrawCallConfig,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
         self.0
-            .draw_frame(pipeline_handle, gpu_update)
+            .draw_frame(pipeline_handle, draw_call, gpu_update)
             .map_err(DrawError::DrawError)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DrawCallConfig {
+    VertexCount(u32),
+    IndexCount(u32),
 }

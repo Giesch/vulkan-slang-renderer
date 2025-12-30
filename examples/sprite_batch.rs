@@ -14,8 +14,8 @@ use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
-    DrawError, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle, TextureFilter,
-    UniformBufferHandle,
+    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
+    TextureFilter, UniformBufferHandle,
 };
 use vulkan_slang_renderer::util::load_image;
 
@@ -27,7 +27,7 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 pub struct SpriteBatch {
-    pipeline: PipelineHandle,
+    pipeline: PipelineHandle<DrawVertexCount>,
     uniform_buffer: UniformBufferHandle<SpriteBatchParams>,
     storage_buffer: StorageBufferHandle<Sprite>,
     sprites: Vec<Sprite>,
@@ -97,7 +97,7 @@ impl Game for SpriteBatch {
             Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0);
         let uniform_data = SpriteBatchParams { projection_matrix };
 
-        renderer.draw_frame(&self.pipeline, |gpu| {
+        renderer.draw_vertex_count(&self.pipeline, self.sprites.len() as u32 * 6, |gpu| {
             gpu.write_uniform(&mut self.uniform_buffer, uniform_data);
             gpu.write_storage(&mut self.storage_buffer, &self.sprites);
         })

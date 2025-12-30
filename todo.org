@@ -1,13 +1,37 @@
 #+title: Todo
 
 * Now
+- [-] make the draw call types explicit
+  - [X] make draw call type a generic on pipeline handle
+    and PipelineConfig and Resources?
+    does the !/'never' Vertex generic already cover this?
+      can't have a 'not' in a rust where clause, though,
+      so can't specialize on 'not never'
+  - [-] then expose two different draw call methods on FrameRenderer
+    - [-] make basic vertex count call explicit
+      - [X] pass the vertex count directly
+      - [ ] remove the vertex count from generated resources
+    - [ ] make draw indexed call explicit
+      - [ ] pass a handle for the index buffer count?
+  - [ ] get rid of the config enum(s)
+    both VertexConfig and VertexPipelineConfig if possible
+  - [ ] double check if the never impl for VertexDescription is still necessary
+  - [ ] for basic draw, maybe pass triangle count instead of vertex count?
+
 - [-] Space Invaders example
   - [X] parse aseprite json
   - [X] animations
   - [X] collisions
     - [X] lose if enemy reaches the bottom
     - [X] lose if enemy touches the player
+  - [ ] split off a CPU Sprite type
+    - use the explicit draw call to avoid drawing the game over sprite
+      ie, stop drawing drawing 'game over' offscreen
+  - [ ] sort sprites by 'object' position instead of 'sprite' position
+    - this will matter for small sprites like the projectiles
+    - could add a 'draw order' field to the gpu sprite itself
   - [ ] bullet
+    - [ ] add the sprite
     - [ ] track enemy damage
     - [ ] remove dead enemy
     - [ ] blinking death animation
@@ -17,6 +41,12 @@
       - [ ] score
   - [ ] bomb?
   - [ ] destructible shields?
+
+- [ ] do the Y-axis flip and transpose in mvp.slang
+  - [ ] make the Y-axis flip just part of project method?
+    is there a way to only do it once on load? constructor funny business?
+    implement it on CPU side? need a way to generate a shared module
+  - [ ] use a specialization constant for COLUMN_MAJOR
 
 - [-] SDF 2D example
   [[https://danielchasehooper.com/posts/code-animated-rick]]
@@ -35,21 +65,26 @@
     D3D requires a real buffer size in a way the other APIs don't:
     https://github.com/gfx-rs/wgpu/issues/914
 
-- [ ] set up dioxus' hot patching
+- [ ] add shadertoy/slang-rhi ocean example
+  https://github.com/shader-slang/slang-rhi/blob/main/examples/shader-toy/ocean.slang
+  https://github.com/shader-slang/slang-rhi/blob/main/examples/shader-toy/shader-toy.slang
+  - this may require compute shader support?
+    that's how they wrote the shadertoy include,
+    but it looks like the ocean example could just be a frag shader
+  - understand the sine waves and auto-differentiation
 
-- [ ] sort sprites by 'object' position instead of 'sprite' position
-  - this will matter for small sprites like the projectiles
-  - could add a 'draw order' field to the gpu sprite itself
+- [ ] set up dioxus' hot patching
 
 - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
 - [ ] binding multiple textures results in only being able to sample the first one
   is this a reflection problem, or a renderer descriptor set problem?
 
-- [X] why is this tutorial renderer so much slower than SDL_gpu at sprites?
-  it looks like it was the linear filtering by default instead of nearest
-
 - [ ] remove per-frame duplication of non-image resources
   https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
+
+- [ ] double check if the drop queue for hot reload is necessary
+  ie, is it actually just fine to to just drop the old version of the shader
+    and its resources immediately (since they're really just vk handles)
 
 - [ ] fix linux perf bug in sprite batch example
   sprite batch example matches the SDL_gpu framerate on windows,
@@ -59,13 +94,22 @@
 - [ ] simplify basic triangle example
   use an orthographic projection instead of mvp?
 
-- [ ] come up with a nicer way to handle different draw calls
-  - ie, cmd_draw vs cmd_draw_indexed vs *_indirect variants
-    want to be able to pass the counts directly
-  - the enum is awkward to deal with
-    and it's better not to store the counts
-  - can the enum be fine if you fall back to a default transparent sprite/sdf?
-    ie, for VertexCount basic cmd_draw call with a stored count
+- [ ] make pipeline init nicer
+  ie, combine these lines somehow:
+  #+begin_src rust
+  let mut pipeline_config = shader.pipeline_config(resources);
+  pipeline_config.disable_depth_test = true;
+  let pipeline = renderer.create_pipeline(pipeline_config);
+  #+end_src
+
+  maybe use a strongly typed builder pattern?
+  #+begin_src rust
+  let pipeline = renderer
+    .shader_pipeline(shader)
+    .resources(resources)
+    .disable_depth_test()
+    .build();
+  #+end_src
 
 - [ ] add docs to Resources fields
   - explain the different draw call types

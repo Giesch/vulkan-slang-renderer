@@ -5,8 +5,8 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
-    DrawError, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle, TextureFilter,
-    TextureHandle, UniformBufferHandle,
+    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
+    TextureFilter, TextureHandle, UniformBufferHandle,
 };
 use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
 use vulkan_slang_renderer::util::{load_image, manifest_path};
@@ -20,7 +20,7 @@ fn main() -> Result<(), anyhow::Error> {
 
 struct SpaceInvaders {
     frame_counter: usize,
-    pipeline: PipelineHandle,
+    pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<SpaceInvadersParams>,
     sprites_buffer: StorageBufferHandle<Sprite>,
     sprites: Vec<Sprite>,
@@ -230,7 +230,6 @@ impl Game for SpaceInvaders {
             game_over_sprite.position.x = (width - game_over_sprite.scale.x) / 2.0;
             game_over_sprite.position.y = 400.0;
         } else {
-            // TODO come up with a better way to avoid using a sprite
             self.sprites[self.game_over_sprite].position.x = 1000.0;
             self.sprites[self.game_over_sprite].position.y = 1000.0;
         }
@@ -243,7 +242,7 @@ impl Game for SpaceInvaders {
         let params = SpaceInvadersParams { projection_matrix };
 
         // draw
-        renderer.draw_frame(&mut self.pipeline, |gpu| {
+        renderer.draw_vertex_count(&mut self.pipeline, self.sprites.len() as u32 * 6, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
             gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
 
