@@ -117,7 +117,7 @@ pub enum VertexConfig<V> {
     VertexAndIndexBuffers(Vec<V>, Vec<u32>),
     // use a basic cmd_draw call passing a vertex count, with no vertex or index buffers,
     // and so no Vertex type
-    VertexCount(u32),
+    VertexCount,
 }
 
 pub struct PipelineConfigBuilder<'t, V: VertexDescription> {

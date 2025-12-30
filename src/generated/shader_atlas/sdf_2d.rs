@@ -26,7 +26,6 @@ pub struct SDF2DParams {
 impl GPUWrite for SDF2DParams {}
 
 pub struct Resources<'a> {
-    pub vertex_count: u32,
     pub params_buffer: &'a UniformBufferHandle<SDF2DParams>,
 }
 
@@ -65,7 +64,7 @@ impl Shader {
         let storage_buffer_handles = vec![
         ];
 
-        let vertex_config = VertexConfig::VertexCount(resources.vertex_count);
+        let vertex_config = VertexConfig::VertexCount;
 
         PipelineConfigBuilder {
             shader: Box::new(self),

@@ -108,7 +108,7 @@ impl {{ shader_impl.shader_type_name }} {
         let vertex_config =
             VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
 {%~ else +%}
-        let vertex_config = VertexConfig::VertexCount(resources.vertex_count);
+        let vertex_config = VertexConfig::VertexCount;
 {%~ endif +%}
         PipelineConfigBuilder {
             shader: Box::new(self),

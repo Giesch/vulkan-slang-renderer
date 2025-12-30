@@ -32,7 +32,6 @@ impl Game for SDF2D {
 
         let params_buffer = renderer.create_uniform_buffer::<SDF2DParams>()?;
         let resources = Resources {
-            vertex_count: 3,
             params_buffer: &params_buffer,
         };
 

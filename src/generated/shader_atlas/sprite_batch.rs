@@ -41,7 +41,6 @@ pub struct Sprite {
 impl GPUWrite for Sprite {}
 
 pub struct Resources<'a> {
-    pub vertex_count: u32,
     pub sprites: &'a StorageBufferHandle<Sprite>,
     pub texture: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<SpriteBatchParams>,
@@ -84,7 +83,7 @@ impl Shader {
             RawStorageBufferHandle::from_typed(resources.sprites),
         ];
 
-        let vertex_config = VertexConfig::VertexCount(resources.vertex_count);
+        let vertex_config = VertexConfig::VertexCount;
 
         PipelineConfigBuilder {
             shader: Box::new(self),

@@ -64,7 +64,6 @@ impl Game for SpriteBatch {
         let texture = renderer.create_texture(image_file_name, &image, TextureFilter::Nearest)?;
 
         let resources = Resources {
-            vertex_count: sprites.len() as u32 * 6,
             sprites: &storage_buffer,
             params_buffer: &uniform_buffer,
             texture: &texture,

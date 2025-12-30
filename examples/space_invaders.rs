@@ -103,7 +103,6 @@ impl Game for SpaceInvaders {
         let sprite_sheet_texture = load_texture(renderer, "sprite_sheet.png")?;
 
         let resources = Resources {
-            vertex_count: sprites.len() as u32 * 6,
             sprites: &sprites_buffer,
             sprite_sheet: &sprite_sheet_texture,
             params_buffer: &params_buffer,

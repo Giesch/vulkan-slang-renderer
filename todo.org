@@ -8,9 +8,9 @@
       can't have a 'not' in a rust where clause, though,
       so can't specialize on 'not never'
   - [-] then expose two different draw call methods on FrameRenderer
-    - [-] make basic vertex count call explicit
+    - [X] make basic vertex count call explicit
       - [X] pass the vertex count directly
-      - [ ] remove the vertex count from generated resources
+      - [X] remove the vertex count from generated resources
     - [ ] make draw indexed call explicit
       - [ ] pass a handle for the index buffer count?
   - [ ] get rid of the config enum(s)

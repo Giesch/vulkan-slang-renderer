@@ -529,7 +529,7 @@ impl Renderer {
                 VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs)
             }
 
-            VertexConfig::VertexCount(_count) => VertexPipelineConfig::VertexCount,
+            VertexConfig::VertexCount => VertexPipelineConfig::VertexCount,
         };
 
         let layout_bindings = config.shader.layout_bindings();
