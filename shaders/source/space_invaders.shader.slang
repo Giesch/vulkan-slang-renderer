@@ -14,7 +14,8 @@ struct SpaceInvadersParams {
 
 struct Sprite {
     float2 scale;
-    float2 padding;
+    uint flags;
+    float padding;
 
     float3 position;
     float rotation;

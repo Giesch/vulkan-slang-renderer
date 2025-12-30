@@ -16,8 +16,12 @@
         for now at least, it's not writable
   - [-] get rid of the config enum(s)
     both VertexConfig and VertexPipelineConfig if possible
-  - [ ] double check if the never impl for VertexDescription is still necessary
+    still using the indexed side of this instead of passing it for now; the marker type is on the pipeline anyway
+  - [X] double check if the never impl for VertexDescription is still necessary
+    ERROR vulkan_slang_renderer::renderer::debug > [Validation] vkDestroyPipeline(): can't be called on VkPipeline 0x320000000032 that is currently in use by VkCommandBuffer 0x646a8f2369a0.
+    The Vulkan spec states: All submitted commands that refer to pipeline must have completed execution (https://vulkan.lunarg.com/doc/view/1.4.328.0/linux/antora/spec/latest/chapters/pipelines.html#VUID-vkDestroyPipeline-pipeline-00765)
   - [-] for basic draw, maybe pass triangle count instead of vertex count?
+    nah
 
 - [-] Space Invaders example
   - [X] parse aseprite json
@@ -25,9 +29,15 @@
   - [X] collisions
     - [X] lose if enemy reaches the bottom
     - [X] lose if enemy touches the player
-  - [ ] split off a CPU Sprite type
+  - [-] split off a CPU Sprite type
     - use the explicit draw call to avoid drawing the game over sprite
       ie, stop drawing drawing 'game over' offscreen
+    - this is messier than just using the padding space for bitflags
+  - [X] sort ui sprites to the front
+  - [X] sort invisible sprites to the back
+  - [X] change the draw call to not include invisible sprites
+    and get rid of the offscreen positioning for game over text sprite
+
   - [ ] sort sprites by 'object' position instead of 'sprite' position
     - this will matter for small sprites like the projectiles
     - could add a 'draw order' field to the gpu sprite itself
@@ -147,6 +157,9 @@
     - recognize when an equivalent struct is generated multiple times
       move all shared rust structs to one shared rust module
   - [ ] handle y-axis inversion and column-major transpose in the shared type
+
+- [ ] allow non-primitive cpu types in codegen
+  ie, use a provided bitflags wrapper type instead of uint/u32 in generated code
 
 - [ ] post a request for SDL_gpu to support later vulkan versions
  do I plan on using that, or continuing with vulkan?

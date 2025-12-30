@@ -33,7 +33,8 @@ impl GPUWrite for SpaceInvadersParams {}
 #[repr(C)]
 pub struct Sprite {
     pub scale: glam::Vec2,
-    pub padding: glam::Vec2,
+    pub flags: u32,
+    pub padding: f32,
     pub position: glam::Vec3,
     pub rotation: f32,
     pub tex_u: f32,

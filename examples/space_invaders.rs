@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -61,6 +62,11 @@ impl Game for SpaceInvaders {
         let game_over_frames = get_animation_frames(&sprite_atlas, "game_over");
         let game_over_frame = &game_over_frames[0].frame;
         let game_over_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, game_over_frame);
+        {
+            let game_over_sprite = &mut sprites[game_over_sprite];
+            game_over_sprite.flags |= SPRITE_FLAG_UI;
+            game_over_sprite.flags &= !SPRITE_FLAG_VISIBLE;
+        }
 
         let player_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, player_offsets);
         let enemy_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, enemy_offsets);
@@ -225,12 +231,10 @@ impl Game for SpaceInvaders {
 
         if self.game_over {
             let game_over_sprite = &mut self.sprites[self.game_over_sprite];
+            game_over_sprite.flags |= SPRITE_FLAG_VISIBLE;
             game_over_sprite.scale = Vec2::new(400.0, 64.0);
             game_over_sprite.position.x = (width - game_over_sprite.scale.x) / 2.0;
             game_over_sprite.position.y = 400.0;
-        } else {
-            self.sprites[self.game_over_sprite].position.x = 1000.0;
-            self.sprites[self.game_over_sprite].position.y = 1000.0;
         }
 
         // make projection matrix
@@ -241,15 +245,35 @@ impl Game for SpaceInvaders {
         let params = SpaceInvadersParams { projection_matrix };
 
         // draw
-        renderer.draw_vertex_count(&mut self.pipeline, self.sprites.len() as u32 * 6, |gpu| {
+        let visible_sprites = self
+            .sprites
+            .iter()
+            .filter(|sprite| flag_enabled(sprite, SPRITE_FLAG_VISIBLE))
+            .count();
+        let vertex_count = visible_sprites as u32 * 6;
+        renderer.draw_vertex_count(&mut self.pipeline, vertex_count, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
             gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
-
-            gpu.sort_storage_by(&mut self.sprites_buffer, |a, b| {
-                b.position.y.total_cmp(&a.position.y)
-            });
+            gpu.sort_storage_by(&mut self.sprites_buffer, sprite_draw_order);
         })
     }
+}
+
+fn sprite_draw_order(a: &Sprite, b: &Sprite) -> Ordering {
+    let a_visible: bool = flag_enabled(a, SPRITE_FLAG_VISIBLE);
+    let a_ui: bool = flag_enabled(a, SPRITE_FLAG_UI);
+    let a_y = a.position.y;
+
+    let b_visible: bool = flag_enabled(b, SPRITE_FLAG_VISIBLE);
+    let b_ui: bool = flag_enabled(b, SPRITE_FLAG_UI);
+    let b_y = b.position.y;
+
+    // invisible last so we can exclude them completely from the draw call
+    let invisible_last = a_visible.cmp(&b_visible).reverse();
+    let ui_on_top = a_ui.cmp(&b_ui);
+    let y_descending = a_y.total_cmp(&b_y).reverse();
+
+    invisible_last.then(ui_on_top).then(y_descending)
 }
 
 struct Player {
@@ -360,7 +384,8 @@ fn init_sprite(
 
     let sprite = Sprite {
         scale: Vec2::new(frame.w as f32 * SPRITE_SCALE, frame.h as f32 * SPRITE_SCALE),
-        padding: Vec2::ZERO,
+        flags: SPRITE_FLAG_VISIBLE,
+        padding: 0.0,
 
         position: Vec3::ZERO,
         rotation: 0.0,
@@ -377,6 +402,13 @@ fn init_sprite(
     sprites.push(sprite);
 
     sprite_id
+}
+
+const SPRITE_FLAG_UI: u32 = 1 << 0;
+const SPRITE_FLAG_VISIBLE: u32 = 1 << 1;
+
+fn flag_enabled(sprite: &Sprite, flag: u32) -> bool {
+    (sprite.flags & flag) == flag
 }
 
 fn load_texture(renderer: &mut Renderer, file_name: &str) -> anyhow::Result<TextureHandle> {
@@ -448,7 +480,7 @@ fn get_animation_frames(sprite_atlas: &SpriteAtlas, name: &str) -> Vec<SpriteFra
         .frames
         .iter()
         .filter(|f| match f.filename.rsplit_once(" ") {
-            Some((title, _)) => title == name,
+            Some((title, _frame_index)) => title == name,
             None => f.filename == name,
         })
         .cloned()
@@ -456,10 +488,16 @@ fn get_animation_frames(sprite_atlas: &SpriteAtlas, name: &str) -> Vec<SpriteFra
 }
 
 struct Animation {
+    /// the index of the current frame in the animation
     current_frame: usize,
+    /// the remaining millis of the current frame
     frame_millis: usize,
+    /// the time within the full animation;
+    /// always less than total_duration
     timer: Duration,
+    /// the sum total duration of all animation frames
     total_duration: Duration,
+    /// the individual durations of each frame, in milliseconds
     frame_durations: Vec<u64>,
 }
 
@@ -481,21 +519,21 @@ impl Animation {
         self.timer += elapsed;
         self.timer = mod_duration(self.timer, self.total_duration);
 
+        let mut next_current_frame = self.current_frame;
         self.frame_millis += elapsed.as_millis() as usize;
-        let mut current_frame = self.current_frame;
         loop {
-            let current_frame_duration = self.frame_durations[current_frame] as usize;
+            let current_frame_duration = self.frame_durations[next_current_frame] as usize;
 
             if self.frame_millis >= current_frame_duration {
                 self.frame_millis %= current_frame_duration;
-                current_frame += 1;
-                current_frame %= self.frame_durations.len();
+                next_current_frame += 1;
+                next_current_frame %= self.frame_durations.len();
             } else {
                 break;
             }
         }
 
-        self.current_frame = current_frame;
+        self.current_frame = next_current_frame;
     }
 
     fn frame<'f>(&self, frames: &'f [SpriteFrame]) -> &'f SpriteFrame {
