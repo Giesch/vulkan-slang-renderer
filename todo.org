@@ -11,12 +11,13 @@
     - [X] make basic vertex count call explicit
       - [X] pass the vertex count directly
       - [X] remove the vertex count from generated resources
-    - [ ] make draw indexed call explicit
-      - [ ] pass a handle for the index buffer count?
-  - [ ] get rid of the config enum(s)
+    - [-] make draw indexed call explicit
+      - [-] pass a handle for the index buffer count?
+        for now at least, it's not writable
+  - [-] get rid of the config enum(s)
     both VertexConfig and VertexPipelineConfig if possible
   - [ ] double check if the never impl for VertexDescription is still necessary
-  - [ ] for basic draw, maybe pass triangle count instead of vertex count?
+  - [-] for basic draw, maybe pass triangle count instead of vertex count?
 
 - [-] Space Invaders example
   - [X] parse aseprite json
@@ -57,13 +58,16 @@
   - [ ] add a custom final example
 
 * Next
-- [X] fix sprite drawing on windows - only drawing one sprite per frame
-  - only the first sprite is always drawn (including when sprites are re-sorted)
-  - removing depth entirely does not affect the behavior at all
-  - it's reading all 0.0 for the x,y of the second sprite
-  - The fix is to include the real buffer (max) length in the storage buffer descriptor set
-    D3D requires a real buffer size in a way the other APIs don't:
-    https://github.com/gfx-rs/wgpu/issues/914
+- [ ] Fix Reflection Bugs
+  - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
+  - [ ] binding multiple textures results in only being able to sample the first one
+    is this a reflection problem, or a renderer descriptor set problem?
+
+- [ ] Blinn/Phong shading example
+  - [ ] load/generate a sphere model with normals
+  - [ ] render spheres with different 70s shading methods
+
+- [ ] basic compute shader example
 
 - [ ] add shadertoy/slang-rhi ocean example
   https://github.com/shader-slang/slang-rhi/blob/main/examples/shader-toy/ocean.slang
@@ -75,21 +79,18 @@
 
 - [ ] set up dioxus' hot patching
 
-- [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
-- [ ] binding multiple textures results in only being able to sample the first one
-  is this a reflection problem, or a renderer descriptor set problem?
-
 - [ ] remove per-frame duplication of non-image resources
   https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
 
-- [ ] double check if the drop queue for hot reload is necessary
+- [ ] double check if the old_pipelines drop queue for hot reload is necessary
   ie, is it actually just fine to to just drop the old version of the shader
     and its resources immediately (since they're really just vk handles)
 
 - [ ] fix linux perf bug in sprite batch example
   sprite batch example matches the SDL_gpu framerate on windows,
   but has a slower framerate on linux for some reason
-
+  - increasing MAX_FRAMES_IN_FLIGHT makes it faster at first,
+    but then it hits a wall and slows down
 
 - [ ] simplify basic triangle example
   use an orthographic projection instead of mvp?

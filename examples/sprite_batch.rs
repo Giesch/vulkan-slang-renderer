@@ -28,8 +28,8 @@ fn main() -> Result<(), anyhow::Error> {
 
 pub struct SpriteBatch {
     pipeline: PipelineHandle<DrawVertexCount>,
-    uniform_buffer: UniformBufferHandle<SpriteBatchParams>,
-    storage_buffer: StorageBufferHandle<Sprite>,
+    params_buffer: UniformBufferHandle<SpriteBatchParams>,
+    sprites_buffer: StorageBufferHandle<Sprite>,
     sprites: Vec<Sprite>,
 }
 
@@ -56,16 +56,16 @@ impl Game for SpriteBatch {
 
         unsafe { SDL_srand(0) };
 
-        let uniform_buffer = renderer.create_uniform_buffer::<SpriteBatchParams>()?;
-        let storage_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
+        let params_buffer = renderer.create_uniform_buffer::<SpriteBatchParams>()?;
+        let sprites_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
 
         let image_file_name = "ravioli_atlas.bmp";
         let image = load_image(image_file_name)?;
         let texture = renderer.create_texture(image_file_name, &image, TextureFilter::Nearest)?;
 
         let resources = Resources {
-            sprites: &storage_buffer,
-            params_buffer: &uniform_buffer,
+            sprites: &sprites_buffer,
+            params_buffer: &params_buffer,
             texture: &texture,
         };
 
@@ -76,8 +76,8 @@ impl Game for SpriteBatch {
 
         Ok(Self {
             pipeline,
-            uniform_buffer,
-            storage_buffer,
+            params_buffer,
+            sprites_buffer,
             sprites,
         })
     }
@@ -94,11 +94,13 @@ impl Game for SpriteBatch {
         let (width, height) = Self::initial_window_size();
         let projection_matrix =
             Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0);
-        let uniform_data = SpriteBatchParams { projection_matrix };
+        let params = SpriteBatchParams { projection_matrix };
+        // 6 = the corners in 2 triangles to make a quad
+        let vertex_count = self.sprites.len() as u32 * 6;
 
-        renderer.draw_vertex_count(&self.pipeline, self.sprites.len() as u32 * 6, |gpu| {
-            gpu.write_uniform(&mut self.uniform_buffer, uniform_data);
-            gpu.write_storage(&mut self.storage_buffer, &self.sprites);
+        renderer.draw_vertex_count(&self.pipeline, vertex_count, |gpu| {
+            gpu.write_uniform(&mut self.params_buffer, params);
+            gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
         })
     }
 }

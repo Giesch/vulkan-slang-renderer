@@ -1,7 +1,16 @@
 [toolchain]
-channel = "nightly-2025-11-22"
+channel = "nightly-2025-12-29"
 
-# specifying components explicitly in order to always include rust-analyzer
+# This specifies components explicitly in order to always include rust-analyzer.
+#
 # component availability by nightly version:
 # https://rust-lang.github.io/rustup-components-history/
-components = ["rustc", "cargo", "rustfmt", "rust-std", "rust-docs", "clippy", "rust-analyzer"]
+components = [
+    "rustc",
+    "cargo",
+    "rustfmt",
+    "rust-std",
+    "rust-docs",
+    "clippy",
+    "rust-analyzer"
+]
