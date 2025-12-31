@@ -38,14 +38,19 @@
   - [X] change the draw call to not include invisible sprites
     and get rid of the offscreen positioning for game over text sprite
 
-  - [ ] sort sprites by 'object' position instead of 'sprite' position
-    - this will matter for small sprites like the projectiles
-    - could add a 'draw order' field to the gpu sprite itself
-  - [ ] bullet
-    - [ ] add the sprite
+  - [-] bullet
+    - [X] add the sprite & input
+    - [ ] despawn bullets that hit the enemy
     - [ ] track enemy damage
     - [ ] remove dead enemy
     - [ ] blinking death animation
+
+  - [ ] use inset bounding boxes for collision
+    maybe use aseprite layers for this? or hardcode it
+
+  - [ ] sort sprites by 'object' position instead of 'sprite' position
+    - this will matter for small sprites like the projectiles
+
   - [ ] full game loop
     - [ ] title screen/intro reel
     - [ ] game over screen

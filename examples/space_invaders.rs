@@ -1,7 +1,6 @@
 use std::cmp::Ordering;
 use std::time::Duration;
 
-use anyhow::anyhow;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use vulkan_slang_renderer::game::*;
@@ -32,6 +31,7 @@ struct SpaceInvaders {
     enemy_animation_frames: Vec<SpriteFrame>,
     game_over: bool,
     game_over_sprite: usize,
+    bullets: Vec<Bullet>,
 }
 
 impl Game for SpaceInvaders {
@@ -48,14 +48,13 @@ impl Game for SpaceInvaders {
         Self: Sized,
     {
         let sprite_atlas = load_sprite_atlas()?;
-        let player_offsets =
-            first_frame_matching(&sprite_atlas, |f| f.filename.starts_with("ship"))?;
-        let enemy_offsets = first_frame_matching(&sprite_atlas, |f| f.filename.starts_with("bug"))?;
 
         let player_animation_frames = get_animation_frames(&sprite_atlas, "ship");
         assert!(!player_animation_frames.is_empty());
         let enemy_animation_frames = get_animation_frames(&sprite_atlas, "bug");
         assert!(!enemy_animation_frames.is_empty());
+        let bullet_animation_frames = get_animation_frames(&sprite_atlas, "bullet");
+        assert!(!bullet_animation_frames.is_empty());
 
         let mut sprites = vec![];
 
@@ -68,9 +67,16 @@ impl Game for SpaceInvaders {
             game_over_sprite.flags &= !SPRITE_FLAG_VISIBLE;
         }
 
-        let player_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, player_offsets);
-        let enemy_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, enemy_offsets);
-        let sprite_atlas_size = sprite_atlas.meta.size;
+        let player_sprite = init_sprite(
+            &mut sprites,
+            &sprite_atlas.meta.size,
+            &player_animation_frames[0].frame,
+        );
+        let enemy_sprite = init_sprite(
+            &mut sprites,
+            &sprite_atlas.meta.size,
+            &enemy_animation_frames[0].frame,
+        );
 
         let player_frame = &player_animation_frames[0].frame;
         let player = Player {
@@ -103,6 +109,18 @@ impl Game for SpaceInvaders {
             },
         ];
 
+        let bullet_frame = &bullet_animation_frames[0].frame;
+        let bullets = {
+            let mut bullets = vec![];
+
+            for _ in 0..Bullet::MAX_BULLETS {
+                let bullet = Bullet::new(&mut sprites, &sprite_atlas.meta.size, bullet_frame);
+                bullets.push(bullet);
+            }
+
+            bullets
+        };
+
         let params_buffer = renderer.create_uniform_buffer::<SpaceInvadersParams>()?;
         let sprites_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
 
@@ -119,6 +137,8 @@ impl Game for SpaceInvaders {
         pipeline_config.disable_depth_test = true;
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let sprite_atlas_size = sprite_atlas.meta.size;
+
         Ok(Self {
             frame_counter: 0,
             pipeline,
@@ -132,25 +152,26 @@ impl Game for SpaceInvaders {
             enemy_animation_frames,
             game_over: false,
             game_over_sprite,
+            bullets,
         })
     }
 
     fn input(&mut self, input: Input) {
         match input {
-            Input::KeyUp(key) => match key {
-                Key::W => self.player.intent.up = false,
-                Key::A => self.player.intent.left = false,
-                Key::S => self.player.intent.down = false,
-                Key::D => self.player.intent.right = false,
-                Key::Space => {}
-            },
-
             Input::KeyDown(key) => match key {
                 Key::W => self.player.intent.up = true,
                 Key::A => self.player.intent.left = true,
                 Key::S => self.player.intent.down = true,
                 Key::D => self.player.intent.right = true,
-                Key::Space => {}
+                Key::Space => self.player.intent.fire = true,
+            },
+
+            Input::KeyUp(key) => match key {
+                Key::W => self.player.intent.up = false,
+                Key::A => self.player.intent.left = false,
+                Key::S => self.player.intent.down = false,
+                Key::D => self.player.intent.right = false,
+                Key::Space => self.player.intent.fire = false,
             },
         }
     }
@@ -173,13 +194,42 @@ impl Game for SpaceInvaders {
         self.player.bounding_box.x += player_movement.x;
         self.player.bounding_box.y += player_movement.y;
 
+        // player fire
+        if self.player.intent.fire {
+            if let Some(free_bullet_id) = self.bullets.iter().position(|b| !b.active) {
+                let bullet = &mut self.bullets[free_bullet_id];
+                bullet.active = true;
+                bullet.bounding_box.x = self.player.bounding_box.x;
+                bullet.bounding_box.y = self.player.bounding_box.y;
+
+                let bullet_sprite = &mut self.sprites[bullet.sprite_id];
+                bullet_sprite.flags |= SPRITE_FLAG_VISIBLE;
+            };
+        }
+
+        // bullet movement
+        for bullet in &mut self.bullets {
+            if !bullet.active {
+                continue;
+            }
+
+            bullet.bounding_box.y += Bullet::SPEED;
+
+            let probably_offscreen = bullet.bounding_box.y > 1000.0;
+            if probably_offscreen {
+                bullet.active = false;
+                let bullet_sprite = &mut self.sprites[bullet.sprite_id];
+                bullet_sprite.flags &= !SPRITE_FLAG_VISIBLE;
+            }
+        }
+
         // enemy movement
         for enemy in &mut self.enemies {
             enemy.movement_timer += 1;
 
             let travel_time = match enemy.intent {
-                EnemyIntent::Down => Enemy::TRAVEL_TIME_DOWN,
-                _ => Enemy::TRAVEL_TIME,
+                EnemyIntent::Down => Enemy::TRAVEL_DOWN_TICKS,
+                _ => Enemy::TRAVEL_TICKS,
             };
 
             if enemy.movement_timer >= travel_time {
@@ -198,6 +248,7 @@ impl Game for SpaceInvaders {
             enemy.bounding_box.y += enemy_movement.y;
         }
 
+        // game over check
         for enemy in &self.enemies {
             if enemy.bounding_box.y <= 0.0 {
                 self.game_over = true;
@@ -212,7 +263,7 @@ impl Game for SpaceInvaders {
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let (width, height) = renderer.window_size();
 
-        // update sprites
+        // player sprite
         let player_sprite = &mut self.sprites[self.player.sprite_id];
         player_sprite.position.x = self.player.bounding_box.x;
         player_sprite.position.y = self.player.bounding_box.y;
@@ -220,6 +271,14 @@ impl Game for SpaceInvaders {
         let player_frame = self.player.animation.frame(&self.player_animation_frames);
         set_sprite_frame(player_sprite, player_frame, &self.sprite_atlas_size);
 
+        // bullet sprites
+        for bullet in &self.bullets {
+            let bullet_sprite = &mut self.sprites[bullet.sprite_id];
+            bullet_sprite.position.x = bullet.bounding_box.x;
+            bullet_sprite.position.y = bullet.bounding_box.y;
+        }
+
+        // enemy sprites
         for enemy in &self.enemies {
             let enemy_sprite = &mut self.sprites[enemy.sprite_id];
             enemy_sprite.position.x = enemy.bounding_box.x;
@@ -229,6 +288,7 @@ impl Game for SpaceInvaders {
             set_sprite_frame(enemy_sprite, enemy_frame, &self.sprite_atlas_size);
         }
 
+        // game over sprite
         if self.game_over {
             let game_over_sprite = &mut self.sprites[self.game_over_sprite];
             game_over_sprite.flags |= SPRITE_FLAG_VISIBLE;
@@ -251,8 +311,10 @@ impl Game for SpaceInvaders {
             .filter(|sprite| flag_enabled(sprite, SPRITE_FLAG_VISIBLE))
             .count();
         let vertex_count = visible_sprites as u32 * 6;
+
         renderer.draw_vertex_count(&mut self.pipeline, vertex_count, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
+
             gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
             gpu.sort_storage_by(&mut self.sprites_buffer, sprite_draw_order);
         })
@@ -290,6 +352,7 @@ struct PlayerIntent {
     down: bool,
     left: bool,
     right: bool,
+    fire: bool,
 }
 
 impl PlayerIntent {
@@ -321,8 +384,8 @@ struct Enemy {
 }
 
 impl Enemy {
-    const TRAVEL_TIME: usize = 100;
-    const TRAVEL_TIME_DOWN: usize = Self::TRAVEL_TIME * 2;
+    const TRAVEL_TICKS: usize = 100;
+    const TRAVEL_DOWN_TICKS: usize = Self::TRAVEL_TICKS * 2;
 }
 
 enum EnemyIntent {
@@ -339,6 +402,39 @@ impl EnemyIntent {
             EnemyIntent::Down => -Vec2::Y,
             EnemyIntent::Left => -Vec2::X,
             EnemyIntent::Right => Vec2::X,
+        }
+    }
+}
+
+struct Bullet {
+    sprite_id: usize,
+    active: bool,
+    bounding_box: BoundingBox,
+}
+
+impl Bullet {
+    const SPEED: f32 = 15.0;
+    const MAX_BULLETS: usize = 100;
+
+    fn new(
+        sprites: &mut Vec<Sprite>,
+        atlas_size: &SpriteAtlasSize,
+        offsets: &SpriteAtlasFrameOffsets,
+    ) -> Self {
+        let sprite_id = init_sprite(sprites, atlas_size, offsets);
+
+        let bullet_sprite = &mut sprites[sprite_id];
+        bullet_sprite.flags &= !SPRITE_FLAG_VISIBLE;
+
+        Bullet {
+            sprite_id,
+            active: false,
+            bounding_box: BoundingBox {
+                x: 0.0,
+                y: 0.0,
+                w: offsets.w as f32 * SPRITE_SCALE,
+                h: offsets.h as f32 * SPRITE_SCALE,
+            },
         }
     }
 }
@@ -429,18 +525,6 @@ fn load_sprite_atlas() -> anyhow::Result<SpriteAtlas> {
     let sprite_atlas: SpriteAtlas = serde_json::from_str(&sprite_atlas_json)?;
 
     Ok(sprite_atlas)
-}
-
-fn first_frame_matching(
-    sprite_atlas: &SpriteAtlas,
-    condition: impl Fn(&SpriteFrame) -> bool,
-) -> anyhow::Result<&SpriteAtlasFrameOffsets> {
-    sprite_atlas
-        .frames
-        .iter()
-        .find(|f| condition(f))
-        .map(|f| &f.frame)
-        .ok_or_else(|| anyhow!("no matching sprite frame found"))
 }
 
 #[derive(Debug, serde::Deserialize)]
