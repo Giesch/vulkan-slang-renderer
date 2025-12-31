@@ -1,43 +1,7 @@
 #+title: Todo
 
 * Now
-- [-] make the draw call types explicit
-  - [X] make draw call type a generic on pipeline handle
-    and PipelineConfig and Resources?
-    does the !/'never' Vertex generic already cover this?
-      can't have a 'not' in a rust where clause, though,
-      so can't specialize on 'not never'
-  - [-] then expose two different draw call methods on FrameRenderer
-    - [X] make basic vertex count call explicit
-      - [X] pass the vertex count directly
-      - [X] remove the vertex count from generated resources
-    - [-] make draw indexed call explicit
-      - [-] pass a handle for the index buffer count?
-        for now at least, it's not writable
-  - [-] get rid of the config enum(s)
-    both VertexConfig and VertexPipelineConfig if possible
-    still using the indexed side of this instead of passing it for now; the marker type is on the pipeline anyway
-  - [X] double check if the never impl for VertexDescription is still necessary
-    ERROR vulkan_slang_renderer::renderer::debug > [Validation] vkDestroyPipeline(): can't be called on VkPipeline 0x320000000032 that is currently in use by VkCommandBuffer 0x646a8f2369a0.
-    The Vulkan spec states: All submitted commands that refer to pipeline must have completed execution (https://vulkan.lunarg.com/doc/view/1.4.328.0/linux/antora/spec/latest/chapters/pipelines.html#VUID-vkDestroyPipeline-pipeline-00765)
-  - [-] for basic draw, maybe pass triangle count instead of vertex count?
-    nah
-
 - [-] Space Invaders example
-  - [X] parse aseprite json
-  - [X] animations
-  - [X] collisions
-    - [X] lose if enemy reaches the bottom
-    - [X] lose if enemy touches the player
-  - [-] split off a CPU Sprite type
-    - use the explicit draw call to avoid drawing the game over sprite
-      ie, stop drawing drawing 'game over' offscreen
-    - this is messier than just using the padding space for bitflags
-  - [X] sort ui sprites to the front
-  - [X] sort invisible sprites to the back
-  - [X] change the draw call to not include invisible sprites
-    and get rid of the offscreen positioning for game over text sprite
-
   - [-] bullet
     - [X] add the sprite & input
     - [ ] despawn bullets that hit the enemy
@@ -75,10 +39,11 @@
 * Next
 - [ ] Fix Reflection Bugs
   - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
+    is this still a problem after the storage buffer size fix?
   - [ ] binding multiple textures results in only being able to sample the first one
     is this a reflection problem, or a renderer descriptor set problem?
 
-- [ ] Blinn/Phong shading example
+- [ ] Phong shading example
   - [ ] load/generate a sphere model with normals
   - [ ] render spheres with different 70s shading methods
 
@@ -87,10 +52,14 @@
 - [ ] add shadertoy/slang-rhi ocean example
   https://github.com/shader-slang/slang-rhi/blob/main/examples/shader-toy/ocean.slang
   https://github.com/shader-slang/slang-rhi/blob/main/examples/shader-toy/shader-toy.slang
-  - this may require compute shader support?
-    that's how they wrote the shadertoy include,
-    but it looks like the ocean example could just be a frag shader
+  - this may require compute shader support
+    would have to reproduce the Blitter in their example utils somehow
+    is it possible to 'just' do it in a frag shader?
   - understand the sine waves and auto-differentiation
+
+- [ ] it looks like the slang-rhi examples use a [format(COLOR_FORMAT)] annotation
+  in the blit compute shader in examples/base/utils.h
+  where is that defined and how is it used?
 
 - [ ] set up dioxus' hot patching
 
