@@ -29,8 +29,9 @@ struct SpaceInvaders {
     sprite_atlas_size: SpriteAtlasSize,
     player_animation_frames: Vec<SpriteFrame>,
     enemy_animation_frames: Vec<SpriteFrame>,
-    game_over: bool,
-    game_over_sprite: usize,
+    game_screen: GameScreen,
+    game_lost_sprite: usize,
+    you_win_sprite: usize,
     bullets: Vec<Bullet>,
 }
 
@@ -66,11 +67,19 @@ impl Game for SpaceInvaders {
 
         let game_over_frames = get_animation_frames(&sprite_atlas, "game_over");
         let game_over_frame = &game_over_frames[0].frame;
-        let game_over_sprite = Sprite::init(&mut sprites, &sprite_atlas.meta.size, game_over_frame);
+        let game_lost_sprite = Sprite::init(&mut sprites, &sprite_atlas.meta.size, game_over_frame);
         {
-            let game_over_sprite = &mut sprites[game_over_sprite];
+            let game_over_sprite = &mut sprites[game_lost_sprite];
             game_over_sprite.flags |= SPRITE_FLAG_UI;
             game_over_sprite.flags &= !SPRITE_FLAG_VISIBLE;
+        }
+        let you_win_frames = get_animation_frames(&sprite_atlas, "you_win");
+        let you_win_frame = &you_win_frames[0].frame;
+        let you_win_sprite = Sprite::init(&mut sprites, &sprite_atlas.meta.size, you_win_frame);
+        {
+            let you_win_sprite = &mut sprites[you_win_sprite];
+            you_win_sprite.flags |= SPRITE_FLAG_UI;
+            you_win_sprite.flags &= !SPRITE_FLAG_VISIBLE;
         }
 
         let player_sprite = Sprite::init(
@@ -158,8 +167,9 @@ impl Game for SpaceInvaders {
             sprite_atlas_size,
             player_animation_frames,
             enemy_animation_frames,
-            game_over: false,
-            game_over_sprite,
+            game_screen: Default::default(),
+            game_lost_sprite,
+            you_win_sprite,
             bullets,
         })
     }
@@ -185,7 +195,7 @@ impl Game for SpaceInvaders {
     }
 
     fn update(&mut self) {
-        if self.game_over {
+        if self.game_screen.game_over() {
             return;
         }
 
@@ -267,7 +277,7 @@ impl Game for SpaceInvaders {
 
         // despawn dead enemies
         for enemy in &mut self.enemies {
-            if enemy.health > 0 {
+            if enemy.is_alive() {
                 continue;
             }
 
@@ -276,13 +286,22 @@ impl Game for SpaceInvaders {
 
         // game over check
         for enemy in &self.enemies {
+            if !enemy.is_alive() {
+                continue;
+            }
+
             if enemy.bounding_box.y <= 0.0 {
-                self.game_over = true;
+                self.game_screen = GameScreen::Lost;
             }
 
             if enemy.bounding_box.overlaps(&self.player.bounding_box) {
-                self.game_over = true;
+                self.game_screen = GameScreen::Lost;
             }
+        }
+
+        let all_enemies_defeated = self.enemies.iter().filter(|e| e.is_alive()).count() == 0;
+        if all_enemies_defeated {
+            self.game_screen = GameScreen::Won;
         }
     }
 
@@ -311,9 +330,14 @@ impl Game for SpaceInvaders {
             enemy_sprite.set_frame(enemy_frame, &self.sprite_atlas_size);
         }
 
-        // game over sprite
-        if self.game_over {
-            let game_over_sprite = &mut self.sprites[self.game_over_sprite];
+        // game over screens
+        let game_over_sprite_id = match &self.game_screen {
+            GameScreen::Playing => None,
+            GameScreen::Lost => Some(self.game_lost_sprite),
+            GameScreen::Won => Some(self.you_win_sprite),
+        };
+        if let Some(game_over_sprite_id) = game_over_sprite_id {
+            let game_over_sprite = &mut self.sprites[game_over_sprite_id];
             game_over_sprite.flags |= SPRITE_FLAG_VISIBLE;
             game_over_sprite.scale = Vec2::new(400.0, 64.0);
             game_over_sprite.position.x = (width - game_over_sprite.scale.x) / 2.0;
@@ -341,6 +365,24 @@ impl Game for SpaceInvaders {
             gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
             gpu.sort_storage_by(&mut self.sprites_buffer, sprite_draw_order);
         })
+    }
+}
+
+#[derive(Debug, Default)]
+enum GameScreen {
+    #[default]
+    Playing,
+    Lost,
+    Won,
+}
+
+impl GameScreen {
+    fn game_over(&self) -> bool {
+        match self {
+            GameScreen::Playing => false,
+            GameScreen::Lost => true,
+            GameScreen::Won => true,
+        }
     }
 }
 

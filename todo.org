@@ -1,15 +1,22 @@
 #+title: Todo
 
 * Now
-- [-] Space Invaders example
+- [X] Space Invaders example
   - [X] change enemy pathing to use a more dynamic 'script'
-  - [ ] add a win screen
+  - [X] add a win screen
 
 - [ ] do the Y-axis flip and transpose in mvp.slang
   - [ ] make the Y-axis flip just part of project method?
     is there a way to only do it once on load? constructor funny business?
     implement it on CPU side? need a way to generate a shared module
   - [ ] use a specialization constant for COLUMN_MAJOR
+
+* Next
+- [ ] Fix Reflection Bugs
+  - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
+    is this still a problem after the storage buffer size fix?
+  - [ ] binding multiple textures results in only being able to sample the first one
+    is this a reflection problem, or a renderer descriptor set problem?
 
 - [-] SDF 2D example
   [[https://danielchasehooper.com/posts/code-animated-rick]]
@@ -18,13 +25,6 @@
   - [ ] complete the examples
     - fill in all the necessary primitives
   - [ ] add a custom final example
-
-* Next
-- [ ] Fix Reflection Bugs
-  - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
-    is this still a problem after the storage buffer size fix?
-  - [ ] binding multiple textures results in only being able to sample the first one
-    is this a reflection problem, or a renderer descriptor set problem?
 
 - [ ] Phong shading example
   - [ ] load/generate a sphere model with normals
