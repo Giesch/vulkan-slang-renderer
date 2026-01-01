@@ -198,12 +198,8 @@ impl Game for SpaceInvaders {
         if self.player.intent.fire {
             if let Some(free_bullet_id) = self.bullets.iter().position(|b| !b.active) {
                 let bullet = &mut self.bullets[free_bullet_id];
-                bullet.active = true;
-                bullet.bounding_box.x = self.player.bounding_box.x;
-                bullet.bounding_box.y = self.player.bounding_box.y;
-
-                let bullet_sprite = &mut self.sprites[bullet.sprite_id];
-                bullet_sprite.flags |= SPRITE_FLAG_VISIBLE;
+                let position = Vec2::new(self.player.bounding_box.x, self.player.bounding_box.y);
+                bullet.spawn(&mut self.sprites, position);
             };
         }
 
@@ -213,7 +209,7 @@ impl Game for SpaceInvaders {
                 continue;
             }
 
-            bullet.bounding_box.y += Bullet::SPEED;
+            bullet.step_forward();
 
             let probably_offscreen = bullet.bounding_box.y > 1000.0;
             if probably_offscreen {
@@ -251,11 +247,13 @@ impl Game for SpaceInvaders {
         // bullet-enemy collisions
         for bullet in &mut self.bullets {
             for enemy in &self.enemies {
-                if !bullet.bounding_box.overlaps(&enemy.bounding_box) {
+                let bullet_hit_box = bullet.hit_box();
+
+                if !bullet_hit_box.overlaps(&enemy.bounding_box) {
                     continue;
                 }
 
-                let bullet_top = bullet.bounding_box.y + bullet.bounding_box.h;
+                let bullet_top = bullet_hit_box.y + bullet_hit_box.h;
                 let enemy_mid = enemy.bounding_box.y + enemy.bounding_box.h / 2.0;
 
                 if bullet_top >= enemy_mid {
@@ -432,6 +430,9 @@ impl Bullet {
     const SPEED: f32 = 15.0;
     const MAX_BULLETS: usize = 100;
 
+    const HIT_BOX_OFFSET: f32 = 15.0 * SPRITE_SCALE;
+    const HIT_BOX_SIDE: f32 = 2.0 * SPRITE_SCALE;
+
     fn new(
         sprites: &mut Vec<Sprite>,
         atlas_size: &SpriteAtlasSize,
@@ -442,16 +443,41 @@ impl Bullet {
         let bullet_sprite = &mut sprites[sprite_id];
         bullet_sprite.flags &= !SPRITE_FLAG_VISIBLE;
 
+        let bounding_box = BoundingBox {
+            x: 0.0,
+            y: 0.0,
+            w: offsets.w as f32 * SPRITE_SCALE,
+            h: offsets.h as f32 * SPRITE_SCALE,
+        };
+
         Bullet {
-            sprite_id,
             active: false,
-            bounding_box: BoundingBox {
-                x: 0.0,
-                y: 0.0,
-                w: offsets.w as f32 * SPRITE_SCALE,
-                h: offsets.h as f32 * SPRITE_SCALE,
-            },
+            sprite_id,
+            bounding_box,
         }
+    }
+
+    fn hit_box(&self) -> BoundingBox {
+        BoundingBox {
+            x: self.bounding_box.x + Self::HIT_BOX_OFFSET,
+            y: self.bounding_box.y + Self::HIT_BOX_OFFSET,
+            w: Self::HIT_BOX_SIDE,
+            h: Self::HIT_BOX_SIDE,
+        }
+    }
+
+    fn step_forward(&mut self) {
+        self.bounding_box.y += Bullet::SPEED;
+    }
+
+    fn spawn(&mut self, sprites: &mut [Sprite], position: Vec2) {
+        self.active = true;
+
+        self.bounding_box.x = position.x;
+        self.bounding_box.y = position.y;
+
+        let sprite = &mut sprites[self.sprite_id];
+        sprite.flags |= SPRITE_FLAG_VISIBLE;
     }
 
     fn despawn(&mut self, sprites: &mut [Sprite]) {

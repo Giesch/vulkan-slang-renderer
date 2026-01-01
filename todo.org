@@ -4,12 +4,12 @@
 - [-] Space Invaders example
   - [-] bullet
     - [X] add the sprite & input
-    - [ ] despawn bullets that hit the enemy
+    - [X] despawn bullets that hit the enemy
     - [ ] track enemy damage
     - [ ] remove dead enemy
     - [ ] blinking death animation
 
-  - [ ] use inset bounding boxes for collision
+  - [X] use inset bounding boxes for collision
     maybe use aseprite layers for this? or hardcode it
 
   - [ ] sort sprites by 'object' position instead of 'sprite' position
