@@ -1,14 +1,8 @@
 #+title: Todo
 
 * Now
-- [X] Space Invaders example
-  - [X] change enemy pathing to use a more dynamic 'script'
-  - [X] add a win screen
-
-- [ ] do the Y-axis flip and transpose in mvp.slang
-  - [ ] make the Y-axis flip just part of project method?
-    is there a way to only do it once on load? constructor funny business?
-    implement it on CPU side? need a way to generate a shared module
+- [-] move special case MVP matrix handling into the slang module
+  - [X] make the Y-axis flip just part of project method
   - [ ] use a specialization constant for COLUMN_MAJOR
 
 * Next
@@ -17,6 +11,8 @@
     is this still a problem after the storage buffer size fix?
   - [ ] binding multiple textures results in only being able to sample the first one
     is this a reflection problem, or a renderer descriptor set problem?
+
+- [ ] performance & scale on 4k monitor
 
 - [-] SDF 2D example
   [[https://danielchasehooper.com/posts/code-animated-rick]]

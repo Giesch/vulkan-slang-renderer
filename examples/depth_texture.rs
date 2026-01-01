@@ -140,14 +140,6 @@ fn make_mvp_matrices(elapsed: Duration, aspect_ratio: f32, column_major: bool) -
 
     let mut mvp = MVPMatrices { model, view, proj };
 
-    // "GLM was originally designed for OpenGL,
-    // where the Y coordinate of the clip coordinates is inverted.
-    // The easiest way to compensate for that is to flip the sign
-    // on the scaling factor of the Y axis in the projection matrix.
-    // If you don’t do this, then the image will be rendered upside down."
-    // https://docs.vulkan.org/tutorial/latest/05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.html
-    mvp.proj.y_axis.y *= -1.0;
-
     // GLM & glam use column-major matrices, but D3D12 and Slang use row-major by default
     // it's also possible to avoid the transpose by reversing the mul() calls in shaders
     // https://discord.com/channels/1303735196696445038/1395879559827816458/1396913440584634499
