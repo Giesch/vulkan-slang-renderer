@@ -60,19 +60,19 @@ impl Game for SpaceInvaders {
 
         let game_over_frames = get_animation_frames(&sprite_atlas, "game_over");
         let game_over_frame = &game_over_frames[0].frame;
-        let game_over_sprite = init_sprite(&mut sprites, &sprite_atlas.meta.size, game_over_frame);
+        let game_over_sprite = Sprite::init(&mut sprites, &sprite_atlas.meta.size, game_over_frame);
         {
             let game_over_sprite = &mut sprites[game_over_sprite];
             game_over_sprite.flags |= SPRITE_FLAG_UI;
             game_over_sprite.flags &= !SPRITE_FLAG_VISIBLE;
         }
 
-        let player_sprite = init_sprite(
+        let player_sprite = Sprite::init(
             &mut sprites,
             &sprite_atlas.meta.size,
             &player_animation_frames[0].frame,
         );
-        let enemy_sprite = init_sprite(
+        let enemy_sprite = Sprite::init(
             &mut sprites,
             &sprite_atlas.meta.size,
             &enemy_animation_frames[0].frame,
@@ -93,21 +93,18 @@ impl Game for SpaceInvaders {
         };
 
         let enemy_frame = &enemy_animation_frames[0].frame;
-        let enemies = vec![
-            //
-            Enemy {
-                sprite_id: enemy_sprite,
-                bounding_box: BoundingBox {
-                    x: 400.0,
-                    y: 700.0,
-                    w: enemy_frame.w as f32 * SPRITE_SCALE,
-                    h: enemy_frame.h as f32 * SPRITE_SCALE,
-                },
-                intent: EnemyIntent::Right,
-                movement_timer: 0,
-                animation: Animation::from_frames(&enemy_animation_frames),
+        let enemies = vec![Enemy {
+            sprite_id: enemy_sprite,
+            bounding_box: BoundingBox {
+                x: 80.0 * SPRITE_SCALE,
+                y: 140.0 * SPRITE_SCALE,
+                w: enemy_frame.w as f32 * SPRITE_SCALE,
+                h: enemy_frame.h as f32 * SPRITE_SCALE,
             },
-        ];
+            intent: EnemyIntent::Right,
+            movement_timer: 0,
+            animation: Animation::from_frames(&enemy_animation_frames),
+        }];
 
         let bullet_frame = &bullet_animation_frames[0].frame;
         let bullets = {
@@ -279,27 +276,24 @@ impl Game for SpaceInvaders {
 
         // player sprite
         let player_sprite = &mut self.sprites[self.player.sprite_id];
-        player_sprite.position.x = self.player.bounding_box.x;
-        player_sprite.position.y = self.player.bounding_box.y;
+        player_sprite.set_position(&self.player.bounding_box);
 
         let player_frame = self.player.animation.frame(&self.player_animation_frames);
-        set_sprite_frame(player_sprite, player_frame, &self.sprite_atlas_size);
+        player_sprite.set_frame(player_frame, &self.sprite_atlas_size);
 
         // bullet sprites
         for bullet in &self.bullets {
             let bullet_sprite = &mut self.sprites[bullet.sprite_id];
-            bullet_sprite.position.x = bullet.bounding_box.x;
-            bullet_sprite.position.y = bullet.bounding_box.y;
+            bullet_sprite.set_position(&bullet.bounding_box);
         }
 
         // enemy sprites
         for enemy in &self.enemies {
             let enemy_sprite = &mut self.sprites[enemy.sprite_id];
-            enemy_sprite.position.x = enemy.bounding_box.x;
-            enemy_sprite.position.y = enemy.bounding_box.y;
+            enemy_sprite.set_position(&enemy.bounding_box);
 
             let enemy_frame = enemy.animation.frame(&self.enemy_animation_frames);
-            set_sprite_frame(enemy_sprite, enemy_frame, &self.sprite_atlas_size);
+            enemy_sprite.set_frame(enemy_frame, &self.sprite_atlas_size);
         }
 
         // game over sprite
@@ -438,7 +432,7 @@ impl Bullet {
         atlas_size: &SpriteAtlasSize,
         offsets: &SpriteAtlasFrameOffsets,
     ) -> Self {
-        let sprite_id = init_sprite(sprites, atlas_size, offsets);
+        let sprite_id = Sprite::init(sprites, atlas_size, offsets);
 
         let bullet_sprite = &mut sprites[sprite_id];
         bullet_sprite.flags &= !SPRITE_FLAG_VISIBLE;
@@ -514,38 +508,6 @@ impl BoundingBox {
 
         vert_overlap && horz_overlap
     }
-}
-
-const SPRITE_SCALE: f32 = 5.0;
-
-fn init_sprite(
-    sprites: &mut Vec<Sprite>,
-    sprite_atlas_size: &SpriteAtlasSize,
-    frame: &SpriteAtlasFrameOffsets,
-) -> usize {
-    let sheet_width = sprite_atlas_size.w as f32;
-    let sheet_height = sprite_atlas_size.h as f32;
-
-    let sprite = Sprite {
-        scale: Vec2::new(frame.w as f32 * SPRITE_SCALE, frame.h as f32 * SPRITE_SCALE),
-        flags: SPRITE_FLAG_VISIBLE,
-        padding: 0.0,
-
-        position: Vec3::ZERO,
-        rotation: 0.0,
-
-        tex_u: frame.x as f32 / sheet_width,
-        tex_v: frame.y as f32 / sheet_height,
-        tex_w: frame.w as f32 / sheet_width,
-        tex_h: frame.h as f32 / sheet_height,
-
-        color: Vec4::splat(1.0),
-    };
-
-    let sprite_id = sprites.len();
-    sprites.push(sprite);
-
-    sprite_id
 }
 
 const SPRITE_FLAG_UI: u32 = 1 << 0;
@@ -678,17 +640,64 @@ fn mod_duration(timer: Duration, limit: Duration) -> Duration {
     Duration::from_millis(millis as u64)
 }
 
-fn set_sprite_frame(
-    sprite: &mut Sprite,
-    sprite_frame: &SpriteFrame,
-    sprite_atlas_size: &SpriteAtlasSize,
-) {
-    let sheet_width = sprite_atlas_size.w as f32;
-    let sheet_height = sprite_atlas_size.h as f32;
-    let frame = &sprite_frame.frame;
+const SPRITE_SCALE: f32 = 5.0;
 
-    sprite.tex_u = frame.x as f32 / sheet_width;
-    sprite.tex_v = frame.y as f32 / sheet_height;
-    sprite.tex_w = frame.w as f32 / sheet_width;
-    sprite.tex_h = frame.h as f32 / sheet_height;
+trait CPUSprite {
+    fn init(
+        sprites: &mut Vec<Sprite>,
+        sprite_atlas_size: &SpriteAtlasSize,
+        frame: &SpriteAtlasFrameOffsets,
+    ) -> usize;
+
+    fn set_frame(&mut self, sprite_frame: &SpriteFrame, sprite_atlas_size: &SpriteAtlasSize);
+
+    fn set_position(&mut self, bounding_box: &BoundingBox);
+}
+
+impl CPUSprite for Sprite {
+    fn init(
+        sprites: &mut Vec<Sprite>,
+        sprite_atlas_size: &SpriteAtlasSize,
+        frame: &SpriteAtlasFrameOffsets,
+    ) -> usize {
+        let sheet_width = sprite_atlas_size.w as f32;
+        let sheet_height = sprite_atlas_size.h as f32;
+
+        let sprite = Sprite {
+            scale: Vec2::new(frame.w as f32 * SPRITE_SCALE, frame.h as f32 * SPRITE_SCALE),
+            flags: SPRITE_FLAG_VISIBLE,
+            padding: 0.0,
+
+            position: Vec3::ZERO,
+            rotation: 0.0,
+
+            tex_u: frame.x as f32 / sheet_width,
+            tex_v: frame.y as f32 / sheet_height,
+            tex_w: frame.w as f32 / sheet_width,
+            tex_h: frame.h as f32 / sheet_height,
+
+            color: Vec4::splat(1.0),
+        };
+
+        let sprite_id = sprites.len();
+        sprites.push(sprite);
+
+        sprite_id
+    }
+
+    fn set_frame(&mut self, sprite_frame: &SpriteFrame, sprite_atlas_size: &SpriteAtlasSize) {
+        let sheet_width = sprite_atlas_size.w as f32;
+        let sheet_height = sprite_atlas_size.h as f32;
+        let frame = &sprite_frame.frame;
+
+        self.tex_u = frame.x as f32 / sheet_width;
+        self.tex_v = frame.y as f32 / sheet_height;
+        self.tex_w = frame.w as f32 / sheet_width;
+        self.tex_h = frame.h as f32 / sheet_height;
+    }
+
+    fn set_position(&mut self, bounding_box: &BoundingBox) {
+        self.position.x = bounding_box.x;
+        self.position.y = bounding_box.y;
+    }
 }

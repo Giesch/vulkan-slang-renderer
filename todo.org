@@ -12,6 +12,11 @@
   - [X] use inset bounding boxes for collision
     maybe use aseprite layers for this? or hardcode it
 
+  - [-] convert 'physics' to use an unscaled space
+    'pixel space' and 'screen space'
+    - [X] first, update sprite mutations to use CPUSprite trait methods
+    - [ ] then, make only CPUSprite methods use SPRITE_SCALE
+
   - [ ] sort sprites by 'object' position instead of 'sprite' position
     - this will matter for small sprites like the projectiles
 
