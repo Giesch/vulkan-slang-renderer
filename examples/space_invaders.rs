@@ -109,6 +109,7 @@ impl Game for SpaceInvaders {
             intent: EnemyIntent::Right,
             movement_timer: 0,
             animation: Animation::from_frames(&enemy_animation_frames),
+            health: 100,
         }];
 
         let bullet_frame = &bullet_animation_frames[0].frame;
@@ -188,6 +189,10 @@ impl Game for SpaceInvaders {
         let elapsed = self.frame_delay();
         self.player.animation.tick(elapsed);
         for enemy in &mut self.enemies {
+            if !enemy.is_alive() {
+                continue;
+            }
+
             enemy.animation.tick(elapsed);
         }
 
@@ -224,6 +229,10 @@ impl Game for SpaceInvaders {
 
         // enemy movement
         for enemy in &mut self.enemies {
+            if !enemy.is_alive() {
+                continue;
+            }
+
             enemy.movement_timer += 1;
 
             let travel_time = match enemy.intent {
@@ -249,10 +258,10 @@ impl Game for SpaceInvaders {
 
         // bullet-enemy collisions
         for bullet in &mut self.bullets {
-            for enemy in &self.enemies {
+            for enemy in &mut self.enemies {
                 let bullet_hit_box = bullet.hit_box();
 
-                if !bullet_hit_box.overlaps(&enemy.bounding_box) {
+                if !enemy.is_alive() || !bullet_hit_box.overlaps(&enemy.bounding_box) {
                     continue;
                 }
 
@@ -261,8 +270,18 @@ impl Game for SpaceInvaders {
 
                 if bullet_top >= enemy_mid {
                     bullet.despawn(&mut self.sprites);
+                    enemy.health -= 1;
                 }
             }
+        }
+
+        // despawn dead enemies
+        for enemy in &mut self.enemies {
+            if enemy.health > 0 {
+                continue;
+            }
+
+            enemy.despawn(&mut self.sprites);
         }
 
         // game over check
@@ -344,8 +363,12 @@ fn sprite_draw_order(a: &Sprite, b: &Sprite) -> Ordering {
     let b_ui: bool = flag_enabled(b, SPRITE_FLAG_UI);
     let b_y = b.position.y;
 
-    // invisible last so we can exclude them completely from the draw call
+    // invisible sprites are last
+    // so that we can leave them out of the draw call
     let invisible_last = a_visible.cmp(&b_visible).reverse();
+
+    // visible sprites are drawn back-to-front
+    // using the painter's algorithm
     let ui_on_top = a_ui.cmp(&b_ui);
     let y_descending = a_y.total_cmp(&b_y).reverse();
 
@@ -398,12 +421,22 @@ struct Enemy {
     movement_timer: usize,
     animation: Animation,
     bounding_box: BoundingBox,
+    health: i32,
 }
 
 impl Enemy {
     const SPEED: f32 = 2.0 / 5.0;
     const TRAVEL_TICKS: usize = 100;
     const TRAVEL_DOWN_TICKS: usize = Self::TRAVEL_TICKS * 2;
+
+    fn is_alive(&self) -> bool {
+        self.health > 0
+    }
+
+    fn despawn(&mut self, sprites: &mut [Sprite]) {
+        let sprite = &mut sprites[self.sprite_id];
+        sprite.flags &= !SPRITE_FLAG_VISIBLE;
+    }
 }
 
 enum EnemyIntent {

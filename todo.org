@@ -18,15 +18,7 @@
     - [X] then, make only CPUSprite methods use SPRITE_SCALE
       and the initial window size
 
-  - [ ] sort sprites by 'object' position instead of 'sprite' position
-    - this will matter for small sprites like the projectiles
-
-  - [ ] full game loop
-    - [ ] title screen/intro reel
-    - [ ] game over screen
-      - [ ] score
-  - [ ] bomb?
-  - [ ] destructible shields?
+  - [ ] change enemy pathing to use a more dynamic 'script'
 
 - [ ] do the Y-axis flip and transpose in mvp.slang
   - [ ] make the Y-axis flip just part of project method?
