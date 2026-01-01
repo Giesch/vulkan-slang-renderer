@@ -248,6 +248,22 @@ impl Game for SpaceInvaders {
             enemy.bounding_box.y += enemy_movement.y;
         }
 
+        // bullet-enemy collisions
+        for bullet in &mut self.bullets {
+            for enemy in &self.enemies {
+                if !bullet.bounding_box.overlaps(&enemy.bounding_box) {
+                    continue;
+                }
+
+                let bullet_top = bullet.bounding_box.y + bullet.bounding_box.h;
+                let enemy_mid = enemy.bounding_box.y + enemy.bounding_box.h / 2.0;
+
+                if bullet_top >= enemy_mid {
+                    bullet.despawn(&mut self.sprites);
+                }
+            }
+        }
+
         // game over check
         for enemy in &self.enemies {
             if enemy.bounding_box.y <= 0.0 {
@@ -436,6 +452,12 @@ impl Bullet {
                 h: offsets.h as f32 * SPRITE_SCALE,
             },
         }
+    }
+
+    fn despawn(&mut self, sprites: &mut [Sprite]) {
+        self.active = false;
+        let bullet_sprite = &mut sprites[self.sprite_id];
+        bullet_sprite.flags &= !SPRITE_FLAG_VISIBLE;
     }
 }
 
