@@ -107,9 +107,14 @@ impl Game for SpaceInvaders {
                 h: enemy_frame.h as f32,
             },
             intent: EnemyIntent::Right,
-            movement_timer: 0,
             animation: Animation::from_frames(&enemy_animation_frames),
             health: 100,
+            movement_script: EnemyMovementScript::new(vec![
+                (EnemyIntent::Right, 100),
+                (EnemyIntent::Down, 200),
+                (EnemyIntent::Left, 100),
+                (EnemyIntent::Up, 100),
+            ]),
         }];
 
         let bullet_frame = &bullet_animation_frames[0].frame;
@@ -194,6 +199,7 @@ impl Game for SpaceInvaders {
             }
 
             enemy.animation.tick(elapsed);
+            enemy.movement_script.tick();
         }
 
         // player movement
@@ -233,23 +239,7 @@ impl Game for SpaceInvaders {
                 continue;
             }
 
-            enemy.movement_timer += 1;
-
-            let travel_time = match enemy.intent {
-                EnemyIntent::Down => Enemy::TRAVEL_DOWN_TICKS,
-                _ => Enemy::TRAVEL_TICKS,
-            };
-
-            if enemy.movement_timer >= travel_time {
-                enemy.movement_timer = enemy.movement_timer % travel_time;
-
-                enemy.intent = match enemy.intent {
-                    EnemyIntent::Up => EnemyIntent::Right,
-                    EnemyIntent::Down => EnemyIntent::Left,
-                    EnemyIntent::Left => EnemyIntent::Up,
-                    EnemyIntent::Right => EnemyIntent::Down,
-                };
-            }
+            enemy.intent = enemy.movement_script.intent();
 
             let enemy_movement = enemy.intent.direction() * Enemy::SPEED;
             enemy.bounding_box.x += enemy_movement.x;
@@ -418,16 +408,14 @@ impl PlayerIntent {
 struct Enemy {
     sprite_id: usize,
     intent: EnemyIntent,
-    movement_timer: usize,
     animation: Animation,
     bounding_box: BoundingBox,
     health: i32,
+    movement_script: EnemyMovementScript,
 }
 
 impl Enemy {
     const SPEED: f32 = 2.0 / 5.0;
-    const TRAVEL_TICKS: usize = 100;
-    const TRAVEL_DOWN_TICKS: usize = Self::TRAVEL_TICKS * 2;
 
     fn is_alive(&self) -> bool {
         self.health > 0
@@ -439,6 +427,7 @@ impl Enemy {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 enum EnemyIntent {
     Up,
     Down,
@@ -681,6 +670,47 @@ impl Animation {
 fn mod_duration(timer: Duration, limit: Duration) -> Duration {
     let millis = timer.as_millis() % limit.as_millis();
     Duration::from_millis(millis as u64)
+}
+
+struct EnemyMovementScript {
+    steps: Vec<(EnemyIntent, usize)>,
+    total_frames: usize,
+    frame_counter: usize,
+}
+
+impl EnemyMovementScript {
+    fn new(steps: Vec<(EnemyIntent, usize)>) -> Self {
+        assert!(!steps.is_empty());
+
+        let total_frames = steps.iter().map(|(_intent, frames)| frames).sum();
+
+        Self {
+            steps,
+            total_frames,
+            frame_counter: 0,
+        }
+    }
+
+    fn tick(&mut self) {
+        self.frame_counter += 1;
+        self.frame_counter %= self.total_frames;
+    }
+
+    fn intent(&self) -> EnemyIntent {
+        let mut remaining_frames = self.frame_counter;
+
+        for &(intent, step_frames) in &self.steps {
+            if step_frames >= remaining_frames {
+                return intent;
+            }
+
+            remaining_frames -= step_frames
+        }
+
+        debug_assert!(false, "invalid enemy movement script");
+
+        return self.steps[0].0;
+    }
 }
 
 const SPRITE_SCALE: f32 = 5.0;
