@@ -34,13 +34,19 @@ struct SpaceInvaders {
     bullets: Vec<Bullet>,
 }
 
+const INITIAL_WINDOW_WIDTH_PIXELS: u32 = 160;
+const INITIAL_WINDOW_HEIGHT_PIXELS: u32 = 180;
+
 impl Game for SpaceInvaders {
     fn window_title() -> &'static str {
         "Space Invaders"
     }
 
     fn initial_window_size() -> (u32, u32) {
-        (800, 900)
+        (
+            INITIAL_WINDOW_WIDTH_PIXELS * SPRITE_SCALE as u32,
+            INITIAL_WINDOW_HEIGHT_PIXELS * SPRITE_SCALE as u32,
+        )
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
@@ -82,13 +88,12 @@ impl Game for SpaceInvaders {
         let player = Player {
             sprite_id: player_sprite,
             intent: Default::default(),
-            speed: 10.0,
             animation: Animation::from_frames(&player_animation_frames),
             bounding_box: BoundingBox {
                 x: 0.0,
                 y: 0.0,
-                w: player_frame.w as f32 * SPRITE_SCALE,
-                h: player_frame.h as f32 * SPRITE_SCALE,
+                w: player_frame.w as f32,
+                h: player_frame.h as f32,
             },
         };
 
@@ -96,10 +101,10 @@ impl Game for SpaceInvaders {
         let enemies = vec![Enemy {
             sprite_id: enemy_sprite,
             bounding_box: BoundingBox {
-                x: 80.0 * SPRITE_SCALE,
-                y: 140.0 * SPRITE_SCALE,
-                w: enemy_frame.w as f32 * SPRITE_SCALE,
-                h: enemy_frame.h as f32 * SPRITE_SCALE,
+                x: 80.0,
+                y: 140.0,
+                w: enemy_frame.w as f32,
+                h: enemy_frame.h as f32,
             },
             intent: EnemyIntent::Right,
             movement_timer: 0,
@@ -187,7 +192,7 @@ impl Game for SpaceInvaders {
         }
 
         // player movement
-        let player_movement = self.player.intent.direction() * self.player.speed;
+        let player_movement = self.player.intent.direction() * Player::SPEED;
         self.player.bounding_box.x += player_movement.x;
         self.player.bounding_box.y += player_movement.y;
 
@@ -208,7 +213,8 @@ impl Game for SpaceInvaders {
 
             bullet.step_forward();
 
-            let probably_offscreen = bullet.bounding_box.y > 1000.0;
+            let probably_offscreen =
+                bullet.bounding_box.y > 1.5 * INITIAL_WINDOW_HEIGHT_PIXELS as f32;
             if probably_offscreen {
                 bullet.active = false;
                 let bullet_sprite = &mut self.sprites[bullet.sprite_id];
@@ -236,7 +242,7 @@ impl Game for SpaceInvaders {
                 };
             }
 
-            let enemy_movement = enemy.intent.direction();
+            let enemy_movement = enemy.intent.direction() * Enemy::SPEED;
             enemy.bounding_box.x += enemy_movement.x;
             enemy.bounding_box.y += enemy_movement.y;
         }
@@ -349,9 +355,12 @@ fn sprite_draw_order(a: &Sprite, b: &Sprite) -> Ordering {
 struct Player {
     sprite_id: usize,
     intent: PlayerIntent,
-    speed: f32,
     animation: Animation,
     bounding_box: BoundingBox,
+}
+
+impl Player {
+    const SPEED: f32 = 2.0;
 }
 
 #[derive(Default)]
@@ -392,6 +401,7 @@ struct Enemy {
 }
 
 impl Enemy {
+    const SPEED: f32 = 2.0 / 5.0;
     const TRAVEL_TICKS: usize = 100;
     const TRAVEL_DOWN_TICKS: usize = Self::TRAVEL_TICKS * 2;
 }
@@ -421,11 +431,11 @@ struct Bullet {
 }
 
 impl Bullet {
-    const SPEED: f32 = 15.0;
+    const SPEED: f32 = 3.0;
     const MAX_BULLETS: usize = 100;
 
-    const HIT_BOX_OFFSET: f32 = 15.0 * SPRITE_SCALE;
-    const HIT_BOX_SIDE: f32 = 2.0 * SPRITE_SCALE;
+    const HIT_BOX_OFFSET: f32 = 15.0;
+    const HIT_BOX_SIDE: f32 = 2.0;
 
     fn new(
         sprites: &mut Vec<Sprite>,
@@ -440,8 +450,8 @@ impl Bullet {
         let bounding_box = BoundingBox {
             x: 0.0,
             y: 0.0,
-            w: offsets.w as f32 * SPRITE_SCALE,
-            h: offsets.h as f32 * SPRITE_SCALE,
+            w: offsets.w as f32,
+            h: offsets.h as f32,
         };
 
         Bullet {
@@ -697,7 +707,7 @@ impl CPUSprite for Sprite {
     }
 
     fn set_position(&mut self, bounding_box: &BoundingBox) {
-        self.position.x = bounding_box.x;
-        self.position.y = bounding_box.y;
+        self.position.x = bounding_box.x * SPRITE_SCALE;
+        self.position.y = bounding_box.y * SPRITE_SCALE;
     }
 }
