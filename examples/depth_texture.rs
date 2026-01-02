@@ -22,7 +22,7 @@ pub struct DepthTextureGame {
     start_time: Instant,
     pipeline: PipelineHandle<DrawIndexed>,
     texture: TextureHandle,
-    params_buffer: UniformBufferHandle<DepthTexture>,
+    params_buffer: UniformBufferHandle<DepthTextureParams>,
 }
 
 // two squares at different z values,
@@ -94,12 +94,12 @@ impl Game for DepthTextureGame {
         let shader = shader_atlas.depth_texture;
 
         let texture = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
-        let params_buffer = renderer.create_uniform_buffer::<DepthTexture>()?;
+        let params_buffer = renderer.create_uniform_buffer::<DepthTextureParams>()?;
         let resources = Resources {
             vertices: VERTICES.to_vec(),
             indices: INDICES.to_vec(),
             texture: &texture,
-            depth_texture_buffer: &params_buffer,
+            params_buffer: &params_buffer,
         };
         let pipeline_config = shader.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
@@ -118,7 +118,7 @@ impl Game for DepthTextureGame {
         let aspect_ratio = renderer.aspect_ratio();
         let elapsed = Instant::now() - self.start_time;
         let mvp = make_mvp_matrices(elapsed, aspect_ratio, COLUMN_MAJOR);
-        let params = DepthTexture { mvp };
+        let params = DepthTextureParams { mvp };
 
         renderer.draw_indexed(&self.pipeline, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);

@@ -18,11 +18,11 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
-pub struct DepthTexture {
+pub struct DepthTextureParams {
     pub mvp: MVPMatrices,
 }
 
-impl GPUWrite for DepthTexture {}
+impl GPUWrite for DepthTextureParams {}
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -48,7 +48,7 @@ pub struct Resources<'a> {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub texture: &'a TextureHandle,
-    pub depth_texture_buffer: &'a UniformBufferHandle<DepthTexture>,
+    pub params_buffer: &'a UniformBufferHandle<DepthTextureParams>,
 }
 
 impl VertexDescription for Vertex {
@@ -111,7 +111,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
-            RawUniformBufferHandle::from_typed(resources.depth_texture_buffer),
+            RawUniformBufferHandle::from_typed(resources.params_buffer),
         ];
 
         #[rustfmt::skip]

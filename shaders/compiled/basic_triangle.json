@@ -3,7 +3,7 @@
   "globalParameters": [
     {
       "kind": "parameterBlock",
-      "parameterName": "mvp",
+      "parameterName": "matrices",
       "elementType": {
         "typeName": "MVPMatrices",
         "fields": [

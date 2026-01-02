@@ -23,7 +23,7 @@ pub struct VikingRoom {
     start_time: Instant,
     pipeline: PipelineHandle<DrawIndexed>,
     texture: TextureHandle,
-    uniform_buffer: UniformBufferHandle<DepthTexture>,
+    params_buffer: UniformBufferHandle<DepthTextureParams>,
 }
 
 impl VikingRoom {
@@ -92,12 +92,12 @@ impl Game for VikingRoom {
         let shader = shader_atlas.depth_texture;
 
         let texture = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
-        let uniform_buffer = renderer.create_uniform_buffer::<DepthTexture>()?;
+        let params_buffer = renderer.create_uniform_buffer::<DepthTextureParams>()?;
         let resources = Resources {
             vertices,
             indices,
             texture: &texture,
-            depth_texture_buffer: &uniform_buffer,
+            params_buffer: &params_buffer,
         };
         let pipeline_config = shader.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
@@ -108,17 +108,18 @@ impl Game for VikingRoom {
             start_time,
             pipeline,
             texture,
-            uniform_buffer,
+            params_buffer,
         })
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+        let elapsed = Instant::now() - self.start_time;
         let aspect_ratio = renderer.aspect_ratio();
+        let mvp = make_mvp_matrices(elapsed, aspect_ratio);
+        let params = DepthTextureParams { mvp };
 
         renderer.draw_indexed(&self.pipeline, |gpu| {
-            let elapsed = Instant::now() - self.start_time;
-            let mvp = make_mvp_matrices(elapsed, aspect_ratio);
-            gpu.write_uniform(&mut self.uniform_buffer, DepthTexture { mvp });
+            gpu.write_uniform(&mut self.params_buffer, params);
         })
     }
 }

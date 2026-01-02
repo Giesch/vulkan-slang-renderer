@@ -3,9 +3,9 @@
   "globalParameters": [
     {
       "kind": "parameterBlock",
-      "parameterName": "depthTexture",
+      "parameterName": "params",
       "elementType": {
-        "typeName": "DepthTexture",
+        "typeName": "DepthTextureParams",
         "fields": [
           {
             "kind": "struct",

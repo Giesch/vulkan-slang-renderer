@@ -43,7 +43,7 @@ impl GPUWrite for Vertex {}
 pub struct Resources<'a> {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
-    pub mvp_buffer: &'a UniformBufferHandle<MVPMatrices>,
+    pub matrices_buffer: &'a UniformBufferHandle<MVPMatrices>,
 }
 
 impl VertexDescription for Vertex {
@@ -100,7 +100,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
-            RawUniformBufferHandle::from_typed(resources.mvp_buffer),
+            RawUniformBufferHandle::from_typed(resources.matrices_buffer),
         ];
 
         #[rustfmt::skip]

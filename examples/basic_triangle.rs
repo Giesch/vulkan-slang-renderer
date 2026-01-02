@@ -32,7 +32,7 @@ impl Game for BasicTriangle {
         let resources = Resources {
             vertices: VERTICES.to_vec(),
             indices: INDICES.to_vec(),
-            mvp_buffer: &uniform_buffer,
+            matrices_buffer: &uniform_buffer,
         };
 
         let shader = ShaderAtlas::init().basic_triangle;

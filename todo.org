@@ -1,9 +1,12 @@
 #+title: Todo
 
 * Now
-- [-] move special case MVP matrix handling into the slang module
-  - [X] make the Y-axis flip just part of project method
-  - [ ] use a specialization constant for COLUMN_MAJOR
+- [ ] Fork Slang-rs
+  - [ ] merge static linking PR
+  - [ ] expose a version of loadModuleFromSourceString
+  - [ ] wrapped shape flags / handle mask correctly
+
+- [ ] vendor & statically link a specific recent slang version
 
 * Next
 - [ ] Fix Reflection Bugs
@@ -11,6 +14,22 @@
     is this still a problem after the storage buffer size fix?
   - [ ] binding multiple textures results in only being able to sample the first one
     is this a reflection problem, or a renderer descriptor set problem?
+
+- [ ] Slang-rs PRs
+  make these changes on a fork and test, then open PRs
+  - [ ] expose a version of loadModuleFromSourceString
+  - [ ] handle shape mask & bitflags correctly
+    make the existing enum private, expose new rust wrappers
+
+- [ ] Slang PRs?
+  - [ ] add module/file name metadata to struct reflection
+    ie, make it possible to get the 'mvp' from a namespaced 'mvp::Matrices' type
+
+- [-] move special case MVP matrix handling into the slang module
+  - [X] make the Y-axis flip just part of project method
+  - [ ] use a specialization constant for COLUMN_MAJOR
+    this will require exposing a rust version of loadModuleFromSourceString
+    https://shader-slang.org/slang/user-guide/link-time-specialization.html
 
 - [ ] performance & scale on 4k monitor
 
