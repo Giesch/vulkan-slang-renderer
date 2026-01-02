@@ -79,7 +79,7 @@ lint:
 
 # set up git pre-commit hook
 [unix]
-setup:
+setup-precommit:
     cp scripts/pre-commit.sh .git/hooks/pre-commit
     chmod +x .git/hooks/pre-commit
 

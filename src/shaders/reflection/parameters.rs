@@ -25,13 +25,17 @@ pub fn reflect_entry_points(
     for global_param in program_layout.parameters() {
         let parameter_name = global_param.name().unwrap().to_string();
 
-        if global_param.type_layout().kind() != slang::TypeKind::ParameterBlock {
+        if global_param.type_layout().unwrap().kind() != slang::TypeKind::ParameterBlock {
             anyhow::bail!(
                 "non-ParameterBlock global: {parameter_name}; only ParameterBlock globals are supported"
             )
         }
 
-        let element_type_layout = global_param.type_layout().element_type_layout();
+        let element_type_layout = global_param
+            .type_layout()
+            .unwrap()
+            .element_type_layout()
+            .unwrap();
 
         let element_type = match element_type_layout.kind() {
             slang::TypeKind::Struct => {
@@ -57,13 +61,13 @@ pub fn reflect_entry_points(
     }
 
     for entry_point in program_layout.entry_points() {
-        let entry_point_name = entry_point.name().to_string();
+        let entry_point_name = entry_point.name().unwrap().to_string();
 
         let mut params = vec![];
         for param in entry_point.parameters() {
             let parameter_name = param.name().unwrap().to_string();
 
-            let type_layout = param.type_layout();
+            let type_layout = param.type_layout().unwrap();
 
             let entry_point_param_json = match type_layout.kind() {
                 slang::TypeKind::Struct => {
@@ -158,7 +162,7 @@ fn reflect_struct_fields(
     for field in struct_type_layout.fields() {
         let field_name = field.name().unwrap().to_string();
         let field_semantic_name = field.semantic_name().map(str::to_string);
-        let field_type_layout = field.type_layout();
+        let field_type_layout = field.type_layout().unwrap();
 
         // TODO handle this being optional in a better way; avoid the unwraps() below
         let binding = param_binding(field);
@@ -178,7 +182,7 @@ fn reflect_struct_fields(
             slang::TypeKind::Vector => {
                 let vec_elem_count = field_type_layout.element_count().unwrap();
 
-                let vec_element_type_layout = field_type_layout.element_type_layout();
+                let vec_element_type_layout = field_type_layout.element_type_layout().unwrap();
 
                 let slang_scalar_type = vec_element_type_layout.scalar_type().unwrap();
 
@@ -219,7 +223,7 @@ fn reflect_struct_fields(
                 let row_count = field_type_layout.row_count().unwrap();
                 let column_count = field_type_layout.column_count().unwrap();
 
-                let mat_element_type_layout = field_type_layout.element_type_layout();
+                let mat_element_type_layout = field_type_layout.element_type_layout().unwrap();
 
                 let scalar_type = scalar_from_slang(mat_element_type_layout.scalar_type().unwrap());
                 let element_type =
@@ -274,7 +278,7 @@ fn reflect_struct_fields(
                     }
 
                     slang::TypeKind::Struct => {
-                        let element_type_layout = field_type_layout.element_type_layout();
+                        let element_type_layout = field_type_layout.element_type_layout().unwrap();
                         let element_type_name = element_type_layout.name().unwrap().to_string();
 
                         let struct_fields = reflect_struct_fields(element_type_layout)?;
@@ -326,10 +330,10 @@ fn scalar_from_slang(scalar: slang::ScalarType) -> ScalarType {
 // returns None for a param with a semantic,
 // where value will be provided by the driver
 fn param_binding(param: &slang::reflection::VariableLayout) -> Option<Binding> {
-    let category = param.category();
+    let category = param.category().unwrap();
 
     let offset = param.offset(category);
-    let size = param.type_layout().size(category);
+    let size = param.type_layout().unwrap().size(category);
 
     match category {
         slang::ParameterCategory::Uniform => {

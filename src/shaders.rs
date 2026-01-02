@@ -1,7 +1,6 @@
 use std::ffi::CString;
 
 use shader_slang as slang;
-use shader_slang::Downcast;
 
 pub mod atlas;
 pub mod build_tasks;
@@ -52,7 +51,7 @@ fn prepare_reflected_shader(source_file_name: &str) -> anyhow::Result<ReflectedS
     // the examples have 1 vert and 1 frag shader
     debug_assert!(module.entry_points().len() == 2);
 
-    let mut components = vec![module.downcast().clone()];
+    let mut components = vec![module.clone().into()];
     let mut vertex_shader: Option<CompiledShader> = None;
     let mut fragment_shader: Option<CompiledShader> = None;
     for entry_point in module.entry_points() {
@@ -64,7 +63,7 @@ fn prepare_reflected_shader(source_file_name: &str) -> anyhow::Result<ReflectedS
             fragment_shader = Some(compiled_shader)
         }
 
-        components.push(entry_point.downcast().clone());
+        components.push(entry_point.clone().into());
     }
     let vertex_shader = vertex_shader
         .unwrap_or_else(|| panic!("failed to load vertex entry point for: {source_file_name}"));
@@ -121,8 +120,9 @@ fn compile_shader(
     module: &slang::Module,
 ) -> anyhow::Result<CompiledShader> {
     let program = session.create_composite_component_type(&[
-        module.downcast().clone(),
-        entry_point.downcast().clone(),
+        //
+        module.clone().into(),
+        entry_point.clone().into(),
     ])?;
 
     let linked_program = program.link()?;
@@ -137,7 +137,7 @@ fn compile_shader(
     let shader_bytecode: slang::Blob = linked_program.entry_point_code(0, 0)?;
     let shader_bytecode = shader_bytecode.as_slice().to_vec();
 
-    let entry_point_name = CString::new(reflection_entry_point.name())?;
+    let entry_point_name = CString::new(reflection_entry_point.name().unwrap())?;
 
     Ok(CompiledShader {
         entry_point_name,

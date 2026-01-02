@@ -18,11 +18,24 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.141"
 
 notify = "8.1.0"
-shader-slang = "0.1.0"
+
 anyhow = "1.0.100"
 heck = "0.5.0"
 askama = "0.14.0"
 thiserror = "2.0.17"
+
+[dependencies.shader-slang]
+# crates.io release
+# version = "0.1.0"
+
+# unreleased main
+git = "https://github.com/FloatyMonkey/slang-rs.git"
+
+# unmerged static-build PR
+# git = "https://github.com/Giesch/slang-rs.git"
+# branch = "static-build"
+# default-features = false
+# features = ["static"]
 
 [dev-dependencies]
 insta = { version = "1.43.2", features = ["json", "glob"] }

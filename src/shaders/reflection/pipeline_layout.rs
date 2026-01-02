@@ -45,7 +45,7 @@ impl PipelineLayoutBuilder {
         &mut self,
         constant_buffer_type_layout: &slang::reflection::TypeLayout,
     ) {
-        let element_type_layout = constant_buffer_type_layout.element_type_layout();
+        let element_type_layout = constant_buffer_type_layout.element_type_layout().unwrap();
         let element_size = element_type_layout.size(slang::ParameterCategory::Uniform);
 
         if element_size == 0 {
@@ -82,14 +82,16 @@ impl PipelineLayoutBuilder {
 
         match binding_type {
             slang::BindingType::ParameterBlock => {
-                let parameter_block_type_layout =
-                    type_layout.binding_range_leaf_type_layout(binding_range_index);
+                let parameter_block_type_layout = type_layout
+                    .binding_range_leaf_type_layout(binding_range_index)
+                    .unwrap();
                 self.add_descriptor_set_for_parameter_block(parameter_block_type_layout);
             }
 
             slang::BindingType::PushConstant => {
-                let constant_buffer_type_layout =
-                    type_layout.binding_range_leaf_type_layout(binding_range_index);
+                let constant_buffer_type_layout = type_layout
+                    .binding_range_leaf_type_layout(binding_range_index)
+                    .unwrap();
                 self.add_push_constatant_range_for_constant_buffer(constant_buffer_type_layout);
             }
 
@@ -122,7 +124,7 @@ impl PipelineLayoutBuilder {
     ) {
         let mut descriptor_set_layout_builder = DescriptorSetLayoutBuilder::reserve_slot(self);
         descriptor_set_layout_builder.add_descriptor_ranges_for_parameter_block_element(
-            parameter_block_type_layout.element_type_layout(),
+            parameter_block_type_layout.element_type_layout().unwrap(),
             self,
         );
 
@@ -264,7 +266,7 @@ impl DescriptorSetLayoutBuilder {
     ) {
         pipeline_layout_builder.current_stage_flags = ReflectedStageFlags::All;
         self.add_descriptor_ranges_for_parameter_block_element(
-            program_layout.global_params_type_layout(),
+            program_layout.global_params_type_layout().unwrap(),
             pipeline_layout_builder,
         );
     }
@@ -278,7 +280,7 @@ impl DescriptorSetLayoutBuilder {
             pipeline_layout_builder.current_stage_flags =
                 ReflectedStageFlags::from_slang(entry_point.stage());
             self.add_descriptor_ranges_for_parameter_block_element(
-                entry_point.type_layout(),
+                entry_point.type_layout().unwrap(),
                 pipeline_layout_builder,
             );
         }
