@@ -2,9 +2,11 @@
 
 * Now
 - [ ] Fork Slang-rs
-  - [ ] merge static linking PR
   - [ ] expose a version of loadModuleFromSourceString
+    - this is already there on main?
   - [ ] wrapped shape flags / handle mask correctly
+  - [ ] static linking PR
+    - does this really work?
 
 - [ ] vendor & statically link a specific recent slang version
 
