@@ -241,6 +241,9 @@
   https://discord.com/channels/1303735196696445038/1428804639523868794/1428919601688871075
   this would fix using stage 'all'
 
+- [ ] switch to using real CI instead of a pre-commit hook
+  or maybe a pre-push hook that checks there's no shader diff?
+
 - [ ] rewrite renderer in a new repo
   how much of this could be done gradually in this one?
   - use a cargo workspace
@@ -257,6 +260,7 @@
   - maybe pregenerate mipmaps offline instead of doing it in vulkan at runtime
     can image-rs do this? need to pack them as well
     see if theres an stb tool or something
+    or use slang auto-diff!
 
 - [ ] make a spinning cube from scratch in slang
 

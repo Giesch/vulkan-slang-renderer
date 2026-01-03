@@ -122,7 +122,10 @@ func panningCircles(pixel: float2, time: float) -> float3 {
     let tiledPixel = fmod(pixel + time, tileWidth);
     let radius = tileWidth / 2.0 - tileWidth / 10.0;
 
-    if (circle(tiledPixel - tileWidth / 2.0, radius) < 0) {
+    // this adds some goofy warping; use tiledPixel instead for normal circles
+    let warpStrength = lerp(0.0, 0.25, sin(time * 20.0) - 1.0);
+    let warpedTiledPixel = warp(tiledPixel, 4.0, warpStrength);
+    if (circle(warpedTiledPixel - tileWidth / 2.0, radius) < 0) {
         return foreground;
     }
 
@@ -154,10 +157,8 @@ func bezier(p: float2, c0: float2, c1: float2, c2: float2) -> float {
     float2 s = 2.0 * (y * j + z * k) - x * i;
 
     float r = (y * z - x * x * 0.25) / dot(s, s);
-    float t = clamp(
+    float t = saturate(
         (0.5 * x + y + r * dot(s, w)) / (x + y + z),
-        0.0,
-        1.0
     );
 
     float2 d = v0 + t * (k + k + t * w);
@@ -203,4 +204,42 @@ func roundRect(float2 p, float2 size, float4 radii) -> float {
 
 func axes(pixel: float2) -> float {
     return min(abs(pixel.x), abs(pixel.y));
+}
+
+// pseudo-random vector
+func grad(z: int2) -> float2 {
+    // https://www.shadertoy.com/view/XdXGW8
+
+    // convert to 1D
+    var n: int = z.x + z.y * 11111;
+    // Hugo Elias hash
+    n = (n << 13)^n;
+    n = (n * (n*n * 15731 + 789221) + 1376312589) >> 16;
+
+    // Perlin style vectors
+    n &= 7;
+    float2 gr = float2(n&1, n>>1) * 2.0 - 1.0;
+
+    return (n >= 6) ? float2(0.0, gr.x) :
+           (n >= 4) ? float2(gr.x, 0.0) :
+           gr;
+}
+
+func noise(p: float2) -> float {
+    // https://www.shadertoy.com/view/XdXGW8
+
+    int2 i = int2(floor(p));
+    float2 f = fract(p);
+    float2 u = f*f * (3.0 - 2.0 * f);
+
+    return lerp( lerp( dot( grad( i+int2(0,0) ), f - float2(0.0,0.0) ),
+                       dot( grad( i+int2(1,0) ), f - float2(1.0,0.0) ), u.x),
+                 lerp( dot( grad( i+int2(0,1) ), f - float2(0.0,1.0) ),
+                       dot( grad( i+int2(1,1) ), f - float2(1.0,1.0) ), u.x), u.y);
+}
+
+func warp(p: float2, scale: float, strength: float) -> float2 {
+    let offsetX: float = noise(p * scale + float2(0.0, 100.0));
+    let offsetY: float = noise(p * scale + float2(100.0, 0.0));
+    return p + float2(offsetX, offsetY) * strength;
 }
