@@ -1,16 +1,14 @@
 #+title: Todo
 
 * Now
-
-* Next
-- [ ] Fix Reflection Bugs
-  - [ ] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
+- [X] Fix Reflection Bugs
+  - [X] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
     is this still a problem after the storage buffer size fix?
-  - [ ] binding multiple textures results in only being able to sample the first one
+  - [X] binding multiple textures results in only being able to sample the first one
     is this a reflection problem, or a renderer descriptor set problem?
 
+* Next
 - [ ] Slang-rs PRs
-  make these changes on a fork and test, then open PRs
   - [ ] handle shape mask & bitflags correctly
     make the existing enum private, expose new rust wrappers
 
@@ -96,6 +94,10 @@
   - [ ] write-only storage buffers (StructuredBuffer)
   - [ ] read-write storage buffers (RWStructuredBuffer)
   - [ ] push constants?
+
+- [ ] revisit ReflectedBindingType::from_slang
+  slang::BindingType::RawBuffer is not only for storage buffers?
+  slang binding type doesn't line up to slang parameter category consistently
 
 - [ ] 3D signed distance fields / Shape Up clone
   - requires read/write storage buffers (for gpu-based object picking)
@@ -202,19 +204,8 @@
       need some way to ensure hot reload of the rust/script happens first
       use hash of input shader source in output dir for dependency tracking?
 
-- [X] Figure out Windows HDR / SRGB bug
-  why does TEXTURE_IMAGE_FORMAT need to be unorm on windows?
-  is it my monitor or graphics card, or the OS?
-  is there a 'proper' way to detect what it should be at runtime?
-  - could be similar to this wgpu bug?
-    https://github.com/gfx-rs/wgpu/issues/4842#issuecomment-1858018132
-  it was incorrect alpha blending somehow - default color mask behavior is bad?
-
 - [ ] split shader println into its own example
 - [ ] split up depth texture & viking room shaders
-
-- [ ] add a way to make storage buffers and/or textures cpu-readable
-  this is useful for gpu-driven mouse 'picking'
 
 * Future
 - [ ] migrate off of anyhow

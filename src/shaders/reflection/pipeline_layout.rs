@@ -324,7 +324,6 @@ impl ReflectedBindingType {
             slang::BindingType::Texture => Self::Texture,
             slang::BindingType::ConstantBuffer => Self::ConstantBuffer,
             slang::BindingType::CombinedTextureSampler => Self::CombinedTextureSampler,
-            // FIXME this includes uniform buffers as well?
             slang::BindingType::RawBuffer => Self::StorageBuffer,
 
             slang::BindingType::PushConstant => todo!(),

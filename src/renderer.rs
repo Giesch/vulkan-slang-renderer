@@ -16,6 +16,7 @@ use crate::shaders::atlas::{PrecompiledShader, ShaderAtlasEntry};
 
 #[cfg(debug_assertions)]
 use crate::shader_watcher;
+use crate::shaders::json::ReflectedDescriptorSetLayout;
 #[cfg(debug_assertions)]
 use log::*;
 
@@ -457,7 +458,7 @@ impl Renderer {
             self.device
                 .destroy_descriptor_pool(pipeline.descriptor_pool, None);
 
-            for &desc_set_layout in &pipeline.layout.descriptor_set_layouts {
+            for &(desc_set_layout, _) in &pipeline.layout.descriptor_set_layouts {
                 self.device
                     .destroy_descriptor_set_layout(desc_set_layout, None);
             }
@@ -557,10 +558,15 @@ impl Renderer {
             .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
             .collect();
 
+        let set_layouts: Vec<_> = pipeline_layout
+            .descriptor_set_layouts
+            .iter()
+            .map(|t| t.0)
+            .collect();
         let descriptor_sets = create_descriptor_sets(
             &self.device,
             descriptor_pool,
-            &pipeline_layout.descriptor_set_layouts,
+            &set_layouts,
             &uniform_buffers_in_layout_frame_order,
             &storage_buffers_in_layout_frame_order,
             &textures,
@@ -983,11 +989,16 @@ impl Renderer {
 
         std::mem::swap(&mut tmp_pipeline_layout, &mut render_pipeline_mut.layout);
 
+        let descriptor_set_layouts = tmp_pipeline_layout
+            .descriptor_set_layouts
+            .into_iter()
+            .map(|t| t.0)
+            .collect();
         self.old_pipelines.push((
             self.total_frames,
             render_pipeline_mut.pipeline,
             tmp_pipeline_layout.pipeline_layout,
-            tmp_pipeline_layout.descriptor_set_layouts,
+            descriptor_set_layouts,
         ));
 
         render_pipeline_mut.pipeline = create_graphics_pipeline(
@@ -2047,16 +2058,23 @@ fn create_descriptor_pool(
     pipeline_layout: &ShaderPipelineLayout,
 ) -> Result<vk::DescriptorPool, anyhow::Error> {
     let descriptor_sets_per_frame = pipeline_layout.descriptor_set_layouts.len() as u32;
-    let descriptor_set_count = descriptor_sets_per_frame * MAX_FRAMES_IN_FLIGHT as u32;
+    let sets_across_frames = descriptor_sets_per_frame * MAX_FRAMES_IN_FLIGHT as u32;
+
+    let total_counts: DescriptorCounts = pipeline_layout
+        .descriptor_set_layouts
+        .iter()
+        .map(|tup| tup.1)
+        .sum();
+
     let uniform_buffer_pool_size = vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::UNIFORM_BUFFER)
-        .descriptor_count(descriptor_set_count);
+        .descriptor_count(sets_across_frames * total_counts.uniform_buffers);
     let storage_buffer_pool_size = vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::STORAGE_BUFFER)
-        .descriptor_count(descriptor_set_count);
+        .descriptor_count(sets_across_frames * total_counts.storage_buffers);
     let sampler_pool_size = vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(descriptor_set_count);
+        .descriptor_count(sets_across_frames * total_counts.combined_texture_samplers);
 
     let pool_sizes = [
         uniform_buffer_pool_size,
@@ -2065,7 +2083,7 @@ fn create_descriptor_pool(
     ];
     let pool_create_info = vk::DescriptorPoolCreateInfo::default()
         .pool_sizes(&pool_sizes)
-        .max_sets(descriptor_set_count);
+        .max_sets(sets_across_frames);
 
     let pool = unsafe { device.create_descriptor_pool(&pool_create_info, None)? };
 
@@ -2931,7 +2949,7 @@ struct ShaderPipelineLayout {
     // NOTE the renderer is expected to clean up these fields correctly
     // they need special handling during hot reload
     pipeline_layout: ash::vk::PipelineLayout,
-    descriptor_set_layouts: Vec<ash::vk::DescriptorSetLayout>,
+    descriptor_set_layouts: Vec<(ash::vk::DescriptorSetLayout, DescriptorCounts)>,
 }
 
 impl ShaderPipelineLayout {
@@ -3024,11 +3042,18 @@ impl shaders::json::ReflectedPipelineLayout {
     unsafe fn vk_create(
         &self,
         device: &ash::Device,
-    ) -> Result<(vk::PipelineLayout, Vec<vk::DescriptorSetLayout>), vk::Result> {
-        let mut descriptor_set_layouts = vec![];
+    ) -> Result<
+        (
+            vk::PipelineLayout,
+            Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
+        ),
+        vk::Result,
+    > {
+        let mut descriptor_set_layouts = Vec::with_capacity(self.descriptor_set_layouts.len());
         for reflected_set_layout in &self.descriptor_set_layouts {
+            let counts = DescriptorCounts::from_descriptor_set_layout(reflected_set_layout);
             let created_set_layout = unsafe { reflected_set_layout.vk_create(device)? };
-            descriptor_set_layouts.push(created_set_layout);
+            descriptor_set_layouts.push((created_set_layout, counts));
         }
 
         let push_constant_ranges: Vec<_> = self
@@ -3037,14 +3062,82 @@ impl shaders::json::ReflectedPipelineLayout {
             .map(|r| r.to_vk())
             .collect();
 
+        let set_layouts: Vec<_> = descriptor_set_layouts.iter().map(|t| t.0).collect();
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
-            .set_layouts(&descriptor_set_layouts)
+            .set_layouts(&set_layouts)
             .push_constant_ranges(&push_constant_ranges);
 
         let pipeline_layout =
             unsafe { device.create_pipeline_layout(&pipeline_layout_info, None)? };
 
         Ok((pipeline_layout, descriptor_set_layouts))
+    }
+}
+
+// how many descriptors there are of each kind in a set layout, for creating the pool
+#[derive(Debug, Clone, Copy)]
+struct DescriptorCounts {
+    uniform_buffers: u32,
+    storage_buffers: u32,
+    combined_texture_samplers: u32,
+}
+
+impl std::iter::Sum for DescriptorCounts {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut sum = Self::ZERO;
+        for counts in iter {
+            sum = sum + counts;
+        }
+
+        sum
+    }
+}
+
+impl std::ops::Add for DescriptorCounts {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            uniform_buffers: self.uniform_buffers + rhs.uniform_buffers,
+            storage_buffers: self.storage_buffers + rhs.storage_buffers,
+            combined_texture_samplers: self.combined_texture_samplers
+                + rhs.combined_texture_samplers,
+        }
+    }
+}
+
+impl DescriptorCounts {
+    const ZERO: Self = Self {
+        uniform_buffers: 0,
+        storage_buffers: 0,
+        combined_texture_samplers: 0,
+    };
+
+    fn from_descriptor_set_layout(set_layout: &ReflectedDescriptorSetLayout) -> Self {
+        let mut uniform_buffers = 0;
+        let mut storage_buffers = 0;
+        let mut combined_texture_samplers = 0;
+        for binding in &set_layout.binding_ranges {
+            match binding.descriptor_type {
+                shaders::json::ReflectedBindingType::ConstantBuffer => {
+                    uniform_buffers += 1;
+                }
+                shaders::json::ReflectedBindingType::StorageBuffer => {
+                    storage_buffers += 1;
+                }
+                shaders::json::ReflectedBindingType::CombinedTextureSampler => {
+                    combined_texture_samplers += 1;
+                }
+                shaders::json::ReflectedBindingType::Sampler => todo!(),
+                shaders::json::ReflectedBindingType::Texture => todo!(),
+            }
+        }
+
+        Self {
+            uniform_buffers,
+            storage_buffers,
+            combined_texture_samplers,
+        }
     }
 }
 
