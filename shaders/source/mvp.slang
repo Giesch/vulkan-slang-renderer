@@ -2,6 +2,9 @@
 
 module mvp;
 
+// provided by the cpu
+extern static const bool columnMajor;
+
 // "GLM was originally designed for OpenGL,
 // where the Y coordinate of the clip coordinates is inverted.
 // The easiest way to compensate for that is to flip the sign
@@ -22,11 +25,19 @@ public struct MVPMatrices {
 
     [ForceInline]
     public func project(position: float3) -> float4 {
-        let homogenousPosition = float4(position, 1.0);
-
         let projection = mul(reflectY, this.proj);
-        let mvpMatrix = mul(projection, mul(this.view, this.model));
+        let position = float4(position, 1.0);
 
-        return mul(mvpMatrix, homogenousPosition);
+        if (columnMajor) {
+            let mvpMatrix = mul(projection, mul(this.view, this.model));
+            return mul(mvpMatrix, position);
+        }
+
+        // GLM & glam use column-major matrices,
+        // but D3D12 and Slang use row-major matrices by default.
+        //
+        // We can avoid transposing them by multiplying them backwards instead.
+        let mvpMatrix = mul(this.model, mul(this.view, projection));
+        return mul(position, mvpMatrix);
     }
 };

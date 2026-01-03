@@ -8,7 +8,6 @@ use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
     TextureFilter, TextureHandle, UniformBufferHandle,
 };
-use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
 use vulkan_slang_renderer::util::{load_image, manifest_path};
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
@@ -345,10 +344,7 @@ impl Game for SpaceInvaders {
         }
 
         // make projection matrix
-        let mut projection_matrix = Mat4::orthographic_lh(0.0, width, height, 0.0, 0.0, -1.0);
-        if !COLUMN_MAJOR {
-            projection_matrix = projection_matrix.transpose();
-        }
+        let projection_matrix = Mat4::orthographic_lh(0.0, width, height, 0.0, 0.0, -1.0);
         let params = SpaceInvadersParams { projection_matrix };
 
         // draw

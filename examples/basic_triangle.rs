@@ -4,7 +4,6 @@ use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
 };
-use vulkan_slang_renderer::shaders::COLUMN_MAJOR;
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
 use vulkan_slang_renderer::generated::shader_atlas::basic_triangle::*;
@@ -81,18 +80,5 @@ fn make_basic_mvp_matrices(aspect_ratio: f32) -> MVPMatrices {
     let fov_degrees: f32 = 45.0;
     let proj = Mat4::perspective_rh(fov_degrees.to_radians(), aspect_ratio, 0.1, 10.0);
 
-    normalize_mvp(MVPMatrices { model, view, proj })
-}
-
-fn normalize_mvp(mut mvp: MVPMatrices) -> MVPMatrices {
-    // GLM & glam use column-major matrices, but D3D12 and Slang use row-major by default
-    // it's also possible to avoid the transpose by reversing the mul() calls in shaders
-    // https://discord.com/channels/1303735196696445038/1395879559827816458/1396913440584634499
-    if !COLUMN_MAJOR {
-        mvp.model = mvp.model.transpose();
-        mvp.view = mvp.view.transpose();
-        mvp.proj = mvp.proj.transpose();
-    }
-
-    mvp
+    MVPMatrices { model, view, proj }
 }

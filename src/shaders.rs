@@ -10,7 +10,7 @@ mod reflection;
 use json::*;
 
 /// whether to use column-major or row-major matricies with slang
-pub const COLUMN_MAJOR: bool = true;
+const COLUMN_MAJOR: bool = false;
 
 pub struct ReflectedShader {
     pub vertex_shader: CompiledShader,
@@ -46,16 +46,35 @@ fn prepare_reflected_shader(source_file_name: &str) -> anyhow::Result<ReflectedS
 
     let session = global_session.create_session(&session_desc).unwrap();
 
-    let module = session.load_module(source_file_name)?;
+    let shader_module = session.load_module(source_file_name)?;
+
+    let cpu_constants_module_src = format!(
+        r#"
+        #language slang 2026
+        module cpu_constants;
+
+        export static const bool columnMajor = {COLUMN_MAJOR};
+        "#,
+    );
+    let cpu_constants_module = session.load_module_from_source_string(
+        "cpu_constants",
+        "cpu_constants.slang",
+        &cpu_constants_module_src,
+    )?;
 
     // the examples have 1 vert and 1 frag shader
-    debug_assert!(module.entry_points().len() == 2);
+    debug_assert!(shader_module.entry_points().len() == 2);
 
-    let mut components = vec![module.clone().into()];
+    let mut components = vec![shader_module.clone().into()];
     let mut vertex_shader: Option<CompiledShader> = None;
     let mut fragment_shader: Option<CompiledShader> = None;
-    for entry_point in module.entry_points() {
-        let compiled_shader = compile_shader(&entry_point, &session, &module)?;
+    for entry_point in shader_module.entry_points() {
+        let compiled_shader = compile_shader(
+            &entry_point,
+            &session,
+            &shader_module,
+            &cpu_constants_module,
+        )?;
 
         if compiled_shader.stage == slang::Stage::Vertex {
             vertex_shader = Some(compiled_shader)
@@ -65,6 +84,7 @@ fn prepare_reflected_shader(source_file_name: &str) -> anyhow::Result<ReflectedS
 
         components.push(entry_point.clone().into());
     }
+
     let vertex_shader = vertex_shader
         .unwrap_or_else(|| panic!("failed to load vertex entry point for: {source_file_name}"));
     let fragment_shader = fragment_shader
@@ -117,12 +137,13 @@ impl std::fmt::Debug for CompiledShader {
 fn compile_shader(
     entry_point: &slang::EntryPoint,
     session: &slang::Session,
-    module: &slang::Module,
+    shader_module: &slang::Module,
+    cpu_constants_module: &slang::Module,
 ) -> anyhow::Result<CompiledShader> {
     let program = session.create_composite_component_type(&[
-        //
-        module.clone().into(),
+        shader_module.clone().into(),
         entry_point.clone().into(),
+        cpu_constants_module.clone().into(),
     ])?;
 
     let linked_program = program.link()?;

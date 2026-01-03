@@ -1,14 +1,6 @@
 #+title: Todo
 
 * Now
-- [ ] Fork Slang-rs
-  - [ ] expose a version of loadModuleFromSourceString
-    - this is already there on main?
-  - [ ] wrapped shape flags / handle mask correctly
-  - [ ] static linking PR
-    - does this really work?
-
-- [ ] vendor & statically link a specific recent slang version
 
 * Next
 - [ ] Fix Reflection Bugs
@@ -19,21 +11,19 @@
 
 - [ ] Slang-rs PRs
   make these changes on a fork and test, then open PRs
-  - [ ] expose a version of loadModuleFromSourceString
   - [ ] handle shape mask & bitflags correctly
     make the existing enum private, expose new rust wrappers
 
-- [ ] Slang PRs?
+- [ ] see if statically linking slang is viable
+  there's a cmake flag for it, but there are other dependencies involved
+
+- [ ] Slang language PRs?
   - [ ] add module/file name metadata to struct reflection
     ie, make it possible to get the 'mvp' from a namespaced 'mvp::Matrices' type
 
-- [-] move special case MVP matrix handling into the slang module
-  - [X] make the Y-axis flip just part of project method
-  - [ ] use a specialization constant for COLUMN_MAJOR
-    this will require exposing a rust version of loadModuleFromSourceString
-    https://shader-slang.org/slang/user-guide/link-time-specialization.html
-
 - [ ] performance & scale on 4k monitor
+  performance and sprite scale also affected on the smaller monitor?
+  seems like maybe a PopOS thing, maybe 2027 is the year of linux on the desktop
 
 - [-] SDF 2D example
   [[https://danielchasehooper.com/posts/code-animated-rick]]
@@ -110,7 +100,7 @@
 - [ ] 3D signed distance fields / Shape Up clone
   - requires read/write storage buffers (for gpu-based object picking)
 
-- [ ] sprite batch example from SDL_gpu
+- [X] sprite batch example from SDL_gpu
 
 - [ ] is align(16) doing the right thing for Vertex?
  or is it doing anything?
@@ -134,6 +124,8 @@
 
 - [ ] allow non-primitive cpu types in codegen
   ie, use a provided bitflags wrapper type instead of uint/u32 in generated code
+  maybe take an Into<GeneratedGPUType> type of struct for
+    gpu.write_uniform()/write_storage()?
 
 - [ ] post a request for SDL_gpu to support later vulkan versions
  do I plan on using that, or continuing with vulkan?

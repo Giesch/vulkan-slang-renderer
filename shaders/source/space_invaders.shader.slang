@@ -1,8 +1,10 @@
 #language slang 2026
 
-module sprite_batch;
-
 // based on the sprite_batch example
+module space_invaders;
+
+// provided by the cpu
+extern static const bool columnMajor;
 
 ParameterBlock<SpaceInvadersParams> params;
 
@@ -63,7 +65,10 @@ VertexOutput vertMain(uint id : SV_VertexID) {
     coord = mul(coord, rotationMatrix);
 
     let coordWithDepth = float4(coord + sprite.position.xy, sprite.position.z, 1.0);
-    let position = mul(params.projectionMatrix, coordWithDepth);
+    // see the comments in mvp.slang
+    let position = columnMajor
+        ? mul(params.projectionMatrix, coordWithDepth)
+        : mul(coordWithDepth, params.projectionMatrix);
 
     let left = sprite.texU;
     let right = sprite.texU + sprite.texW;
