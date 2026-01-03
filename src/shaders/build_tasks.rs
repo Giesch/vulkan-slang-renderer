@@ -610,6 +610,8 @@ mod tests {
 
     use crate::util::manifest_path;
 
+    // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
+    #[cfg(not(windows))]
     #[test]
     fn generated_files() {
         let tmp_prefix = format!("shader-test-{}", uuid::Uuid::new_v4());

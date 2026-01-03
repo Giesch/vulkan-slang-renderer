@@ -67,6 +67,7 @@ test:
     INSTA_UPDATE=no cargo test
 
 # run and review snapshot tests interactively
+[unix] # currently broken on windows, see build_tasks.rs
 insta:
     cargo insta test --review
 

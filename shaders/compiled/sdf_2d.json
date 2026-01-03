@@ -59,7 +59,7 @@
           "index": 0,
           "count": 1
         },
-        "typeName": "VertexOutput",
+        "typeName": "FragInput",
         "fields": [
           {
             "kind": "vector",

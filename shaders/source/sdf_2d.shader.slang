@@ -12,7 +12,7 @@ struct SDF2DParams {
     float time;
 }
 
-struct VertexOutput {
+struct FragInput {
     float4 position : SV_Position;
     float2 pixel : TEXCOORD0;
 }
@@ -24,12 +24,12 @@ static const float2 fullScreenTriangleVerts[3] = {
 };
 
 static const float2x2 reflectY = float2x2(
-    1.0, 0.0,
+    1.0,  0.0,
     0.0, -1.0,
 );
 
 [shader("vertex")]
-VertexOutput vertMain(uint id : SV_VertexID) {
+FragInput vertMain(uint id : SV_VertexID) {
     let texCoord = fullScreenTriangleVerts[id];
 
     let position = float4(texCoord * 2.0 + -1.0, 0.0, 1.0);
@@ -38,11 +38,11 @@ VertexOutput vertMain(uint id : SV_VertexID) {
     pixel = pixel + float2(0.0, 1.0); // move origin to center
     pixel *= params.resolution; // scale to screen
 
-    return VertexOutput(position, pixel);
+    return FragInput(position, pixel);
 }
 
 [shader("fragment")]
-float4 fragMain(VertexOutput input) : SV_Target {
+float4 fragMain(FragInput input) : SV_Target {
     let res = params.resolution;
 
     let rootSamples = 3; // 9 samples per pixel
@@ -122,8 +122,8 @@ func panningCircles(pixel: float2, time: float) -> float3 {
     let tiledPixel = fmod(pixel + time, tileWidth);
     let radius = tileWidth / 2.0 - tileWidth / 10.0;
 
-    let goofyWarping = false;
-    if (goofyWarping) {
+    let warpingAnimation = true;
+    if (warpingAnimation) {
         let warpStrength = lerp(0.0, 0.25, sin(time * 20.0) - 1.0);
         let warpedTiledPixel = warp(tiledPixel, 4.0, warpStrength);
         if (circle(warpedTiledPixel - tileWidth / 2.0, radius) < 0) {
@@ -228,10 +228,9 @@ func grad(z: int2) -> float2 {
 
 // https://www.shadertoy.com/view/XdXGW8
 func noise(p: float2) -> float {
-
-    int2 i = int2(floor(p));
-    float2 f = fract(p);
-    float2 u = f*f * (3.0 - 2.0 * f);
+    let i = int2(floor(p));
+    let f: float2 = fract(p);
+    let u: float2 = f*f * (3.0 - 2.0 * f);
 
     return lerp( lerp( dot( grad( i+int2(0,0) ), f - float2(0.0,0.0) ),
                        dot( grad( i+int2(1,0) ), f - float2(1.0,0.0) ), u.x),
@@ -256,8 +255,8 @@ func parabola(pos: float2, k: float) -> float {
     let h = q*q - p*p*p;
     let r = sqrt(abs(h));
     let x = h > 0.0
-        ? pow(q+r, 1.0 / 3.0) - pow(abs(q-r), 1.0/3.0) * sign(r - q)
-        : 2.0*cos(atan2(r,q)/3.0)*sqrt(p);
+        ? pow(q + r, 1.0 / 3.0) - pow(abs(q - r), 1.0 / 3.0) * sign(r - q)
+        : 2.0 * cos(atan2(r, q) / 3.0) * sqrt(p);
 
     return length(pos - float2(x, k * x*x)) * sign(pos.x - x);
 }

@@ -33,7 +33,7 @@ struct Sprite {
     float4 color;
 }
 
-struct VertexOutput {
+struct FragInput {
     float2 texCoord : TEXCOORD0;
     float4 color : TEXCOORD1;
     float4 position : SV_Position;
@@ -51,7 +51,7 @@ static const float2 quadCorners[4] = {
 };
 
 [shader("vertex")]
-VertexOutput vertMain(uint id : SV_VertexID) {
+FragInput vertMain(uint id : SV_VertexID) {
     let sprite = params.sprites[id / 6];
 
     let vert = triangleIndices[id % 6];
@@ -75,12 +75,7 @@ VertexOutput vertMain(uint id : SV_VertexID) {
     };
     let texCoord = texCoordsByVert[vert];
 
-    return VertexOutput(texCoord, sprite.color, position);
-}
-
-struct FragInput {
-    float2 texCoord : TEXCOORD0;
-    float4 color : TEXCOORD1;
+    return FragInput(texCoord, sprite.color, position);
 }
 
 [shader("fragment")]

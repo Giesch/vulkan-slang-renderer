@@ -196,8 +196,18 @@
           "index": 0,
           "count": 3
         },
-        "typeName": "VertexOutput",
+        "typeName": "FragInput",
         "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "semanticName": "SV_POSITION",
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
           {
             "kind": "vector",
             "fieldName": "texCoord",
@@ -220,16 +230,6 @@
               "index": 1,
               "count": 1
             },
-            "elementCount": 4,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "vector",
-            "fieldName": "position",
-            "semanticName": "SV_POSITION",
             "elementCount": 4,
             "elementType": {
               "kind": "scalar",
