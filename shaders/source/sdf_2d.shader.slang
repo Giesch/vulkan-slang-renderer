@@ -122,11 +122,17 @@ func panningCircles(pixel: float2, time: float) -> float3 {
     let tiledPixel = fmod(pixel + time, tileWidth);
     let radius = tileWidth / 2.0 - tileWidth / 10.0;
 
-    // this adds some goofy warping; use tiledPixel instead for normal circles
-    let warpStrength = lerp(0.0, 0.25, sin(time * 20.0) - 1.0);
-    let warpedTiledPixel = warp(tiledPixel, 4.0, warpStrength);
-    if (circle(warpedTiledPixel - tileWidth / 2.0, radius) < 0) {
-        return foreground;
+    let goofyWarping = false;
+    if (goofyWarping) {
+        let warpStrength = lerp(0.0, 0.25, sin(time * 20.0) - 1.0);
+        let warpedTiledPixel = warp(tiledPixel, 4.0, warpStrength);
+        if (circle(warpedTiledPixel - tileWidth / 2.0, radius) < 0) {
+            return foreground;
+        }
+    } else {
+        if (circle(tiledPixel - tileWidth / 2.0, radius) < 0) {
+            return foreground;
+        }
     }
 
     return background;
@@ -138,9 +144,8 @@ func circle(pixel: float2, radius: float) -> float {
     return length(pixel) - radius;
 }
 
+// https://www.shadertoy.com/view/MlKcDD
 func bezier(p: float2, c0: float2, c1: float2, c2: float2) -> float {
-    // https://www.shadertoy.com/view/MlKcDD
-
     float2 i = c0 - c2;
     float2 j = c2 - c1;
     float2 k = c1 - c0;
@@ -168,9 +173,8 @@ func bezier(p: float2, c0: float2, c1: float2, c2: float2) -> float {
 
 static const float pi = 3.141593;
 
+// https://www.shadertoy.com/view/MlKcDD
 func star(p: float2, float r, float points, float ratio) -> float {
-    // https://www.shadertoy.com/view/MlKcDD
-
     var p = p;
 
     float an = pi / points;
@@ -189,9 +193,8 @@ func star(p: float2, float r, float points, float ratio) -> float {
     return length(p) * sign(p.x);
 }
 
+// https://www.shadertoy.com/view/4llXD7
 func roundRect(float2 p, float2 size, float4 radii) -> float {
-    // https://www.shadertoy.com/view/4llXD7
-
     var radii = radii;
 
     radii.xy = (p.x > 0) ? radii.xy : radii.zw;
@@ -206,10 +209,8 @@ func axes(pixel: float2) -> float {
     return min(abs(pixel.x), abs(pixel.y));
 }
 
-// pseudo-random vector
+// https://www.shadertoy.com/view/XdXGW8
 func grad(z: int2) -> float2 {
-    // https://www.shadertoy.com/view/XdXGW8
-
     // convert to 1D
     var n: int = z.x + z.y * 11111;
     // Hugo Elias hash
@@ -225,8 +226,8 @@ func grad(z: int2) -> float2 {
            gr;
 }
 
+// https://www.shadertoy.com/view/XdXGW8
 func noise(p: float2) -> float {
-    // https://www.shadertoy.com/view/XdXGW8
 
     int2 i = int2(floor(p));
     float2 f = fract(p);
@@ -242,4 +243,21 @@ func warp(p: float2, scale: float, strength: float) -> float2 {
     let offsetX: float = noise(p * scale + float2(0.0, 100.0));
     let offsetY: float = noise(p * scale + float2(100.0, 0.0));
     return p + float2(offsetX, offsetY) * strength;
+}
+
+// https://www.shadertoy.com/view/ws3GD7
+func parabola(pos: float2, k: float) -> float {
+    var pos = pos;
+    pos.x = abs(pos.x);
+
+    let ik = 1.0 / k;
+    let p = ik * (pos.y - 0.5 * ik) / 3.0;
+    let q = 0.25 * ik*ik * pos.x;
+    let h = q*q - p*p*p;
+    let r = sqrt(abs(h));
+    let x = h > 0.0
+        ? pow(q+r, 1.0 / 3.0) - pow(abs(q-r), 1.0/3.0) * sign(r - q)
+        : 2.0*cos(atan2(r,q)/3.0)*sqrt(p);
+
+    return length(pos - float2(x, k * x*x)) * sign(pos.x - x);
 }
