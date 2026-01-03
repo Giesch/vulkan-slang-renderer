@@ -2,7 +2,7 @@
 
 module mvp;
 
-// provided by the cpu
+// provided by the cpu; see shaders::MATRIX_LAYOUT
 extern static const bool columnMajor;
 
 // "GLM was originally designed for OpenGL,
@@ -25,8 +25,8 @@ public struct MVPMatrices {
 
     [ForceInline]
     public func project(position: float3) -> float4 {
-        let projection = mul(reflectY, this.proj);
         let position = float4(position, 1.0);
+        let projection = mul(reflectY, this.proj);
 
         if (columnMajor) {
             let mvpMatrix = mul(projection, mul(this.view, this.model));
@@ -36,7 +36,8 @@ public struct MVPMatrices {
         // GLM & glam use column-major matrices,
         // but D3D12 and Slang use row-major matrices by default.
         //
-        // We can avoid transposing them by multiplying them backwards instead.
+        // We can either transpose the component matrices,
+        // or multiply everything backwards.
         let mvpMatrix = mul(this.model, mul(this.view, projection));
         return mul(position, mvpMatrix);
     }

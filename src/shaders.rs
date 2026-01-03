@@ -10,7 +10,14 @@ mod reflection;
 use json::*;
 
 /// whether to use column-major or row-major matricies with slang
-const COLUMN_MAJOR: bool = false;
+/// https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/a1-01-matrix-layout.html
+const MATRIX_LAYOUT: MatrixLayout = MatrixLayout::RowMajor;
+
+#[derive(Debug, PartialEq, Eq)]
+enum MatrixLayout {
+    ColumnMajor,
+    RowMajor,
+}
 
 pub struct ReflectedShader {
     pub vertex_shader: CompiledShader,
@@ -27,10 +34,9 @@ fn prepare_reflected_shader(source_file_name: &str) -> anyhow::Result<ReflectedS
         .language(slang::SourceLanguage::Slang)
         .optimization(slang::OptimizationLevel::High)
         .emit_spirv_directly(true);
-    let session_options = if COLUMN_MAJOR {
-        session_options.matrix_layout_column(true)
-    } else {
-        session_options.matrix_layout_row(true)
+    let session_options = match MATRIX_LAYOUT {
+        MatrixLayout::ColumnMajor => session_options.matrix_layout_column(true),
+        MatrixLayout::RowMajor => session_options.matrix_layout_row(true),
     };
 
     let target_desc = slang::TargetDesc::default()
@@ -48,12 +54,13 @@ fn prepare_reflected_shader(source_file_name: &str) -> anyhow::Result<ReflectedS
 
     let shader_module = session.load_module(source_file_name)?;
 
+    let column_major = MATRIX_LAYOUT == MatrixLayout::ColumnMajor;
     let cpu_constants_module_src = format!(
         r#"
         #language slang 2026
         module cpu_constants;
 
-        export static const bool columnMajor = {COLUMN_MAJOR};
+        export static const bool columnMajor = {column_major};
         "#,
     );
     let cpu_constants_module = session.load_module_from_source_string(
