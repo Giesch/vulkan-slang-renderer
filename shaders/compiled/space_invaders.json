@@ -24,68 +24,10 @@
           },
           {
             "kind": "resource",
-            "fieldName": "debugBoxes",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
-            },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
-              "typeName": "DebugBox",
-              "fields": [
-                {
-                  "kind": "vector",
-                  "fieldName": "color",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 0,
-                    "size": 16
-                  },
-                  "elementCount": 4,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                },
-                {
-                  "kind": "vector",
-                  "fieldName": "position",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 16,
-                    "size": 8
-                  },
-                  "elementCount": 2,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                },
-                {
-                  "kind": "vector",
-                  "fieldName": "size",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 24,
-                    "size": 8
-                  },
-                  "elementCount": 2,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                }
-              ]
-            }
-          },
-          {
-            "kind": "resource",
             "fieldName": "sprites",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 2,
+              "index": 1,
               "count": 1
             },
             "resourceShape": "structuredBuffer",
@@ -200,6 +142,64 @@
                     "size": 16
                   },
                   "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "debugBoxes",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 2,
+              "count": 1
+            },
+            "resourceShape": "structuredBuffer",
+            "resultType": {
+              "kind": "struct",
+              "typeName": "DebugBox",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "size",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 24,
+                    "size": 8
+                  },
+                  "elementCount": 2,
                   "elementType": {
                     "kind": "scalar",
                     "scalarType": "float32"

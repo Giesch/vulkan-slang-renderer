@@ -10,8 +10,8 @@ ParameterBlock<SpaceInvadersParams> params;
 
 struct SpaceInvadersParams {
     float4x4 projectionMatrix;
-    StructuredBuffer<DebugBox> debugBoxes;
     StructuredBuffer<Sprite> sprites;
+    StructuredBuffer<DebugBox> debugBoxes;
     Sampler2D spriteSheet;
 }
 
@@ -34,7 +34,9 @@ struct Sprite {
 struct DebugBox {
     float4 color;
 
+    // as 0-1 uv-style coords within the sprite
     float2 position;
+    // as a proportion of the sprite
     float2 size;
 }
 
@@ -67,13 +69,6 @@ FragInput vertMain(uint id : SV_VertexID) {
 
     if (sprite.debugBoxId != UINT_MAX) {
         let debugBox = params.debugBoxes[sprite.debugBoxId];
-
-        printf(
-            "in vert; debugBoxId: %d, position: %1.2v2f, size: %1.2v2f",
-            sprite.debugBoxId,
-            debugBox.position,
-            debugBox.size,
-        );
     }
 
     let vert = triangleIndices[id % 6];
@@ -116,19 +111,6 @@ float4 fragMain(FragInput input) : SV_Target {
 
     if (input.debugBoxId != UINT_MAX) {
         let debugBox = params.debugBoxes[input.debugBoxId];
-
-        // // TODO FIXME it looks like this is the enemy sprite position
-        // // the relative struct offsets also line up
-        // // that means we're getting the wrong storage buffer?
-        // //   yeah, it also starts tracking a bullet position if that's sorted first
-        // //   and swapping the order in the ParameterBlock swaps which we get
-        // printf(
-        //     "in frag; debugBoxId: %d, position: %1.2v2f, size: %1.2v2f",
-        //     input.debugBoxId,
-        //     debugBox.position,
-        //     debugBox.size,
-        // );
-
         if (nearSidesOfDebugBox(input.spriteCoord, debugBox)) {
             return debugBox.color;
         }
@@ -147,14 +129,14 @@ func nearSidesOfSprite(texPos: float2) -> bool {
     return distToSides < 0.01;
 }
 
-func nearSidesOfDebugBox(texPos: float2, debugBox: DebugBox) -> bool {
+func nearSidesOfDebugBox(spriteCoord: float2, debugBox: DebugBox) -> bool {
     let distToSidesX = min(
-        abs(texPos.x - debugBox.position.x),
-        abs(texPos.x - (debugBox.position.x + debugBox.size.x))
+        abs(spriteCoord.x - debugBox.position.x),
+        abs(spriteCoord.x - (debugBox.position.x + debugBox.size.x))
     );
     let distToSidesY = min(
-        abs(texPos.y - debugBox.position.y),
-        abs(texPos.y - (debugBox.position.y + debugBox.size.y))
+        abs(spriteCoord.y - debugBox.position.y),
+        abs(spriteCoord.y - (debugBox.position.y + debugBox.size.y))
     );
     let distToSides = min(distToSidesX, distToSidesY);
 

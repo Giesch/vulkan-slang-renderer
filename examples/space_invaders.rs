@@ -39,6 +39,7 @@ struct SpaceInvaders {
 const INITIAL_WINDOW_WIDTH_PIXELS: u32 = 160;
 const INITIAL_WINDOW_HEIGHT_PIXELS: u32 = 180;
 
+const ENABLE_DEBUG_BOXES: bool = false;
 const MAX_DEBUG_BOXES: u32 = 100;
 
 impl Game for SpaceInvaders {
@@ -142,7 +143,9 @@ impl Game for SpaceInvaders {
         };
 
         let mut debug_boxes: Vec<DebugBox> = Vec::with_capacity(MAX_DEBUG_BOXES as usize);
-        setup_debug_boxes(&mut debug_boxes, &mut sprites, &player);
+        if ENABLE_DEBUG_BOXES {
+            setup_debug_boxes(&mut debug_boxes, &mut sprites, &player);
+        }
 
         let params_buffer = renderer.create_uniform_buffer::<SpaceInvadersParams>()?;
         let debug_boxes_buffer = renderer.create_storage_buffer::<DebugBox>(MAX_DEBUG_BOXES)?;
@@ -832,14 +835,10 @@ impl CPUSprite for Sprite {
 }
 
 fn setup_debug_boxes(debug_boxes: &mut Vec<DebugBox>, sprites: &mut [Sprite], player: &Player) {
-    let player_sprite = &sprites[player.sprite_id];
     let player_box = DebugBox {
         color: Vec4::new(0.0, 1.0, 0.0, 1.0),
         position: Vec2::ZERO,
-        size: Vec2::new(
-            player.bounding_box.w * SPRITE_SCALE / player_sprite.tex_w,
-            player.bounding_box.h * SPRITE_SCALE / player_sprite.tex_h,
-        ),
+        size: Vec2::splat(1.0),
     };
 
     assign_debug_box_to_sprite(player.sprite_id, player_box, debug_boxes, sprites);

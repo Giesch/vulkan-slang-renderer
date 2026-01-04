@@ -2132,10 +2132,14 @@ fn create_descriptor_sets(
 ) -> Result<Vec<vk::DescriptorSet>, anyhow::Error> {
     // this vec and the resulting vec of descriptor sets are arranged like this:
     // [
-    //     frame_0_set_0,
-    //     frame_0_set_1,
-    //     frame_1_set_0,
-    //     frame_1_set_1,
+    //     frame_0_set_0_binding_0,
+    //     frame_0_set_0_binding_1,
+    //     frame_0_set_1_binding_0,
+    //     frame_0_set_1_binding_1,
+    //     frame_1_set_0_binding_0,
+    //     frame_1_set_0_binding_1,
+    //     frame_1_set_1_binding_0,
+    //     frame_1_set_1_binding_1,
     // ]
     let mut set_layouts = vec![];
     for _frame in 0..MAX_FRAMES_IN_FLIGHT {
@@ -2150,6 +2154,11 @@ fn create_descriptor_sets(
     let descriptor_sets = unsafe { device.allocate_descriptor_sets(&alloc_info)? };
 
     for frame in 0..MAX_FRAMES_IN_FLIGHT {
+        let mut uniform_buffer_index = 0;
+        let mut storage_buffer_index = 0;
+        let mut texture_index = 0;
+
+        #[expect(clippy::needless_range_loop)]
         for layout_offset in 0..descriptor_set_layouts.len() {
             let ds = frame * descriptor_set_layouts.len() + layout_offset;
             let dst_set = descriptor_sets[ds];
@@ -2159,7 +2168,7 @@ fn create_descriptor_sets(
                 match description {
                     LayoutDescription::Uniform(uniform_buffer_description) => {
                         let raw_uniform_buffers_by_frame =
-                            uniform_buffers_in_layout_frame_order[layout_offset];
+                            uniform_buffers_in_layout_frame_order[uniform_buffer_index];
                         let uniform_buffer = raw_uniform_buffers_by_frame[frame].buffer;
 
                         let buffer_info = vk::DescriptorBufferInfo::default()
@@ -2177,12 +2186,12 @@ fn create_descriptor_sets(
 
                         let writes = [uniform_buffer_write];
                         unsafe { device.update_descriptor_sets(&writes, &[]) };
+                        uniform_buffer_index += 1;
                     }
 
                     LayoutDescription::Storage(storage_buffer_description) => {
                         let raw_storage_buffers_by_frame =
-                            storage_buffers_in_layout_frame_order[layout_offset];
-                        // TODO FIXME need to allow for multiple per frame
+                            storage_buffers_in_layout_frame_order[storage_buffer_index];
                         let storage_buffer: vk::Buffer = raw_storage_buffers_by_frame[frame].buffer;
 
                         // "If range is not equal to VK_WHOLE_SIZE, range must be less than or equal to the size of buffer minus offset"
@@ -2204,10 +2213,11 @@ fn create_descriptor_sets(
 
                         let writes = [storage_buffer_write];
                         unsafe { device.update_descriptor_sets(&writes, &[]) };
+                        storage_buffer_index += 1;
                     }
 
                     LayoutDescription::Texture(texture_description) => {
-                        let texture = textures[layout_offset];
+                        let texture = textures[texture_index];
 
                         let image_info = vk::DescriptorImageInfo::default()
                             .image_layout(texture_description.layout)
@@ -2224,6 +2234,7 @@ fn create_descriptor_sets(
 
                         let writes = [image_write];
                         unsafe { device.update_descriptor_sets(&writes, &[]) };
+                        texture_index += 1;
                     }
                 }
             }
