@@ -2182,6 +2182,7 @@ fn create_descriptor_sets(
                     LayoutDescription::Storage(storage_buffer_description) => {
                         let raw_storage_buffers_by_frame =
                             storage_buffers_in_layout_frame_order[layout_offset];
+                        // TODO FIXME need to allow for multiple per frame
                         let storage_buffer: vk::Buffer = raw_storage_buffers_by_frame[frame].buffer;
 
                         // "If range is not equal to VK_WHOLE_SIZE, range must be less than or equal to the size of buffer minus offset"

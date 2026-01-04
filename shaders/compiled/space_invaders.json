@@ -8,11 +8,84 @@
         "typeName": "SpaceInvadersParams",
         "fields": [
           {
+            "kind": "matrix",
+            "fieldName": "projectionMatrix",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 64
+            },
+            "rowCount": 4,
+            "columnCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "debugBoxes",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "structuredBuffer",
+            "resultType": {
+              "kind": "struct",
+              "typeName": "DebugBox",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "size",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 24,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
             "kind": "resource",
             "fieldName": "sprites",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 1,
+              "index": 2,
               "count": 1
             },
             "resourceShape": "structuredBuffer",
@@ -46,13 +119,13 @@
                 },
                 {
                   "kind": "scalar",
-                  "fieldName": "padding",
+                  "fieldName": "debugBoxId",
                   "binding": {
                     "kind": "uniform",
                     "offset": 12,
                     "size": 4
                   },
-                  "scalarType": "float32"
+                  "scalarType": "uint32"
                 },
                 {
                   "kind": "vector",
@@ -136,26 +209,11 @@
             }
           },
           {
-            "kind": "matrix",
-            "fieldName": "projectionMatrix",
-            "binding": {
-              "kind": "uniform",
-              "offset": 0,
-              "size": 64
-            },
-            "rowCount": 4,
-            "columnCount": 4,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
             "kind": "resource",
             "fieldName": "spriteSheet",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 2,
+              "index": 3,
               "count": 1
             },
             "resourceShape": "texture2D",
@@ -194,7 +252,7 @@
         "binding": {
           "kind": "varyingInput",
           "index": 0,
-          "count": 3
+          "count": 4
         },
         "typeName": "FragInput",
         "fields": [
@@ -249,6 +307,16 @@
               "kind": "scalar",
               "scalarType": "float32"
             }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "debugBoxId",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 3,
+              "count": 1
+            },
+            "scalarType": "uint32"
           }
         ]
       }
@@ -274,6 +342,13 @@
           },
           {
             "binding": 2,
+            "descriptorType": "storageBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 64
+          },
+          {
+            "binding": 3,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",

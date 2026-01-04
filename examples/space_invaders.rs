@@ -22,7 +22,9 @@ struct SpaceInvaders {
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<SpaceInvadersParams>,
     sprites_buffer: StorageBufferHandle<Sprite>,
+    debug_boxes_buffer: StorageBufferHandle<DebugBox>,
     sprites: Vec<Sprite>,
+    debug_boxes: Vec<DebugBox>,
     player: Player,
     enemies: Vec<Enemy>,
     sprite_atlas_size: SpriteAtlasSize,
@@ -36,6 +38,8 @@ struct SpaceInvaders {
 
 const INITIAL_WINDOW_WIDTH_PIXELS: u32 = 160;
 const INITIAL_WINDOW_HEIGHT_PIXELS: u32 = 180;
+
+const MAX_DEBUG_BOXES: u32 = 100;
 
 impl Game for SpaceInvaders {
     fn window_title() -> &'static str {
@@ -116,7 +120,7 @@ impl Game for SpaceInvaders {
             },
             intent: EnemyIntent::Right,
             animation: Animation::from_frames(&enemy_animation_frames),
-            health: 100,
+            health: 50,
             movement_script: EnemyMovementScript::new(vec![
                 (EnemyIntent::Right, 100),
                 (EnemyIntent::Down, 200),
@@ -137,13 +141,18 @@ impl Game for SpaceInvaders {
             bullets
         };
 
+        let mut debug_boxes: Vec<DebugBox> = Vec::with_capacity(MAX_DEBUG_BOXES as usize);
+        setup_debug_boxes(&mut debug_boxes, &mut sprites, &player);
+
         let params_buffer = renderer.create_uniform_buffer::<SpaceInvadersParams>()?;
+        let debug_boxes_buffer = renderer.create_storage_buffer::<DebugBox>(MAX_DEBUG_BOXES)?;
         let sprites_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
 
         let sprite_sheet_texture = load_texture(renderer, "sprite_sheet.png")?;
 
         let resources = Resources {
             sprites: &sprites_buffer,
+            debug_boxes: &debug_boxes_buffer,
             sprite_sheet: &sprite_sheet_texture,
             params_buffer: &params_buffer,
         };
@@ -160,7 +169,9 @@ impl Game for SpaceInvaders {
             pipeline,
             params_buffer,
             sprites_buffer,
+            debug_boxes_buffer,
             sprites,
+            debug_boxes,
             player,
             enemies,
             sprite_atlas_size,
@@ -260,17 +271,15 @@ impl Game for SpaceInvaders {
             for enemy in &mut self.enemies {
                 let bullet_hit_box = bullet.hit_box();
 
-                if !enemy.is_alive() || !bullet_hit_box.overlaps(&enemy.bounding_box) {
+                if !enemy.is_alive()
+                    || !bullet.active
+                    || !bullet_hit_box.overlaps(&enemy.bounding_box)
+                {
                     continue;
                 }
 
-                let bullet_top = bullet_hit_box.y + bullet_hit_box.h;
-                let enemy_mid = enemy.bounding_box.y + enemy.bounding_box.h / 2.0;
-
-                if bullet_top >= enemy_mid {
-                    bullet.despawn(&mut self.sprites);
-                    enemy.health -= 1;
-                }
+                bullet.despawn(&mut self.sprites);
+                enemy.health -= 1;
             }
         }
 
@@ -310,6 +319,10 @@ impl Game for SpaceInvaders {
         // player sprite
         let player_sprite = &mut self.sprites[self.player.sprite_id];
         player_sprite.set_position(&self.player.bounding_box);
+        if player_sprite.debug_box_id != u32::MAX {
+            // let debug_box = &mut self.debug_boxes[player_sprite.debug_box_id as usize];
+            // dbg!(player_sprite.debug_box_id, debug_box);
+        }
 
         let player_frame = self.player.animation.frame(&self.player_animation_frames);
         player_sprite.set_frame(player_frame, &self.sprite_atlas_size);
@@ -357,6 +370,11 @@ impl Game for SpaceInvaders {
 
         renderer.draw_vertex_count(&mut self.pipeline, vertex_count, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
+
+            // TODO FIXME need a separate draw call?
+            //   or find a way to match these with their sprites
+            // dbg!(&self.debug_boxes);
+            gpu.write_storage(&mut self.debug_boxes_buffer, &self.debug_boxes);
 
             gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
             gpu.sort_storage_by(&mut self.sprites_buffer, sprite_draw_order);
@@ -777,7 +795,7 @@ impl CPUSprite for Sprite {
         let sprite = Sprite {
             scale: Vec2::new(frame.w as f32 * SPRITE_SCALE, frame.h as f32 * SPRITE_SCALE),
             flags: SPRITE_FLAG_VISIBLE,
-            padding: 0.0,
+            debug_box_id: u32::MAX,
 
             position: Vec3::ZERO,
             rotation: 0.0,
@@ -811,4 +829,29 @@ impl CPUSprite for Sprite {
         self.position.x = bounding_box.x * SPRITE_SCALE;
         self.position.y = bounding_box.y * SPRITE_SCALE;
     }
+}
+
+fn setup_debug_boxes(debug_boxes: &mut Vec<DebugBox>, sprites: &mut [Sprite], player: &Player) {
+    let player_sprite = &sprites[player.sprite_id];
+    let player_box = DebugBox {
+        color: Vec4::new(0.0, 1.0, 0.0, 1.0),
+        position: Vec2::ZERO,
+        size: Vec2::new(
+            player.bounding_box.w * SPRITE_SCALE / player_sprite.tex_w,
+            player.bounding_box.h * SPRITE_SCALE / player_sprite.tex_h,
+        ),
+    };
+
+    assign_debug_box_to_sprite(player.sprite_id, player_box, debug_boxes, sprites);
+}
+
+fn assign_debug_box_to_sprite(
+    sprite_id: usize,
+    debug_box: DebugBox,
+    debug_boxes: &mut Vec<DebugBox>,
+    sprites: &mut [Sprite],
+) {
+    let player_sprite = &mut sprites[sprite_id];
+    player_sprite.debug_box_id = debug_boxes.len() as u32;
+    debug_boxes.push(debug_box);
 }
