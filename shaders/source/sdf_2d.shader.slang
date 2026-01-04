@@ -2,6 +2,8 @@
 
 module sdf_2d;
 
+import fullscreen_triangle;
+
 // A partial Slang implementation of this blog post:
 // https://danielchasehooper.com/posts/code-animated-rick
 
@@ -17,28 +19,10 @@ struct FragInput {
     float2 pixel : TEXCOORD0;
 }
 
-static const float2 fullScreenTriangleVerts[3] = {
-    {0.0, 0.0},
-    {0.0, 2.0},
-    {2.0, 0.0},
-};
-
-static const float2x2 reflectY = float2x2(
-    1.0,  0.0,
-    0.0, -1.0,
-);
-
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
-    let texCoord = fullScreenTriangleVerts[id];
-
-    let position = float4(texCoord * 2.0 + -1.0, 0.0, 1.0);
-
-    var pixel = mul(reflectY, texCoord); // reflect Y-axis to match OpenGL
-    pixel = pixel + float2(0.0, 1.0); // move origin to center
-    pixel *= params.resolution; // scale to screen
-
-    return FragInput(position, pixel);
+    let p = fullscreenPosition(id, params.resolution);
+    return FragInput(p.svPosition, p.pixel);
 }
 
 [shader("fragment")]
