@@ -9,15 +9,16 @@ extern static const bool columnMajor;
 ParameterBlock<SpaceInvadersParams> params;
 
 struct SpaceInvadersParams {
-    StructuredBuffer<Sprite> sprites;
     float4x4 projectionMatrix;
+    StructuredBuffer<DebugBox> debugBoxes;
+    StructuredBuffer<Sprite> sprites;
     Sampler2D spriteSheet;
 }
 
 struct Sprite {
     float2 scale;
-    uint flags;
-    float padding;
+    uint flags; // used on the CPU
+    uint debugBoxId; // UINT_MAX = none
 
     float3 position;
     float rotation;
@@ -30,11 +31,19 @@ struct Sprite {
     float4 color;
 }
 
+struct DebugBox {
+    float4 color;
+
+    float2 position;
+    float2 size;
+}
+
 struct FragInput {
     float4 position : SV_Position;
     float2 texCoord : TEXCOORD0;
     float4 color : TEXCOORD1;
     float2 spriteCoord : TEXCOORD2;
+    uint debugBoxId : TEXCOORD3;
 }
 
 // a list of two clockwise triangle indicies into quadCorners to make a quad
@@ -48,10 +57,24 @@ static const float2 quadCorners[4] = {
     {1.0f, 1.0f}
 };
 
+// TODO not in slang by default?
+static const uint UINT_MAX = 4294967295;
+
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
     let spriteId = id / 6;
     let sprite = params.sprites[spriteId];
+
+    if (sprite.debugBoxId != UINT_MAX) {
+        let debugBox = params.debugBoxes[sprite.debugBoxId];
+
+        printf(
+            "in vert; debugBoxId: %d, position: %1.2v2f, size: %1.2v2f",
+            sprite.debugBoxId,
+            debugBox.position,
+            debugBox.size,
+        );
+    }
 
     let vert = triangleIndices[id % 6];
     var coord = quadCorners[vert];
@@ -81,22 +104,59 @@ FragInput vertMain(uint id : SV_VertexID) {
     };
     let texCoord = texCoordsByVert[vert];
 
-    return FragInput(position, texCoord, sprite.color, spriteCoord);
+    return FragInput(position, texCoord, sprite.color, spriteCoord, sprite.debugBoxId);
 }
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
     let debugSpriteEdges = false;
-    if (debugSpriteEdges) {
-        let distToSidesX = min(input.spriteCoord.x, abs(input.spriteCoord.x - 1.0));
-        let distToSidesY = min(input.spriteCoord.y, abs(input.spriteCoord.y - 1.0));
-        let distToSides = min(distToSidesX, distToSidesY);
-        if (distToSides < 0.01) {
-            return float4(1.0, 0.0, 0.0, 1.0);
+    if (debugSpriteEdges && nearSidesOfSprite(input.spriteCoord)) {
+        return float4(1.0, 0.0, 1.0, 1.0);
+    }
+
+    if (input.debugBoxId != UINT_MAX) {
+        let debugBox = params.debugBoxes[input.debugBoxId];
+
+        // // TODO FIXME it looks like this is the enemy sprite position
+        // // the relative struct offsets also line up
+        // // that means we're getting the wrong storage buffer?
+        // //   yeah, it also starts tracking a bullet position if that's sorted first
+        // //   and swapping the order in the ParameterBlock swaps which we get
+        // printf(
+        //     "in frag; debugBoxId: %d, position: %1.2v2f, size: %1.2v2f",
+        //     input.debugBoxId,
+        //     debugBox.position,
+        //     debugBox.size,
+        // );
+
+        if (nearSidesOfDebugBox(input.spriteCoord, debugBox)) {
+            return debugBox.color;
         }
     }
 
     let textureColor = params.spriteSheet.Sample(input.texCoord);
 
     return input.color * textureColor;
+}
+
+func nearSidesOfSprite(texPos: float2) -> bool {
+    let distToSidesX = min(texPos.x, abs(texPos.x - 1.0));
+    let distToSidesY = min(texPos.y, abs(texPos.y - 1.0));
+    let distToSides = min(distToSidesX, distToSidesY);
+
+    return distToSides < 0.01;
+}
+
+func nearSidesOfDebugBox(texPos: float2, debugBox: DebugBox) -> bool {
+    let distToSidesX = min(
+        abs(texPos.x - debugBox.position.x),
+        abs(texPos.x - (debugBox.position.x + debugBox.size.x))
+    );
+    let distToSidesY = min(
+        abs(texPos.y - debugBox.position.y),
+        abs(texPos.y - (debugBox.position.y + debugBox.size.y))
+    );
+    let distToSides = min(distToSidesX, distToSidesY);
+
+    return distToSides < 0.01;
 }

@@ -34,6 +34,15 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
         Severity::ERROR => error!("{prefixed_message}"),
         Severity::WARNING => warn!("{prefixed_message}"),
         Severity::VERBOSE => debug!("{prefixed_message}"),
+
+        Severity::INFO if prefixed_message.contains("DebugPrintf:\n") => {
+            let mut split = prefixed_message.split("DebugPrintf:");
+            let _vulkan_prefix = split.next().unwrap();
+            let printf_message = split.next().unwrap();
+            // TODO use a different level/filter for this?
+            info!("{printf_message}")
+        }
+
         _info_or_other => info!("{prefixed_message}"),
     };
 

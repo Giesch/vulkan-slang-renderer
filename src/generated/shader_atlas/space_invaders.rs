@@ -29,7 +29,7 @@ impl GPUWrite for SpaceInvadersParams {}
 pub struct Sprite {
     pub scale: glam::Vec2,
     pub flags: u32,
-    pub padding: f32,
+    pub debug_box_id: u32,
     pub position: glam::Vec3,
     pub rotation: f32,
     pub tex_u: f32,
@@ -41,7 +41,18 @@ pub struct Sprite {
 
 impl GPUWrite for Sprite {}
 
+#[derive(Debug, Clone, Serialize)]
+#[repr(C)]
+pub struct DebugBox {
+    pub color: glam::Vec4,
+    pub position: glam::Vec2,
+    pub size: glam::Vec2,
+}
+
+impl GPUWrite for DebugBox {}
+
 pub struct Resources<'a> {
+    pub debug_boxes: &'a StorageBufferHandle<DebugBox>,
     pub sprites: &'a StorageBufferHandle<Sprite>,
     pub sprite_sheet: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<SpaceInvadersParams>,
@@ -81,6 +92,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
+            RawStorageBufferHandle::from_typed(resources.debug_boxes),
             RawStorageBufferHandle::from_typed(resources.sprites),
         ];
 

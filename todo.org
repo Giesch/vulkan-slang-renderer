@@ -1,11 +1,17 @@
 #+title: Todo
 
 * Now
-- [X] Fix Reflection Bugs
+- [-] Fix Reflection Bugs
   - [X] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
     is this still a problem after the storage buffer size fix?
   - [X] binding multiple textures results in only being able to sample the first one
     is this a reflection problem, or a renderer descriptor set problem?
+  - [ ] still need to write correctly in create_descriptor_sets
+    for each resource type, it needs to be possible to have multiple per frame
+    - start with storage buffers
+      - maybe use offsets instead of multiple buffers? pseudo-bindless
+        https://www.vincentparizet.com/blog/posts/vulkan_bindless_descriptors/
+        could have the handle store the offset
 
 * Next
 - [ ] Slang-rs PRs
