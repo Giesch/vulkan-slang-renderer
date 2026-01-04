@@ -18,7 +18,7 @@ struct SpaceInvadersParams {
 struct Sprite {
     float2 scale;
     uint flags; // used on the CPU
-    uint debugBoxId; // UINT_MAX = none
+    uint debugBoxId; // uint.maxValue = none
 
     float3 position;
     float rotation;
@@ -59,17 +59,10 @@ static const float2 quadCorners[4] = {
     {1.0f, 1.0f}
 };
 
-// TODO not in slang by default?
-static const uint UINT_MAX = 4294967295;
-
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
     let spriteId = id / 6;
     let sprite = params.sprites[spriteId];
-
-    if (sprite.debugBoxId != UINT_MAX) {
-        let debugBox = params.debugBoxes[sprite.debugBoxId];
-    }
 
     let vert = triangleIndices[id % 6];
     var coord = quadCorners[vert];
@@ -109,7 +102,7 @@ float4 fragMain(FragInput input) : SV_Target {
         return float4(1.0, 0.0, 1.0, 1.0);
     }
 
-    if (input.debugBoxId != UINT_MAX) {
+    if (input.debugBoxId != uint.maxValue) {
         let debugBox = params.debugBoxes[input.debugBoxId];
         if (nearSidesOfDebugBox(input.spriteCoord, debugBox)) {
             return debugBox.color;
