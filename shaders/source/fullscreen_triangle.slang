@@ -7,6 +7,7 @@ public struct FullscreenPosition {
     public float2 pixel;
 }
 
+// a screen-covering triangle in [0, 1] texture coordinates
 static const float2 fullScreenTriangleVerts[3] = {
     {0.0, 0.0},
     {0.0, 2.0},
@@ -22,7 +23,8 @@ static const float2x2 reflectY = float2x2(
 public func fullscreenPosition(svVertexId: uint, resolution: float2) -> FullscreenPosition {
     let texCoord = fullScreenTriangleVerts[svVertexId];
 
-    let position = float4(2 * texCoord - 1.0, 0.0, 1.0);
+    // rescale to [-1, 1] normalized device coordinates
+    let svPosition = float4(2 * texCoord - 1.0, 0.0, 1.0);
 
     // reflect Y-axis to match OpenGL
     var openglCoords = mul(reflectY, texCoord);
@@ -31,5 +33,5 @@ public func fullscreenPosition(svVertexId: uint, resolution: float2) -> Fullscre
     // scale to screen
     openglCoords *= resolution;
 
-    return FullscreenPosition(position, openglCoords);
+    return FullscreenPosition(svPosition, openglCoords);
 }

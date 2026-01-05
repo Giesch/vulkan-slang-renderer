@@ -1,17 +1,22 @@
 #+title: Todo
 
 * Now
-- [-] Fix Reflection Bugs
+- [ ] 3d SDF / Ray marching example
+
+- [X] Fix Reflection Bugs
   - [X] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
     is this still a problem after the storage buffer size fix?
   - [X] binding multiple textures results in only being able to sample the first one
     is this a reflection problem, or a renderer descriptor set problem?
-  - [ ] still need to write correctly in create_descriptor_sets
+  - [X] still need to write correctly in create_descriptor_sets
     for each resource type, it needs to be possible to have multiple per frame
-    - start with storage buffers
-      - maybe use offsets instead of multiple buffers? pseudo-bindless
-        https://www.vincentparizet.com/blog/posts/vulkan_bindless_descriptors/
-        could have the handle store the offset
+  - [X] sdf 2d validation error (newly introduced?)
+    "vkCreateDescriptorPool(): pCreateInfo->pPoolSizes[1].descriptorCount is zero."
+    same for pPoolSizes[2]
+
+- [ ] is there a nice way to prevent uninitialized shader bindings?
+  - require an initial value in setup?
+  - change draw methods to require resource updates?
 
 * Next
 - [ ] Slang-rs PRs

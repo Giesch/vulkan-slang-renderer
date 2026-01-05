@@ -8,6 +8,7 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 use ash::vk;
+use glam::Vec2;
 use sdl3::sys::vulkan::SDL_Vulkan_DestroySurface;
 use sdl3::video::Window;
 
@@ -2076,11 +2077,15 @@ fn create_descriptor_pool(
         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
         .descriptor_count(sets_across_frames * total_counts.combined_texture_samplers);
 
-    let pool_sizes = [
+    let pool_sizes: Vec<vk::DescriptorPoolSize> = [
         uniform_buffer_pool_size,
         storage_buffer_pool_size,
         sampler_pool_size,
-    ];
+    ]
+    .into_iter()
+    .filter(|s| s.descriptor_count != 0)
+    .collect();
+
     let pool_create_info = vk::DescriptorPoolCreateInfo::default()
         .pool_sizes(&pool_sizes)
         .max_sets(sets_across_frames);
@@ -3237,8 +3242,8 @@ impl<'f> FrameRenderer<'f> {
         self.0.aspect_ratio
     }
 
-    pub fn window_size(&self) -> (f32, f32) {
-        (self.0.width, self.0.height)
+    pub fn window_resolution(&self) -> Vec2 {
+        Vec2::new(self.0.width, self.0.height)
     }
 
     pub fn draw_indexed(

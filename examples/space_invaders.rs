@@ -317,7 +317,9 @@ impl Game for SpaceInvaders {
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
-        let (width, height) = renderer.window_size();
+        let resolution = renderer.window_resolution();
+        let width = resolution.x;
+        let height = resolution.y;
 
         // player sprite
         let player_sprite = &mut self.sprites[self.player.sprite_id];

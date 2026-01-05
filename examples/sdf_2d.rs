@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use glam::Vec2;
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
@@ -48,12 +47,10 @@ impl Game for SDF2D {
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let time = (Instant::now() - self.start_time).as_secs_f32();
-
-        let (width, height) = renderer.window_size();
-        let resolution = Vec2::new(width as f32, height as f32);
-
+        let resolution = renderer.window_resolution();
         let params = SDF2DParams { time, resolution };
 
+        // TODO allow multiple draw calls, split debug boxes to a separate one
         renderer.draw_vertex_count(&mut self.pipeline, 3, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
         })
