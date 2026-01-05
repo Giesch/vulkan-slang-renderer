@@ -20,15 +20,6 @@ struct RayMarchingParams {
     uint sphereCount;
 }
 
-struct Sphere {
-    float3 center;
-    float radius;
-
-    float distance(float3 point) {
-        return length(point - center) - radius;
-    }
-}
-
 struct FragInput {
     float4 position : SV_Position;
     float2 centeredCoords : TEXCOORD0;
@@ -63,7 +54,7 @@ func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
 
     for (int i = 0; i < N_STEPS; i++) {
         let currentPosition: float3 = rayOrigin + distanceTraveled * rayDirection;
-        let closestDistance: float = mapTheWorld(currentPosition);
+        let closestDistance: float = closestShape(currentPosition);
 
         if (closestDistance < MIN_HIT_DISTANCE) {
             // hit
@@ -100,31 +91,47 @@ func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
     return float3(0.0);
 }
 
-// returns the closest distance to any shape
-func mapTheWorld(currentPosition: float3) -> float {
-    var closestDistance = float.maxValue;
-
-    // TODO make this part of a Shape interface
-    for (int i = 0; i < params.sphereCount; i++) {
-        let sphere = params.spheres[i];
-        let sphereDistance = sphere.distance(currentPosition);
-        if (sphereDistance < closestDistance) {
-            closestDistance = sphereDistance;
-        }
-    }
-
-    return closestDistance;
+func closestShape(currentPosition: float3) -> float {
+    let closestSphere = Sphere.closest(params.spheres, params.sphereCount, currentPosition);
+    return closestSphere;
 }
 
 // TODO replace this with autodiff?
 func calculateNormal(p: float3) -> float3 {
     const float2 smallStep = float2(0.001, 0.0);
 
-    let gradientX = mapTheWorld(p + smallStep.xyy) - mapTheWorld(p - smallStep.xyy);
-    let gradientY = mapTheWorld(p + smallStep.yxy) - mapTheWorld(p - smallStep.yxy);
-    let gradientZ = mapTheWorld(p + smallStep.yyx) - mapTheWorld(p - smallStep.yyx);
+    let gradientX = closestShape(p + smallStep.xyy) - closestShape(p - smallStep.xyy);
+    let gradientY = closestShape(p + smallStep.yxy) - closestShape(p - smallStep.yxy);
+    let gradientZ = closestShape(p + smallStep.yyx) - closestShape(p - smallStep.yyx);
 
     return normalize(
         float3(gradientX, gradientY, gradientZ)
     );
+}
+
+interface IShape {
+    static float closest(StructuredBuffer<This> buffer, int count, float3 position) {
+        var closestDistance = float.maxValue;
+
+        for (int i = 0; i < count; i++) {
+            let shape = buffer[i];
+            let shapeDistance = shape.distance(position);
+            if (shapeDistance < closestDistance) {
+                closestDistance = shapeDistance;
+            }
+        }
+
+        return closestDistance;
+    }
+
+    float distance(float3 position);
+}
+
+struct Sphere : IShape {
+    float3 center;
+    float radius;
+
+    float distance(float3 point) {
+        return length(point - center) - radius;
+    }
 }
