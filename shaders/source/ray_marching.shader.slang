@@ -7,16 +7,18 @@
 module ray_marching;
 
 import fullscreen_triangle;
+import ray_march_camera;
 
 ParameterBlock<RayMarchingParams> params;
 
 static const float3 lightColor = float3(1);
 
 struct RayMarchingParams {
-    float3 cameraPosition;
-    uint sphereCount;
+    RayMarchCamera camera;
 
     float3 lightPosition;
+    uint sphereCount;
+
     float2 resolution;
     StructuredBuffer<Sphere> spheres;
 }
@@ -34,9 +36,8 @@ FragInput vertMain(uint id : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
-    // z = field-of-view
-    let rayDirection = float3(input.centeredCoords, 1.0);
-    let color = rayMarch(params.cameraPosition, rayDirection);
+    let rayDirection = params.camera.rayDirection(input.centeredCoords);
+    let color = rayMarch(params.camera.position, rayDirection);
 
     return float4(color, 1.0);
 }
@@ -50,35 +51,39 @@ func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
 
     for (int i = 0; i < N_STEPS; i++) {
         let currentPosition: float3 = rayOrigin + distanceTraveled * rayDirection;
-        let closestDistance: float = closestShape(currentPosition);
+        var closestDistance = float.maxValue;
 
-        if (closestDistance < MIN_HIT_DISTANCE) {
-            // hit
-            let normal = calculateNormal(currentPosition);
+        if (let hit = closestShape(currentPosition)) {
+            closestDistance = hit.distance;
 
-            // https://learnopengl.com/Lighting/Basic-Lighting
-            let ambientStrength = 0.005;
-            let ambient = ambientStrength * lightColor;
+            if (closestDistance < MIN_HIT_DISTANCE) {
+                // hit
 
-            let lightDirection = normalize(params.lightPosition - currentPosition);
+                let normal = calculateNormal(currentPosition);
 
-            // lambertian diffuse
-            let diffuse = lightColor * max(0.0, dot(normal, lightDirection));
+                // https://learnopengl.com/Lighting/Basic-Lighting
 
-            // blinn-phong specular reflection
-            let specularStrength = 0.5;
-            let shininess = 16.0;
-            let viewDirection = -rayDirection;
-            float3 halfwayDirection = normalize(lightDirection + rayDirection);
-            let specularIntensity = pow(max(dot(normal, halfwayDirection), 0.0), shininess);
-            let specular = specularStrength * lightColor * specularIntensity;
+                let ambientStrength = 0.005;
+                let ambient = ambientStrength * lightColor;
 
-            let objectColor = float3(0.2, 0.2, 0.6);
-            return (ambient + diffuse + specular) * objectColor;
+                let lightDirection = normalize(params.lightPosition - currentPosition);
+
+                // lambertian diffuse
+                let diffuse = lightColor * max(0.0, dot(normal, lightDirection));
+
+                // blinn-phong specular reflection
+                let specularStrength = 0.5;
+                let shininess = 16.0;
+                let viewDirection = -rayDirection;
+                float3 halfwayDirection = normalize(lightDirection + rayDirection);
+                let specularIntensity = pow(max(dot(normal, halfwayDirection), 0.0), shininess);
+                let specular = specularStrength * lightColor * specularIntensity;
+
+                return (ambient + diffuse + specular) * hit.objectColor;
+            }
         }
 
-        if (distanceTraveled >= MAX_TRACE_DISTANCE) {
-            // miss
+        if (distanceTraveled >= MAX_TRACE_DISTANCE) { // miss
             break;
         }
 
@@ -89,37 +94,59 @@ func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
     return float3(0.0);
 }
 
-func closestShape(currentPosition: float3) -> float {
-    let closestSphere = Sphere.closest(params.spheres, params.sphereCount, currentPosition);
-    return closestSphere;
+func closestShape(pos: float3) -> Optional<RayHit> {
+    let sphereHit = Sphere.closest(params.spheres, params.sphereCount, pos);
+
+    return sphereHit;
+}
+
+func closestShapeDist(pos: float3) -> float {
+    if (let hit = closestShape(pos)) {
+        return hit.distance;
+    }
+
+    return float.maxValue;
 }
 
 func calculateNormal(p: float3) -> float3 {
     const float2 smallStep = float2(0.001, 0.0);
 
-    let gradientX = closestShape(p + smallStep.xyy) - closestShape(p - smallStep.xyy);
-    let gradientY = closestShape(p + smallStep.yxy) - closestShape(p - smallStep.yxy);
-    let gradientZ = closestShape(p + smallStep.yyx) - closestShape(p - smallStep.yyx);
+    let gradientX = closestShapeDist(p + smallStep.xyy) - closestShapeDist(p - smallStep.xyy);
+    let gradientY = closestShapeDist(p + smallStep.yxy) - closestShapeDist(p - smallStep.yxy);
+    let gradientZ = closestShapeDist(p + smallStep.yyx) - closestShapeDist(p - smallStep.yyx);
 
     return normalize(
         float3(gradientX, gradientY, gradientZ)
     );
 }
 
+struct RayHit {
+    float distance;
+    float3 objectColor;
+}
+
+// a generic 3D SDF
 interface IShape {
-    static float closest(StructuredBuffer<This> buffer, int count, float3 position) {
-        var closestDistance = float.maxValue;
+    static Optional<RayHit> closest(StructuredBuffer<This> buffer, int count, float3 position) {
+        var rayHit: Optional<RayHit> = none;
 
         for (int i = 0; i < count; i++) {
             let shape = buffer[i];
             let shapeDistance = shape.distance(position);
-            if (shapeDistance < closestDistance) {
-                closestDistance = shapeDistance;
+
+            if (let existingHit = rayHit) {
+                if (shapeDistance < existingHit.distance) {
+                    rayHit = RayHit(shapeDistance, shape.color);
+                }
+            } else {
+                rayHit = RayHit(shapeDistance, shape.color);
             }
         }
 
-        return closestDistance;
+        return rayHit;
     }
+
+    property float3 color { get; }
 
     float distance(float3 position);
 }
@@ -127,6 +154,8 @@ interface IShape {
 struct Sphere : IShape {
     float3 center;
     float radius;
+
+    float3 color;
 
     float distance(float3 point) {
         return length(point - center) - radius;

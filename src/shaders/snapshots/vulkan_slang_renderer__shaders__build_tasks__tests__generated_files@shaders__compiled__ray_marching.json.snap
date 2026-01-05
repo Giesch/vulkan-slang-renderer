@@ -13,11 +13,64 @@ info:
         "typeName": "RayMarchingParams",
         "fields": [
           {
-            "kind": "vector",
-            "fieldName": "cameraPosition",
+            "kind": "struct",
+            "fieldName": "camera",
             "binding": {
               "kind": "uniform",
               "offset": 0,
+              "size": 80
+            },
+            "structType": {
+              "typeName": "RayMarchCamera",
+              "fields": [
+                {
+                  "kind": "matrix",
+                  "fieldName": "inverseViewProj",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 64,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "padding",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 76,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "lightPosition",
+            "binding": {
+              "kind": "uniform",
+              "offset": 80,
               "size": 12
             },
             "elementCount": 3,
@@ -31,31 +84,17 @@ info:
             "fieldName": "sphereCount",
             "binding": {
               "kind": "uniform",
-              "offset": 12,
+              "offset": 92,
               "size": 4
             },
             "scalarType": "uint32"
           },
           {
             "kind": "vector",
-            "fieldName": "lightPosition",
-            "binding": {
-              "kind": "uniform",
-              "offset": 16,
-              "size": 12
-            },
-            "elementCount": 3,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "vector",
             "fieldName": "resolution",
             "binding": {
               "kind": "uniform",
-              "offset": 32,
+              "offset": 96,
               "size": 8
             },
             "elementCount": 2,
@@ -100,6 +139,20 @@ info:
                     "size": 4
                   },
                   "scalarType": "float32"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
                 }
               ]
             }
@@ -171,14 +224,14 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 48
+            "size": 112
           },
           {
             "binding": 1,
             "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 48
+            "size": 112
           }
         ]
       }

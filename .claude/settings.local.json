@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(cargo check --all)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(just shaders)"
     ]
   }
 }

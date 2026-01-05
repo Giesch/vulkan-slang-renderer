@@ -1,14 +1,22 @@
 #+title: Todo
 
 * Now
-- [ ] 3d SDF / Ray marching example
-  - [ ] fix rescaling to window size
+- [-] 3d SDF / Ray marching example
+  - [X] fix rescaling to window size
     switch to using an MVP matrix?
-  - [ ] order of fields in params broke the renderer
-    does the structured buffer have to be last? or was it an alignment thing
-  - [ ] make the camera moveable
+  - [X] make the camera moveable
     either directly, or by moving everything else
+  - [-] order of fields in params broke the renderer
+    does the structured buffer have to be last? or was it an alignment thing
+    this is because align(16) doesn't actually fulfill std140 (see below)
+  - [ ] colors are broken
+    both spheres should be the same blue - they're not, so there's an incorrect offset
+    probably another memory layout problem
   - [ ] try replacing calculateNormal with auto-differentiation like the ocean example
+
+- [ ] use a macro for std 140 layout
+  - align(16) is not enough; need to enforce that struct fields are also aligned
+  - does this also apply to std430?
 
 * Next
 - [ ] is there a nice way to prevent uninitialized shader bindings?
