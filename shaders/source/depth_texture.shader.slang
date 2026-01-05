@@ -27,10 +27,7 @@ FragVertex vertMain(uint vertexIndex : SV_VertexID, Vertex vertex) {
     if (vertexIndex == 0) {
         // this is intended as a demo of shader printf
         // run an example like 'just shader-debug viking_room' to try it
-        printf(
-          "first vertex position: %f, %f, %f\n",
-          position.x, position.y, position.z
-        );
+        printf("first vertex position: %1.2v3f", position);
     }
 
     return FragVertex(position, vertex.color, vertex.texCoord);

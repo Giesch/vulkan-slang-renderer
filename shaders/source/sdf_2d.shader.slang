@@ -21,8 +21,10 @@ struct FragInput {
 
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
-    let p = fullscreenPosition(id, params.resolution);
-    return FragInput(p.svPosition, p.pixel);
+    let fp = fullscreenPosition(id);
+    let pixel = fp.centeredCoords * params.resolution;
+
+    return FragInput(fp.svPosition, pixel);
 }
 
 [shader("fragment")]
