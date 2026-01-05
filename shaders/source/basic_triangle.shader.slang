@@ -11,18 +11,18 @@ struct Vertex {
     float3 color;
 };
 
-struct FragVertex {
+struct FragInput {
     float4 position : SV_POSITION;
     float3 color;
 };
 
 [shader("vertex")]
-FragVertex vertexMain(Vertex vertex) {
+FragInput vertexMain(Vertex vertex) {
     let position = matrices.project(vertex.position);
-    return FragVertex(position, vertex.color);
+    return FragInput(position, vertex.color);
 }
 
 [shader("fragment")]
-float4 fragmentMain(FragVertex fragVertex) {
+float4 fragmentMain(FragInput fragVertex) {
     return float4(fragVertex.color, 1.0);
 }

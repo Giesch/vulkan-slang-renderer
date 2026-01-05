@@ -10,25 +10,24 @@ import fullscreen_triangle;
 
 ParameterBlock<RayMarchingParams> params;
 
-// this assumes a 2x2 x-y image plane at float3(0.0)
-// TODO move to uniform
-static const float3 cameraPosition = float3(0.0, 0.0, -5.0);
+static const float3 lightColor = float3(1);
 
+// TODO FIXME the order of these fields can break the renderer?
+// do resources have to go last?
 struct RayMarchingParams {
+    float3 cameraPosition;
+    uint sphereCount;
+
+    float3 lightPosition;
+    // TODO use this to rescale
     float2 resolution;
     StructuredBuffer<Sphere> spheres;
-    uint sphereCount;
 }
 
 struct FragInput {
     float4 position : SV_Position;
     float2 centeredCoords : TEXCOORD0;
 }
-
-static const float2x2 reflectY = float2x2(
-    1.0,  0.0,
-    0.0, -1.0,
-);
 
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
@@ -39,8 +38,9 @@ FragInput vertMain(uint id : SV_VertexID) {
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
     // z = field-of-view
+    // TODO move the image plane based on camera position
     let rayDirection = float3(input.centeredCoords, 1.0);
-    let color = rayMarch(cameraPosition, rayDirection);
+    let color = rayMarch(params.cameraPosition, rayDirection);
 
     return float4(color, 1.0);
 }
@@ -58,25 +58,27 @@ func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
 
         if (closestDistance < MIN_HIT_DISTANCE) {
             // hit
-
             let normal = calculateNormal(currentPosition);
-            // normal map color; [-1, 1] to [0, 1]
-            // return normal * 0.5 + 0.5;
 
-            // TODO move to uniform
-            let lightPosition = float3(2.0, -5.0, 2.0);
-            let directionToLight = normalize(currentPosition - lightPosition);
+            // https://learnopengl.com/Lighting/Basic-Lighting
+            let ambientStrength = 0.005;
+            let ambient = ambientStrength * lightColor;
 
-            let lightColor = float3(0.45, 0.45, 0.6);
+            let lightDirection = normalize(params.lightPosition - currentPosition);
 
             // lambertian diffuse
-            let diffuseIntensity = max(0.0, dot(normal, directionToLight));
+            let diffuse = lightColor * max(0.0, dot(normal, lightDirection));
 
-            // 'nikita diffuse'
-            // https://lisyarus.github.io/blog/posts/a-silly-diffuse-shading-model.html
-            // let diffuseIntensity = (1 + dot(normal, directionToLight)) / 2.0;
+            // blinn-phong specular reflection
+            let specularStrength = 0.5;
+            let shininess = 16.0;
+            let viewDirection = -rayDirection;
+            float3 halfwayDirection = normalize(lightDirection + rayDirection);
+            let specularIntensity = pow(max(dot(normal, halfwayDirection), 0.0), shininess);
+            let specular = specularStrength * lightColor * specularIntensity;
 
-            return lightColor * diffuseIntensity;
+            let objectColor = float3(0.2, 0.2, 0.6);
+            return (ambient + diffuse + specular) * objectColor;
         }
 
         if (distanceTraveled >= MAX_TRACE_DISTANCE) {

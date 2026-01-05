@@ -9,10 +9,48 @@
         "fields": [
           {
             "kind": "vector",
-            "fieldName": "resolution",
+            "fieldName": "cameraPosition",
             "binding": {
               "kind": "uniform",
               "offset": 0,
+              "size": 12
+            },
+            "elementCount": 3,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "sphereCount",
+            "binding": {
+              "kind": "uniform",
+              "offset": 12,
+              "size": 4
+            },
+            "scalarType": "uint32"
+          },
+          {
+            "kind": "vector",
+            "fieldName": "lightPosition",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 12
+            },
+            "elementCount": 3,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "resolution",
+            "binding": {
+              "kind": "uniform",
+              "offset": 32,
               "size": 8
             },
             "elementCount": 2,
@@ -60,16 +98,6 @@
                 }
               ]
             }
-          },
-          {
-            "kind": "scalar",
-            "fieldName": "sphereCount",
-            "binding": {
-              "kind": "uniform",
-              "offset": 8,
-              "size": 4
-            },
-            "scalarType": "uint32"
           }
         ]
       }
@@ -138,14 +166,14 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 16
+            "size": 48
           },
           {
             "binding": 1,
             "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 16
+            "size": 48
           }
         ]
       }

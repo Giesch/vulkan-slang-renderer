@@ -119,7 +119,7 @@ info:
           "index": 0,
           "count": 1
         },
-        "typeName": "FragVertex",
+        "typeName": "FragInput",
         "fields": [
           {
             "kind": "vector",

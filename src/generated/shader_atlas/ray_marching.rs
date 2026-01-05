@@ -19,8 +19,10 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct RayMarchingParams {
-    pub resolution: glam::Vec2,
+    pub camera_position: glam::Vec3,
     pub sphere_count: u32,
+    pub light_position: glam::Vec3,
+    pub resolution: glam::Vec2,
 }
 
 impl GPUWrite for RayMarchingParams {}
