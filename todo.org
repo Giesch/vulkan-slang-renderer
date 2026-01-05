@@ -2,23 +2,19 @@
 
 * Now
 - [ ] 3d SDF / Ray marching example
+  - [ ] fix rescaling to window size
+    switch to using an MVP matrix?
+  - [ ] order of fields in params broke the renderer
+    does the structured buffer have to be last? or was it an alignment thing
+  - [ ] make the camera moveable
+    either directly, or by moving everything else
+  - [ ] try replacing calculateNormal with auto-differentiation like the ocean example
 
-- [X] Fix Reflection Bugs
-  - [X] descriptor set sizes are wrong when mixing storage buffers with uniform buffers
-    is this still a problem after the storage buffer size fix?
-  - [X] binding multiple textures results in only being able to sample the first one
-    is this a reflection problem, or a renderer descriptor set problem?
-  - [X] still need to write correctly in create_descriptor_sets
-    for each resource type, it needs to be possible to have multiple per frame
-  - [X] sdf 2d validation error (newly introduced?)
-    "vkCreateDescriptorPool(): pCreateInfo->pPoolSizes[1].descriptorCount is zero."
-    same for pPoolSizes[2]
-
+* Next
 - [ ] is there a nice way to prevent uninitialized shader bindings?
   - require an initial value in setup?
   - change draw methods to require resource updates?
 
-* Next
 - [ ] Slang-rs PRs
   - [ ] handle shape mask & bitflags correctly
     make the existing enum private, expose new rust wrappers

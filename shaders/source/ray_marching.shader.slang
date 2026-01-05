@@ -12,14 +12,11 @@ ParameterBlock<RayMarchingParams> params;
 
 static const float3 lightColor = float3(1);
 
-// TODO FIXME the order of these fields can break the renderer?
-// do resources have to go last?
 struct RayMarchingParams {
     float3 cameraPosition;
     uint sphereCount;
 
     float3 lightPosition;
-    // TODO use this to rescale
     float2 resolution;
     StructuredBuffer<Sphere> spheres;
 }
@@ -38,7 +35,6 @@ FragInput vertMain(uint id : SV_VertexID) {
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
     // z = field-of-view
-    // TODO move the image plane based on camera position
     let rayDirection = float3(input.centeredCoords, 1.0);
     let color = rayMarch(params.cameraPosition, rayDirection);
 
@@ -98,7 +94,6 @@ func closestShape(currentPosition: float3) -> float {
     return closestSphere;
 }
 
-// TODO replace this with autodiff?
 func calculateNormal(p: float3) -> float3 {
     const float2 smallStep = float2(0.001, 0.0);
 
