@@ -1,0 +1,99 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+Rust-based Vulkan renderer with Slang shader integration. Provides type-safe, reflection-based interfaces for Slang shaders with hot-reloading capabilities.
+
+## Build Commands
+
+```bash
+cargo check --all # Check source and examples for type errors
+just shaders      # Generate shader bindings (MUST run after .slang changes)
+just test         # Run tests (snapshot testing via insta)
+just lint         # Clippy with warnings as errors
+```
+
+**Important:** Always run `just shaders` after modifying any `.shader.slang` files to regenerate Rust bindings.
+
+## Toolchain
+
+- Rust nightly-2025-10-24 (Rust Edition 2024)
+- Uses `#![feature(never_type)]`
+
+## Architecture
+
+### Core Modules (src/)
+- **app.rs** - Application event loop, SDL integration
+- **game.rs** - Game trait definitions and input system
+- **renderer.rs** - Main Vulkan rendering engine (~109KB)
+- **shaders.rs** - Slang compilation interface
+- **shader_watcher.rs** - Hot reload for shaders (debug builds only)
+- **generated/** - Auto-generated shader bindings (don't edit manually)
+
+### Shader System
+
+**Workflow:**
+1. Create/edit `shaders/source/*.shader.slang`
+2. Run `just shaders` (sets `GENERATE_RUST_SOURCE=true`)
+3. Generates: SPIR-V bytecode + reflection JSON + Rust bindings in `src/generated/`
+
+**Generated code includes:**
+- Vertex input structs with Vulkan format annotations
+- Parameter block structs (Std140 for uniforms, Std430 for storage)
+- Type-safe `Resources` struct and `pipeline_config()` builder
+
+### Game Trait
+
+Implement this to create an application:
+```rust
+pub trait Game {
+    fn setup(renderer: &mut Renderer) -> Result<Self>;
+    fn update(&mut self);
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
+    fn window_title() -> &'static str;
+    fn initial_window_size() -> (u32, u32);
+    fn input(&mut self, input: Input);
+    fn run() -> Result<()>;  // Entry point
+}
+```
+
+### Type-Safe Resource Handles
+
+- `PipelineHandle<DrawIndexed>` / `PipelineHandle<DrawVertexCount>`
+- `UniformBufferHandle<T>` - Uniform buffers
+- `StorageBufferHandle<T>` - Storage buffers
+- `TextureHandle` - Textures
+
+### Key Constants (src/renderer.rs)
+
+- `ENABLE_VALIDATION` - Vulkan validation layers (on in debug builds)
+- `ENABLE_SAMPLE_SHADING` - MSAA (off by default)
+- `MAX_FRAMES_IN_FLIGHT` - 2 (double buffering)
+
+## Examples
+
+Run with `just dev example=NAME`:
+- basic_triangle - Minimal vertex/index buffer
+- depth_texture - Depth testing and textures
+- sprite_batch - Sprite rendering with storage buffers
+- space_invaders - Complete game example
+- sdf_2d - SDF rendering (fullscreen quad)
+- viking_room - 3D model loading
+
+## Testing
+
+Uses insta for snapshot testing of generated code:
+```bash
+just test           # Non-interactive (CI)
+just insta          # Interactive review
+```
+
+## Key Dependencies
+
+- ash - Vulkan bindings
+- glam - Math (Vec3, Mat4, etc.)
+- sdl3 - Window/input
+- shader-slang - Slang compiler
+- askama - Template engine for code generation
