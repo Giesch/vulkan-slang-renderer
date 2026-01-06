@@ -105,7 +105,7 @@ func panningCircles(pixel: float2, time: float) -> float3 {
 
     let screenWidth = 2.0;
     let time = (time + screenWidth / slowMo) * slowMo;
-    let tiledPixel = fmod(pixel + time, tileWidth);
+    let tiledPixel = fmod(pixel + time + screenWidth, tileWidth);
     let radius = tileWidth / 2.0 - tileWidth / 10.0;
 
     let warpingAnimation = true;
