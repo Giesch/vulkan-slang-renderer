@@ -9,10 +9,11 @@ Rust-based Vulkan renderer with Slang shader integration. Provides type-safe, re
 ## Build Commands
 
 ```bash
-cargo check --all # Check source and examples for type errors
-just shaders      # Generate shader bindings (MUST run after .slang changes)
-just test         # Run tests (snapshot testing via insta)
-just lint         # Clippy with warnings as errors
+cargo check --all    # Check source and examples for type errors
+just shaders         # Generate shader bindings (MUST run after .slang changes)
+just test            # Run tests (snapshot testing via insta)
+cargo insta --accept # accept all modified snapshots
+just lint            # Clippy with warnings as errors
 ```
 
 **Important:** Always run `just shaders` after modifying any `.shader.slang` files to regenerate Rust bindings.
