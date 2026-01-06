@@ -26,6 +26,7 @@ struct RayMarching {
     spheres_buffer: StorageBufferHandle<Sphere>,
     spheres: Vec<Sphere>,
     pipeline: PipelineHandle<DrawVertexCount>,
+    intent: Intent,
     camera_controller: RaymarchCameraController,
 }
 
@@ -75,6 +76,7 @@ impl Game for RayMarching {
             spheres_buffer,
             spheres,
             pipeline,
+            intent: Default::default(),
             camera_controller,
         })
     }
@@ -82,25 +84,25 @@ impl Game for RayMarching {
     fn input(&mut self, input: Input) {
         match input {
             Input::KeyDown(key) => match key {
-                Key::W => self.camera_controller.forward = true,
-                Key::S => self.camera_controller.backward = true,
-                Key::A => self.camera_controller.left = true,
-                Key::D => self.camera_controller.right = true,
+                Key::W => self.intent.forward = true,
+                Key::S => self.intent.backward = true,
+                Key::A => self.intent.left = true,
+                Key::D => self.intent.right = true,
                 Key::Space => {}
             },
 
             Input::KeyUp(key) => match key {
-                Key::W => self.camera_controller.forward = false,
-                Key::S => self.camera_controller.backward = false,
-                Key::A => self.camera_controller.left = false,
-                Key::D => self.camera_controller.right = false,
+                Key::W => self.intent.forward = false,
+                Key::S => self.intent.backward = false,
+                Key::A => self.intent.left = false,
+                Key::D => self.intent.right = false,
                 Key::Space => {}
             },
         }
     }
 
     fn update(&mut self) {
-        self.camera_controller.update();
+        self.camera_controller.update(&self.intent);
 
         let elapsed = (Instant::now() - self.start_time).as_secs_f32();
         let elapsed = elapsed * 0.1;
@@ -130,16 +132,20 @@ impl Game for RayMarching {
     }
 }
 
+// Translated player camera controls
+#[derive(Default)]
+struct Intent {
+    forward: bool,
+    backward: bool,
+    left: bool,
+    right: bool,
+}
+
 struct RaymarchCameraController {
     position: Vec3,
     yaw: f32,
     pitch: f32,
     move_speed: f32,
-
-    forward: bool,
-    backward: bool,
-    left: bool,
-    right: bool,
 }
 
 impl RaymarchCameraController {
@@ -149,10 +155,6 @@ impl RaymarchCameraController {
             move_speed,
             yaw: 0.0,
             pitch: 0.0,
-            forward: false,
-            backward: false,
-            left: false,
-            right: false,
         }
     }
 
@@ -164,34 +166,34 @@ impl RaymarchCameraController {
         )
     }
 
-    fn update(&mut self) {
+    fn update(&mut self, intent: &Intent) {
         let forward_dir = self.forward_direction();
         let right_dir = -Vec3::new(self.yaw.cos(), 0.0, self.yaw.sin());
 
-        if self.forward {
-            self.position += forward_dir * self.move_speed;
+        let mut movement = Vec3::ZERO;
+        if intent.forward {
+            movement += forward_dir;
         }
-        if self.backward {
-            self.position -= forward_dir * self.move_speed;
+        if intent.backward {
+            movement -= forward_dir;
         }
-        if self.left {
-            self.position -= right_dir * self.move_speed;
+        if intent.left {
+            movement -= right_dir;
         }
-        if self.right {
-            self.position += right_dir * self.move_speed;
+        if intent.right {
+            movement += right_dir;
         }
+
+        self.position += movement.normalize_or_zero() * self.move_speed;
     }
 
     fn camera(&self, aspect_ratio: f32) -> RayMarchCamera {
         let fov_y_radians = 45.0_f32.to_radians();
-        let view = {
-            let target = self.position + self.forward_direction();
-            Mat4::look_at_rh(self.position, target, Vec3::Y)
-        };
-        let proj = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 1000.0);
 
-        let view_proj = proj * view;
-        let inverse_view_proj = view_proj.inverse();
+        let target = self.position + self.forward_direction();
+        let view = Mat4::look_at_rh(self.position, target, Vec3::Y);
+        let proj = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 1000.0);
+        let inverse_view_proj = (proj * view).inverse();
 
         RayMarchCamera {
             position: self.position,
