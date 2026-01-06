@@ -43,13 +43,15 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         add_top_level_rust_modules(&slang_file_names, &mut generated_source_files);
     }
 
+    let search_path = config.shaders_source_dir.to_str().unwrap();
+
     // generate per-shader files
     for slang_file_name in &slang_file_names {
         let ReflectedShader {
             vertex_shader,
             fragment_shader,
             reflection_json,
-        } = prepare_reflected_shader(slang_file_name)?;
+        } = prepare_reflected_shader(slang_file_name, search_path)?;
 
         if config.generate_rust_source {
             let source_file = build_generated_source_file(&reflection_json);
@@ -502,11 +504,20 @@ fn gather_struct_defs(
                     generated_sub_fields.push(field_def);
                 };
             }
+
+            // Calculate alignment from the nested struct's own fields, not from parent
+            let nested_alignment = alignment.map(|a| match a {
+                Alignment::Std140 => Alignment::Std140,
+                Alignment::Std430 { .. } => Alignment::Std430 {
+                    struct_alignment: std430_struct_alignment(&struct_field.struct_type.fields),
+                },
+            });
+
             let sub_struct_def = GeneratedStructDefinition {
                 type_name: type_name.clone(),
                 fields: generated_sub_fields,
                 trait_derives: vec!["Debug", "Clone", "Serialize"],
-                alignment,
+                alignment: nested_alignment,
                 expected_size: None,
             };
             struct_defs.push(sub_struct_def);
@@ -696,6 +707,35 @@ fn std430_alignment(type_name: &str) -> usize {
     }
 }
 
+/// Returns the std430 alignment for a struct field
+fn std430_field_alignment(field: &StructField) -> usize {
+    match field {
+        StructField::Scalar(s) => match s.scalar_type {
+            ScalarType::Float32 | ScalarType::Uint32 => 4,
+        },
+        StructField::Vector(VectorStructField::Bound(v)) => match v.element_count {
+            4 => 16,
+            3 => 16, // vec3 has 16-byte alignment in std430
+            2 => 8,
+            _ => 16,
+        },
+        StructField::Vector(VectorStructField::Semantic(v)) => match v.element_count {
+            4 => 16,
+            3 => 16, // vec3 has 16-byte alignment in std430
+            2 => 8,
+            _ => 16,
+        },
+        StructField::Matrix(_) => 16, // all matrices are 16-byte aligned
+        StructField::Struct(s) => std430_struct_alignment(&s.struct_type.fields),
+        StructField::Resource(_) => 0, // resources don't contribute to alignment
+    }
+}
+
+/// Calculates the std430 alignment for a struct from its fields
+fn std430_struct_alignment(fields: &[StructField]) -> usize {
+    fields.iter().map(std430_field_alignment).max().unwrap_or(4) // minimum alignment is 4 in std430
+}
+
 /// Rounds up to the next multiple of alignment
 fn align_to(offset: usize, alignment: usize) -> usize {
     offset.div_ceil(alignment) * alignment
@@ -741,6 +781,90 @@ mod tests {
         };
 
         write_precompiled_shaders(config).unwrap();
+
+        insta::glob!(&tmp_dir_path, "**/*.{rs,json}", |tmp_path| {
+            let relative_path = tmp_path.strip_prefix(&tmp_dir_path).unwrap();
+
+            let info = serde_json::json!({
+                "relative_path": &relative_path
+            });
+
+            let content = std::fs::read_to_string(tmp_path).unwrap();
+
+            insta::with_settings!({ info => &info, omit_expression => true }, {
+                insta::assert_snapshot!(content);
+            });
+        });
+    }
+
+    // Tests for std430 alignment edge cases
+    #[cfg(not(windows))]
+    #[test]
+    fn std430_alignment_tests() {
+        let tmp_prefix = format!("shader-test-{}", uuid::Uuid::new_v4());
+        let tmp_dir_path = std::env::temp_dir().join(tmp_prefix);
+
+        let config = Config {
+            generate_rust_source: true,
+            rust_source_dir: tmp_dir_path.join("src"),
+            shaders_source_dir: manifest_path(["shaders", "test"]),
+            compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
+        };
+
+        write_precompiled_shaders(config).unwrap();
+
+        // Run cargo check on the generated code to verify it compiles
+        {
+            use std::fmt::Write;
+
+            let check_crate = manifest_path(["shaders", "test", "check_crate"]);
+            let check_crate_src = check_crate.join("src/generated");
+            let check_crate_shaders = check_crate.join("shaders/compiled");
+
+            std::fs::create_dir_all(&check_crate_src).unwrap();
+            std::fs::create_dir_all(&check_crate_shaders).unwrap();
+
+            // Copy .rs files and build mod.rs
+            let mut mod_contents = String::new();
+            let shader_atlas_dir = tmp_dir_path.join("src/generated/shader_atlas");
+            for entry in std::fs::read_dir(&shader_atlas_dir).unwrap() {
+                let entry = entry.unwrap();
+                if entry.path().extension() == Some(std::ffi::OsStr::new("rs")) {
+                    let filename = entry.file_name();
+                    std::fs::copy(entry.path(), check_crate_src.join(&filename)).unwrap();
+                    let mod_name = filename.to_str().unwrap().strip_suffix(".rs").unwrap();
+                    writeln!(mod_contents, "pub mod {};", mod_name).unwrap();
+                }
+            }
+            std::fs::write(check_crate_src.join("mod.rs"), mod_contents).unwrap();
+
+            // Copy compiled shader files (.json and .spv)
+            let compiled_dir = tmp_dir_path.join("shaders/compiled");
+            for entry in std::fs::read_dir(&compiled_dir).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "json" || e == "spv") {
+                    std::fs::copy(&path, check_crate_shaders.join(entry.file_name())).unwrap();
+                }
+            }
+
+            // Run cargo check
+            let output = std::process::Command::new("cargo")
+                .args(["check"])
+                .current_dir(&check_crate)
+                .output()
+                .expect("failed to run cargo check");
+
+            // Cleanup before asserting (so we don't leave files on failure)
+            std::fs::remove_dir_all(&check_crate_src).unwrap();
+            std::fs::remove_dir_all(&check_crate_shaders).unwrap();
+
+            assert!(
+                output.status.success(),
+                "generated code failed to compile:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
 
         insta::glob!(&tmp_dir_path, "**/*.{rs,json}", |tmp_path| {
             let relative_path = tmp_path.strip_prefix(&tmp_dir_path).unwrap();

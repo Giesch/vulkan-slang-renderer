@@ -1,0 +1,10 @@
+[package]
+name = "shader-check"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ash = "0.38"
+glam = { version = "0.29", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

@@ -12,13 +12,14 @@
   - [X] colors are broken
     both spheres should be the same blue - they're not, so there's an incorrect offset
     probably another memory layout problem
+  - [ ] add a cube or other shapes
   - [ ] add shadows
   - [ ] try replacing calculateNormal with auto-differentiation like the ocean example
 
-- [-] generated padding and assertions for std 430 layout
+- [X] generated padding and assertions for std 430 layout
   ie for storage buffers
   - [X] get examples working
-  - [ ] set up more robust unit tests
+  - [X] set up more robust unit tests
 
 - [ ] use a macro for std 140 layout?
   ie for uniform buffers
@@ -367,6 +368,9 @@
   make the enum of supported glam types / primitives part of StructEntryPointParameter
 
 - [ ] replace ReflectionJson::layout_bindings with directly inlining data in generated code
+
+- [ ] support more types in std 430 layout
+  ie, arrays as struct fields
 
 
 * Roc Questions

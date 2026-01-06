@@ -1,0 +1,110 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: shaders/compiled/std430_vectors.json
+---
+{
+  "sourceFileName": "std430_vectors.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "resource",
+            "fieldName": "data",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 0,
+              "count": 1
+            },
+            "resourceShape": "structuredBuffer",
+            "resultType": {
+              "kind": "struct",
+              "typeName": "VectorData",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "a",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "b",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "c",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 32,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": []
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "storageBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 0
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

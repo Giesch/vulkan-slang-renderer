@@ -1,0 +1,34 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: src/generated/shader_atlas.rs
+---
+pub mod std430_vectors;
+pub mod std430_nested_structs;
+pub mod std430_matrices;
+pub mod std430_vec3_padding;
+pub mod std430_scalars;
+pub mod std430_mixed_fields;
+
+
+pub struct ShaderAtlas {
+    pub std430_vectors: std430_vectors::Shader,
+    pub std430_nested_structs: std430_nested_structs::Shader,
+    pub std430_matrices: std430_matrices::Shader,
+    pub std430_vec3_padding: std430_vec3_padding::Shader,
+    pub std430_scalars: std430_scalars::Shader,
+    pub std430_mixed_fields: std430_mixed_fields::Shader,
+}
+
+impl ShaderAtlas {
+    pub fn init() -> Self {
+        Self {
+            std430_vectors: std430_vectors::Shader::init(),
+            std430_nested_structs: std430_nested_structs::Shader::init(),
+            std430_matrices: std430_matrices::Shader::init(),
+            std430_vec3_padding: std430_vec3_padding::Shader::init(),
+            std430_scalars: std430_scalars::Shader::init(),
+            std430_mixed_fields: std430_mixed_fields::Shader::init(),
+        }
+    }
+}

@@ -1,2 +1,6 @@
 /target
-/vendor
+
+# Test fixture crate generated files
+shaders/test/check_crate/src/generated/
+shaders/test/check_crate/shaders/
+shaders/test/check_crate/target/

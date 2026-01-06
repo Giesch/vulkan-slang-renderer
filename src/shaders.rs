@@ -25,9 +25,12 @@ pub struct ReflectedShader {
     pub reflection_json: ReflectionJson,
 }
 
-fn prepare_reflected_shader(source_file_name: &str) -> anyhow::Result<ReflectedShader> {
+fn prepare_reflected_shader(
+    source_file_name: &str,
+    search_path: &str,
+) -> anyhow::Result<ReflectedShader> {
     let global_session = slang::GlobalSession::new().unwrap();
-    let search_path = CString::new("shaders/source").unwrap();
+    let search_path = CString::new(search_path).unwrap();
 
     let session_options = slang::CompilerOptions::default()
         .vulkan_use_entry_point_name(true)
@@ -114,7 +117,7 @@ fn prepare_reflected_shader(source_file_name: &str) -> anyhow::Result<ReflectedS
 
 #[cfg(debug_assertions)]
 pub fn dev_compile_slang_shaders(source_file_name: &str) -> anyhow::Result<ReflectedShader> {
-    prepare_reflected_shader(source_file_name)
+    prepare_reflected_shader(source_file_name, "shaders/source")
 }
 
 pub struct CompiledShader {
