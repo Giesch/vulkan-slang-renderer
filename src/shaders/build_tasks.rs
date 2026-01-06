@@ -165,6 +165,7 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
                     fields: generated_fields,
                     trait_derives: vec!["Debug", "Clone", "Serialize"],
                     alignment: Some(Alignment::Std140),
+                    expected_size: None,
                 };
 
                 let mut attribute_descriptions = vec![];
@@ -215,6 +216,7 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
             fields: param_block_fields,
             trait_derives: vec!["Debug", "Clone", "Serialize"],
             alignment: Some(Alignment::Std140),
+            expected_size: None,
         });
 
         // the default-added parameter block uniform buffer
@@ -248,10 +250,7 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
                 }
             };
 
-            GeneratedStructFieldDefinition {
-                field_name: r.field_name.clone(),
-                type_name,
-            }
+            GeneratedStructFieldDefinition::new(r.field_name.clone(), type_name)
         })
         .collect();
 
@@ -260,6 +259,7 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
         fields: resources_fields,
         trait_derives: vec![],
         alignment: None,
+        expected_size: None,
     };
     struct_defs.push(resources_struct);
 
@@ -360,6 +360,67 @@ impl GeneratedShaderImpl {
     }
 }
 
+/// Generates fields for a std430 storage buffer struct, inserting padding as needed.
+/// Returns (fields, struct_alignment, expected_size).
+fn generate_std430_struct_fields(
+    source_fields: &[StructField],
+    struct_defs: &mut Vec<GeneratedStructDefinition>,
+) -> (Vec<GeneratedStructFieldDefinition>, usize, usize) {
+    let mut generated_fields = Vec::new();
+    let mut current_offset: usize = 0;
+    let mut max_alignment: usize = 4; // minimum alignment
+    let mut padding_index: usize = 0;
+
+    for source_field in source_fields {
+        // Get the generated field (and recurse for nested structs)
+        let alignment_for_nested = Some(Alignment::Std430 {
+            struct_alignment: 16,
+        });
+        let Some(gen_field) = gather_struct_defs(source_field, struct_defs, alignment_for_nested)
+        else {
+            continue;
+        };
+
+        // Get the expected offset from reflection
+        let Some((expected_offset, field_size)) = field_offset_size(source_field) else {
+            // No offset info (e.g. semantic field), just add the field
+            generated_fields.push(gen_field);
+            continue;
+        };
+
+        // Track max alignment for struct alignment calculation
+        let field_alignment = std430_alignment(&gen_field.type_name);
+        max_alignment = max_alignment.max(field_alignment);
+
+        // Insert padding if needed
+        if expected_offset > current_offset {
+            let padding_size = expected_offset - current_offset;
+            generated_fields.push(GeneratedStructFieldDefinition::padding(
+                padding_index,
+                padding_size,
+            ));
+            padding_index += 1;
+        }
+
+        generated_fields.push(gen_field);
+        current_offset = expected_offset + field_size;
+    }
+
+    // Calculate final struct size (round up to struct alignment for array stride)
+    let expected_size = align_to(current_offset, max_alignment);
+
+    // Add trailing padding if needed
+    if expected_size > current_offset {
+        let padding_size = expected_size - current_offset;
+        generated_fields.push(GeneratedStructFieldDefinition::padding(
+            padding_index,
+            padding_size,
+        ));
+    }
+
+    (generated_fields, max_alignment, expected_size)
+}
+
 fn gather_struct_defs(
     field: &StructField,
     struct_defs: &mut Vec<GeneratedStructDefinition>,
@@ -379,20 +440,21 @@ fn gather_struct_defs(
                         }
 
                         ResourceResultType::Struct(struct_result_type) => {
-                            // NOTE for now, the only resource this can be is a storage buffer
-                            let alignment = Some(Alignment::Std430);
+                            // Storage buffer struct - need to calculate std430 layout
+                            let (fields, struct_alignment, expected_size) =
+                                generate_std430_struct_fields(
+                                    &struct_result_type.fields,
+                                    struct_defs,
+                                );
 
-                            let fields = struct_result_type
-                                .fields
-                                .iter()
-                                .filter_map(|sf| gather_struct_defs(sf, struct_defs, alignment))
-                                .collect();
+                            let alignment = Some(Alignment::Std430 { struct_alignment });
 
                             struct_defs.push(GeneratedStructDefinition {
                                 type_name: struct_result_type.type_name.clone(),
                                 fields,
                                 trait_derives: vec!["Debug", "Clone", "Serialize"],
                                 alignment,
+                                expected_size: Some(expected_size),
                             });
                         }
                     }
@@ -410,10 +472,10 @@ fn gather_struct_defs(
                 ScalarType::Uint32 => "u32",
             };
 
-            Some(GeneratedStructFieldDefinition {
-                field_name: scalar.field_name.to_snake_case(),
-                type_name: field_type.to_string(),
-            })
+            Some(GeneratedStructFieldDefinition::new(
+                scalar.field_name.to_snake_case(),
+                field_type.to_string(),
+            ))
         }
 
         StructField::Vector(VectorStructField::Semantic(_)) => None,
@@ -426,10 +488,10 @@ fn gather_struct_defs(
                 (t, c) => panic!("vector not supported: type: {t:?}, count: {c}"),
             };
 
-            Some(GeneratedStructFieldDefinition {
-                field_name: vector.field_name.to_snake_case(),
-                type_name: field_type.to_string(),
-            })
+            Some(GeneratedStructFieldDefinition::new(
+                vector.field_name.to_snake_case(),
+                field_type.to_string(),
+            ))
         }
 
         StructField::Struct(struct_field) => {
@@ -445,13 +507,14 @@ fn gather_struct_defs(
                 fields: generated_sub_fields,
                 trait_derives: vec!["Debug", "Clone", "Serialize"],
                 alignment,
+                expected_size: None,
             };
             struct_defs.push(sub_struct_def);
 
-            Some(GeneratedStructFieldDefinition {
-                field_name: struct_field.field_name.to_snake_case(),
+            Some(GeneratedStructFieldDefinition::new(
+                struct_field.field_name.to_snake_case(),
                 type_name,
-            })
+            ))
         }
 
         StructField::Matrix(matrix) => {
@@ -466,10 +529,10 @@ fn gather_struct_defs(
                 }
             };
 
-            Some(GeneratedStructFieldDefinition {
-                field_name: matrix.field_name.to_snake_case(),
-                type_name: field_type.to_string(),
-            })
+            Some(GeneratedStructFieldDefinition::new(
+                matrix.field_name.to_snake_case(),
+                field_type.to_string(),
+            ))
         }
     }
 }
@@ -517,6 +580,7 @@ struct GeneratedStructDefinition {
     fields: Vec<GeneratedStructFieldDefinition>,
     trait_derives: Vec<&'static str>,
     alignment: Option<Alignment>, // None = CPU only
+    expected_size: Option<usize>, // For compile-time size assertion
 }
 
 impl GeneratedStructDefinition {
@@ -534,8 +598,12 @@ impl GeneratedStructDefinition {
         self.alignment.is_some()
     }
 
-    fn repr(&self) -> Option<&str> {
+    fn repr(&self) -> Option<String> {
         self.alignment.as_ref().map(Alignment::annotation)
+    }
+
+    fn expected_size(&self) -> Option<usize> {
+        self.expected_size
     }
 }
 
@@ -543,6 +611,22 @@ impl GeneratedStructDefinition {
 struct GeneratedStructFieldDefinition {
     field_name: String,
     type_name: String,
+}
+
+impl GeneratedStructFieldDefinition {
+    fn new(field_name: String, type_name: String) -> Self {
+        Self {
+            field_name,
+            type_name,
+        }
+    }
+
+    fn padding(index: usize, size: usize) -> Self {
+        Self {
+            field_name: format!("_padding_{index}"),
+            type_name: format!("[u8; {size}]"),
+        }
+    }
 }
 
 struct GeneratedFile {
@@ -584,22 +668,54 @@ enum RequiredResourceType {
     StructuredBuffer(String),
 }
 
+/// Extracts offset and size from a StructField's binding
+fn field_offset_size(field: &StructField) -> Option<(usize, usize)> {
+    let binding = match field {
+        StructField::Scalar(s) => Some(&s.binding),
+        StructField::Vector(VectorStructField::Bound(v)) => Some(&v.binding),
+        StructField::Vector(VectorStructField::Semantic(_)) => None,
+        StructField::Matrix(m) => Some(&m.binding),
+        StructField::Struct(s) => Some(&s.binding),
+        StructField::Resource(_) => None,
+    };
+
+    binding.and_then(|b| match b {
+        Binding::Uniform(u) => Some((u.offset, u.size)),
+        _ => None,
+    })
+}
+
+/// Returns the std430 alignment for a given Rust type name
+fn std430_alignment(type_name: &str) -> usize {
+    match type_name {
+        "glam::Vec4" | "glam::Mat4" | "glam::Mat3" | "glam::Mat2" => 16,
+        "glam::Vec3" => 16, // vec3 has 16-byte alignment in std430
+        "glam::Vec2" => 8,
+        "f32" | "u32" | "i32" => 4,
+        _ => 16, // assume 16 for unknown/struct types
+    }
+}
+
+/// Rounds up to the next multiple of alignment
+fn align_to(offset: usize, alignment: usize) -> usize {
+    offset.div_ceil(alignment) * alignment
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Alignment {
-    // #[repr(C, align(16))]
-    // used for uniform buffers
+    /// #[repr(C, align(16))] - used for uniform buffers
     Std140,
-    // #[repr(C)]
-    // used for storage buffers
-    // manual padding may be necessary
-    Std430,
+    /// #[repr(C, align(N))] - used for storage buffers with calculated alignment
+    Std430 { struct_alignment: usize },
 }
 
 impl Alignment {
-    fn annotation(&self) -> &str {
+    fn annotation(&self) -> String {
         match self {
-            Self::Std140 => "#[repr(C, align(16))]",
-            Self::Std430 => "#[repr(C)]",
+            Self::Std140 => "#[repr(C, align(16))]".to_string(),
+            Self::Std430 { struct_alignment } => {
+                format!("#[repr(C, align({struct_alignment}))]")
+            }
         }
     }
 }

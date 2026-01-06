@@ -25,7 +25,7 @@ pub struct SpriteBatchParams {
 impl GPUWrite for SpriteBatchParams {}
 
 #[derive(Debug, Clone, Serialize)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct Sprite {
     pub position: glam::Vec3,
     pub rotation: f32,
@@ -39,6 +39,7 @@ pub struct Sprite {
 }
 
 impl GPUWrite for Sprite {}
+const _: () = assert!(std::mem::size_of::<Sprite>() == 64);
 
 pub struct Resources<'a> {
     pub sprites: &'a StorageBufferHandle<Sprite>,

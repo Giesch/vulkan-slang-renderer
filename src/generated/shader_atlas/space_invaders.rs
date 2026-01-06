@@ -25,7 +25,7 @@ pub struct SpaceInvadersParams {
 impl GPUWrite for SpaceInvadersParams {}
 
 #[derive(Debug, Clone, Serialize)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct DebugBox {
     pub color: glam::Vec4,
     pub position: glam::Vec2,
@@ -33,9 +33,10 @@ pub struct DebugBox {
 }
 
 impl GPUWrite for DebugBox {}
+const _: () = assert!(std::mem::size_of::<DebugBox>() == 32);
 
 #[derive(Debug, Clone, Serialize)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct Sprite {
     pub scale: glam::Vec2,
     pub flags: u32,
@@ -50,6 +51,7 @@ pub struct Sprite {
 }
 
 impl GPUWrite for Sprite {}
+const _: () = assert!(std::mem::size_of::<Sprite>() == 64);
 
 pub struct Resources<'a> {
     pub sprites: &'a StorageBufferHandle<Sprite>,

@@ -28,14 +28,16 @@ pub struct RayMarchingParams {
 impl GPUWrite for RayMarchingParams {}
 
 #[derive(Debug, Clone, Serialize)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct Sphere {
     pub center: glam::Vec3,
     pub radius: f32,
     pub color: glam::Vec3,
+    pub _padding_0: [u8; 4],
 }
 
 impl GPUWrite for Sphere {}
+const _: () = assert!(std::mem::size_of::<Sphere>() == 32);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

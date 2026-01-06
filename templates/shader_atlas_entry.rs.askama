@@ -36,6 +36,11 @@ pub struct {{ def.type_name }} {
 
 impl GPUWrite for {{ def.type_name }} {}
 {%- endif %}
+{%- match def.expected_size() -%}
+{%- when Some with (size) +%}
+const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
+{%- when None -%}
+{%- endmatch %}
 {% endfor %}
 {% for block in vertex_impl_blocks -%}
 impl VertexDescription for {{ block.type_name }} {

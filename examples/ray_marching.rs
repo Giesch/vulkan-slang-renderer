@@ -124,11 +124,13 @@ impl Game for RayMarching {
                 center: Vec3::ZERO,
                 radius: 1.0,
                 color: Vec3::new(0.2, 0.2, 0.6),
+                _padding_0: [0; 4],
             },
             Sphere {
                 center: Vec3::splat(1.0),
                 radius: 0.2,
                 color: Vec3::new(0.2, 0.2, 0.6),
+                _padding_0: [0; 4],
             },
         ];
 
