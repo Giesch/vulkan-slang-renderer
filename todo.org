@@ -14,11 +14,24 @@
     probably another memory layout problem
   - [ ] try replacing calculateNormal with auto-differentiation like the ocean example
 
-- [ ] use a macro for std 140 layout
+- [ ] generated padding and assertions for std 430 layout
+  ie for storage buffers
+  - [ ] get examples working
+  - [ ] set up more robust unit tests
+
+- [ ] use a macro for std 140 layout?
+  ie for uniform buffers
   - align(16) is not enough; need to enforce that struct fields are also aligned
-  - does this also apply to std430?
+  - there are existing crates for this; use one of those, or make a new system?
 
 * Next
+- [ ] get off of rust nightly
+  - [ ] find a good replacement for never type in vertex config
+  - [ ] remove 'fast build' config
+
+- [ ] look for opportunities to refactor (and split up) renderer.rs and build_tasks.rs
+  - find chunks that could be modules and/or opaque types
+
 - [ ] is there a nice way to prevent uninitialized shader bindings?
   - require an initial value in setup?
   - change draw methods to require resource updates?
