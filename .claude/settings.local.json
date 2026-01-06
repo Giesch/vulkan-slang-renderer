@@ -1,9 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo check --all)",
       "Bash(ls:*)",
-      "Bash(just shaders)"
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(cargo check --all)",
+      "Bash(cargo clean:*)",
+      "Bash(just shaders)",
+      "Bash(just test:*)",
+      "Bash(just insta:*)",
+      "Bash(just lint:*)"
     ]
   }
 }
