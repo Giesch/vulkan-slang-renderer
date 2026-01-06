@@ -4,10 +4,13 @@ module fullscreen_triangle;
 
 public struct FullscreenPosition {
     // [-1, 1] normalized device coordinates
+    // Vulkan-style Y-down
     public float4 svPosition;
     // [0, 1] uv texture coordinates
+    // Vulkan-style Y-down
     public float2 texCoord;
     // [-1, 1] with origin at the center
+    // OpenGL-style Y-up
     public float2 centeredCoords;
 }
 

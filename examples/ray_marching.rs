@@ -15,6 +15,121 @@ fn main() -> Result<(), anyhow::Error> {
     RayMarching::run()
 }
 
+const MAX_SPHERES: u32 = 100;
+const MOON_START: Vec3 = Vec3::new(1.0, 0.0, 1.0);
+const SUN_START: Vec3 = Vec3::new(4.0, 5.0, 2.0);
+
+struct RayMarching {
+    start_time: Instant,
+    params_buffer: UniformBufferHandle<RayMarchingParams>,
+    sun_position: Vec3,
+    spheres_buffer: StorageBufferHandle<Sphere>,
+    spheres: Vec<Sphere>,
+    pipeline: PipelineHandle<DrawVertexCount>,
+    camera_controller: RaymarchCameraController,
+}
+
+impl Game for RayMarching {
+    fn window_title() -> &'static str {
+        "Ray Marching"
+    }
+
+    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    where
+        Self: Sized,
+    {
+        let start_time = Instant::now();
+
+        let params_buffer = renderer.create_uniform_buffer::<RayMarchingParams>()?;
+        let spheres_buffer = renderer.create_storage_buffer::<Sphere>(MAX_SPHERES)?;
+        let resources = Resources {
+            spheres: &spheres_buffer,
+            params_buffer: &params_buffer,
+        };
+
+        let shader = ShaderAtlas::init().ray_marching;
+        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline = renderer.create_pipeline(pipeline_config)?;
+
+        let spheres = vec![
+            Sphere {
+                center: Vec3::ZERO,
+                radius: 1.0,
+                color: Vec3::new(0.2, 0.2, 0.6),
+                _padding_0: [0; 4],
+            },
+            Sphere {
+                center: MOON_START,
+                radius: 0.2,
+                color: Vec3::new(0.2, 0.6, 0.2),
+                _padding_0: [0; 4],
+            },
+        ];
+
+        let camera_controller = RaymarchCameraController::new(Vec3::new(0.0, 0.0, -5.0), 0.1);
+
+        Ok(Self {
+            start_time,
+            params_buffer,
+            sun_position: SUN_START,
+            spheres_buffer,
+            spheres,
+            pipeline,
+            camera_controller,
+        })
+    }
+
+    fn input(&mut self, input: Input) {
+        match input {
+            Input::KeyDown(key) => match key {
+                Key::W => self.camera_controller.forward = true,
+                Key::S => self.camera_controller.backward = true,
+                Key::A => self.camera_controller.left = true,
+                Key::D => self.camera_controller.right = true,
+                Key::Space => {}
+            },
+
+            Input::KeyUp(key) => match key {
+                Key::W => self.camera_controller.forward = false,
+                Key::S => self.camera_controller.backward = false,
+                Key::A => self.camera_controller.left = false,
+                Key::D => self.camera_controller.right = false,
+                Key::Space => {}
+            },
+        }
+    }
+
+    fn update(&mut self) {
+        self.camera_controller.update();
+
+        let elapsed = (Instant::now() - self.start_time).as_secs_f32();
+        let elapsed = elapsed * 0.1;
+
+        let sun_rotation = Mat4::from_rotation_y(TAU * (elapsed * 0.25).fract());
+        self.sun_position = sun_rotation.transform_point3(SUN_START);
+
+        let moon_rotation = Mat4::from_rotation_y(TAU * (elapsed * 4.0).fract());
+        let moon_position = moon_rotation.transform_point3(MOON_START);
+        self.spheres[1].center = moon_position;
+    }
+
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+        let camera = self.camera_controller.camera(renderer.aspect_ratio());
+
+        let params = RayMarchingParams {
+            camera,
+            light_position: self.sun_position,
+            resolution: renderer.window_resolution(),
+            sphere_count: self.spheres.len() as u32,
+        };
+
+        renderer.draw_vertex_count(&mut self.pipeline, 3, |gpu| {
+            gpu.write_uniform(&mut self.params_buffer, params);
+            gpu.write_storage(&mut self.spheres_buffer, &self.spheres);
+        })
+    }
+}
+
 struct RaymarchCameraController {
     position: Vec3,
     yaw: f32,
@@ -83,113 +198,5 @@ impl RaymarchCameraController {
             padding: 0.0,
             inverse_view_proj,
         }
-    }
-}
-
-struct RayMarching {
-    start_time: Instant,
-    params_buffer: UniformBufferHandle<RayMarchingParams>,
-    spheres_buffer: StorageBufferHandle<Sphere>,
-    spheres: Vec<Sphere>,
-    pipeline: PipelineHandle<DrawVertexCount>,
-    camera_controller: RaymarchCameraController,
-}
-
-const MAX_SPHERES: u32 = 100;
-
-impl Game for RayMarching {
-    fn window_title() -> &'static str {
-        "Ray Marching"
-    }
-
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
-    where
-        Self: Sized,
-    {
-        let start_time = Instant::now();
-
-        let params_buffer = renderer.create_uniform_buffer::<RayMarchingParams>()?;
-        let spheres_buffer = renderer.create_storage_buffer::<Sphere>(MAX_SPHERES)?;
-        let resources = Resources {
-            spheres: &spheres_buffer,
-            params_buffer: &params_buffer,
-        };
-
-        let shader = ShaderAtlas::init().ray_marching;
-        let pipeline_config = shader.pipeline_config(resources);
-        let pipeline = renderer.create_pipeline(pipeline_config)?;
-
-        let spheres = vec![
-            Sphere {
-                center: Vec3::ZERO,
-                radius: 1.0,
-                color: Vec3::new(0.2, 0.2, 0.6),
-                _padding_0: [0; 4],
-            },
-            Sphere {
-                center: Vec3::splat(1.0),
-                radius: 0.2,
-                color: Vec3::new(0.2, 0.2, 0.6),
-                _padding_0: [0; 4],
-            },
-        ];
-
-        let camera_controller = RaymarchCameraController::new(Vec3::new(0.0, 0.0, -5.0), 0.1);
-
-        Ok(Self {
-            start_time,
-            params_buffer,
-            spheres_buffer,
-            spheres,
-            pipeline,
-            camera_controller,
-        })
-    }
-
-    fn input(&mut self, input: Input) {
-        match input {
-            Input::KeyDown(key) => match key {
-                Key::W => self.camera_controller.forward = true,
-                Key::S => self.camera_controller.backward = true,
-                Key::A => self.camera_controller.left = true,
-                Key::D => self.camera_controller.right = true,
-                Key::Space => {}
-            },
-
-            Input::KeyUp(key) => match key {
-                Key::W => self.camera_controller.forward = false,
-                Key::S => self.camera_controller.backward = false,
-                Key::A => self.camera_controller.left = false,
-                Key::D => self.camera_controller.right = false,
-                Key::Space => {}
-            },
-        }
-    }
-
-    fn update(&mut self) {
-        self.camera_controller.update();
-    }
-
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
-        let elapsed = (Instant::now() - self.start_time).as_secs_f32();
-        let elapsed = elapsed * 0.1;
-
-        let light_position = Vec3::new(4.0, 5.0, 2.0);
-        let rotation = Mat4::from_rotation_y(TAU * elapsed.fract());
-        let light_position = rotation.transform_point3(light_position);
-
-        let camera = self.camera_controller.camera(renderer.aspect_ratio());
-
-        let params = RayMarchingParams {
-            camera,
-            light_position,
-            resolution: renderer.window_resolution(),
-            sphere_count: self.spheres.len() as u32,
-        };
-
-        renderer.draw_vertex_count(&mut self.pipeline, 3, |gpu| {
-            gpu.write_uniform(&mut self.params_buffer, params);
-            gpu.write_storage(&mut self.spheres_buffer, &self.spheres);
-        })
     }
 }

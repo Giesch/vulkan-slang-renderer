@@ -9,20 +9,23 @@
   - [-] order of fields in params broke the renderer
     does the structured buffer have to be last? or was it an alignment thing
     this is because align(16) doesn't actually fulfill std140 (see below)
-  - [ ] colors are broken
+  - [X] colors are broken
     both spheres should be the same blue - they're not, so there's an incorrect offset
     probably another memory layout problem
+  - [ ] add shadows
   - [ ] try replacing calculateNormal with auto-differentiation like the ocean example
 
-- [ ] generated padding and assertions for std 430 layout
+- [-] generated padding and assertions for std 430 layout
   ie for storage buffers
-  - [ ] get examples working
+  - [X] get examples working
   - [ ] set up more robust unit tests
 
 - [ ] use a macro for std 140 layout?
   ie for uniform buffers
   - align(16) is not enough; need to enforce that struct fields are also aligned
   - there are existing crates for this; use one of those, or make a new system?
+
+- [ ] review/extract in-code todos
 
 * Next
 - [ ] get off of rust nightly
