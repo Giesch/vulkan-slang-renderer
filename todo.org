@@ -32,6 +32,13 @@
   - [ ] find a good replacement for never type in vertex config
   - [ ] remove 'fast build' config
 
+- [ ] vulkan validation layer setup and tests
+  - [ ] enable the validation layers with env var instead of with code
+  - [ ] have another config option / env var for 'panic on validation error'
+    or on warning;
+  - [ ] set up automated tests that use the panic env var to check examples for validation errors
+  - [ ] another env var for writing logs to a file?
+
 - [ ] look for opportunities to refactor (and split up) renderer.rs and build_tasks.rs
   - find chunks that could be modules and/or opaque types
 
@@ -367,3 +374,10 @@
 - [ ] will compiler apis be available for compile-time reflection by platforms?
 - [ ] will there be some way to say "I'm trying to implement this interface"
   like to get nicer error messages
+
+
+* Other Graphics Resources
+- PBR Book
+  https://www.pbr-book.org/
+- Learning Modern 3D Graphics Programming
+  https://paroj.github.io/gltut/
