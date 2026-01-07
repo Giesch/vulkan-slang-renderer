@@ -1,7 +1,7 @@
 use std::f32::consts::TAU;
 use std::time::Instant;
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
@@ -15,7 +15,8 @@ fn main() -> Result<(), anyhow::Error> {
     RayMarching::run()
 }
 
-const MAX_SPHERES: u32 = 100;
+const SHAPE_BUFFER_SIZE: u32 = 32;
+
 const MOON_START: Vec3 = Vec3::new(1.0, 0.0, 1.0);
 const SUN_START: Vec3 = Vec3::new(4.0, 5.0, 2.0);
 
@@ -24,7 +25,9 @@ struct RayMarching {
     params_buffer: UniformBufferHandle<RayMarchingParams>,
     sun_position: Vec3,
     spheres_buffer: StorageBufferHandle<Sphere>,
+    boxes_buffer: StorageBufferHandle<BoxRect>,
     spheres: Vec<Sphere>,
+    boxes: Vec<BoxRect>,
     pipeline: PipelineHandle<DrawVertexCount>,
     intent: Intent,
     camera_controller: RaymarchCameraController,
@@ -42,9 +45,11 @@ impl Game for RayMarching {
         let start_time = Instant::now();
 
         let params_buffer = renderer.create_uniform_buffer::<RayMarchingParams>()?;
-        let spheres_buffer = renderer.create_storage_buffer::<Sphere>(MAX_SPHERES)?;
+        let spheres_buffer = renderer.create_storage_buffer::<Sphere>(SHAPE_BUFFER_SIZE)?;
+        let boxes_buffer = renderer.create_storage_buffer::<BoxRect>(SHAPE_BUFFER_SIZE)?;
         let resources = Resources {
             spheres: &spheres_buffer,
+            boxes: &boxes_buffer,
             params_buffer: &params_buffer,
         };
 
@@ -52,20 +57,22 @@ impl Game for RayMarching {
         let pipeline_config = shader.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
-        let spheres = vec![
-            Sphere {
-                center: Vec3::ZERO,
-                radius: 1.0,
-                color: Vec3::new(0.2, 0.2, 0.6),
-                _padding_0: [0; 4],
-            },
-            Sphere {
-                center: MOON_START,
-                radius: 0.2,
-                color: Vec3::new(0.2, 0.6, 0.2),
-                _padding_0: [0; 4],
-            },
-        ];
+        let spheres = vec![Sphere {
+            center: Vec3::ZERO,
+            radius: 1.0,
+            color: Vec3::new(0.2, 0.2, 0.6),
+            _padding_0: Default::default(),
+        }];
+
+        let boxes = vec![BoxRect {
+            center: MOON_START,
+            radii: Vec3::splat(0.2),
+            color: Vec3::new(0.2, 0.6, 0.2),
+            rotation: Vec4::from_array(Quat::IDENTITY.to_array()),
+            _padding_0: Default::default(),
+            _padding_1: Default::default(),
+            _padding_2: Default::default(),
+        }];
 
         let camera_controller = RaymarchCameraController::new(Vec3::new(0.0, 0.0, -5.0), 0.1);
 
@@ -74,8 +81,12 @@ impl Game for RayMarching {
             params_buffer,
             sun_position: SUN_START,
             spheres_buffer,
+            boxes_buffer,
+            boxes,
+
             spheres,
             pipeline,
+
             intent: Default::default(),
             camera_controller,
         })
@@ -110,9 +121,13 @@ impl Game for RayMarching {
         let sun_rotation = Mat4::from_rotation_y(TAU * (elapsed * 0.25).fract());
         self.sun_position = sun_rotation.transform_point3(SUN_START);
 
-        let moon_rotation = Mat4::from_rotation_y(TAU * (elapsed * 4.0).fract());
+        let moon_rotation = Mat4::from_rotation_y(TAU * (elapsed * 2.0).fract());
         let moon_position = moon_rotation.transform_point3(MOON_START);
-        self.spheres[1].center = moon_position;
+        self.boxes[0].center = moon_position;
+
+        // Rotate the box in place
+        let box_spin = Quat::from_rotation_y(TAU * (elapsed * 2.0).fract());
+        self.boxes[0].rotation = Vec4::from_array(box_spin.to_array());
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
@@ -123,11 +138,13 @@ impl Game for RayMarching {
             light_position: self.sun_position,
             resolution: renderer.window_resolution(),
             sphere_count: self.spheres.len() as u32,
+            box_count: self.boxes.len() as u32,
         };
 
         renderer.draw_vertex_count(&mut self.pipeline, 3, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
             gpu.write_storage(&mut self.spheres_buffer, &self.spheres);
+            gpu.write_storage(&mut self.boxes_buffer, &self.boxes);
         })
     }
 }
@@ -197,7 +214,6 @@ impl RaymarchCameraController {
 
         RayMarchCamera {
             position: self.position,
-            padding: 0.0,
             inverse_view_proj,
         }
     }

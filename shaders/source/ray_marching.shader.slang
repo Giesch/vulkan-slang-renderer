@@ -20,7 +20,10 @@ struct RayMarchingParams {
     uint sphereCount;
 
     float2 resolution;
+    uint boxCount;
+
     StructuredBuffer<Sphere> spheres;
+    StructuredBuffer<BoxRect> boxes;
 }
 
 struct FragInput {
@@ -72,7 +75,7 @@ func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
                 let diffuse = lightColor * max(0.0, dot(normal, lightDirection));
 
                 // blinn-phong specular reflection
-                let specularStrength = 0.5;
+                let specularStrength = 0.25;
                 let shininess = 16.0;
                 let viewDirection = -rayDirection;
                 float3 halfwayDirection = normalize(lightDirection + rayDirection);
@@ -95,9 +98,14 @@ func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
 }
 
 func closestShape(pos: float3) -> Optional<RayHit> {
-    let sphereHit = Sphere.closest(params.spheres, params.sphereCount, pos);
+    let sphereRes = Sphere.closest(params.spheres, params.sphereCount, pos);
+    let boxRes = BoxRect.closest(params.boxes, params.boxCount, pos);
 
-    return sphereHit;
+    if (sphereRes.distance <= boxRes.distance) {
+        return sphereRes.rayHit;
+    }
+
+    return boxRes.rayHit;
 }
 
 func closestShapeDist(pos: float3) -> float {
@@ -108,15 +116,16 @@ func closestShapeDist(pos: float3) -> float {
     return float.maxValue;
 }
 
+// https://iquilezles.org/articles/normalsSDF/
 func calculateNormal(p: float3) -> float3 {
-    const float2 smallStep = float2(0.001, 0.0);
-
-    let gradientX = closestShapeDist(p + smallStep.xyy) - closestShapeDist(p - smallStep.xyy);
-    let gradientY = closestShapeDist(p + smallStep.yxy) - closestShapeDist(p - smallStep.yxy);
-    let gradientZ = closestShapeDist(p + smallStep.yyx) - closestShapeDist(p - smallStep.yyx);
+    const float h = 0.001;
+    const float2 k = float2(1.0, -1.0);
 
     return normalize(
-        float3(gradientX, gradientY, gradientZ)
+        k.xyy * closestShapeDist(p + k.xyy * h) +
+        k.yyx * closestShapeDist(p + k.yyx * h) +
+        k.yxy * closestShapeDist(p + k.yxy * h) +
+        k.xxx * closestShapeDist(p + k.xxx * h)
     );
 }
 
@@ -125,9 +134,14 @@ struct RayHit {
     float3 objectColor;
 }
 
+struct RayHitDistance {
+    Optional<RayHit> rayHit;
+    float distance;
+}
+
 // a generic 3D SDF
 interface IShape {
-    static Optional<RayHit> closest(StructuredBuffer<This> buffer, int count, float3 position) {
+    static RayHitDistance closest(StructuredBuffer<This> buffer, int count, float3 position) {
         var rayHit: Optional<RayHit> = none;
 
         for (int i = 0; i < count; i++) {
@@ -143,13 +157,21 @@ interface IShape {
             }
         }
 
-        return rayHit;
+        var dist = float.maxValue;
+        if (let hit = rayHit) {
+            dist = hit.distance;
+        }
+
+        return RayHitDistance(rayHit, dist);
     }
 
     property float3 color { get; }
 
     float distance(float3 position);
 }
+
+
+// https://iquilezles.org/articles/distfunctions/
 
 struct Sphere : IShape {
     float3 center;
@@ -159,5 +181,33 @@ struct Sphere : IShape {
 
     float distance(float3 point) {
         return length(point - center) - radius;
+    }
+}
+
+// Quaternion helpers for rotating SDFs in place
+func quatConjugate(float4 q) -> float4 {
+    return float4(-q.xyz, q.w);
+}
+
+func rotateByQuat(float3 v, float4 q) -> float3 {
+    float3 u = q.xyz;
+    float s = q.w;
+    return 2.0 * dot(u, v) * u
+         + (s * s - dot(u, u)) * v
+         + 2.0 * s * cross(u, v);
+}
+
+// https://www.youtube.com/watch?v=62-pRVZuS5c
+struct BoxRect : IShape {
+    float3 center;
+    float3 radii;
+    float3 color;
+    float4 rotation; // quaternion (x, y, z, w)
+
+    float distance(float3 point) {
+        // Transform point to local space (rotate around center)
+        let localPoint = rotateByQuat(point - center, quatConjugate(rotation));
+        let q = abs(localPoint) - radii;
+        return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
     }
 }

@@ -16,6 +16,7 @@ const MATRIX_LAYOUT: MatrixLayout = MatrixLayout::RowMajor;
 #[derive(Debug, PartialEq, Eq)]
 enum MatrixLayout {
     ColumnMajor,
+    #[allow(dead_code)]
     RowMajor,
 }
 

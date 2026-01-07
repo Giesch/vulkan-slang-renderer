@@ -23,9 +23,25 @@ pub struct RayMarchingParams {
     pub light_position: glam::Vec3,
     pub sphere_count: u32,
     pub resolution: glam::Vec2,
+    pub box_count: u32,
 }
 
 impl GPUWrite for RayMarchingParams {}
+
+#[derive(Debug, Clone, Serialize)]
+#[repr(C, align(16))]
+pub struct BoxRect {
+    pub center: glam::Vec3,
+    pub _padding_0: [u8; 4],
+    pub radii: glam::Vec3,
+    pub _padding_1: [u8; 4],
+    pub color: glam::Vec3,
+    pub _padding_2: [u8; 4],
+    pub rotation: glam::Vec4,
+}
+
+impl GPUWrite for BoxRect {}
+const _: () = assert!(std::mem::size_of::<BoxRect>() == 64);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -44,13 +60,13 @@ const _: () = assert!(std::mem::size_of::<Sphere>() == 32);
 pub struct RayMarchCamera {
     pub inverse_view_proj: glam::Mat4,
     pub position: glam::Vec3,
-    pub padding: f32,
 }
 
 impl GPUWrite for RayMarchCamera {}
 
 pub struct Resources<'a> {
     pub spheres: &'a StorageBufferHandle<Sphere>,
+    pub boxes: &'a StorageBufferHandle<BoxRect>,
     pub params_buffer: &'a UniformBufferHandle<RayMarchingParams>,
 }
 
@@ -88,6 +104,7 @@ impl Shader {
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
             RawStorageBufferHandle::from_typed(resources.spheres),
+            RawStorageBufferHandle::from_typed(resources.boxes),
         ];
 
         let vertex_config = VertexConfig::VertexCount;

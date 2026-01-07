@@ -46,16 +46,6 @@
                     "kind": "scalar",
                     "scalarType": "float32"
                   }
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "padding",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 76,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
                 }
               ]
             }
@@ -97,6 +87,16 @@
               "kind": "scalar",
               "scalarType": "float32"
             }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "boxCount",
+            "binding": {
+              "kind": "uniform",
+              "offset": 104,
+              "size": 4
+            },
+            "scalarType": "uint32"
           },
           {
             "kind": "resource",
@@ -144,6 +144,78 @@
                     "size": 12
                   },
                   "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "boxes",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 2,
+              "count": 1
+            },
+            "resourceShape": "structuredBuffer",
+            "resultType": {
+              "kind": "struct",
+              "typeName": "BoxRect",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "center",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "radii",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 32,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "rotation",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 48,
+                    "size": 16
+                  },
+                  "elementCount": 4,
                   "elementType": {
                     "kind": "scalar",
                     "scalarType": "float32"
@@ -223,6 +295,13 @@
           },
           {
             "binding": 1,
+            "descriptorType": "storageBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 112
+          },
+          {
+            "binding": 2,
             "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
