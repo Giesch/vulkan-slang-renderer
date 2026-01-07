@@ -100,6 +100,8 @@ pub enum Key {
     A,
     S,
     D,
+    Q,
+    E,
     Space,
 }
 
@@ -110,6 +112,8 @@ impl Key {
             SDLScancode::A => Some(Key::A),
             SDLScancode::S => Some(Key::S),
             SDLScancode::D => Some(Key::D),
+            SDLScancode::Q => Some(Key::Q),
+            SDLScancode::E => Some(Key::E),
             SDLScancode::Space => Some(Key::Space),
             _ => None,
         }

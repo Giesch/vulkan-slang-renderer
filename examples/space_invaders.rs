@@ -195,6 +195,7 @@ impl Game for SpaceInvaders {
                 Key::S => self.player.intent.down = true,
                 Key::D => self.player.intent.right = true,
                 Key::Space => self.player.intent.fire = true,
+                _ => {}
             },
 
             Input::KeyUp(key) => match key {
@@ -203,6 +204,7 @@ impl Game for SpaceInvaders {
                 Key::S => self.player.intent.down = false,
                 Key::D => self.player.intent.right = false,
                 Key::Space => self.player.intent.fire = false,
+                _ => {}
             },
         }
     }
