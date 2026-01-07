@@ -31,17 +31,15 @@ impl GPUWrite for RayMarchingParams {}
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct BoxRect {
-    pub center: glam::Vec3,
-    pub _padding_0: [u8; 4],
+    pub transform: glam::Mat4,
     pub radii: glam::Vec3,
-    pub _padding_1: [u8; 4],
+    pub _padding_0: [u8; 4],
     pub color: glam::Vec3,
-    pub _padding_2: [u8; 4],
-    pub rotation: glam::Vec4,
+    pub _padding_1: [u8; 4],
 }
 
 impl GPUWrite for BoxRect {}
-const _: () = assert!(std::mem::size_of::<BoxRect>() == 64);
+const _: () = assert!(std::mem::size_of::<BoxRect>() == 96);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

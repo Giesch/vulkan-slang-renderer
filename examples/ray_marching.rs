@@ -1,7 +1,7 @@
 use std::f32::consts::TAU;
 use std::time::Instant;
 
-use glam::{Mat4, Quat, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3};
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
@@ -65,13 +65,11 @@ impl Game for RayMarching {
         }];
 
         let boxes = vec![BoxRect {
-            center: MOON_START,
             radii: Vec3::splat(0.2),
             color: Vec3::new(0.2, 0.6, 0.2),
-            rotation: Vec4::from_array(Quat::IDENTITY.to_array()),
+            transform: Mat4::from_translation(-MOON_START),
             _padding_0: Default::default(),
             _padding_1: Default::default(),
-            _padding_2: Default::default(),
         }];
 
         let camera_controller = RaymarchCameraController::new(Vec3::new(0.0, 0.0, -5.0), 0.1);
@@ -121,13 +119,16 @@ impl Game for RayMarching {
         let sun_rotation = Mat4::from_rotation_y(TAU * (elapsed * 0.25).fract());
         self.sun_position = sun_rotation.transform_point3(SUN_START);
 
-        let moon_rotation = Mat4::from_rotation_y(TAU * (elapsed * 2.0).fract());
-        let moon_position = moon_rotation.transform_point3(MOON_START);
-        self.boxes[0].center = moon_position;
+        let cube_moon_transform = {
+            let local_rotation = Mat4::from_rotation_z(TAU * (2.0 * elapsed).fract());
+            let translation = Mat4::from_translation(MOON_START);
+            let orbit_rotation =
+                Mat4::from_quat(Quat::from_rotation_y(TAU * (1.0 * elapsed).fract()));
 
-        // Rotate the box in place
-        let box_spin = Quat::from_rotation_y(TAU * (elapsed * 2.0).fract());
-        self.boxes[0].rotation = Vec4::from_array(box_spin.to_array());
+            local_rotation * translation * orbit_rotation
+        };
+
+        self.boxes[0].transform = cube_moon_transform;
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
@@ -183,9 +184,13 @@ impl RaymarchCameraController {
         )
     }
 
+    fn right_direction(&mut self) -> Vec3 {
+        -Vec3::new(self.yaw.cos(), 0.0, self.yaw.sin())
+    }
+
     fn update(&mut self, intent: &Intent) {
         let forward_dir = self.forward_direction();
-        let right_dir = -Vec3::new(self.yaw.cos(), 0.0, self.yaw.sin());
+        let right_dir = self.right_direction();
 
         let mut movement = Vec3::ZERO;
         if intent.forward {

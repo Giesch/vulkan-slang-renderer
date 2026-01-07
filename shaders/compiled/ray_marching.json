@@ -166,14 +166,15 @@
               "typeName": "BoxRect",
               "fields": [
                 {
-                  "kind": "vector",
-                  "fieldName": "center",
+                  "kind": "matrix",
+                  "fieldName": "transform",
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
-                    "size": 12
+                    "size": 64
                   },
-                  "elementCount": 3,
+                  "rowCount": 4,
+                  "columnCount": 4,
                   "elementType": {
                     "kind": "scalar",
                     "scalarType": "float32"
@@ -184,7 +185,7 @@
                   "fieldName": "radii",
                   "binding": {
                     "kind": "uniform",
-                    "offset": 16,
+                    "offset": 64,
                     "size": 12
                   },
                   "elementCount": 3,
@@ -198,24 +199,10 @@
                   "fieldName": "color",
                   "binding": {
                     "kind": "uniform",
-                    "offset": 32,
+                    "offset": 80,
                     "size": 12
                   },
                   "elementCount": 3,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                },
-                {
-                  "kind": "vector",
-                  "fieldName": "rotation",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 48,
-                    "size": 16
-                  },
-                  "elementCount": 4,
                   "elementType": {
                     "kind": "scalar",
                     "scalarType": "float32"

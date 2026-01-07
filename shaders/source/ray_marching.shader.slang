@@ -9,6 +9,9 @@ module ray_marching;
 import fullscreen_triangle;
 import ray_march_camera;
 
+// provided by the cpu; see shaders::MATRIX_LAYOUT
+extern static const bool columnMajor;
+
 ParameterBlock<RayMarchingParams> params;
 
 static const float3 lightColor = float3(1);
@@ -184,29 +187,18 @@ struct Sphere : IShape {
     }
 }
 
-// Quaternion helpers for rotating SDFs in place
-func quatConjugate(float4 q) -> float4 {
-    return float4(-q.xyz, q.w);
-}
-
-func rotateByQuat(float3 v, float4 q) -> float3 {
-    float3 u = q.xyz;
-    float s = q.w;
-    return 2.0 * dot(u, v) * u
-         + (s * s - dot(u, u)) * v
-         + 2.0 * s * cross(u, v);
-}
-
 // https://www.youtube.com/watch?v=62-pRVZuS5c
 struct BoxRect : IShape {
-    float3 center;
+    float4x4 transform;
     float3 radii;
     float3 color;
-    float4 rotation; // quaternion (x, y, z, w)
 
     float distance(float3 point) {
-        // Transform point to local space (rotate around center)
-        let localPoint = rotateByQuat(point - center, quatConjugate(rotation));
+        // see the comments in mvp.slang
+        let localPoint = columnMajor
+            ? mul(transform, float4(point, 1.0)).xyz
+            : mul(float4(point, 1.0), transform).xyz;
+
         let q = abs(localPoint) - radii;
         return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
     }

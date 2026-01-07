@@ -6,18 +6,16 @@
       "Bash(grep:*)",
       "Bash(find:*)",
       "Bash(xargs cat:*)",
-
       "Bash(cargo check --all)",
       "Bash(cargo clean:*)",
-
       "Bash(just shaders)",
       "Bash(just test:*)",
       "Bash(cargo test:*)",
       "Bash(cargo insta:*)",
-      "Bash(just lint:*)"
+      "Bash(just lint:*)",
+      "Bash(git commit:*)"
     ]
   },
-
   "statusLine": {
     "type": "command",
     "command": "npx ccusage@latest statusline"
