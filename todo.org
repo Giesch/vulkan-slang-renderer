@@ -14,9 +14,15 @@
     probably another memory layout problem
   - [X] add a cube or other shapes
     https://iquilezles.org/articles/distfunctions/
-
   - [ ] add shadows
-  - [ ] try replacing calculateNormal with auto-differentiation like the ocean example
+  - [ ] optimize for a large number of shapes?
+    first, make an example with a large number of different shapes,
+    and confirm that the current version is slow
+    - maybe make a separate example
+    - store shapes in one buffer with a tagged union?
+      might need/want nicer codegen for that
+      is this meaningfully slower than separate buffers?
+    - separate shape buffers, individually cpu-sorted?
 
 - [X] generated padding and assertions for std 430 layout
   ie for storage buffers
@@ -404,6 +410,8 @@
 - [ ] will compiler apis be available for compile-time reflection by platforms?
 - [ ] will there be some way to say "I'm trying to implement this interface"
   like to get nicer error messages
+- [ ] I think we can hack some reflection in via Encode/Decode
+  is that considered friendly/supported?
 
 
 * Other Graphics Resources
