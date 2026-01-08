@@ -378,9 +378,6 @@ impl Game for SpaceInvaders {
         renderer.draw_vertex_count(&mut self.pipeline, vertex_count, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
 
-            // TODO FIXME need a separate draw call?
-            //   or find a way to match these with their sprites
-            // dbg!(&self.debug_boxes);
             gpu.write_storage(&mut self.debug_boxes_buffer, &self.debug_boxes);
 
             gpu.write_storage(&mut self.sprites_buffer, &self.sprites);

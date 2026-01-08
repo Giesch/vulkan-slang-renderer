@@ -164,7 +164,6 @@ fn reflect_struct_fields(
         let field_semantic_name = field.semantic_name().map(str::to_string);
         let field_type_layout = field.type_layout().unwrap();
 
-        // TODO handle this being optional in a better way; avoid the unwraps() below
         let binding = param_binding(field);
 
         let field_json = match field_type_layout.kind() {

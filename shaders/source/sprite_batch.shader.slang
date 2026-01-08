@@ -10,6 +10,8 @@ module sprite_batch;
 // which uses the method described in this blog post:
 // https://moonside.games/posts/sdl-gpu-sprite-batcher/
 
+extern static const bool columnMajor;
+
 ParameterBlock<SpriteBatchParams> params;
 
 struct SpriteBatchParams {
@@ -65,7 +67,10 @@ FragInput vertMain(uint id : SV_VertexID) {
     coord = mul(coord, rotationMatrix);
 
     let coordWithDepth = float4(coord + sprite.position.xy, sprite.position.z, 1.0);
-    let position = mul(params.projectionMatrix, coordWithDepth);
+    let position = columnMajor
+        ? mul(params.projectionMatrix, coordWithDepth)
+        : mul(coordWithDepth, params.projectionMatrix);
+
 
     float2 texCoordsByVert[4] = {
         {sprite.texU,               sprite.texV              },

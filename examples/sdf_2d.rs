@@ -50,7 +50,6 @@ impl Game for SDF2D {
         let resolution = renderer.window_resolution();
         let params = SDF2DParams { time, resolution };
 
-        // TODO allow multiple draw calls, split debug boxes to a separate one
         renderer.draw_vertex_count(&mut self.pipeline, 3, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
         })

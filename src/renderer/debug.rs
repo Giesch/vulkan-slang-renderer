@@ -39,7 +39,6 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
             let mut split = prefixed_message.split("DebugPrintf:");
             let _vulkan_prefix = split.next().unwrap();
             let printf_message = split.next().unwrap();
-            // TODO use a different level/filter for this?
             info!("{printf_message}")
         }
 

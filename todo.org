@@ -14,6 +14,7 @@
     probably another memory layout problem
   - [X] add a cube or other shapes
     https://iquilezles.org/articles/distfunctions/
+
   - [ ] add shadows
   - [ ] try replacing calculateNormal with auto-differentiation like the ocean example
 
@@ -39,6 +40,12 @@
 
 
 * Next
+- [ ] allow multiple draw calls per frame
+  split debug boxes in space invaders to a separate draw call?
+
+- [ ] move inverting matrices back to the CPU
+  maybe in the new std140 / std430 methods?
+
 - [ ] get off of rust nightly
   - [ ] find a good replacement for never type in vertex config
   - [ ] remove 'fast build' config
@@ -388,6 +395,8 @@
 
 - [ ] support more types in std 430 layout
   ie, arrays as struct fields
+
+- [ ] use a different log level or filter for shader debug printf?
 
 
 * Roc Questions
