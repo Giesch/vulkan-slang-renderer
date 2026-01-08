@@ -29,9 +29,11 @@ pub struct RayMarchingParams {
     pub sphere_count: u32,
     pub resolution: glam::Vec2,
     pub box_count: u32,
+    pub _padding_0: [u8; 4],
 }
 
 impl GPUWrite for RayMarchingParams {}
+const _: () = assert!(std::mem::size_of::<RayMarchingParams>() == 112);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

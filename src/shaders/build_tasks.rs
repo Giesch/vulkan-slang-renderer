@@ -199,14 +199,12 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
     }
 
     for GlobalParameter::ParameterBlock(parameter_block) in &reflection_json.global_parameters {
-        let mut param_block_fields = vec![];
-        for field in &parameter_block.element_type.fields {
-            if let Some(generated_field) =
-                gather_struct_defs(field, &mut struct_defs, Some(Alignment::Std140))
-            {
-                param_block_fields.push(generated_field);
-            };
+        // Generate std140 struct fields with proper padding
+        let (param_block_fields, _struct_alignment, expected_size) =
+            generate_std140_struct_fields(&parameter_block.element_type.fields, &mut struct_defs);
 
+        // Collect required resources (textures, storage buffers, etc.)
+        for field in &parameter_block.element_type.fields {
             if let Some(req) = required_resource(field) {
                 required_resources.push(req);
             }
@@ -218,7 +216,7 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
             fields: param_block_fields,
             trait_derives: vec!["Debug", "Clone", "Serialize"],
             alignment: Some(Alignment::Std140),
-            expected_size: None,
+            expected_size: Some(expected_size),
         });
 
         // the default-added parameter block uniform buffer
@@ -391,8 +389,8 @@ fn generate_std430_struct_fields(
         };
 
         // Track max alignment for struct alignment calculation
-        let field_alignment = std430_alignment(&gen_field.type_name);
-        max_alignment = max_alignment.max(field_alignment);
+        let field_align = field_alignment(&gen_field.type_name);
+        max_alignment = max_alignment.max(field_align);
 
         // Insert padding if needed
         if expected_offset > current_offset {
@@ -421,6 +419,71 @@ fn generate_std430_struct_fields(
     }
 
     (generated_fields, max_alignment, expected_size)
+}
+
+/// Generates fields for a std140 uniform buffer struct, inserting padding as needed.
+/// Returns (fields, struct_alignment, expected_size).
+/// Key difference from std430: nested structs always have 16-byte alignment in std140.
+fn generate_std140_struct_fields(
+    source_fields: &[StructField],
+    struct_defs: &mut Vec<GeneratedStructDefinition>,
+) -> (Vec<GeneratedStructFieldDefinition>, usize, usize) {
+    let mut generated_fields = Vec::new();
+    let mut current_offset: usize = 0;
+    let mut padding_index: usize = 0;
+
+    for source_field in source_fields {
+        // Skip resources - they don't have offset/size and don't contribute to layout
+        if matches!(source_field, StructField::Resource(_)) {
+            // Still need to gather struct definitions for StructuredBuffer element types
+            let _ = gather_struct_defs(source_field, struct_defs, Some(Alignment::Std140));
+            continue;
+        }
+
+        // Get the generated field (and recurse for nested structs)
+        let Some(gen_field) =
+            gather_struct_defs(source_field, struct_defs, Some(Alignment::Std140))
+        else {
+            continue;
+        };
+
+        // Get the expected offset from reflection
+        let Some((expected_offset, field_size)) = field_offset_size(source_field) else {
+            // No offset info (e.g. semantic field), just add the field
+            generated_fields.push(gen_field);
+            continue;
+        };
+
+        // Insert padding if needed
+        if expected_offset > current_offset {
+            let padding_size = expected_offset - current_offset;
+            generated_fields.push(GeneratedStructFieldDefinition::padding(
+                padding_index,
+                padding_size,
+            ));
+            padding_index += 1;
+        }
+
+        generated_fields.push(gen_field);
+        current_offset = expected_offset + field_size;
+    }
+
+    // std140 always uses 16-byte struct alignment
+    let struct_alignment = 16;
+
+    // Calculate final struct size (round up to struct alignment)
+    let expected_size = align_to(current_offset, struct_alignment);
+
+    // Add trailing padding if needed
+    if expected_size > current_offset {
+        let padding_size = expected_size - current_offset;
+        generated_fields.push(GeneratedStructFieldDefinition::padding(
+            padding_index,
+            padding_size,
+        ));
+    }
+
+    (generated_fields, struct_alignment, expected_size)
 }
 
 fn gather_struct_defs(
@@ -696,11 +759,12 @@ fn field_offset_size(field: &StructField) -> Option<(usize, usize)> {
     })
 }
 
-/// Returns the std430 alignment for a given Rust type name
-fn std430_alignment(type_name: &str) -> usize {
+/// Returns the alignment for a given Rust type name.
+/// These rules are the same for both std140 and std430 for basic types.
+fn field_alignment(type_name: &str) -> usize {
     match type_name {
         "glam::Vec4" | "glam::Mat4" | "glam::Mat3" | "glam::Mat2" => 16,
-        "glam::Vec3" => 16, // vec3 has 16-byte alignment in std430
+        "glam::Vec3" => 16, // vec3 has 16-byte alignment in both std140 and std430
         "glam::Vec2" => 8,
         "f32" | "u32" | "i32" => 4,
         _ => 16, // assume 16 for unknown/struct types
@@ -797,10 +861,10 @@ mod tests {
         });
     }
 
-    // Tests for std430 alignment edge cases
+    // Tests for std140 and std430 alignment edge cases
     #[cfg(not(windows))]
     #[test]
-    fn std430_alignment_tests() {
+    fn alignment_tests() {
         let tmp_prefix = format!("shader-test-{}", uuid::Uuid::new_v4());
         let tmp_dir_path = std::env::temp_dir().join(tmp_prefix);
 

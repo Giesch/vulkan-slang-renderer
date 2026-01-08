@@ -1,11 +1,11 @@
 ---
 source: src/shaders/build_tasks.rs
 info:
-  relative_path: src/generated/shader_atlas/std430_mixed_fields.rs
+  relative_path: src/generated/shader_atlas/std140_nested_structs.rs
 ---
 // GENERATED FILE (do not edit directly)
 
-//! generated from slang shader: std430_mixed_fields.shader.slang
+//! generated from slang shader: std140_nested_structs.shader.slang
 
 use std::ffi::CString;
 use std::io::Cursor;
@@ -23,31 +23,28 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
-pub struct Params {
+pub struct OuterData {
+    pub x: f32,
+    pub _padding_0: [u8; 12],
+    pub inner: InnerData,
+    pub y: f32,
+    pub _padding_1: [u8; 12],
 }
 
-impl GPUWrite for Params {}
-const _: () = assert!(std::mem::size_of::<Params>() == 0);
+impl GPUWrite for OuterData {}
+const _: () = assert!(std::mem::size_of::<OuterData>() == 48);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
-pub struct MixedData {
+pub struct InnerData {
     pub a: f32,
-    pub _padding_0: [u8; 12],
-    pub b: glam::Vec3,
-    pub c: f32,
-    pub d: glam::Vec2,
-    pub e: u32,
-    pub _padding_1: [u8; 4],
-    pub f: glam::Vec4,
+    pub b: glam::Vec2,
 }
 
-impl GPUWrite for MixedData {}
-const _: () = assert!(std::mem::size_of::<MixedData>() == 64);
+impl GPUWrite for InnerData {}
 
 pub struct Resources<'a> {
-    pub data: &'a StorageBufferHandle<MixedData>,
-    pub params_buffer: &'a UniformBufferHandle<Params>,
+    pub params_buffer: &'a UniformBufferHandle<OuterData>,
 }
 
 
@@ -60,7 +57,7 @@ impl Shader {
     pub fn init() -> Self {
         let json_str = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/std430_mixed_fields.json"
+            "/shaders/compiled/std140_nested_structs.json"
         ));
 
         let reflection_json: ReflectionJson = serde_json::from_str(json_str).unwrap();
@@ -85,7 +82,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
-            RawStorageBufferHandle::from_typed(resources.data),
         ];
 
         let vertex_config = VertexConfig::VertexCount;
@@ -124,7 +120,7 @@ impl Shader {
     fn vert_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/std430_mixed_fields.vert.spv"
+            "/shaders/compiled/std140_nested_structs.vert.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")
@@ -133,7 +129,7 @@ impl Shader {
     fn frag_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/std430_mixed_fields.frag.spv"
+            "/shaders/compiled/std140_nested_structs.frag.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")

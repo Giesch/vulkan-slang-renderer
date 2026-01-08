@@ -25,6 +25,7 @@ pub struct MVPMatrices {
 }
 
 impl GPUWrite for MVPMatrices {}
+const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

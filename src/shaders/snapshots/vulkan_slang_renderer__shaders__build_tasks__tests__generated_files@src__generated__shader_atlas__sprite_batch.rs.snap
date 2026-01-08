@@ -28,6 +28,7 @@ pub struct SpriteBatchParams {
 }
 
 impl GPUWrite for SpriteBatchParams {}
+const _: () = assert!(std::mem::size_of::<SpriteBatchParams>() == 64);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

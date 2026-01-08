@@ -1,0 +1,6 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: src/generated.rs
+---
+pub mod shader_atlas;

@@ -1,0 +1,126 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: shaders/compiled/std430_nested_structs.json
+---
+{
+  "sourceFileName": "std430_nested_structs.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "resource",
+            "fieldName": "data",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 0,
+              "count": 1
+            },
+            "resourceShape": "structuredBuffer",
+            "resultType": {
+              "kind": "struct",
+              "typeName": "OuterData",
+              "fields": [
+                {
+                  "kind": "scalar",
+                  "fieldName": "x",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "struct",
+                  "fieldName": "inner",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 16
+                  },
+                  "structType": {
+                    "typeName": "InnerData",
+                    "fields": [
+                      {
+                        "kind": "scalar",
+                        "fieldName": "a",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 4
+                        },
+                        "scalarType": "float32"
+                      },
+                      {
+                        "kind": "vector",
+                        "fieldName": "b",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 8,
+                          "size": 8
+                        },
+                        "elementCount": 2,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "y",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 24,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": []
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "storageBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 0
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

@@ -23,6 +23,7 @@ pub struct DepthTextureParams {
 }
 
 impl GPUWrite for DepthTextureParams {}
+const _: () = assert!(std::mem::size_of::<DepthTextureParams>() == 192);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

@@ -26,9 +26,11 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 pub struct SDF2DParams {
     pub resolution: glam::Vec2,
     pub time: f32,
+    pub _padding_0: [u8; 4],
 }
 
 impl GPUWrite for SDF2DParams {}
+const _: () = assert!(std::mem::size_of::<SDF2DParams>() == 16);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<SDF2DParams>,

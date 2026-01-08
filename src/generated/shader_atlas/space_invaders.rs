@@ -23,6 +23,7 @@ pub struct SpaceInvadersParams {
 }
 
 impl GPUWrite for SpaceInvadersParams {}
+const _: () = assert!(std::mem::size_of::<SpaceInvadersParams>() == 64);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

@@ -149,6 +149,7 @@ impl Game for RayMarching {
             resolution: renderer.window_resolution(),
             sphere_count: self.spheres.len() as u32,
             box_count: self.boxes.len() as u32,
+            _padding_0: Default::default(),
         };
 
         renderer.draw_vertex_count(&mut self.pipeline, 3, |gpu| {

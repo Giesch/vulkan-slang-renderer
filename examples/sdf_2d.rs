@@ -48,7 +48,11 @@ impl Game for SDF2D {
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let time = (Instant::now() - self.start_time).as_secs_f32();
         let resolution = renderer.window_resolution();
-        let params = SDF2DParams { time, resolution };
+        let params = SDF2DParams {
+            time,
+            resolution,
+            _padding_0: Default::default(),
+        };
 
         renderer.draw_vertex_count(&mut self.pipeline, 3, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
