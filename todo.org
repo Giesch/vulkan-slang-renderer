@@ -6,7 +6,7 @@
     switch to using an MVP matrix?
   - [X] make the camera moveable
     either directly, or by moving everything else
-  - [-] order of fields in params broke the renderer
+  - [X] order of fields in params broke the renderer
     does the structured buffer have to be last? or was it an alignment thing
     this is because align(16) doesn't actually fulfill std140 (see below)
   - [X] colors are broken
@@ -24,30 +24,33 @@
       is this meaningfully slower than separate buffers?
     - separate shape buffers, individually cpu-sorted?
 
-- [X] generated padding and assertions for std 430 layout
-  ie for storage buffers
-  - [X] get examples working
-  - [X] set up more robust unit tests
-
-- [ ] codegen assertions & tests for std 140 layout
-  ie for uniform buffers
-  - align(16) is not enough; need to enforce that struct fields are also aligned
-  - there are existing crates for this; use one of those, or make a new system?
-
-- [ ] review/extract in-code todos
-- [ ] go back over claude commits
+- [ ] CRT Shader example
+- [ ] add egui as an editor ui
+  at least to the CRT example, maybe generally
+  is there a nice way to expose this to a scripting language?
 
 - [ ] learn about quaternions, euler angle camera rotation
+
+- [ ] go back over claude commits
+  - [ ] see if there's a nicer way to do raymarch camera rotation
+  - [ ] double check alignment tests
+
 - [ ] find a nicer way to handle 4x4 transform matrices
   - ie, have another dedicated slang type like MVP
     handle the column major mul swap
   - generate 'new' functions for those wrapper types in rust?
     or have a way to work with them more easily
 
+- [ ] use facet for generating 430/140 stuff?
+  stepping stone to supporting scripting languages / roc encode?
 
 * Next
+- [ ] basic compute shader example
+
 - [ ] allow multiple draw calls per frame
   split debug boxes in space invaders to a separate draw call?
+
+- [ ] update generated code to not include_str in dev profile?
 
 - [ ] move inverting matrices back to the CPU
   maybe in the new std140 / std430 methods?
@@ -96,8 +99,6 @@
 - [ ] Phong shading example
   - [ ] load/generate a sphere model with normals
   - [ ] render spheres with different 70s shading methods
-
-- [ ] basic compute shader example
 
 - [ ] add shadertoy/slang-rhi ocean example
   https://github.com/shader-slang/slang-rhi/blob/main/examples/shader-toy/ocean.slang
