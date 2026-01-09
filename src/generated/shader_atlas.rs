@@ -2,11 +2,13 @@ pub mod basic_triangle;
 pub mod depth_texture;
 pub mod ray_marching;
 pub mod sdf_2d;
+pub mod serenity_crt;
 pub mod space_invaders;
 pub mod sprite_batch;
 
 pub struct ShaderAtlas {
     pub space_invaders: space_invaders::Shader,
+    pub serenity_crt: serenity_crt::Shader,
     pub sdf_2d: sdf_2d::Shader,
     pub basic_triangle: basic_triangle::Shader,
     pub ray_marching: ray_marching::Shader,
@@ -18,6 +20,7 @@ impl ShaderAtlas {
     pub fn init() -> Self {
         Self {
             space_invaders: space_invaders::Shader::init(),
+            serenity_crt: serenity_crt::Shader::init(),
             sdf_2d: sdf_2d::Shader::init(),
             basic_triangle: basic_triangle::Shader::init(),
             ray_marching: ray_marching::Shader::init(),

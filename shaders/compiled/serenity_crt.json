@@ -1,0 +1,253 @@
+{
+  "sourceFileName": "serenity_crt.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "SerenityCRTParams",
+        "fields": [
+          {
+            "kind": "resource",
+            "fieldName": "tex",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "scanlineIntensity",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "scanlineCount",
+            "binding": {
+              "kind": "uniform",
+              "offset": 4,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "time",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "yOffset",
+            "binding": {
+              "kind": "uniform",
+              "offset": 12,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "brightness",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "contrast",
+            "binding": {
+              "kind": "uniform",
+              "offset": 20,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "saturation",
+            "binding": {
+              "kind": "uniform",
+              "offset": 24,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "bloomIntensity",
+            "binding": {
+              "kind": "uniform",
+              "offset": 28,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "bloomThreshold",
+            "binding": {
+              "kind": "uniform",
+              "offset": 32,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "rgbShift",
+            "binding": {
+              "kind": "uniform",
+              "offset": 36,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "adaptiveIntensity",
+            "binding": {
+              "kind": "uniform",
+              "offset": 40,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "vignetteStrength",
+            "binding": {
+              "kind": "uniform",
+              "offset": 44,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "curvature",
+            "binding": {
+              "kind": "uniform",
+              "offset": 48,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "flickerStrength",
+            "binding": {
+              "kind": "uniform",
+              "offset": 52,
+              "size": 4
+            },
+            "scalarType": "float32"
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "effect",
+    "stage": "fragment",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "input",
+        "binding": {
+          "kind": "varyingInput",
+          "index": 0,
+          "count": 2
+        },
+        "typeName": "FragInput",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 0,
+              "count": 1
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "uv",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 1,
+              "count": 1
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 64
+          },
+          {
+            "binding": 1,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 64
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}
