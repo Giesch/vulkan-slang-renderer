@@ -8,6 +8,7 @@ module ray_marching;
 
 import fullscreen_triangle;
 import ray_march_camera;
+import projection;
 
 // provided by the cpu; see shaders::MATRIX_LAYOUT
 extern static const bool columnMajor;
@@ -188,16 +189,13 @@ struct Sphere : IShape {
 
 // https://www.youtube.com/watch?v=62-pRVZuS5c
 struct BoxRect : IShape {
-    float4x4 transform;
+    Projection transform;
     float3 radii;
+
     float3 color;
 
     float distance(float3 point) {
-        // see the comments in mvp.slang
-        let localPoint = columnMajor
-            ? mul(transform, float4(point, 1.0)).xyz
-            : mul(float4(point, 1.0), transform).xyz;
-
+        let localPoint = transform.project(float4(point, 1.0)).xyz;
         let q = abs(localPoint) - radii;
         return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
     }

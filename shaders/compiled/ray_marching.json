@@ -19,18 +19,32 @@
               "typeName": "RayMarchCamera",
               "fields": [
                 {
-                  "kind": "matrix",
+                  "kind": "struct",
                   "fieldName": "inverseViewProj",
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
                     "size": 64
                   },
-                  "rowCount": 4,
-                  "columnCount": 4,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
+                  "structType": {
+                    "typeName": "Projection",
+                    "fields": [
+                      {
+                        "kind": "matrix",
+                        "fieldName": "matrix",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 64
+                        },
+                        "rowCount": 4,
+                        "columnCount": 4,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      }
+                    ]
                   }
                 },
                 {
@@ -152,18 +166,32 @@
               "typeName": "BoxRect",
               "fields": [
                 {
-                  "kind": "matrix",
+                  "kind": "struct",
                   "fieldName": "transform",
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
                     "size": 64
                   },
-                  "rowCount": 4,
-                  "columnCount": 4,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
+                  "structType": {
+                    "typeName": "Projection",
+                    "fields": [
+                      {
+                        "kind": "matrix",
+                        "fieldName": "matrix",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 64
+                        },
+                        "rowCount": 4,
+                        "columnCount": 4,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      }
+                    ]
                   }
                 },
                 {

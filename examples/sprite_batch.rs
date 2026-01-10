@@ -92,9 +92,10 @@ impl Game for SpriteBatch {
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let (width, height) = Self::initial_window_size();
-        let projection_matrix =
-            Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0);
-        let params = SpriteBatchParams { projection_matrix };
+        let projection = Projection {
+            matrix: Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0),
+        };
+        let params = SpriteBatchParams { projection };
         // 6 = the corners in 2 triangles to make a quad
         let vertex_count = self.sprites.len() as u32 * 6;
 

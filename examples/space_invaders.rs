@@ -363,9 +363,10 @@ impl Game for SpaceInvaders {
             game_over_sprite.position.y = 400.0;
         }
 
-        // make projection matrix
-        let projection_matrix = Mat4::orthographic_lh(0.0, width, height, 0.0, 0.0, -1.0);
-        let params = SpaceInvadersParams { projection_matrix };
+        let projection = Projection {
+            matrix: Mat4::orthographic_lh(0.0, width, height, 0.0, 0.0, -1.0),
+        };
+        let params = SpaceInvadersParams { projection };
 
         // draw
         let visible_sprites = self

@@ -514,13 +514,16 @@ fn gather_struct_defs(
 
                             let alignment = Some(Alignment::Std430 { struct_alignment });
 
-                            struct_defs.push(GeneratedStructDefinition {
-                                type_name: struct_result_type.type_name.clone(),
-                                fields,
-                                trait_derives: vec!["Debug", "Clone", "Serialize"],
-                                alignment,
-                                expected_size: Some(expected_size),
-                            });
+                            try_add_struct_def(
+                                struct_defs,
+                                GeneratedStructDefinition {
+                                    type_name: struct_result_type.type_name.clone(),
+                                    fields,
+                                    trait_derives: vec!["Debug", "Clone", "Serialize"],
+                                    alignment,
+                                    expected_size: Some(expected_size),
+                                },
+                            );
                         }
                     }
 
@@ -583,7 +586,7 @@ fn gather_struct_defs(
                 alignment: nested_alignment,
                 expected_size: None,
             };
-            struct_defs.push(sub_struct_def);
+            try_add_struct_def(struct_defs, sub_struct_def);
 
             Some(GeneratedStructFieldDefinition::new(
                 struct_field.field_name.to_snake_case(),
@@ -803,6 +806,36 @@ fn std430_struct_alignment(fields: &[StructField]) -> usize {
 /// Rounds up to the next multiple of alignment
 fn align_to(offset: usize, alignment: usize) -> usize {
     offset.div_ceil(alignment) * alignment
+}
+
+/// Adds a struct definition if it doesn't already exist.
+/// Panics if a struct with the same name exists but has incompatible fields.
+fn try_add_struct_def(
+    struct_defs: &mut Vec<GeneratedStructDefinition>,
+    new_def: GeneratedStructDefinition,
+) {
+    if let Some(existing) = struct_defs
+        .iter()
+        .find(|d| d.type_name == new_def.type_name)
+    {
+        // Verify compatibility by comparing fields
+        let fields_match = existing.fields.len() == new_def.fields.len()
+            && existing
+                .fields
+                .iter()
+                .zip(&new_def.fields)
+                .all(|(a, b)| a.field_name == b.field_name && a.type_name == b.type_name);
+
+        if !fields_match {
+            panic!(
+                "Incompatible struct definitions for '{}': fields differ",
+                new_def.type_name
+            );
+        }
+        // Already exists with matching fields, skip
+    } else {
+        struct_defs.push(new_def);
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

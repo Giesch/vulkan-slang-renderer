@@ -2,6 +2,8 @@
 
 module sprite_batch;
 
+import projection;
+
 // Based on the official SDL_gpu example here:
 // https://github.com/TheSpydog/SDL_gpu_examples/blob/main/Examples/PullSpriteBatch.c
 // https://github.com/TheSpydog/SDL_gpu_examples/blob/main/Content/Shaders/Source/PullSpriteBatch.vert.hlsl
@@ -16,7 +18,7 @@ ParameterBlock<SpriteBatchParams> params;
 
 struct SpriteBatchParams {
     StructuredBuffer<Sprite> sprites;
-    float4x4 projectionMatrix;
+    Projection projection;
     Sampler2D texture;
 }
 
@@ -67,10 +69,7 @@ FragInput vertMain(uint id : SV_VertexID) {
     coord = mul(coord, rotationMatrix);
 
     let coordWithDepth = float4(coord + sprite.position.xy, sprite.position.z, 1.0);
-    let position = columnMajor
-        ? mul(params.projectionMatrix, coordWithDepth)
-        : mul(coordWithDepth, params.projectionMatrix);
-
+    let position = params.projection.project(coordWithDepth);
 
     float2 texCoordsByVert[4] = {
         {sprite.texU,               sprite.texV              },

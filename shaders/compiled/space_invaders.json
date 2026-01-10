@@ -8,18 +8,32 @@
         "typeName": "SpaceInvadersParams",
         "fields": [
           {
-            "kind": "matrix",
-            "fieldName": "projectionMatrix",
+            "kind": "struct",
+            "fieldName": "projection",
             "binding": {
               "kind": "uniform",
               "offset": 0,
               "size": 64
             },
-            "rowCount": 4,
-            "columnCount": 4,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
+            "structType": {
+              "typeName": "Projection",
+              "fields": [
+                {
+                  "kind": "matrix",
+                  "fieldName": "matrix",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
             }
           },
           {

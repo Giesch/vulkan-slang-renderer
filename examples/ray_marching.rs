@@ -67,7 +67,9 @@ impl Game for RayMarching {
         let boxes = vec![BoxRect {
             radii: Vec3::splat(0.2),
             color: Vec3::new(0.2, 0.6, 0.2),
-            transform: Mat4::from_translation(-MOON_START),
+            transform: Projection {
+                matrix: Mat4::from_translation(-MOON_START),
+            },
             _padding_0: Default::default(),
             _padding_1: Default::default(),
         }];
@@ -134,7 +136,8 @@ impl Game for RayMarching {
             let orbit_rotation =
                 Mat4::from_quat(Quat::from_rotation_y(TAU * (1.0 * elapsed).fract()));
 
-            local_rotation * translation * orbit_rotation
+            let matrix = local_rotation * translation * orbit_rotation;
+            Projection { matrix }
         };
 
         self.boxes[0].transform = cube_moon_transform;
@@ -239,7 +242,9 @@ impl RaymarchCameraController {
 
         RayMarchCamera {
             position: self.position,
-            inverse_view_proj,
+            inverse_view_proj: Projection {
+                matrix: inverse_view_proj,
+            },
         }
     }
 }

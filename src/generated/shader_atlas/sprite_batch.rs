@@ -19,11 +19,19 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct SpriteBatchParams {
-    pub projection_matrix: glam::Mat4,
+    pub projection: Projection,
 }
 
 impl GPUWrite for SpriteBatchParams {}
 const _: () = assert!(std::mem::size_of::<SpriteBatchParams>() == 64);
+
+#[derive(Debug, Clone, Serialize)]
+#[repr(C, align(16))]
+pub struct Projection {
+    pub matrix: glam::Mat4,
+}
+
+impl GPUWrite for Projection {}
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

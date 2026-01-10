@@ -3,13 +3,12 @@
 // based on the sprite_batch example
 module space_invaders;
 
-// provided by the cpu
-extern static const bool columnMajor;
+import projection;
 
 ParameterBlock<SpaceInvadersParams> params;
 
 struct SpaceInvadersParams {
-    float4x4 projectionMatrix;
+    Projection projection;
     StructuredBuffer<Sprite> sprites;
     StructuredBuffer<DebugBox> debugBoxes;
     Sampler2D spriteSheet;
@@ -76,10 +75,7 @@ FragInput vertMain(uint id : SV_VertexID) {
     coord = mul(coord, rotationMatrix);
 
     let coordWithDepth = float4(coord + sprite.position.xy, sprite.position.z, 1.0);
-    // see the comments in mvp.slang
-    let position = columnMajor
-        ? mul(params.projectionMatrix, coordWithDepth)
-        : mul(coordWithDepth, params.projectionMatrix);
+    let position = params.projection.project(coordWithDepth);
 
     let left = sprite.texU;
     let right = sprite.texU + sprite.texW;

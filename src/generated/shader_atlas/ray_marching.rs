@@ -32,7 +32,7 @@ const _: () = assert!(std::mem::size_of::<RayMarchingParams>() == 112);
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct BoxRect {
-    pub transform: glam::Mat4,
+    pub transform: Projection,
     pub radii: glam::Vec3,
     pub _padding_0: [u8; 4],
     pub color: glam::Vec3,
@@ -57,11 +57,19 @@ const _: () = assert!(std::mem::size_of::<Sphere>() == 32);
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct RayMarchCamera {
-    pub inverse_view_proj: glam::Mat4,
+    pub inverse_view_proj: Projection,
     pub position: glam::Vec3,
 }
 
 impl GPUWrite for RayMarchCamera {}
+
+#[derive(Debug, Clone, Serialize)]
+#[repr(C, align(16))]
+pub struct Projection {
+    pub matrix: glam::Mat4,
+}
+
+impl GPUWrite for Projection {}
 
 pub struct Resources<'a> {
     pub spheres: &'a StorageBufferHandle<Sphere>,
