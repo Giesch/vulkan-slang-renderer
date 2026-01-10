@@ -146,7 +146,6 @@ impl Game for RayMarching {
         let params = RayMarchingParams {
             camera,
             light_position: self.sun_position,
-            resolution: renderer.window_resolution(),
             sphere_count: self.spheres.len() as u32,
             box_count: self.boxes.len() as u32,
             _padding_0: Default::default(),

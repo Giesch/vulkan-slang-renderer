@@ -22,7 +22,6 @@ struct RayMarchingParams {
     float3 lightPosition;
     uint sphereCount;
 
-    float2 resolution;
     uint boxCount;
 
     StructuredBuffer<Sphere> spheres;

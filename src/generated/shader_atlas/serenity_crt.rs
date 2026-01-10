@@ -19,6 +19,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct SerenityCRTParams {
+    pub resolution: glam::Vec2,
     pub scanline_intensity: f32,
     pub scanline_count: f32,
     pub time: f32,
@@ -33,7 +34,6 @@ pub struct SerenityCRTParams {
     pub vignette_strength: f32,
     pub curvature: f32,
     pub flicker_strength: f32,
-    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for SerenityCRTParams {}

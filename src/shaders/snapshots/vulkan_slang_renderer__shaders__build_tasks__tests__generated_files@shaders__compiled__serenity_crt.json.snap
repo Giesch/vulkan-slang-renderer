@@ -31,28 +31,22 @@ info:
             }
           },
           {
-            "kind": "scalar",
-            "fieldName": "scanlineIntensity",
+            "kind": "vector",
+            "fieldName": "resolution",
             "binding": {
               "kind": "uniform",
               "offset": 0,
-              "size": 4
+              "size": 8
             },
-            "scalarType": "float32"
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
           },
           {
             "kind": "scalar",
-            "fieldName": "scanlineCount",
-            "binding": {
-              "kind": "uniform",
-              "offset": 4,
-              "size": 4
-            },
-            "scalarType": "float32"
-          },
-          {
-            "kind": "scalar",
-            "fieldName": "time",
+            "fieldName": "scanlineIntensity",
             "binding": {
               "kind": "uniform",
               "offset": 8,
@@ -62,7 +56,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "yOffset",
+            "fieldName": "scanlineCount",
             "binding": {
               "kind": "uniform",
               "offset": 12,
@@ -72,7 +66,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "brightness",
+            "fieldName": "time",
             "binding": {
               "kind": "uniform",
               "offset": 16,
@@ -82,7 +76,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "contrast",
+            "fieldName": "yOffset",
             "binding": {
               "kind": "uniform",
               "offset": 20,
@@ -92,7 +86,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "saturation",
+            "fieldName": "brightness",
             "binding": {
               "kind": "uniform",
               "offset": 24,
@@ -102,7 +96,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "bloomIntensity",
+            "fieldName": "contrast",
             "binding": {
               "kind": "uniform",
               "offset": 28,
@@ -112,7 +106,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "bloomThreshold",
+            "fieldName": "saturation",
             "binding": {
               "kind": "uniform",
               "offset": 32,
@@ -122,7 +116,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "rgbShift",
+            "fieldName": "bloomIntensity",
             "binding": {
               "kind": "uniform",
               "offset": 36,
@@ -132,7 +126,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "adaptiveIntensity",
+            "fieldName": "bloomThreshold",
             "binding": {
               "kind": "uniform",
               "offset": 40,
@@ -142,7 +136,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "vignetteStrength",
+            "fieldName": "rgbShift",
             "binding": {
               "kind": "uniform",
               "offset": 44,
@@ -152,7 +146,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "curvature",
+            "fieldName": "adaptiveIntensity",
             "binding": {
               "kind": "uniform",
               "offset": 48,
@@ -162,10 +156,30 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "flickerStrength",
+            "fieldName": "vignetteStrength",
             "binding": {
               "kind": "uniform",
               "offset": 52,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "curvature",
+            "binding": {
+              "kind": "uniform",
+              "offset": 56,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "flickerStrength",
+            "binding": {
+              "kind": "uniform",
+              "offset": 60,
               "size": 4
             },
             "scalarType": "float32"
@@ -196,18 +210,14 @@ info:
         "binding": {
           "kind": "varyingInput",
           "index": 0,
-          "count": 2
+          "count": 1
         },
         "typeName": "FragInput",
         "fields": [
           {
             "kind": "vector",
             "fieldName": "position",
-            "binding": {
-              "kind": "varyingInput",
-              "index": 0,
-              "count": 1
-            },
+            "semanticName": "SV_POSITION",
             "elementCount": 4,
             "elementType": {
               "kind": "scalar",
@@ -219,7 +229,7 @@ info:
             "fieldName": "uv",
             "binding": {
               "kind": "varyingInput",
-              "index": 1,
+              "index": 0,
               "count": 1
             },
             "elementCount": 2,

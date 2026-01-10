@@ -11,6 +11,7 @@ ParameterBlock<SerenityCRTParams> params;
 
 struct SerenityCRTParams {
     Sampler2D tex;
+    float2 resolution;
 
     float scanlineIntensity; // Adjust intensity (0-1)
     float scanlineCount; // Number of scanlines
@@ -31,35 +32,37 @@ struct SerenityCRTParams {
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
     let fp = fullscreenPosition(id);
-    return FragInput(fp.svPosition, fp.centeredCoords);
+    return FragInput(fp.svPosition, fp.texCoord);
 }
 
 struct FragInput {
-    float4 position : TEXCOORD0;
-    float2 uv : TEXCOORD1;
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
 }
 
 [shader("fragment")]
-float4 effect(
-    FragInput input
-) {
-    let tex = params.tex;
+float4 effect(FragInput input) {
     var uv = input.uv;
+    params.tex.Sample(uv);
 
     // Apply screen curvature if enabled
     if (params.curvature > 0.0) {
         uv = curveRemapUV(uv, params.curvature);
-        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-            return float4(0.0, 0.0, 0.0, 1.0);
-        }
+    }
+
+    uv = uv * (params.resolution / params.resolution.y);
+
+    // TODO is there a better way to avoid tiling?
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        return float4(0.0, 0.0, 0.0, 1.0);
     }
 
     // Get the original pixel color with curved coordinates
-    float4 pixel = tex.Sample(uv);
+    float4 pixel = params.tex.Sample(uv);
 
     // Apply bloom effect early
     if (params.bloomIntensity > 0.0) {
-        float4 bloomSample = sampleBloom(tex, uv, 0.005);
+        float4 bloomSample = sampleBloom(params.tex, uv, 0.005);
         // Apply brightness to bloom sample to match pixel processing
         bloomSample.rgb *= params.brightness;
         float lum = dot(bloomSample.rgb, float3(0.299, 0.587, 0.114));
@@ -71,8 +74,8 @@ float4 effect(
     // Apply RGB shift (chromatic aberration)
     if (params.rgbShift > 0.0) {
         float shift = params.rgbShift * 0.01;
-        pixel.r += tex.Sample(float2(uv.x + shift, uv.y)).r * 0.1;
-        pixel.b += tex.Sample(float2(uv.x - shift, uv.y)).b * 0.1;
+        pixel.r += params.tex.Sample(float2(uv.x + shift, uv.y)).r * 0.1;
+        pixel.b += params.tex.Sample(float2(uv.x - shift, uv.y)).b * 0.1;
     }
 
     // Apply brightness
@@ -101,10 +104,15 @@ float4 effect(
     // Apply flicker effect
     float flicker = 1.0 + sin(params.time * 110.0) * params.flickerStrength;
 
+    // FIXME
+    pixel.rgb *= scanline * flicker;
+    return pixel;
+
     // Apply vignette
     float vignette = 1.0;
     if (params.vignetteStrength > 0.0) {
-        float2 vignetteCoord = uv * 2.0 - 1.0;
+        float2 vignetteCoordOGL = uv * 2.0 - 1.0;
+        float2 vignetteCoord = vignetteCoordOGL - 2.0;
         float vignetteDistance = max(abs(vignetteCoord.x), abs(vignetteCoord.y));
         vignette = 1.0 - pow(vignetteDistance, 3.0) * params.vignetteStrength;
     }

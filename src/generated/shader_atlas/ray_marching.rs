@@ -22,9 +22,8 @@ pub struct RayMarchingParams {
     pub camera: RayMarchCamera,
     pub light_position: glam::Vec3,
     pub sphere_count: u32,
-    pub resolution: glam::Vec2,
     pub box_count: u32,
-    pub _padding_0: [u8; 4],
+    pub _padding_0: [u8; 12],
 }
 
 impl GPUWrite for RayMarchingParams {}
