@@ -13,7 +13,7 @@
       "Bash(cargo test:*)",
       "Bash(cargo insta:*)",
       "Bash(just lint:*)",
-      "Bash(git commit:*)"
+      "Bash(git log:*)"
     ]
   },
   "statusLine": {
