@@ -101,7 +101,7 @@ pub struct Renderer {
     image_available: Vec<vk::Semaphore>,
     /// render finished semaphores indexed by image_index
     render_finished: Vec<vk::Semaphore>,
-    /// frame fences indexed by current frame
+    /// frame fences indexed by current_frame
     frames_in_flight: Vec<vk::Fence>,
     /// looping index
     current_frame: usize,

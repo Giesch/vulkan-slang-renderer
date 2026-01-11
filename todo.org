@@ -1,48 +1,23 @@
 #+title: Todo
 
 * Now
-- [-] 3d SDF / Ray marching example
-  - [X] fix rescaling to window size
-    switch to using an MVP matrix?
-  - [X] make the camera moveable
-    either directly, or by moving everything else
-  - [X] order of fields in params broke the renderer
-    does the structured buffer have to be last? or was it an alignment thing
-    this is because align(16) doesn't actually fulfill std140 (see below)
-  - [X] colors are broken
-    both spheres should be the same blue - they're not, so there's an incorrect offset
-    probably another memory layout problem
-  - [X] add a cube or other shapes
-    https://iquilezles.org/articles/distfunctions/
-  - [ ] add shadows
-  - [ ] optimize for a large number of shapes?
-    first, make an example with a large number of different shapes,
-    and confirm that the current version is slow
-    - maybe make a separate example
-    - store shapes in one buffer with a tagged union?
-      might need/want nicer codegen for that
-      is this meaningfully slower than separate buffers?
-    - separate shape buffers, individually cpu-sorted?
-
-- [ ] CRT Shader example
 - [ ] add egui as an editor ui
   at least to the CRT example, maybe generally
   is there a nice way to expose this to a scripting language?
-
-- [ ] learn about quaternions, euler angle camera rotation
-
-- [ ] go back over claude commits
-  - [ ] see if there's a nicer way to do raymarch camera rotation
-  - [ ] double check alignment tests
-
-- [ ] find a nicer way to handle 4x4 transform matrices
-  - ie, have another dedicated slang type like MVP
-    handle the column major mul swap
-  - generate 'new' functions for those wrapper types in rust?
-    or have a way to work with them more easily
+  - [ ] add facet for reflecting on editable fields
+  - [ ] add egui integration
+    goal is to automatically work with an exported facet type
 
 - [ ] use facet for generating 430/140 stuff?
   stepping stone to supporting scripting languages / roc encode?
+  - [ ] rename the 140/430 structs to have 'uniform' or 'storage' in their names
+  - [ ] generate 'packed' versions of 140/430 structs
+    maybe name them 'packed', maybe the packed version gets the bare name
+
+- [ ] learn about quaternions, euler angle camera rotation
+- [ ] go back over claude commits
+  - [ ] see if there's a nicer way to do raymarch camera rotation
+  - [ ] double check alignment tests
 
 * Next
 - [ ] basic compute shader example
@@ -72,6 +47,7 @@
 - [ ] is there a nice way to prevent uninitialized shader bindings?
   - require an initial value in setup?
   - change draw methods to require resource updates?
+    this would make code-gen more complicated
 
 - [ ] Slang-rs PRs
   - [ ] handle shape mask & bitflags correctly
@@ -88,13 +64,21 @@
   performance and sprite scale also affected on the smaller monitor?
   seems like maybe a PopOS thing, maybe 2027 is the year of linux on the desktop
 
-- [-] SDF 2D example
+- [-] 2D SDF example
   [[https://danielchasehooper.com/posts/code-animated-rick]]
   - [X] add fullscreen quad/triangle
   - [X] super-sampling
   - [ ] complete the examples
     - fill in all the necessary primitives
   - [ ] add a custom final example
+
+- [ ] 3D SDF / ray marching example
+  - [ ] add shadows
+    use a normal shadow-map approach?
+    is there anything unique to SDFs here really?
+  - [ ] optimize for a large number of shapes?
+    first, make a separate example with a large number of different shapes
+    https://www.reddit.com/r/GraphicsProgramming/comments/xlt2dr/how_to_improve_performance_of_a_ray_marched_scene/
 
 - [ ] Phong shading example
   - [ ] load/generate a sphere model with normals
@@ -404,6 +388,9 @@
   ie, arrays as struct fields
 
 - [ ] use a different log level or filter for shader debug printf?
+
+- [ ] try out the CRT-Royale shader or other blurrier ones with the Dracula image
+  https://docs.libretro.com/shader/crt/
 
 
 * Roc Questions

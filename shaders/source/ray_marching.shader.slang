@@ -49,43 +49,26 @@ float4 fragMain(FragInput input) : SV_Target {
 }
 
 func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
-    const int N_STEPS = 32;
-    const float MIN_HIT_DISTANCE = 0.001;
+    const int MAX_STEPS = 32;
     const float MAX_TRACE_DISTANCE = 1000.0;
+    const float MIN_HIT_DISTANCE = 0.001;
 
     var distanceTraveled: float = 0.0;
 
-    for (int i = 0; i < N_STEPS; i++) {
+    for (int i = 0; i < MAX_STEPS; i++) {
         let currentPosition: float3 = rayOrigin + distanceTraveled * rayDirection;
         var closestDistance = float.maxValue;
 
         if (let hit = closestShape(currentPosition)) {
             closestDistance = hit.distance;
 
-            if (closestDistance < MIN_HIT_DISTANCE) {
-                // hit
-
-                let normal = calculateNormal(currentPosition);
-
-                // https://learnopengl.com/Lighting/Basic-Lighting
-
-                let ambientStrength = 0.005;
-                let ambient = ambientStrength * lightColor;
-
-                let lightDirection = normalize(params.lightPosition - currentPosition);
-
-                // lambertian diffuse
-                let diffuse = lightColor * max(0.0, dot(normal, lightDirection));
-
-                // blinn-phong specular reflection
-                let specularStrength = 0.25;
-                let shininess = 16.0;
-                let viewDirection = -rayDirection;
-                float3 halfwayDirection = normalize(lightDirection + rayDirection);
-                let specularIntensity = pow(max(dot(normal, halfwayDirection), 0.0), shininess);
-                let specular = specularStrength * lightColor * specularIntensity;
-
-                return (ambient + diffuse + specular) * hit.objectColor;
+            if (closestDistance < MIN_HIT_DISTANCE) { // hit
+                var blp: BasicLightingParams;
+                blp.currentPosition = currentPosition;
+                blp.rayDirection = rayDirection;
+                blp.objectColor = hit.objectColor;
+                blp.lightColor = lightColor;
+                return basicLighting(blp);
             }
         }
 
@@ -98,6 +81,35 @@ func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
 
     // miss
     return float3(0.0);
+}
+
+struct BasicLightingParams {
+    float3 currentPosition;
+    float3 rayDirection;
+    float3 objectColor;
+    float3 lightColor;
+}
+
+// https://learnopengl.com/Lighting/Basic-Lighting
+func basicLighting(p: BasicLightingParams) -> float3 {
+    let normal = calculateNormal(p.currentPosition);
+    let lightDirection = normalize(params.lightPosition - p.currentPosition);
+
+    // naive ambient light
+    let ambientStrength = 0.005;
+    let ambient = ambientStrength * p.lightColor;
+
+    // lambertian diffuse
+    let diffuse = p.lightColor * max(0.0, dot(normal, lightDirection));
+
+    // blinn-phong specular reflection
+    let specularStrength = 0.25;
+    let shininess = 16.0;
+    float3 halfwayDirection = normalize(lightDirection + p.rayDirection);
+    let specularIntensity = pow(max(dot(normal, halfwayDirection), 0.0), shininess);
+    let specular = specularStrength * p.lightColor * specularIntensity;
+
+    return (ambient + diffuse + specular) * p.objectColor;
 }
 
 func closestShape(pos: float3) -> Optional<RayHit> {
