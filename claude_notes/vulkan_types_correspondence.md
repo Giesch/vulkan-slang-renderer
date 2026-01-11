@@ -1,0 +1,300 @@
+# Vulkan Types Correspondence
+
+This is a claude (opus 4.5) generated comparison of the types used in renderer.rs with their corresponding types in D3D12, Metal, and WGPU.
+
+## Vulkan Types (from ash crate - vk::*)
+
+- `vk::Instance` - Vulkan instance
+  - D3D12: `IDXGIFactory` (partial equivalent)
+  - Metal: No direct equivalent (Metal has no instance concept)
+  - WebGPU: `navigator.gpu` / `GPU` object
+- `vk::PhysicalDevice` - Physical GPU device
+  - D3D12: `IDXGIAdapter`
+  - Metal: `MTLDevice` (Metal combines physical and logical device)
+  - WebGPU: `GPUAdapter`
+- `vk::Device` - Logical device
+  - D3D12: `ID3D12Device`
+  - Metal: `MTLDevice`
+  - WebGPU: `GPUDevice`
+- `vk::Queue` - Command queue
+  - D3D12: `ID3D12CommandQueue`
+  - Metal: `MTLCommandQueue`
+  - WebGPU: `GPUQueue` (single queue per device)
+- `vk::SurfaceKHR` - Window surface
+  - D3D12: `IDXGISwapChain` (combined with swapchain)
+  - Metal: `CAMetalLayer`
+  - WebGPU: `GPUCanvasContext`
+- `vk::SwapchainKHR` - Swapchain for presenting images
+  - D3D12: `IDXGISwapChain`
+  - Metal: `CAMetalLayer` (handles swapchain implicitly via `nextDrawable`)
+  - WebGPU: `GPUCanvasContext.configure()` + `getCurrentTexture()`
+- `vk::RenderPass` - Render pass definition
+  - D3D12: `ID3D12GraphicsCommandList::BeginRenderPass` (optional), or implicit via RTV/DSV binding
+  - Metal: `MTLRenderPassDescriptor`
+  - WebGPU: `GPURenderPassDescriptor`
+- `vk::Framebuffer` - Framebuffer for render targets
+  - D3D12: No direct equivalent (render targets bound directly via `OMSetRenderTargets`)
+  - Metal: No direct equivalent (attachments specified in `MTLRenderPassDescriptor`)
+  - WebGPU: No direct equivalent (attachments in `GPURenderPassDescriptor`)
+- `vk::CommandPool` - Command buffer allocator
+  - D3D12: `ID3D12CommandAllocator`
+  - Metal: No direct equivalent (command buffers allocated from `MTLCommandQueue`)
+  - WebGPU: No direct equivalent (encoders created from device)
+- `vk::CommandBuffer` - Recorded GPU commands
+  - D3D12: `ID3D12GraphicsCommandList`
+  - Metal: `MTLCommandBuffer` + `MTLRenderCommandEncoder`
+  - WebGPU: `GPUCommandBuffer` (from `GPUCommandEncoder.finish()`)
+- `vk::Pipeline` - Graphics pipeline
+  - D3D12: `ID3D12PipelineState`
+  - Metal: `MTLRenderPipelineState`
+  - WebGPU: `GPURenderPipeline`
+- `vk::PipelineLayout` - Pipeline layout (descriptor bindings)
+  - D3D12: `ID3D12RootSignature`
+  - Metal: Implicit in shader argument tables / `MTLArgumentEncoder`
+  - WebGPU: `GPUPipelineLayout`
+- `vk::DescriptorPool` - Descriptor set allocator
+  - D3D12: `ID3D12DescriptorHeap`
+  - Metal: No direct equivalent (use argument buffers or direct binding)
+  - WebGPU: No direct equivalent (bind groups created from device)
+- `vk::DescriptorSet` - Bound resources for shaders
+  - D3D12: Descriptor tables within `ID3D12DescriptorHeap`
+  - Metal: `MTLBuffer` (argument buffer) or direct `setBuffer`/`setTexture` calls
+  - WebGPU: `GPUBindGroup`
+- `vk::DescriptorSetLayout` - Layout of descriptor bindings
+  - D3D12: `D3D12_ROOT_PARAMETER` / `D3D12_DESCRIPTOR_RANGE` (part of root signature)
+  - Metal: `MTLArgumentDescriptor` / argument buffer layout
+  - WebGPU: `GPUBindGroupLayout`
+- `vk::Buffer` - GPU buffer
+  - D3D12: `ID3D12Resource` (with dimension `D3D12_RESOURCE_DIMENSION_BUFFER`)
+  - Metal: `MTLBuffer`
+  - WebGPU: `GPUBuffer`
+- `vk::DeviceMemory` - GPU memory allocation
+  - D3D12: `ID3D12Heap` (or implicit in committed resources)
+  - Metal: `MTLHeap` (or implicit, Metal manages memory internally)
+  - WebGPU: No direct equivalent (WebGPU manages memory internally)
+- `vk::Image` - GPU image/texture
+  - D3D12: `ID3D12Resource` (with dimension `D3D12_RESOURCE_DIMENSION_TEXTURE2D`)
+  - Metal: `MTLTexture`
+  - WebGPU: `GPUTexture`
+- `vk::ImageView` - View into an image
+  - D3D12: `D3D12_CPU_DESCRIPTOR_HANDLE` (SRV, UAV, RTV, or DSV)
+  - Metal: `MTLTexture` (create view via `newTextureView(pixelFormat:)`)
+  - WebGPU: `GPUTextureView`
+- `vk::Sampler` - Texture sampler
+  - D3D12: `D3D12_SAMPLER_DESC` / sampler in `ID3D12DescriptorHeap`
+  - Metal: `MTLSamplerState`
+  - WebGPU: `GPUSampler`
+- `vk::Semaphore` - GPU synchronization primitive
+  - D3D12: `ID3D12Fence` (used differently, with `Signal`/`Wait` on queues)
+  - Metal: `MTLEvent` / `MTLSharedEvent`
+  - WebGPU: No direct equivalent (implicit synchronization)
+- `vk::Fence` - CPU-GPU synchronization primitive
+  - D3D12: `ID3D12Fence` (with `SetEventOnCompletion`)
+  - Metal: `MTLCommandBuffer.waitUntilCompleted()` / completion handlers
+  - WebGPU: `GPUBuffer.mapAsync()` / `GPUQueue.onSubmittedWorkDone()`
+- `vk::Format` - Data format (e.g., R8G8B8A8_SRGB)
+  - D3D12: `DXGI_FORMAT`
+  - Metal: `MTLPixelFormat`
+  - WebGPU: `GPUTextureFormat`
+- `vk::Extent2D` - 2D dimensions
+  - D3D12: `D3D12_VIEWPORT` / `DXGI_SWAP_CHAIN_DESC::Width/Height`
+  - Metal: `MTLSize` / `CGSize`
+  - WebGPU: `GPUExtent3D` (width/height fields)
+- `vk::SurfaceCapabilitiesKHR` - Surface capabilities
+  - D3D12: `DXGI_SWAP_CHAIN_DESC` / `IDXGIOutput::GetDisplayModeList`
+  - Metal: `CAMetalLayer` properties (`maximumDrawableCount`, `drawableSize`)
+  - WebGPU: `GPUCanvasContext` + `GPUAdapter.limits`
+- `vk::SurfaceFormatKHR` - Surface format
+  - D3D12: `DXGI_FORMAT`
+  - Metal: `MTLPixelFormat` / `CAMetalLayer.pixelFormat`
+  - WebGPU: `GPUTextureFormat` / `GPUCanvasConfiguration.format`
+- `vk::PresentModeKHR` - Presentation mode
+  - D3D12: `DXGI_SWAP_EFFECT`
+  - Metal: `CAMetalLayer.displaySyncEnabled` / `presentsWithTransaction`
+  - WebGPU: `GPUCanvasAlphaMode` (limited control)
+- `vk::ImageTiling` - Image memory layout
+  - D3D12: `D3D12_TEXTURE_LAYOUT`
+  - Metal: `MTLStorageMode` / `MTLTextureType`
+  - WebGPU: No direct equivalent (abstracted away)
+- `vk::ImageUsageFlags` - Image usage flags
+  - D3D12: `D3D12_RESOURCE_FLAGS`
+  - Metal: `MTLTextureUsage`
+  - WebGPU: `GPUTextureUsage`
+- `vk::MemoryPropertyFlags` - Memory property flags
+  - D3D12: `D3D12_HEAP_TYPE`
+  - Metal: `MTLStorageMode` / `MTLResourceOptions`
+  - WebGPU: No direct equivalent (use `mappedAtCreation` / `mapAsync`)
+- `vk::SampleCountFlags` - MSAA sample count
+  - D3D12: `DXGI_SAMPLE_DESC`
+  - Metal: `MTLTextureDescriptor.sampleCount`
+  - WebGPU: `GPUTextureDescriptor.sampleCount`
+
+## Project-Specific Types
+
+### Resource Handles
+- `PipelineHandle<T>` - Type-safe handle to a graphics pipeline
+  - D3D12: Would wrap `ID3D12PipelineState`
+  - Metal: Would wrap `MTLRenderPipelineState`
+  - WebGPU: Would wrap `GPURenderPipeline`
+- `UniformBufferHandle<T>` - Type-safe handle to a uniform buffer
+  - D3D12: Would wrap `ID3D12Resource` (constant buffer)
+  - Metal: Would wrap `MTLBuffer`
+  - WebGPU: Would wrap `GPUBuffer` (uniform usage)
+- `StorageBufferHandle<T>` - Type-safe handle to a storage buffer
+  - D3D12: Would wrap `ID3D12Resource` (UAV buffer)
+  - Metal: Would wrap `MTLBuffer`
+  - WebGPU: Would wrap `GPUBuffer` (storage usage)
+- `TextureHandle` - Handle to a texture resource
+  - D3D12: Would wrap `ID3D12Resource` + SRV descriptor
+  - Metal: Would wrap `MTLTexture`
+  - WebGPU: Would wrap `GPUTexture` + `GPUTextureView`
+- `RawUniformBufferHandle` - Type-erased uniform buffer handle
+  - D3D12: Would wrap `ID3D12Resource` (constant buffer)
+  - Metal: Would wrap `MTLBuffer`
+  - WebGPU: Would wrap `GPUBuffer` (uniform usage)
+- `RawStorageBufferHandle` - Type-erased storage buffer handle
+  - D3D12: Would wrap `ID3D12Resource` (UAV buffer)
+  - Metal: Would wrap `MTLBuffer`
+  - WebGPU: Would wrap `GPUBuffer` (storage usage)
+
+### Core Structures
+- `Renderer` - Main rendering engine managing all Vulkan resources
+  - D3D12: Would manage `ID3D12Device`, `IDXGISwapChain`, command queues, etc.
+  - Metal: Would manage `MTLDevice`, `CAMetalLayer`, `MTLCommandQueue`, etc.
+  - WebGPU: Would manage `GPUDevice`, `GPUCanvasContext`, `GPUQueue`, etc.
+- `FrameRenderer<'f>` - One-time-use reference for a single frame's draw calls
+  - D3D12: Would wrap `ID3D12GraphicsCommandList` for a frame
+  - Metal: Would wrap `MTLCommandBuffer` + `MTLRenderCommandEncoder`
+  - WebGPU: Would wrap `GPUCommandEncoder` + `GPURenderPassEncoder`
+- `Gpu<'f>` - Interface for updating GPU resources during frame rendering
+  - D3D12: Would handle `Map`/`Unmap` on `ID3D12Resource`
+  - Metal: Would handle `contents()` pointer on `MTLBuffer`
+  - WebGPU: Would handle `GPUQueue.writeBuffer()` / `GPUBuffer.getMappedRange()`
+
+### Storage Containers
+- `PipelineStorage` - Sparse storage of pipeline objects
+  - D3D12: Would store `ID3D12PipelineState` objects
+  - Metal: Would store `MTLRenderPipelineState` objects
+  - WebGPU: Would store `GPURenderPipeline` objects
+- `UniformBufferStorage` - Per-frame uniform buffer storage
+  - D3D12: Would store `ID3D12Resource` constant buffers
+  - Metal: Would store `MTLBuffer` objects
+  - WebGPU: Would store `GPUBuffer` objects
+- `StorageBufferStorage` - Per-frame storage buffer storage
+  - D3D12: Would store `ID3D12Resource` UAV buffers
+  - Metal: Would store `MTLBuffer` objects
+  - WebGPU: Would store `GPUBuffer` objects
+- `TextureStorage` - Texture object storage
+  - D3D12: Would store `ID3D12Resource` textures + SRV descriptors
+  - Metal: Would store `MTLTexture` objects
+  - WebGPU: Would store `GPUTexture` + `GPUTextureView` objects
+
+### Internal Resource Wrappers
+- `RawUniformBuffer` - Wraps vk::Buffer + vk::DeviceMemory + mapped pointer
+  - D3D12: Would wrap `ID3D12Resource` (upload heap) + mapped pointer
+  - Metal: Would wrap `MTLBuffer` (shared storage) + `contents()` pointer
+  - WebGPU: Would wrap `GPUBuffer` + use `writeBuffer()` for updates
+- `RawStorageBuffer` - Wraps vk::Buffer + vk::DeviceMemory + mapped pointer
+  - D3D12: Would wrap `ID3D12Resource` (upload heap) + mapped pointer
+  - Metal: Would wrap `MTLBuffer` (shared storage) + `contents()` pointer
+  - WebGPU: Would wrap `GPUBuffer` + use `writeBuffer()` for updates
+- `Texture` - Wraps vk::Image + vk::ImageView + vk::Sampler + memory
+  - D3D12: Would wrap `ID3D12Resource` + SRV/sampler descriptors
+  - Metal: Would wrap `MTLTexture` + `MTLSamplerState`
+  - WebGPU: Would wrap `GPUTexture` + `GPUTextureView` + `GPUSampler`
+- `RendererPipeline` - Wraps vk::Pipeline + layout + descriptor sets
+  - D3D12: Would wrap `ID3D12PipelineState` + `ID3D12RootSignature` + descriptor tables
+  - Metal: Would wrap `MTLRenderPipelineState` + argument buffers
+  - WebGPU: Would wrap `GPURenderPipeline` + `GPUBindGroup`s
+- `VertexAndIndexBuffers` - Wraps vertex/index vk::Buffer pair
+  - D3D12: Would wrap `ID3D12Resource` pair + `D3D12_VERTEX_BUFFER_VIEW` / `D3D12_INDEX_BUFFER_VIEW`
+  - Metal: Would wrap `MTLBuffer` pair
+  - WebGPU: Would wrap `GPUBuffer` pair
+
+### Pipeline Configuration
+- `DrawCall` - Marker trait for draw call types
+  - D3D12: `DrawInstanced` vs `DrawIndexedInstanced`
+  - Metal: `drawPrimitives` vs `drawIndexedPrimitives`
+  - WebGPU: `draw` vs `drawIndexed`
+- `DrawIndexed` - Marker for indexed draw calls
+  - D3D12: `ID3D12GraphicsCommandList::DrawIndexedInstanced`
+  - Metal: `MTLRenderCommandEncoder.drawIndexedPrimitives`
+  - WebGPU: `GPURenderPassEncoder.drawIndexed()`
+- `DrawVertexCount` - Marker for vertex count draw calls
+  - D3D12: `ID3D12GraphicsCommandList::DrawInstanced`
+  - Metal: `MTLRenderCommandEncoder.drawPrimitives`
+  - WebGPU: `GPURenderPassEncoder.draw()`
+- `PipelineConfig<'t, V, D>` - Pipeline configuration
+  - D3D12: `D3D12_GRAPHICS_PIPELINE_STATE_DESC`
+  - Metal: `MTLRenderPipelineDescriptor`
+  - WebGPU: `GPURenderPipelineDescriptor`
+- `PipelineConfigBuilder<'t, V>` - Builder for pipeline configuration
+  - D3D12: Builder for `D3D12_GRAPHICS_PIPELINE_STATE_DESC`
+  - Metal: Builder for `MTLRenderPipelineDescriptor`
+  - WebGPU: Builder for `GPURenderPipelineDescriptor`
+- `VertexConfig<V>` - Vertex buffer configuration enum
+  - D3D12: `D3D12_INPUT_LAYOUT_DESC` + `D3D12_VERTEX_BUFFER_VIEW`
+  - Metal: `MTLVertexDescriptor` + `setVertexBuffer`
+  - WebGPU: `GPUVertexState` + `setVertexBuffer()`
+- `VertexPipelineConfig` - Internal vertex pipeline config
+  - D3D12: `D3D12_INPUT_LAYOUT_DESC`
+  - Metal: `MTLVertexDescriptor`
+  - WebGPU: `GPUVertexBufferLayout[]`
+- `DrawCallConfig` - VertexCount or IndexCount configuration
+  - D3D12: Parameters to `DrawInstanced` / `DrawIndexedInstanced`
+  - Metal: Parameters to `drawPrimitives` / `drawIndexedPrimitives`
+  - WebGPU: Parameters to `draw()` / `drawIndexed()`
+
+### Descriptor Descriptions (for shader reflection)
+- `UniformBufferDescription` - Describes a uniform buffer binding
+  - D3D12: `D3D12_ROOT_DESCRIPTOR` (CBV) or `D3D12_DESCRIPTOR_RANGE` (CBV)
+  - Metal: Buffer binding index in shader / `MTLArgumentDescriptor`
+  - WebGPU: `GPUBindGroupLayoutEntry` (buffer with type "uniform")
+- `StorageBufferDescription` - Describes a storage buffer binding
+  - D3D12: `D3D12_DESCRIPTOR_RANGE` (UAV)
+  - Metal: Buffer binding index in shader / `MTLArgumentDescriptor`
+  - WebGPU: `GPUBindGroupLayoutEntry` (buffer with type "storage" or "read-only-storage")
+- `TextureDescription` - Describes a texture binding
+  - D3D12: `D3D12_DESCRIPTOR_RANGE` (SRV)
+  - Metal: Texture binding index in shader / `MTLArgumentDescriptor`
+  - WebGPU: `GPUBindGroupLayoutEntry` (texture)
+- `LayoutDescription` - Enum wrapping Uniform/Texture/Storage descriptions
+  - D3D12: `D3D12_ROOT_PARAMETER` (CBV/SRV/UAV variants)
+  - Metal: `MTLArgumentDescriptor` / shader binding indices
+  - WebGPU: `GPUBindGroupLayoutEntry`
+- `DescriptorCounts` - Counts for descriptor pool allocation
+  - D3D12: `D3D12_DESCRIPTOR_HEAP_DESC::NumDescriptors`
+  - Metal: Argument buffer size / binding count
+  - WebGPU: No direct equivalent (bind groups created on demand)
+- `ShaderPipelineLayout` - Compiled shaders + descriptor set layouts
+  - D3D12: `ID3DBlob` (compiled shaders) + `ID3D12RootSignature`
+  - Metal: `MTLLibrary` + `MTLFunction` + argument buffer layout
+  - WebGPU: `GPUShaderModule` + `GPUPipelineLayout`
+
+### Vulkan Setup Helpers
+- `QueueFamilyIndices` - Graphics and presentation queue family indices
+  - D3D12: `D3D12_COMMAND_LIST_TYPE` (direct queue handles both)
+  - Metal: No equivalent (single `MTLCommandQueue` handles all)
+  - WebGPU: No equivalent (single `GPUQueue` per device)
+- `CreatedSwapchain` - Swapchain with format and extent
+  - D3D12: `IDXGISwapChain` + `DXGI_SWAP_CHAIN_DESC`
+  - Metal: `CAMetalLayer` + `drawableSize` + `pixelFormat`
+  - WebGPU: `GPUCanvasContext` + `GPUCanvasConfiguration`
+- `SwapChainSupportDetails` - Surface capabilities, formats, present modes
+  - D3D12: `IDXGIOutput::GetDisplayModeList` + `DXGI_SWAP_CHAIN_DESC`
+  - Metal: `CAMetalLayer` properties
+  - WebGPU: `navigator.gpu.getPreferredCanvasFormat()` + `GPUAdapter.limits`
+- `ImageOptions` - Configuration for creating Vulkan images
+  - D3D12: `D3D12_RESOURCE_DESC`
+  - Metal: `MTLTextureDescriptor`
+  - WebGPU: `GPUTextureDescriptor`
+
+### Enums
+- `TextureFilter` - Linear/Nearest texture filtering
+  - D3D12: `D3D12_FILTER`
+  - Metal: `MTLSamplerMinMagFilter`
+  - WebGPU: `GPUFilterMode`
+- `DrawError` - Error during frame drawing
+  - D3D12: `HRESULT` error codes
+  - Metal: `NSError` / `MTLCommandBuffer.error`
+  - WebGPU: `GPUError` / `GPUDevice.lost`
