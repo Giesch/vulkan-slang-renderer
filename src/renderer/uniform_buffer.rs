@@ -3,6 +3,8 @@ use std::marker::PhantomData;
 
 use ash::vk;
 
+use super::MAX_FRAMES_IN_FLIGHT;
+
 #[derive(Debug)]
 pub struct UniformBufferHandle<T> {
     index: usize,
@@ -17,14 +19,17 @@ pub(super) struct RawUniformBuffer {
 
 // NOTE renderer has to enforce type safety
 // ordered first by handle index, then by frame
-pub(super) struct UniformBufferStorage(Vec<Option<Vec<RawUniformBuffer>>>);
+pub(super) struct UniformBufferStorage(Vec<Option<[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]>>);
 
 impl UniformBufferStorage {
     pub fn new() -> Self {
         Self(Default::default())
     }
 
-    pub fn add<T>(&mut self, buffers_per_frame: Vec<RawUniformBuffer>) -> UniformBufferHandle<T> {
+    pub fn add<T>(
+        &mut self,
+        buffers_per_frame: [RawUniformBuffer; MAX_FRAMES_IN_FLIGHT],
+    ) -> UniformBufferHandle<T> {
         let handle = UniformBufferHandle {
             index: self.0.len(),
             _phantom_data: PhantomData::<T>,
@@ -35,7 +40,10 @@ impl UniformBufferStorage {
         handle
     }
 
-    pub fn get_raw(&self, handle: &RawUniformBufferHandle) -> &[RawUniformBuffer] {
+    pub fn get_raw(
+        &self,
+        handle: &RawUniformBufferHandle,
+    ) -> &[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT] {
         self.0[handle.index].as_ref().unwrap()
     }
 
@@ -49,11 +57,14 @@ impl UniformBufferStorage {
         unsafe { &mut *mut_ptr }
     }
 
-    pub fn take<T>(&mut self, handle: UniformBufferHandle<T>) -> Vec<RawUniformBuffer> {
+    pub fn take<T>(
+        &mut self,
+        handle: UniformBufferHandle<T>,
+    ) -> [RawUniformBuffer; MAX_FRAMES_IN_FLIGHT] {
         self.0[handle.index].take().unwrap()
     }
 
-    pub fn take_all(&mut self) -> Vec<Vec<RawUniformBuffer>> {
+    pub fn take_all(&mut self) -> Vec<[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> {
         self.0
             .iter_mut()
             .filter_map(|option| option.take())

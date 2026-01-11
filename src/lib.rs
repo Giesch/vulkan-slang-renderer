@@ -1,4 +1,5 @@
 #![feature(never_type)]
+#![feature(array_try_from_fn)]
 
 pub mod app;
 pub mod game;

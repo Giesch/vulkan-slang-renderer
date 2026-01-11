@@ -96,13 +96,13 @@ pub struct Renderer {
     depth_image_memory: vk::DeviceMemory,
     depth_image_view: vk::ImageView,
     command_pool: vk::CommandPool,
-    command_buffers: Vec<vk::CommandBuffer>,
+    command_buffers: [vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT],
     /// image semaphores indexed by current_frame
-    image_available: Vec<vk::Semaphore>,
+    image_available: [vk::Semaphore; MAX_FRAMES_IN_FLIGHT],
     /// render finished semaphores indexed by image_index
     render_finished: Vec<vk::Semaphore>,
     /// frame fences indexed by current_frame
-    frames_in_flight: Vec<vk::Fence>,
+    frames_in_flight: [vk::Fence; MAX_FRAMES_IN_FLIGHT],
     /// looping index
     current_frame: usize,
 
@@ -343,30 +343,28 @@ impl Renderer {
     pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> anyhow::Result<UniformBufferHandle<T>> {
         let buffer_size = std::mem::size_of::<T>() as u64;
 
-        let mut buffers_per_frame = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
-        for _ in 0..MAX_FRAMES_IN_FLIGHT {
-            let (buffer, device_mem) = create_memory_buffer(
-                &self.instance,
-                &self.device,
-                self.physical_device,
-                buffer_size,
-                vk::BufferUsageFlags::UNIFORM_BUFFER,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            )?;
+        let buffers_per_frame: [RawUniformBuffer; MAX_FRAMES_IN_FLIGHT] =
+            std::array::try_from_fn(|_| {
+                let (buffer, device_mem) = create_memory_buffer(
+                    &self.instance,
+                    &self.device,
+                    self.physical_device,
+                    buffer_size,
+                    vk::BufferUsageFlags::UNIFORM_BUFFER,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                )?;
 
-            let mapped_mem = unsafe {
-                self.device
-                    .map_memory(device_mem, 0, buffer_size, Default::default())?
-            };
+                let mapped_mem = unsafe {
+                    self.device
+                        .map_memory(device_mem, 0, buffer_size, Default::default())?
+                };
 
-            let raw_uniform_buffer = RawUniformBuffer {
-                buffer,
-                device_mem,
-                mapped_mem,
-            };
-
-            buffers_per_frame.push(raw_uniform_buffer);
-        }
+                Ok::<_, anyhow::Error>(RawUniformBuffer {
+                    buffer,
+                    device_mem,
+                    mapped_mem,
+                })
+            })?;
 
         let handle = self.uniform_buffers.add(buffers_per_frame);
 
@@ -393,30 +391,28 @@ impl Renderer {
     ) -> anyhow::Result<StorageBufferHandle<T>> {
         let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
 
-        let mut buffers_per_frame = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
-        for _ in 0..MAX_FRAMES_IN_FLIGHT {
-            let (buffer, device_mem) = create_memory_buffer(
-                &self.instance,
-                &self.device,
-                self.physical_device,
-                buffer_size,
-                vk::BufferUsageFlags::STORAGE_BUFFER,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            )?;
+        let buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT] =
+            std::array::try_from_fn(|_| {
+                let (buffer, device_mem) = create_memory_buffer(
+                    &self.instance,
+                    &self.device,
+                    self.physical_device,
+                    buffer_size,
+                    vk::BufferUsageFlags::STORAGE_BUFFER,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                )?;
 
-            let mapped_mem = unsafe {
-                self.device
-                    .map_memory(device_mem, 0, buffer_size, Default::default())?
-            };
+                let mapped_mem = unsafe {
+                    self.device
+                        .map_memory(device_mem, 0, buffer_size, Default::default())?
+                };
 
-            let raw_storage_buffer = RawStorageBuffer {
-                buffer,
-                device_mem,
-                mapped_mem,
-            };
-
-            buffers_per_frame.push(raw_storage_buffer);
-        }
+                Ok::<_, anyhow::Error>(RawStorageBuffer {
+                    buffer,
+                    device_mem,
+                    mapped_mem,
+                })
+            })?;
 
         let handle = self.storage_buffers.add(buffers_per_frame, len);
 
@@ -547,17 +543,19 @@ impl Renderer {
             textures
         };
 
-        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer]> = config
-            .uniform_buffer_handles
-            .iter()
-            .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
-            .collect();
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> =
+            config
+                .uniform_buffer_handles
+                .iter()
+                .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
+                .collect();
 
-        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer]> = config
-            .storage_buffer_handles
-            .iter()
-            .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
-            .collect();
+        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> =
+            config
+                .storage_buffer_handles
+                .iter()
+                .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
+                .collect();
 
         let set_layouts: Vec<_> = pipeline_layout
             .descriptor_set_layouts
@@ -1847,7 +1845,7 @@ fn create_command_pool(
 fn create_command_buffers(
     device: &ash::Device,
     command_pool: vk::CommandPool,
-) -> Result<Vec<vk::CommandBuffer>, anyhow::Error> {
+) -> Result<[vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT], anyhow::Error> {
     let alloc_info = vk::CommandBufferAllocateInfo::default()
         .command_pool(command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
@@ -1855,18 +1853,22 @@ fn create_command_buffers(
 
     let buffers = unsafe { device.allocate_command_buffers(&alloc_info)? };
 
-    Ok(buffers)
+    Ok(buffers.try_into().unwrap())
 }
 
 fn create_sync_objects(
     device: &ash::Device,
     swapchain_images: &[vk::Image],
-) -> Result<(Vec<vk::Semaphore>, Vec<vk::Semaphore>, Vec<vk::Fence>), anyhow::Error> {
-    let mut image_available = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
-    for _frame in 0..MAX_FRAMES_IN_FLIGHT {
-        let semaphore = unsafe { device.create_semaphore(&Default::default(), None)? };
-        image_available.push(semaphore);
-    }
+) -> Result<
+    (
+        [vk::Semaphore; MAX_FRAMES_IN_FLIGHT],
+        Vec<vk::Semaphore>,
+        [vk::Fence; MAX_FRAMES_IN_FLIGHT],
+    ),
+    anyhow::Error,
+> {
+    let image_available: [vk::Semaphore; MAX_FRAMES_IN_FLIGHT] =
+        std::array::try_from_fn(|_| unsafe { device.create_semaphore(&Default::default(), None) })?;
 
     let mut render_finished = Vec::with_capacity(swapchain_images.len());
     for _image in swapchain_images {
@@ -1874,13 +1876,11 @@ fn create_sync_objects(
         render_finished.push(semaphore);
     }
 
-    let mut frames_in_flight = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
-    for _frame in 0..MAX_FRAMES_IN_FLIGHT {
+    let frames_in_flight: [vk::Fence; MAX_FRAMES_IN_FLIGHT] = std::array::try_from_fn(|_| {
         let fence_create_info =
             vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-        let fence = unsafe { device.create_fence(&fence_create_info, None)? };
-        frames_in_flight.push(fence);
-    }
+        unsafe { device.create_fence(&fence_create_info, None) }
+    })?;
 
     Ok((image_available, render_finished, frames_in_flight))
 }
@@ -2130,8 +2130,8 @@ fn create_descriptor_sets(
     device: &ash::Device,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layouts: &[vk::DescriptorSetLayout],
-    uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer]],
-    storage_buffers_in_layout_frame_order: &[&[RawStorageBuffer]],
+    uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]],
+    storage_buffers_in_layout_frame_order: &[&[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]],
     textures: &[&Texture],
     layout_bindings: Vec<Vec<LayoutDescription>>,
 ) -> Result<Vec<vk::DescriptorSet>, anyhow::Error> {
