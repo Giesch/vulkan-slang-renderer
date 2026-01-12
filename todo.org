@@ -1,12 +1,20 @@
 #+title: Todo
 
 * Now
-- [ ] add egui as an editor ui
+- [-] add egui as an editor ui
   at least to the CRT example, maybe generally
   is there a nice way to expose this to a scripting language?
-  - [ ] add facet for reflecting on editable fields
-  - [ ] add egui integration
-    goal is to automatically work with an exported facet type
+  - [X] add example egui integration
+  - [ ] make egui integration optional
+    - [ ] allow disabling it in dev
+    - [ ] disable by default in release
+    - [ ] handle rescaling text/ui for 4k
+  - [ ] make egui integration configurable - use facet for editable fields
+    ie, use a single reflectable type for exposing editable properties
+    add a new trait method for exposting this reflectable type
+    - [ ] make the rust version work with passing a facet type
+    - [ ] switch from facet to a trait with a blanket impl for facet
+    - [ ] come up with a plan for implementing that trait from scripting lang
 
 - [ ] use facet for generating 430/140 stuff?
   stepping stone to supporting scripting languages / roc encode?
@@ -14,10 +22,17 @@
   - [ ] generate 'packed' versions of 140/430 structs
     maybe name them 'packed', maybe the packed version gets the bare name
 
+- [ ] add a way to test for vulkan validation errors
+  claude has already started tailing the logs...
+  - [ ] at a minimum, run basic triangle for x seconds
+  - [ ] ideally, record inputs for all example games and run the recorded inputs
+
 - [ ] learn about quaternions, euler angle camera rotation
 - [ ] go back over claude commits
   - [ ] see if there's a nicer way to do raymarch camera rotation
   - [ ] double check alignment tests
+
+- [ ] is it possible to develop this in a sprite?
 
 * Next
 - [ ] basic compute shader example

@@ -42,6 +42,9 @@ pub use storage_buffer::*;
 pub mod pipeline;
 pub use pipeline::*;
 
+pub mod egui;
+pub use egui::EguiIntegration;
+
 /// enables both the validation layer and debug utils logging
 const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
 /// applies MSAA-like sampling within textures
@@ -110,10 +113,16 @@ pub struct Renderer {
     textures: TextureStorage,
     uniform_buffers: UniformBufferStorage,
     storage_buffers: StorageBufferStorage,
+
+    // egui uses a separate render pass (1 sample) to avoid MSAA conflicts
+    // All are Option so they can be conditionally created and dropped before the device
+    egui: Option<EguiIntegration>,
+    egui_render_pass: Option<vk::RenderPass>,
+    egui_framebuffers: Option<Vec<vk::Framebuffer>>,
 }
 
 impl Renderer {
-    pub fn init(window: Window) -> Result<Self, anyhow::Error> {
+    pub fn init(window: Window, enable_egui: bool) -> Result<Self, anyhow::Error> {
         #[cfg(debug_assertions)]
         let shader_changes = shader_watcher::watch()?;
 
@@ -212,6 +221,17 @@ impl Renderer {
             msaa_samples,
         )?;
 
+        // egui uses a separate 1-sample render pass to avoid MSAA conflicts
+        let (egui, egui_render_pass, egui_framebuffers) = if enable_egui {
+            let pass = create_egui_render_pass(&device, image_format)?;
+            let framebuffers =
+                create_egui_framebuffers(&device, pass, &swapchain_image_views, image_extent)?;
+            let egui = EguiIntegration::new(&instance, physical_device, device.clone(), pass)?;
+            (Some(egui), Some(pass), Some(framebuffers))
+        } else {
+            (None, None, None)
+        };
+
         let command_pool = create_command_pool(&device, &queue_family_indices)?;
         let command_buffers = create_command_buffers(&device, command_pool)?;
 
@@ -296,6 +316,9 @@ impl Renderer {
             textures,
             uniform_buffers,
             storage_buffers,
+            egui,
+            egui_render_pass,
+            egui_framebuffers,
         })
     }
 
@@ -701,8 +724,46 @@ impl Renderer {
             },
         }
 
-        // END RENDER PASS
+        // END MAIN RENDER PASS
         unsafe { self.device.cmd_end_render_pass(command_buffer) };
+
+        // EGUI RENDER PASS (separate 1-sample pass for egui overlay)
+        if let (Some(egui), Some(egui_render_pass), Some(egui_framebuffers)) = (
+            &mut self.egui,
+            self.egui_render_pass,
+            &self.egui_framebuffers,
+        ) {
+            let egui_framebuffer = egui_framebuffers[image_index as usize];
+            let render_area = vk::Rect2D::default()
+                .offset(vk::Offset2D::default())
+                .extent(self.image_extent);
+            let egui_render_pass_begin = vk::RenderPassBeginInfo::default()
+                .render_pass(egui_render_pass)
+                .framebuffer(egui_framebuffer)
+                .render_area(render_area);
+
+            unsafe {
+                self.device.cmd_begin_render_pass(
+                    command_buffer,
+                    &egui_render_pass_begin,
+                    vk::SubpassContents::INLINE,
+                );
+            }
+
+            // Draw egui overlay
+            let screen_size = [self.width, self.height];
+            egui.begin_frame(screen_size);
+            egui.draw_debug_overlay();
+            egui.end_frame_and_draw(
+                self.graphics_queue,
+                self.command_pool,
+                command_buffer,
+                self.image_extent,
+                self.current_frame,
+            );
+
+            unsafe { self.device.cmd_end_render_pass(command_buffer) };
+        }
 
         unsafe { self.device.end_command_buffer(command_buffer)? };
 
@@ -740,6 +801,11 @@ impl Renderer {
 
         let fences = [self.frames_in_flight[self.current_frame]];
         unsafe { self.device.wait_for_fences(&fences, true, u64::MAX)? };
+
+        // Free egui textures from the previous use of this frame slot
+        if let Some(egui) = &mut self.egui {
+            egui.free_pending_textures(self.current_frame);
+        }
 
         let (image_index, swapchain_was_submoptimal_on_image_acquire) = unsafe {
             match self.swapchain_device_ext.acquire_next_image(
@@ -904,11 +970,25 @@ impl Renderer {
             self.color_image_view,
         )?;
 
+        if let Some(egui_render_pass) = self.egui_render_pass {
+            self.egui_framebuffers = Some(create_egui_framebuffers(
+                &self.device,
+                egui_render_pass,
+                &self.swapchain_image_views,
+                image_extent,
+            )?);
+        }
+
         Ok(())
     }
 
     fn cleanup_swapchain(&mut self) {
         unsafe {
+            if let Some(egui_framebuffers) = &self.egui_framebuffers {
+                for framebuffer in egui_framebuffers {
+                    self.device.destroy_framebuffer(*framebuffer, None);
+                }
+            }
             for framebuffer in &self.swapchain_framebuffers {
                 self.device.destroy_framebuffer(*framebuffer, None);
             }
@@ -1025,6 +1105,11 @@ impl Renderer {
 
         Ok(())
     }
+
+    /// Get mutable access to the egui integration for event handling
+    pub fn egui(&mut self) -> Option<&mut EguiIntegration> {
+        self.egui.as_mut()
+    }
 }
 
 impl Drop for Renderer {
@@ -1065,6 +1150,9 @@ impl Drop for Renderer {
             }
 
             self.device.destroy_render_pass(self.render_pass, None);
+            if let Some(egui_render_pass) = self.egui_render_pass {
+                self.device.destroy_render_pass(egui_render_pass, None);
+            }
 
             self.cleanup_swapchain();
 
@@ -1084,6 +1172,9 @@ impl Drop for Renderer {
                     self.destroy_storage_buffer(storage_buffer);
                 }
             }
+
+            // Drop egui before device destruction so it can clean up its Vulkan resources
+            drop(self.egui.take());
 
             self.device.destroy_device(None);
 
@@ -1671,6 +1762,79 @@ fn create_render_pass(
     let render_pass = unsafe { device.create_render_pass(&render_pass_create_info, None)? };
 
     Ok(render_pass)
+}
+
+/// Simple 1-sample render pass for egui overlay.
+/// Draws on top of the main render pass output (uses LOAD op).
+fn create_egui_render_pass(
+    device: &ash::Device,
+    swapchain_format: vk::Format,
+) -> Result<vk::RenderPass, anyhow::Error> {
+    let color_attachment = vk::AttachmentDescription::default()
+        .format(swapchain_format)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::LOAD)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+
+    let color_attachment_ref = vk::AttachmentReference::default()
+        .attachment(0)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+    let color_attachment_refs = [color_attachment_ref];
+    let subpass = vk::SubpassDescription::default()
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        .color_attachments(&color_attachment_refs);
+
+    let subpass_dep = vk::SubpassDependency::default()
+        .src_subpass(vk::SUBPASS_EXTERNAL)
+        .dst_subpass(0)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+
+    let attachments = [color_attachment];
+    let subpasses = [subpass];
+    let dependencies = [subpass_dep];
+    let render_pass_create_info = vk::RenderPassCreateInfo::default()
+        .attachments(&attachments)
+        .subpasses(&subpasses)
+        .dependencies(&dependencies);
+
+    let render_pass = unsafe { device.create_render_pass(&render_pass_create_info, None)? };
+
+    Ok(render_pass)
+}
+
+/// Create framebuffers for egui render pass (just swapchain images, no MSAA/depth)
+fn create_egui_framebuffers(
+    device: &ash::Device,
+    render_pass: vk::RenderPass,
+    swapchain_image_views: &[vk::ImageView],
+    image_extent: vk::Extent2D,
+) -> Result<Vec<vk::Framebuffer>, anyhow::Error> {
+    let mut framebuffers = Vec::with_capacity(swapchain_image_views.len());
+
+    for &swapchain_image_view in swapchain_image_views {
+        let attachments = [swapchain_image_view];
+
+        let framebuffer_info = vk::FramebufferCreateInfo::default()
+            .render_pass(render_pass)
+            .attachments(&attachments)
+            .width(image_extent.width)
+            .height(image_extent.height)
+            .layers(1);
+
+        let framebuffer = unsafe { device.create_framebuffer(&framebuffer_info, None)? };
+
+        framebuffers.push(framebuffer);
+    }
+
+    Ok(framebuffers)
 }
 
 /// usage: read_shader_spv("triangle.vert.spv");

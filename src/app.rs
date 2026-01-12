@@ -52,6 +52,10 @@ impl App {
     // https://wiki.libsdl.org/SDL3/SDL_EventType
     pub fn handle_events(&mut self, event_pump: &mut EventPump) -> anyhow::Result<()> {
         for event in event_pump.poll_iter() {
+            if let Some(egui) = self.renderer.egui() {
+                egui.handle_sdl_event(&event);
+            }
+
             match event {
                 Event::Quit { .. }
                 | Event::KeyDown {

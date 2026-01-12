@@ -42,6 +42,10 @@ pub trait Game {
         DEFAULT_FRAME_DELAY
     }
 
+    fn enable_egui() -> bool {
+        cfg!(debug_assertions)
+    }
+
     fn run() -> anyhow::Result<()>
     where
         Self: Sized + 'static,
@@ -58,7 +62,7 @@ pub trait Game {
             .vulkan()
             .build()?;
 
-        let mut renderer = Renderer::init(window)?;
+        let mut renderer = Renderer::init(window, Self::enable_egui())?;
         let game = Self::setup(&mut renderer)?;
         let app = App::init(renderer, game)?;
 

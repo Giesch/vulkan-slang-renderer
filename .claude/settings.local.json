@@ -13,7 +13,15 @@
       "Bash(cargo test:*)",
       "Bash(cargo insta:*)",
       "Bash(just lint:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(cargo doc:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo tree:*)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:crates.io)",
+      "WebSearch",
+      "WebFetch(domain:fasterthanli.me)",
+      "WebFetch(domain:facet.rs)"
     ]
   },
   "statusLine": {

@@ -23,6 +23,8 @@ anyhow = "1.0.100"
 heck = "0.5.0"
 askama = "0.14.0"
 thiserror = "2.0.17"
+egui = "0.33"
+egui-ash-renderer = "0.11.0"
 
 [dependencies.shader-slang]
 # unreleased main
