@@ -25,19 +25,19 @@ struct SerenityCRT {
 
 #[derive(Facet)]
 struct EditState {
-    scanline_intensity: Slider<f32>,
-    scanline_count: Slider<f32>,
-    y_offset: Slider<f32>,
-    brightness: Slider<f32>,
-    contrast: Slider<f32>,
-    saturation: Slider<f32>,
-    bloom_intensity: Slider<f32>,
-    bloom_threshold: Slider<f32>,
-    rgb_shift: Slider<f32>,
-    adaptive_intensity: Slider<f32>,
-    vignette_strength: Slider<f32>,
-    curvature: Slider<f32>,
-    flicker_strength: Slider<f32>,
+    scanline_intensity: Slider,
+    scanline_count: Slider,
+    y_offset: Slider,
+    brightness: Slider,
+    contrast: Slider,
+    saturation: Slider,
+    bloom_intensity: Slider,
+    bloom_threshold: Slider,
+    rgb_shift: Slider,
+    adaptive_intensity: Slider,
+    vignette_strength: Slider,
+    curvature: Slider,
+    flicker_strength: Slider,
 }
 
 impl Game for SerenityCRT {

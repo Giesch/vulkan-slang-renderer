@@ -48,6 +48,7 @@
   - [X] see if there's a nicer way to do raymarch camera rotation
   - [ ] double check alignment tests
   - [ ] review egui and facet again
+  - [ ] read the facet docs
 
 * Next
 - [ ] get off of rust nightly

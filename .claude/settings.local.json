@@ -15,6 +15,7 @@
       "Bash(just lint:*)",
       "Bash(git log:*)",
       "Bash(cargo doc:*)",
+      "Bash(cargo build:*)",
       "Bash(cargo check:*)",
       "Bash(cargo tree:*)",
       "WebFetch(domain:docs.rs)",
