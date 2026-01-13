@@ -36,6 +36,8 @@ pub struct SpriteBatch {
 const SPRITE_COUNT: usize = 8192;
 
 impl Game for SpriteBatch {
+    type EditState = ();
+
     fn window_title() -> &'static str {
         "Sprite Batch"
     }

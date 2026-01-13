@@ -43,6 +43,8 @@ const ENABLE_DEBUG_BOXES: bool = false;
 const MAX_DEBUG_BOXES: u32 = 100;
 
 impl Game for SpaceInvaders {
+    type EditState = ();
+
     fn window_title() -> &'static str {
         "Space Invaders"
     }
@@ -233,6 +235,7 @@ impl Game for SpaceInvaders {
         self.player.bounding_box.y += player_movement.y;
 
         // player fire
+        #[expect(clippy::collapsible_if)]
         if self.player.intent.fire {
             if let Some(free_bullet_id) = self.bullets.iter().position(|b| !b.active) {
                 let bullet = &mut self.bullets[free_bullet_id];
@@ -376,7 +379,7 @@ impl Game for SpaceInvaders {
             .count();
         let vertex_count = visible_sprites as u32 * 6;
 
-        renderer.draw_vertex_count(&mut self.pipeline, vertex_count, |gpu| {
+        renderer.draw_vertex_count(&self.pipeline, vertex_count, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
 
             gpu.write_storage(&mut self.debug_boxes_buffer, &self.debug_boxes);
@@ -770,7 +773,7 @@ impl EnemyMovementScript {
 
         debug_assert!(false, "invalid enemy movement script");
 
-        return self.steps[0].0;
+        self.steps[0].0
     }
 }
 

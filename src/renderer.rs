@@ -45,6 +45,8 @@ pub use pipeline::*;
 pub mod egui;
 pub use egui::EguiIntegration;
 
+pub mod facet_egui;
+
 /// enables both the validation layer and debug utils logging
 const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
 /// applies MSAA-like sampling within textures
@@ -114,11 +116,10 @@ pub struct Renderer {
     uniform_buffers: UniformBufferStorage,
     storage_buffers: StorageBufferStorage,
 
-    // egui uses a separate render pass (1 sample) to avoid MSAA conflicts
-    // All are Option so they can be conditionally created and dropped before the device
     egui: Option<EguiIntegration>,
     egui_render_pass: Option<vk::RenderPass>,
     egui_framebuffers: Option<Vec<vk::Framebuffer>>,
+    text_input_active: bool,
 }
 
 impl Renderer {
@@ -319,6 +320,7 @@ impl Renderer {
             egui,
             egui_render_pass,
             egui_framebuffers,
+            text_input_active: false,
         })
     }
 
@@ -750,17 +752,25 @@ impl Renderer {
                 );
             }
 
-            // Draw egui overlay
+            // Draw egui overlay (begin_frame is idempotent, safe to call if already begun)
             let screen_size = [self.width, self.height];
             egui.begin_frame(screen_size);
-            egui.draw_debug_overlay();
-            egui.end_frame_and_draw(
+            let wants_keyboard_input = egui.end_frame_and_draw(
                 self.graphics_queue,
                 self.command_pool,
                 command_buffer,
                 self.image_extent,
                 self.current_frame,
             );
+
+            // Toggle SDL text input based on whether egui has a text field focused
+            if wants_keyboard_input && !self.text_input_active {
+                unsafe { sdl3::sys::keyboard::SDL_StartTextInput(self.window.raw()) };
+                self.text_input_active = true;
+            } else if !wants_keyboard_input && self.text_input_active {
+                unsafe { sdl3::sys::keyboard::SDL_StopTextInput(self.window.raw()) };
+                self.text_input_active = false;
+            }
 
             unsafe { self.device.cmd_end_render_pass(command_buffer) };
         }
@@ -1109,6 +1119,22 @@ impl Renderer {
     /// Get mutable access to the egui integration for event handling
     pub fn egui(&mut self) -> Option<&mut EguiIntegration> {
         self.egui.as_mut()
+    }
+
+    /// Begin the egui frame early, before command buffer recording.
+    /// This allows games to build egui UI before draw_frame is called.
+    /// Idempotent: safe to call multiple times per frame.
+    pub fn begin_egui_frame(&mut self) {
+        if let Some(egui) = &mut self.egui {
+            let screen_size = [self.width, self.height];
+            egui.begin_frame(screen_size);
+        }
+    }
+
+    /// Get a clone of the egui context for building UI.
+    /// Returns None if egui is disabled.
+    pub fn egui_context(&self) -> Option<::egui::Context> {
+        self.egui.as_ref().map(|e| e.ctx.clone())
     }
 }
 

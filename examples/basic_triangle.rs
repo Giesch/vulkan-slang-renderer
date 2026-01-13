@@ -18,6 +18,8 @@ pub struct BasicTriangle {
 }
 
 impl Game for BasicTriangle {
+    type EditState = ();
+
     fn window_title() -> &'static str {
         "Basic Triangle"
     }

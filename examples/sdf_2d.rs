@@ -19,6 +19,8 @@ struct SDF2D {
 }
 
 impl Game for SDF2D {
+    type EditState = ();
+
     fn window_title() -> &'static str {
         "SDF 2D"
     }
@@ -54,7 +56,7 @@ impl Game for SDF2D {
             _padding_0: Default::default(),
         };
 
-        renderer.draw_vertex_count(&mut self.pipeline, 3, |gpu| {
+        renderer.draw_vertex_count(&self.pipeline, 3, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
         })
     }

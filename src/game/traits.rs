@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use facet::Facet;
 use sdl3::keyboard::Scancode as SDLScancode;
 
 use crate::app::App;
@@ -11,6 +12,10 @@ const DEFAULT_WINDOW_TITLE: &str = "Game";
 
 /// This is the only trait from this module to implement directly.
 pub trait Game {
+    /// The debug state type that will be reflected in egui.
+    /// Use `()` if no debug UI is needed.
+    type EditState: for<'a> Facet<'a> + 'static;
+
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
     where
         Self: Sized;
@@ -42,8 +47,11 @@ pub trait Game {
         DEFAULT_FRAME_DELAY
     }
 
-    fn enable_egui() -> bool {
-        cfg!(debug_assertions)
+    /// Returns the debug window name and a mutable reference to the debug state for egui rendering.
+    /// Return None to disable debug UI for this frame.
+    /// Default implementation returns None.
+    fn editor_ui(&mut self) -> Option<(&str, &mut Self::EditState)> {
+        None
     }
 
     fn run() -> anyhow::Result<()>
@@ -62,7 +70,8 @@ pub trait Game {
             .vulkan()
             .build()?;
 
-        let mut renderer = Renderer::init(window, Self::enable_egui())?;
+        let enable_egui = cfg!(debug_assertions);
+        let mut renderer = Renderer::init(window, enable_egui)?;
         let game = Self::setup(&mut renderer)?;
         let app = App::init(renderer, game)?;
 
@@ -90,6 +99,9 @@ pub trait RuntimeGame {
     fn frame_delay(&self) -> Duration;
 
     fn input(&mut self, input: Input);
+
+    /// Draw debug UI using egui. Called by the renderer during egui pass.
+    fn draw_edit_ui(&mut self, ctx: &egui::Context);
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -142,5 +154,15 @@ where
 
     fn input(&mut self, input: Input) {
         self.input(input);
+    }
+
+    fn draw_edit_ui(&mut self, ctx: &egui::Context) {
+        let Some((window_name, debug_state)) = Game::editor_ui(self) else {
+            return;
+        };
+
+        egui::Window::new(window_name).show(ctx, |ui| {
+            crate::renderer::facet_egui::render_facet_ui(ui, debug_state);
+        });
     }
 }

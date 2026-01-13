@@ -78,6 +78,8 @@ const INDICES: [u32; 12] = [
 ];
 
 impl Game for DepthTextureGame {
+    type EditState = ();
+
     fn window_title() -> &'static str {
         "Depth Texture"
     }

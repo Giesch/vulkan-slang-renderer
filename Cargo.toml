@@ -25,6 +25,8 @@ askama = "0.14.0"
 thiserror = "2.0.17"
 egui = "0.33"
 egui-ash-renderer = "0.11.0"
+facet = { version = "0.42", features = ["reflect"] }
+facet-core = { version = "0.42.0", features = ["std"] }
 
 [dependencies.shader-slang]
 # unreleased main

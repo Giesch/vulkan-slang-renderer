@@ -5,16 +5,59 @@
   at least to the CRT example, maybe generally
   is there a nice way to expose this to a scripting language?
   - [X] add example egui integration
-  - [ ] make egui integration optional
-    - [ ] allow disabling it in dev
-    - [ ] disable by default in release
+  - [-] make egui integration optional
+    - [X] allow disabling it in dev
+    - [X] disable by default in release
+    - [X] see if it's possible to refactor begin/end egui frame
+      move into egui integration?
+      what about the vk frame, is that weird
+    - [X] make keyboard editing of fields work
+    - [X] facet_egui fixes
+      - [X] in try_render_slider, type_identifier does not include the f32 generic
+      - [X] refactor the big if-else chain
+
+    - [ ] what happens when returning a facet editor struct in release mode?
+      ie, run serenity_crt in release
+    - [ ] what would happen when hot-reloading the debug struct?
+      do we need to use the trait object version for this?
+      - [ ] would this break the associated type generic
+      - [ ] would this break the egui's ui state (ie, collapsed/uncollapsed)
+    - [X] can we make the egui window renameable?
     - [ ] handle rescaling text/ui for 4k
-  - [ ] make egui integration configurable - use facet for editable fields
+
+  - [-] make egui integration configurable - use facet for editable fields
     ie, use a single reflectable type for exposing editable properties
     add a new trait method for exposting this reflectable type
-    - [ ] make the rust version work with passing a facet type
+    - [X] make the rust version work with passing a facet type
     - [ ] switch from facet to a trait with a blanket impl for facet
     - [ ] come up with a plan for implementing that trait from scripting lang
+  - [X] use the same number of frames in flight?
+    does this matter? maybe could be out-of-sync?
+  - [ ] egui undo stack?
+  - [ ] make it possible to have a 'save' button
+    - separate trait for that? include loading api
+    - api for implementing your own event buttons?
+      what would be nicer from roc/ts? direct imgui api?
+
+  - [ ] make an sdl rust pr to add window.start/stop_text_input()
+
+- [ ] learn about quaternions, euler angle camera rotation
+  3b1b visualization - maybe recreate here?
+
+- [-] go back over claude commits
+  - [X] see if there's a nicer way to do raymarch camera rotation
+  - [ ] double check alignment tests
+  - [ ] review egui and facet again
+
+* Next
+- [ ] get off of rust nightly
+  - [ ] find a good replacement for never type in vertex config
+  - [ ] remove 'fast build' config
+
+- [ ] add a way to test for vulkan validation errors
+  claude has already started tailing the logs...
+  - [ ] at a minimum, run basic triangle for x seconds
+  - [ ] ideally, record inputs for all example games and run the recorded inputs
 
 - [ ] use facet for generating 430/140 stuff?
   stepping stone to supporting scripting languages / roc encode?
@@ -22,19 +65,10 @@
   - [ ] generate 'packed' versions of 140/430 structs
     maybe name them 'packed', maybe the packed version gets the bare name
 
-- [ ] add a way to test for vulkan validation errors
-  claude has already started tailing the logs...
-  - [ ] at a minimum, run basic triangle for x seconds
-  - [ ] ideally, record inputs for all example games and run the recorded inputs
-
-- [ ] learn about quaternions, euler angle camera rotation
-- [ ] go back over claude commits
-  - [ ] see if there's a nicer way to do raymarch camera rotation
-  - [ ] double check alignment tests
-
 - [ ] is it possible to develop this in a sprite?
+  ie, would the vulkan stuff even compile
 
-* Next
+
 - [ ] basic compute shader example
 
 - [ ] allow multiple draw calls per frame
@@ -44,10 +78,6 @@
 
 - [ ] move inverting matrices back to the CPU
   maybe in the new std140 / std430 methods?
-
-- [ ] get off of rust nightly
-  - [ ] find a good replacement for never type in vertex config
-  - [ ] remove 'fast build' config
 
 - [ ] vulkan validation layer setup and tests
   - [ ] enable the validation layers with env var instead of with code

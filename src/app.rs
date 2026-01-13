@@ -36,6 +36,11 @@ impl App {
             if !self.minimized {
                 self.game.update();
 
+                self.renderer.begin_egui_frame();
+                if let Some(ctx) = self.renderer.egui_context() {
+                    self.game.draw_edit_ui(&ctx);
+                }
+
                 let frame_renderer = FrameRenderer::new(&mut self.renderer);
                 self.game.draw_frame(frame_renderer)?;
             }

@@ -2,6 +2,7 @@
 #![feature(array_try_from_fn)]
 
 pub mod app;
+pub mod editor;
 pub mod game;
 pub mod generated;
 pub mod renderer;

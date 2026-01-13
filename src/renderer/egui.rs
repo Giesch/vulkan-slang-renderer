@@ -9,6 +9,7 @@ use super::MAX_FRAMES_IN_FLIGHT;
 
 pub struct EguiIntegration {
     start_time: std::time::Instant,
+    frame_begun: bool,
 
     pub ctx: Context,
     renderer: egui_ash_renderer::Renderer,
@@ -29,7 +30,10 @@ impl EguiIntegration {
             physical_device,
             device,
             render_pass,
-            egui_ash_renderer::Options::default(),
+            egui_ash_renderer::Options {
+                in_flight_frames: MAX_FRAMES_IN_FLIGHT,
+                ..Default::default()
+            },
         )?;
 
         Ok(Self {
@@ -37,6 +41,7 @@ impl EguiIntegration {
             renderer,
             raw_input: RawInput::default(),
             start_time: std::time::Instant::now(),
+            frame_begun: false,
             pending_free_textures: [vec![], vec![]],
         })
     }
@@ -63,15 +68,21 @@ impl EguiIntegration {
         update_modifiers(&mut self.raw_input.modifiers, event);
     }
 
-    /// Begin egui frame - call at start of frame after handling events
+    /// Begin egui frame - call at start of frame after handling events.
+    /// Idempotent: safe to call multiple times per frame.
     pub fn begin_frame(&mut self, screen_size: [f32; 2]) {
+        if self.frame_begun {
+            return;
+        }
+        self.frame_begun = true;
+
         self.raw_input.time = Some(self.start_time.elapsed().as_secs_f64());
         self.raw_input.screen_rect = Some(egui::Rect::from_min_size(
             Pos2::ZERO,
             Vec2::new(screen_size[0], screen_size[1]),
         ));
-        #[expect(deprecated)]
-        self.ctx.begin_frame(self.raw_input.take());
+
+        self.ctx.begin_pass(self.raw_input.take());
     }
 
     /// Draw the debug overlay (time display)
@@ -93,6 +104,7 @@ impl EguiIntegration {
 
     /// End egui frame and record draw commands into the command buffer.
     /// Must be called while render pass is active.
+    /// Returns true if egui wants keyboard input (a text field has focus).
     pub fn end_frame_and_draw(
         &mut self,
         queue: vk::Queue,
@@ -100,9 +112,9 @@ impl EguiIntegration {
         command_buffer: vk::CommandBuffer,
         extent: vk::Extent2D,
         frame_index: usize,
-    ) {
-        #[expect(deprecated)]
-        let output = self.ctx.end_frame();
+    ) -> bool {
+        let wants_keyboard_input = self.ctx.wants_keyboard_input();
+        let output = self.ctx.end_pass();
 
         // Handle texture updates
         self.renderer
@@ -123,6 +135,9 @@ impl EguiIntegration {
 
         // Defer texture freeing until next frame when we know the GPU is done with this frame slot
         self.pending_free_textures[frame_index].extend(output.textures_delta.free);
+
+        self.frame_begun = false;
+        wants_keyboard_input
     }
 
     /// Get a reference to the egui context for UI building
@@ -207,7 +222,7 @@ fn translate_mouse_button(btn: MouseButton) -> Option<egui::PointerButton> {
     }
 }
 
-fn translate_keycode(keycode: Keycode) -> Option<Key> {
+fn translate_keycode(keycode: sdl3::keyboard::Keycode) -> Option<egui::Key> {
     match keycode {
         Keycode::A => Some(Key::A),
         Keycode::B => Some(Key::B),

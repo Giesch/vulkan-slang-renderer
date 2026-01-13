@@ -74,6 +74,8 @@ impl VikingRoom {
 }
 
 impl Game for VikingRoom {
+    type EditState = ();
+
     fn window_title() -> &'static str {
         "Viking Room"
     }
