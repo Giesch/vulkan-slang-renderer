@@ -9,19 +9,7 @@ enum FieldKind<'a> {
         inner_type: PrimitiveKind,
         struct_type: &'a StructType,
     },
-    Glam(GlamKind),
-    Primitive(PrimitiveKind),
     Struct(&'a StructType),
-    Unsupported,
-}
-
-#[derive(Clone, Copy)]
-enum GlamKind {
-    Vec2,
-    Vec3,
-    Vec4,
-    Quat,
-    Mat4,
 }
 
 #[derive(Clone, Copy)]
@@ -36,28 +24,19 @@ enum PrimitiveKind {
 }
 
 /// Classify a field's type for rendering.
-fn classify_field<'a>(type_identifier: &str, ty: &'a Type) -> FieldKind<'a> {
+/// Returns None for an unsupported editor type.
+fn classify_field<'a>(type_identifier: &str, ty: &'a Type) -> Option<FieldKind<'a>> {
     // Check for Slider wrapper type
     if let Some(slider) = parse_slider(type_identifier, ty) {
-        return slider;
-    }
-
-    // Check for glam types
-    if let Some(glam) = parse_glam(type_identifier) {
-        return FieldKind::Glam(glam);
-    }
-
-    // Check for primitives
-    if let Some(prim) = parse_primitive(type_identifier) {
-        return FieldKind::Primitive(prim);
+        return Some(slider);
     }
 
     // Check for nested structs
     if let Type::User(UserType::Struct(struct_type)) = ty {
-        return FieldKind::Struct(struct_type);
+        return Some(FieldKind::Struct(struct_type));
     }
 
-    FieldKind::Unsupported
+    None
 }
 
 fn parse_slider<'a>(type_identifier: &str, ty: &'a Type) -> Option<FieldKind<'a>> {
@@ -80,19 +59,6 @@ fn parse_slider<'a>(type_identifier: &str, ty: &'a Type) -> Option<FieldKind<'a>
     })
 }
 
-fn parse_glam(type_identifier: &str) -> Option<GlamKind> {
-    match type_identifier {
-        "glam::Vec2" | "glam::f32::Vec2" => Some(GlamKind::Vec2),
-        "glam::Vec3" | "glam::f32::Vec3" | "glam::Vec3A" | "glam::f32::Vec3A" => {
-            Some(GlamKind::Vec3)
-        }
-        "glam::Vec4" | "glam::f32::Vec4" => Some(GlamKind::Vec4),
-        "glam::Quat" | "glam::f32::Quat" => Some(GlamKind::Quat),
-        "glam::Mat4" | "glam::f32::Mat4" => Some(GlamKind::Mat4),
-        _ => None,
-    }
-}
-
 fn parse_primitive(type_identifier: &str) -> Option<PrimitiveKind> {
     match type_identifier {
         "f32" => Some(PrimitiveKind::F32),
@@ -103,50 +69,6 @@ fn parse_primitive(type_identifier: &str) -> Option<PrimitiveKind> {
         "u64" => Some(PrimitiveKind::U64),
         "bool" => Some(PrimitiveKind::Bool),
         _ => None,
-    }
-}
-
-/// Render a primitive value.
-fn render_primitive(ui: &mut Ui, ptr: *mut u8, kind: PrimitiveKind) -> bool {
-    match kind {
-        PrimitiveKind::F32 => render_drag_value::<f32>(ui, ptr, 0.1),
-        PrimitiveKind::F64 => render_drag_value::<f64>(ui, ptr, 0.1),
-        PrimitiveKind::I32 => render_drag_value::<i32>(ui, ptr, 1.0),
-        PrimitiveKind::I64 => render_drag_value::<i64>(ui, ptr, 1.0),
-        PrimitiveKind::U32 => render_drag_value::<u32>(ui, ptr, 1.0),
-        PrimitiveKind::U64 => render_drag_value::<u64>(ui, ptr, 1.0),
-        PrimitiveKind::Bool => {
-            let value_ptr = ptr as *mut bool;
-            let mut v = unsafe { *value_ptr };
-            let response = ui.checkbox(&mut v, "");
-            if response.changed() {
-                unsafe { *value_ptr = v };
-                return true;
-            }
-            false
-        }
-    }
-}
-
-fn render_drag_value<T: egui::emath::Numeric>(ui: &mut Ui, ptr: *mut u8, speed: f64) -> bool {
-    let value_ptr = ptr as *mut T;
-    let mut v = unsafe { *value_ptr };
-    let response = ui.add(egui::DragValue::new(&mut v).speed(speed));
-    if response.changed() {
-        unsafe { *value_ptr = v };
-        return true;
-    }
-    false
-}
-
-/// Render a glam type.
-fn render_glam(ui: &mut Ui, ptr: *mut u8, kind: GlamKind) -> bool {
-    match kind {
-        GlamKind::Vec2 => render_vec2(ui, ptr),
-        GlamKind::Vec3 => render_vec3(ui, ptr),
-        GlamKind::Vec4 => render_vec4(ui, ptr),
-        GlamKind::Quat => render_quat(ui, ptr),
-        GlamKind::Mat4 => render_mat4(ui, ptr),
     }
 }
 
@@ -169,7 +91,9 @@ fn render_slider(
 pub fn render_facet_ui<'a, T: Facet<'a>>(ui: &mut Ui, value: &mut T) -> bool {
     let shape = T::SHAPE;
     let ptr = value as *mut T as *mut u8;
-    let kind = classify_field(shape.type_identifier, &shape.ty);
+    let Some(kind) = classify_field(shape.type_identifier, &shape.ty) else {
+        return false;
+    };
 
     match kind {
         FieldKind::Slider {
@@ -177,19 +101,11 @@ pub fn render_facet_ui<'a, T: Facet<'a>>(ui: &mut Ui, value: &mut T) -> bool {
             struct_type,
         } => render_slider(ui, ptr, inner_type, struct_type),
 
-        FieldKind::Glam(glam_kind) => render_glam(ui, ptr, glam_kind),
-
-        FieldKind::Primitive(prim_kind) => render_primitive(ui, ptr, prim_kind),
-
         FieldKind::Struct(struct_type) => render_struct(ui, ptr, struct_type),
-
-        FieldKind::Unsupported => {
-            ui.label(format!("Unsupported type: {}", shape.type_identifier));
-            false
-        }
     }
 }
 
+// TODO rename or remove this
 fn render_struct(ui: &mut Ui, base_ptr: *mut u8, struct_type: &StructType) -> bool {
     let mut modified = false;
 
@@ -197,7 +113,9 @@ fn render_struct(ui: &mut Ui, base_ptr: *mut u8, struct_type: &StructType) -> bo
         let field_ptr = unsafe { base_ptr.add(field.offset) };
         let field_shape = field.shape.get();
         let field_type_name = field_shape.type_identifier;
-        let kind = classify_field(field_type_name, &field_shape.ty);
+        let Some(kind) = classify_field(field_type_name, &field_shape.ty) else {
+            return false;
+        };
 
         ui.horizontal(|ui| {
             ui.label(field.name);
@@ -211,16 +129,6 @@ fn render_struct(ui: &mut Ui, base_ptr: *mut u8, struct_type: &StructType) -> bo
                         modified = true;
                     }
                 }
-                FieldKind::Glam(glam_kind) => {
-                    if render_glam(ui, field_ptr, glam_kind) {
-                        modified = true;
-                    }
-                }
-                FieldKind::Primitive(prim_kind) => {
-                    if render_primitive(ui, field_ptr, prim_kind) {
-                        modified = true;
-                    }
-                }
                 FieldKind::Struct(nested_struct) => {
                     ui.collapsing(field.name, |ui| {
                         if render_struct(ui, field_ptr, nested_struct) {
@@ -228,113 +136,9 @@ fn render_struct(ui: &mut Ui, base_ptr: *mut u8, struct_type: &StructType) -> bo
                         }
                     });
                 }
-                FieldKind::Unsupported => {
-                    ui.label(format!("({})", field_type_name));
-                }
             }
         });
     }
-
-    modified
-}
-
-fn render_vec2(ui: &mut Ui, ptr: *mut u8) -> bool {
-    let v = unsafe { &mut *(ptr as *mut glam::Vec2) };
-    let mut modified = false;
-    ui.horizontal(|ui| {
-        modified |= ui
-            .add(egui::DragValue::new(&mut v.x).prefix("x: ").speed(0.1))
-            .changed();
-        modified |= ui
-            .add(egui::DragValue::new(&mut v.y).prefix("y: ").speed(0.1))
-            .changed();
-    });
-
-    modified
-}
-
-fn render_vec3(ui: &mut Ui, ptr: *mut u8) -> bool {
-    let v = unsafe { &mut *(ptr as *mut glam::Vec3) };
-    let mut modified = false;
-    ui.horizontal(|ui| {
-        modified |= ui
-            .add(egui::DragValue::new(&mut v.x).prefix("x: ").speed(0.1))
-            .changed();
-        modified |= ui
-            .add(egui::DragValue::new(&mut v.y).prefix("y: ").speed(0.1))
-            .changed();
-        modified |= ui
-            .add(egui::DragValue::new(&mut v.z).prefix("z: ").speed(0.1))
-            .changed();
-    });
-
-    modified
-}
-
-fn render_vec4(ui: &mut Ui, ptr: *mut u8) -> bool {
-    let v = unsafe { &mut *(ptr as *mut glam::Vec4) };
-    let mut modified = false;
-    ui.horizontal(|ui| {
-        modified |= ui
-            .add(egui::DragValue::new(&mut v.x).prefix("x: ").speed(0.1))
-            .changed();
-        modified |= ui
-            .add(egui::DragValue::new(&mut v.y).prefix("y: ").speed(0.1))
-            .changed();
-        modified |= ui
-            .add(egui::DragValue::new(&mut v.z).prefix("z: ").speed(0.1))
-            .changed();
-        modified |= ui
-            .add(egui::DragValue::new(&mut v.w).prefix("w: ").speed(0.1))
-            .changed();
-    });
-
-    modified
-}
-
-fn render_quat(ui: &mut Ui, ptr: *mut u8) -> bool {
-    let q = unsafe { &mut *(ptr as *mut glam::Quat) };
-    // Display as euler angles for easier editing
-    let (mut x, mut y, mut z) = q.to_euler(glam::EulerRot::XYZ);
-    let mut modified = false;
-
-    ui.horizontal(|ui| {
-        ui.label("euler:");
-        modified |= ui
-            .add(egui::DragValue::new(&mut x).prefix("x: ").speed(0.01))
-            .changed();
-        modified |= ui
-            .add(egui::DragValue::new(&mut y).prefix("y: ").speed(0.01))
-            .changed();
-        modified |= ui
-            .add(egui::DragValue::new(&mut z).prefix("z: ").speed(0.01))
-            .changed();
-    });
-
-    if modified {
-        *q = glam::Quat::from_euler(glam::EulerRot::XYZ, x, y, z);
-    }
-
-    modified
-}
-
-fn render_mat4(ui: &mut Ui, ptr: *mut u8) -> bool {
-    let m = unsafe { &mut *(ptr as *mut glam::Mat4) };
-    let mut modified = false;
-
-    ui.vertical(|ui| {
-        for row in 0..4 {
-            ui.horizontal(|ui| {
-                for col in 0..4 {
-                    let mut v = m.col(col)[row];
-                    if ui.add(egui::DragValue::new(&mut v).speed(0.01)).changed() {
-                        m.col_mut(col)[row] = v;
-                        modified = true;
-                    }
-                }
-            });
-        }
-    });
 
     modified
 }
