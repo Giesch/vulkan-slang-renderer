@@ -34,6 +34,7 @@
     - [ ] come up with a plan for implementing that trait from scripting lang
   - [X] use the same number of frames in flight?
     does this matter? maybe could be out-of-sync?
+
   - [ ] egui undo stack?
   - [ ] make it possible to have a 'save' button
     - separate trait for that? include loading api
@@ -52,9 +53,9 @@
   - [ ] read the facet docs
 
 * Next
-- [ ] get off of rust nightly
-  - [ ] find a good replacement for never type in vertex config
-  - [ ] remove 'fast build' config
+- [X] get off of rust nightly
+  - [X] find a good replacement for never type in vertex config
+  - [X] remove 'fast build' config
 
 - [ ] add a way to test for vulkan validation errors
   claude has already started tailing the logs...

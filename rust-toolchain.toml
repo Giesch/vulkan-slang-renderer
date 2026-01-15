@@ -1,18 +1,2 @@
-# Based on when the latest stable branched from master:
-# https://releases.rs/docs/1.92.0/
 [toolchain]
-channel = "nightly-2025-10-24"
-
-# This specifies components explicitly in order to always include rust-analyzer.
-#
-# component availability by nightly version:
-# https://rust-lang.github.io/rustup-components-history/
-components = [
-    "rustc",
-    "cargo",
-    "rustfmt",
-    "rust-std",
-    "rust-docs",
-    "clippy",
-    "rust-analyzer"
-]
+channel = "stable"
