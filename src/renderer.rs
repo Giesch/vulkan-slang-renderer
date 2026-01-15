@@ -447,28 +447,31 @@ impl Renderer {
     pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> anyhow::Result<UniformBufferHandle<T>> {
         let buffer_size = std::mem::size_of::<T>() as u64;
 
-        let buffers_per_frame: [RawUniformBuffer; MAX_FRAMES_IN_FLIGHT] =
-            std::array::try_from_fn(|_| {
-                let (buffer, device_mem) = create_memory_buffer(
-                    &self.instance,
-                    &self.device,
-                    self.physical_device,
-                    buffer_size,
-                    vk::BufferUsageFlags::UNIFORM_BUFFER,
-                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-                )?;
+        let mut buffers_per_frame: [Option<RawUniformBuffer>; MAX_FRAMES_IN_FLIGHT] =
+            [const { None }; MAX_FRAMES_IN_FLIGHT];
+        #[expect(clippy::needless_range_loop)]
+        for i in 0..MAX_FRAMES_IN_FLIGHT {
+            let (buffer, device_mem) = create_memory_buffer(
+                &self.instance,
+                &self.device,
+                self.physical_device,
+                buffer_size,
+                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            )?;
 
-                let mapped_mem = unsafe {
-                    self.device
-                        .map_memory(device_mem, 0, buffer_size, Default::default())?
-                };
+            let mapped_mem = unsafe {
+                self.device
+                    .map_memory(device_mem, 0, buffer_size, Default::default())?
+            };
 
-                Ok::<_, anyhow::Error>(RawUniformBuffer {
-                    buffer,
-                    device_mem,
-                    mapped_mem,
-                })
-            })?;
+            buffers_per_frame[i] = Some(RawUniformBuffer {
+                buffer,
+                device_mem,
+                mapped_mem,
+            });
+        }
+        let buffers_per_frame = buffers_per_frame.map(Option::unwrap);
 
         let handle = self.uniform_buffers.add(buffers_per_frame);
 
@@ -495,28 +498,31 @@ impl Renderer {
     ) -> anyhow::Result<StorageBufferHandle<T>> {
         let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
 
-        let buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT] =
-            std::array::try_from_fn(|_| {
-                let (buffer, device_mem) = create_memory_buffer(
-                    &self.instance,
-                    &self.device,
-                    self.physical_device,
-                    buffer_size,
-                    vk::BufferUsageFlags::STORAGE_BUFFER,
-                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-                )?;
+        let mut buffers_per_frame: [Option<RawStorageBuffer>; MAX_FRAMES_IN_FLIGHT] =
+            [const { None }; MAX_FRAMES_IN_FLIGHT];
+        #[expect(clippy::needless_range_loop)]
+        for i in 0..MAX_FRAMES_IN_FLIGHT {
+            let (buffer, device_mem) = create_memory_buffer(
+                &self.instance,
+                &self.device,
+                self.physical_device,
+                buffer_size,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            )?;
 
-                let mapped_mem = unsafe {
-                    self.device
-                        .map_memory(device_mem, 0, buffer_size, Default::default())?
-                };
+            let mapped_mem = unsafe {
+                self.device
+                    .map_memory(device_mem, 0, buffer_size, Default::default())?
+            };
 
-                Ok::<_, anyhow::Error>(RawStorageBuffer {
-                    buffer,
-                    device_mem,
-                    mapped_mem,
-                })
-            })?;
+            buffers_per_frame[i] = Some(RawStorageBuffer {
+                buffer,
+                device_mem,
+                mapped_mem,
+            });
+        }
+        let buffers_per_frame = buffers_per_frame.map(Option::unwrap);
 
         let handle = self.storage_buffers.add(buffers_per_frame, len);
 
@@ -2272,8 +2278,13 @@ fn create_sync_objects(
     ),
     anyhow::Error,
 > {
-    let image_available: [vk::Semaphore; MAX_FRAMES_IN_FLIGHT] =
-        std::array::try_from_fn(|_| unsafe { device.create_semaphore(&Default::default(), None) })?;
+    let mut image_available: [Option<vk::Semaphore>; MAX_FRAMES_IN_FLIGHT] =
+        [const { None }; MAX_FRAMES_IN_FLIGHT];
+    #[expect(clippy::needless_range_loop)]
+    for i in 0..MAX_FRAMES_IN_FLIGHT {
+        image_available[i] = Some(unsafe { device.create_semaphore(&Default::default(), None)? });
+    }
+    let image_available = image_available.map(Option::unwrap);
 
     let mut render_finished = Vec::with_capacity(swapchain_images.len());
     for _image in swapchain_images {
@@ -2281,11 +2292,15 @@ fn create_sync_objects(
         render_finished.push(semaphore);
     }
 
-    let frames_in_flight: [vk::Fence; MAX_FRAMES_IN_FLIGHT] = std::array::try_from_fn(|_| {
+    let mut frames_in_flight: [Option<vk::Fence>; MAX_FRAMES_IN_FLIGHT] =
+        [const { None }; MAX_FRAMES_IN_FLIGHT];
+    #[expect(clippy::needless_range_loop)]
+    for i in 0..MAX_FRAMES_IN_FLIGHT {
         let fence_create_info =
             vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-        unsafe { device.create_fence(&fence_create_info, None) }
-    })?;
+        frames_in_flight[i] = Some(unsafe { device.create_fence(&fence_create_info, None)? });
+    }
+    let frames_in_flight = frames_in_flight.map(Option::unwrap);
 
     Ok((image_available, render_finished, frames_in_flight))
 }
