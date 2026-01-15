@@ -93,18 +93,27 @@ pub struct Renderer {
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
     render_pass: vk::RenderPass,
-    swapchain_framebuffers: Vec<vk::Framebuffer>,
+    swapchain_framebuffers: [vk::Framebuffer; MAX_FRAMES_IN_FLIGHT],
     color_image: vk::Image,
     color_image_memory: vk::DeviceMemory,
     color_image_view: vk::ImageView,
     depth_image: vk::Image,
     depth_image_memory: vk::DeviceMemory,
     depth_image_view: vk::ImageView,
+
+    /// resolve images for upscaling, indexed by current_frame
+    render_scale: f32,
+    render_extent: vk::Extent2D,
+    resolve_images: [vk::Image; MAX_FRAMES_IN_FLIGHT],
+    resolve_image_memories: [vk::DeviceMemory; MAX_FRAMES_IN_FLIGHT],
+    resolve_image_views: [vk::ImageView; MAX_FRAMES_IN_FLIGHT],
+
     command_pool: vk::CommandPool,
     command_buffers: [vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT],
     /// image semaphores indexed by current_frame
     image_available: [vk::Semaphore; MAX_FRAMES_IN_FLIGHT],
     /// render finished semaphores indexed by image_index
+    /// ie, one per swapchain image, not per frame-in-flight
     render_finished: Vec<vk::Semaphore>,
     /// frame fences indexed by current_frame
     frames_in_flight: [vk::Fence; MAX_FRAMES_IN_FLIGHT],
@@ -122,8 +131,59 @@ pub struct Renderer {
     text_input_active: bool,
 }
 
+fn calculate_render_extent(display_extent: vk::Extent2D, render_scale: f32) -> vk::Extent2D {
+    vk::Extent2D {
+        width: ((display_extent.width as f32 * render_scale) as u32).max(1),
+        height: ((display_extent.height as f32 * render_scale) as u32).max(1),
+    }
+}
+
+fn create_resolve_images(
+    instance: &ash::Instance,
+    device: &ash::Device,
+    physical_device: vk::PhysicalDevice,
+    render_extent: vk::Extent2D,
+    color_format: vk::Format,
+) -> Result<
+    (
+        [vk::Image; MAX_FRAMES_IN_FLIGHT],
+        [vk::DeviceMemory; MAX_FRAMES_IN_FLIGHT],
+        [vk::ImageView; MAX_FRAMES_IN_FLIGHT],
+    ),
+    anyhow::Error,
+> {
+    let image_options = ImageOptions {
+        extent: render_extent,
+        format: color_format,
+        tiling: vk::ImageTiling::OPTIMAL,
+        usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        mip_levels: 1,
+        msaa_samples: vk::SampleCountFlags::TYPE_1,
+    };
+
+    let mut images = [vk::Image::null(); MAX_FRAMES_IN_FLIGHT];
+    let mut memories = [vk::DeviceMemory::null(); MAX_FRAMES_IN_FLIGHT];
+    let mut views = [vk::ImageView::null(); MAX_FRAMES_IN_FLIGHT];
+
+    for i in 0..MAX_FRAMES_IN_FLIGHT {
+        let (image, memory) = create_vk_image(instance, device, physical_device, image_options)?;
+        let view = create_image_view(device, image, color_format, vk::ImageAspectFlags::COLOR, 1)?;
+        images[i] = image;
+        memories[i] = memory;
+        views[i] = view;
+    }
+
+    Ok((images, memories, views))
+}
+
 impl Renderer {
-    pub fn init(window: Window, enable_egui: bool) -> Result<Self, anyhow::Error> {
+    pub fn init(
+        window: Window,
+        enable_egui: bool,
+        render_scale: f32,
+    ) -> Result<Self, anyhow::Error> {
+        let render_scale = render_scale.clamp(0.25, 1.0);
         #[cfg(debug_assertions)]
         let shader_changes = shader_watcher::watch()?;
 
@@ -236,11 +296,24 @@ impl Renderer {
         let command_pool = create_command_pool(&device, &queue_family_indices)?;
         let command_buffers = create_command_buffers(&device, command_pool)?;
 
+        // Calculate scaled render extent
+        let render_extent = calculate_render_extent(image_extent, render_scale);
+
+        // Create resolve images at render_extent
+        let (resolve_images, resolve_image_memories, resolve_image_views) = create_resolve_images(
+            &instance,
+            &device,
+            physical_device,
+            render_extent,
+            image_format,
+        )?;
+
+        // Color and depth buffers at render_extent (scaled resolution)
         let (color_image, color_image_memory, color_image_view) = create_color_image(
             &instance,
             &device,
             physical_device,
-            image_extent,
+            render_extent,
             image_format,
             msaa_samples,
         )?;
@@ -251,15 +324,16 @@ impl Renderer {
             physical_device,
             command_pool,
             graphics_queue,
-            image_extent,
+            render_extent,
             msaa_samples,
         )?;
 
+        // Framebuffers use resolve_image_views (one per frame-in-flight)
         let swapchain_framebuffers = create_framebuffers(
             &device,
             render_pass,
-            &swapchain_image_views,
-            image_extent,
+            &resolve_image_views,
+            render_extent,
             depth_image_view,
             color_image_view,
         )?;
@@ -306,6 +380,11 @@ impl Renderer {
             depth_image,
             depth_image_memory,
             depth_image_view,
+            render_scale,
+            render_extent,
+            resolve_images,
+            resolve_image_memories,
+            resolve_image_views,
             command_pool,
             command_buffers,
             image_available,
@@ -622,10 +701,11 @@ impl Renderer {
                 .begin_command_buffer(command_buffer, &begin_info)?;
         }
 
-        let framebuffer = self.swapchain_framebuffers[image_index as usize];
+        let framebuffer = self.swapchain_framebuffers[self.current_frame];
+        // Main render pass uses render_extent (scaled resolution)
         let render_area = vk::Rect2D::default()
             .offset(vk::Offset2D::default())
-            .extent(self.image_extent);
+            .extent(self.render_extent);
         let clear_color = vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [0.0, 0.0, 0.0, 1.0],
@@ -662,11 +742,12 @@ impl Renderer {
             );
         }
 
+        // Use render_extent for game rendering (scaled resolution)
         let viewport = vk::Viewport::default()
             .x(0.0)
             .y(0.0)
-            .width(self.image_extent.width as f32)
-            .height(self.image_extent.height as f32)
+            .width(self.render_extent.width as f32)
+            .height(self.render_extent.height as f32)
             .min_depth(0.0)
             .max_depth(1.0);
         let viewports = [viewport];
@@ -674,7 +755,7 @@ impl Renderer {
 
         let scissor = vk::Rect2D::default()
             .offset(vk::Offset2D::default())
-            .extent(self.image_extent);
+            .extent(self.render_extent);
         let scissors = [scissor];
         unsafe { self.device.cmd_set_scissor(command_buffer, 0, &scissors) };
 
@@ -728,6 +809,109 @@ impl Renderer {
 
         // END MAIN RENDER PASS
         unsafe { self.device.cmd_end_render_pass(command_buffer) };
+
+        // BLIT FROM RESOLVE IMAGE TO SWAPCHAIN (upscale step)
+        let swapchain_image = self.swapchain_images[image_index as usize];
+        {
+            // Transition swapchain image from UNDEFINED to TRANSFER_DST
+            let barrier_to_transfer = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(swapchain_image)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .src_access_mask(vk::AccessFlags::empty())
+                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
+
+            unsafe {
+                self.device.cmd_pipeline_barrier(
+                    command_buffer,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[barrier_to_transfer],
+                );
+            }
+
+            // Blit from resolve_image to swapchain_image
+            let src_subresource = vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1);
+
+            let blit = vk::ImageBlit::default()
+                .src_offsets([
+                    vk::Offset3D::default(),
+                    vk::Offset3D {
+                        x: self.render_extent.width as i32,
+                        y: self.render_extent.height as i32,
+                        z: 1,
+                    },
+                ])
+                .src_subresource(src_subresource)
+                .dst_offsets([
+                    vk::Offset3D::default(),
+                    vk::Offset3D {
+                        x: self.image_extent.width as i32,
+                        y: self.image_extent.height as i32,
+                        z: 1,
+                    },
+                ])
+                .dst_subresource(src_subresource);
+
+            unsafe {
+                self.device.cmd_blit_image(
+                    command_buffer,
+                    self.resolve_images[self.current_frame],
+                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    swapchain_image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[blit],
+                    vk::Filter::LINEAR,
+                );
+            }
+
+            // Always transition to PRESENT_SRC_KHR - egui render pass handles layout internally
+            let final_layout = vk::ImageLayout::PRESENT_SRC_KHR;
+
+            let barrier_to_next = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(final_layout)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(swapchain_image)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_READ);
+
+            unsafe {
+                self.device.cmd_pipeline_barrier(
+                    command_buffer,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[barrier_to_next],
+                );
+            }
+        }
 
         // EGUI RENDER PASS (separate 1-sample pass for egui overlay)
         if let (Some(egui), Some(egui_render_pass), Some(egui_framebuffers)) = (
@@ -921,6 +1105,15 @@ impl Renderer {
             self.device.destroy_image(self.color_image, None);
             self.device.free_memory(self.color_image_memory, None);
         }
+        unsafe {
+            for i in 0..MAX_FRAMES_IN_FLIGHT {
+                self.device
+                    .destroy_image_view(self.resolve_image_views[i], None);
+                self.device.destroy_image(self.resolve_images[i], None);
+                self.device
+                    .free_memory(self.resolve_image_memories[i], None);
+            }
+        }
 
         let CreatedSwapchain {
             swapchain,
@@ -938,19 +1131,35 @@ impl Renderer {
         self.image_format = image_format;
         self.image_extent = image_extent;
 
+        // Recalculate render extent
+        self.render_extent = calculate_render_extent(image_extent, self.render_scale);
+
         self.swapchain_images =
             unsafe { self.swapchain_device_ext.get_swapchain_images(swapchain)? };
 
         self.swapchain_image_views =
             create_swapchain_image_views(&self.device, self.image_format, &self.swapchain_images)?;
 
+        // Recreate resolve images at render_extent (one per frame-in-flight)
+        let (resolve_images, resolve_image_memories, resolve_image_views) = create_resolve_images(
+            &self.instance,
+            &self.device,
+            self.physical_device,
+            self.render_extent,
+            self.image_format,
+        )?;
+        self.resolve_images = resolve_images;
+        self.resolve_image_memories = resolve_image_memories;
+        self.resolve_image_views = resolve_image_views;
+
+        // Depth and color at render_extent
         let (depth_image, depth_image_memory, depth_image_view) = create_depth_buffer_image(
             &self.instance,
             &self.device,
             self.physical_device,
             self.command_pool,
             self.graphics_queue,
-            self.image_extent,
+            self.render_extent,
             self.msaa_samples,
         )?;
         self.depth_image = depth_image;
@@ -961,7 +1170,7 @@ impl Renderer {
             &self.instance,
             &self.device,
             self.physical_device,
-            self.image_extent,
+            self.render_extent,
             self.image_format,
             self.msaa_samples,
         )?;
@@ -971,11 +1180,9 @@ impl Renderer {
 
         self.swapchain_framebuffers = create_framebuffers(
             &self.device,
-            // NOTE for some monitor changes,
-            // you'd need to recreate the renderpass as well
             self.render_pass,
-            &self.swapchain_image_views,
-            image_extent,
+            &self.resolve_image_views,
+            self.render_extent,
             self.depth_image_view,
             self.color_image_view,
         )?;
@@ -1160,6 +1367,14 @@ impl Drop for Renderer {
             self.device.destroy_image_view(self.color_image_view, None);
             self.device.destroy_image(self.color_image, None);
             self.device.free_memory(self.color_image_memory, None);
+
+            for i in 0..MAX_FRAMES_IN_FLIGHT {
+                self.device
+                    .destroy_image_view(self.resolve_image_views[i], None);
+                self.device.destroy_image(self.resolve_images[i], None);
+                self.device
+                    .free_memory(self.resolve_image_memories[i], None);
+            }
 
             #[cfg(debug_assertions)]
             for (_frame, old_pipeline, old_pipeline_layout, old_descriptor_set_layouts) in
@@ -1535,7 +1750,7 @@ fn create_swapchain(
         .image_color_space(surface_format.color_space)
         .image_extent(image_extent)
         .image_array_layers(1) // only not one for stereoscopic 3D (VR?)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT); // this would be a memory op instead, if post-processing
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST); // TRANSFER_DST for render scaling blit
 
     let create_info_indices = [
         queue_family_indices.graphics,
@@ -1730,6 +1945,7 @@ fn create_render_pass(
         .attachment(1)
         .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
+    // Resolve to intermediate image for render scaling (will blit to swapchain)
     let color_attachment_resolve = vk::AttachmentDescription::default()
         .format(swapchain_format)
         .samples(vk::SampleCountFlags::TYPE_1)
@@ -1738,7 +1954,7 @@ fn create_render_pass(
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+        .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
     let color_attachment_resolve_ref = vk::AttachmentReference::default()
         .attachment(2)
@@ -1994,26 +2210,25 @@ fn create_graphics_pipeline(
 fn create_framebuffers(
     device: &ash::Device,
     render_pass: vk::RenderPass,
-    swapchain_image_views: &[vk::ImageView],
-    image_extent: vk::Extent2D,
+    resolve_image_views: &[vk::ImageView; MAX_FRAMES_IN_FLIGHT],
+    render_extent: vk::Extent2D,
     depth_image_view: vk::ImageView,
     color_image_view: vk::ImageView,
-) -> Result<Vec<vk::Framebuffer>, anyhow::Error> {
-    let mut framebuffers = Vec::with_capacity(swapchain_image_views.len());
+) -> Result<[vk::Framebuffer; MAX_FRAMES_IN_FLIGHT], anyhow::Error> {
+    // One framebuffer per frame-in-flight, each with its own resolve target
+    let mut framebuffers = [vk::Framebuffer::null(); MAX_FRAMES_IN_FLIGHT];
 
-    for &swapchain_image_view in swapchain_image_views {
-        let attachments = [color_image_view, depth_image_view, swapchain_image_view];
+    for i in 0..MAX_FRAMES_IN_FLIGHT {
+        let attachments = [color_image_view, depth_image_view, resolve_image_views[i]];
 
         let framebuffer_info = vk::FramebufferCreateInfo::default()
             .render_pass(render_pass)
             .attachments(&attachments)
-            .width(image_extent.width)
-            .height(image_extent.height)
+            .width(render_extent.width)
+            .height(render_extent.height)
             .layers(1);
 
-        let framebuffer = unsafe { device.create_framebuffer(&framebuffer_info, None)? };
-
-        framebuffers.push(framebuffer);
+        framebuffers[i] = unsafe { device.create_framebuffer(&framebuffer_info, None)? };
     }
 
     Ok(framebuffers)
@@ -2567,6 +2782,7 @@ fn create_texture_image(
     Ok((vk_image, image_memory, mip_levels))
 }
 
+#[derive(Clone, Copy)]
 struct ImageOptions {
     extent: vk::Extent2D,
     format: vk::Format,
@@ -3097,9 +3313,6 @@ fn get_max_usable_sample_count(
     // NOTE; it may be better to choose less than the maximum available
     // for performance reasons
     let descending_options = [
-        vk::SampleCountFlags::TYPE_64,
-        vk::SampleCountFlags::TYPE_32,
-        vk::SampleCountFlags::TYPE_16,
         vk::SampleCountFlags::TYPE_8,
         vk::SampleCountFlags::TYPE_4,
         vk::SampleCountFlags::TYPE_2,
@@ -3434,6 +3647,19 @@ impl<'f> FrameRenderer<'f> {
 
     pub fn window_resolution(&self) -> Vec2 {
         Vec2::new(self.0.width, self.0.height)
+    }
+
+    /// Returns the internal render resolution (may be lower than display with render scaling)
+    pub fn render_resolution(&self) -> Vec2 {
+        Vec2::new(
+            self.0.render_extent.width as f32,
+            self.0.render_extent.height as f32,
+        )
+    }
+
+    /// Returns the current render scale (0.25 to 1.0)
+    pub fn render_scale(&self) -> f32 {
+        self.0.render_scale
     }
 
     pub fn draw_indexed(

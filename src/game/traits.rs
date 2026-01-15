@@ -47,6 +47,13 @@ pub trait Game {
         DEFAULT_FRAME_DELAY
     }
 
+    /// Override to set the render scale.
+    /// The default is based on the user's display, with larger displays getting a smaller scale.
+    /// Valid range: 0.25 to 1.0. Lower values improve performance at cost of image quality.
+    fn render_scale() -> Option<f32> {
+        None
+    }
+
     /// Returns the debug window name and a mutable reference to the debug state for egui rendering.
     /// Return None to disable debug UI for this frame.
     /// Default implementation returns None.
@@ -71,7 +78,11 @@ pub trait Game {
             .build()?;
 
         let enable_egui = cfg!(debug_assertions);
-        let mut renderer = Renderer::init(window, enable_egui)?;
+        let render_scale = match Self::render_scale() {
+            Some(scale_override) => scale_override,
+            None => compute_render_scale_for_display(&window),
+        };
+        let mut renderer = Renderer::init(window, enable_egui, render_scale)?;
         let game = Self::setup(&mut renderer)?;
         let app = App::init(renderer, game)?;
 
@@ -80,6 +91,31 @@ pub trait Game {
     }
 
     fn input(&mut self, _input: Input) {}
+}
+
+/// Compute render scale based on display resolution.
+/// Returns lower scale for high-resolution displays to improve performance.
+fn compute_render_scale_for_display(window: &sdl3::video::Window) -> f32 {
+    let Ok(display) = window.get_display() else {
+        return 1.0;
+    };
+    let Ok(bounds) = display.get_bounds() else {
+        return 1.0;
+    };
+
+    let pixel_count = bounds.w as u64 * bounds.h as u64;
+
+    // Scale based on total pixels:
+    // - 4K+ (3840x2160 = 8.3M pixels): 0.5
+    // - 2K/1440p (2560x1440 = 3.7M pixels): 0.75
+    // - 1080p and below: 1.0
+    if pixel_count >= 8_000_000 {
+        0.5
+    } else if pixel_count >= 3_500_000 {
+        0.75
+    } else {
+        1.0
+    }
 }
 
 /// parameters passed through to SDL to create a window
