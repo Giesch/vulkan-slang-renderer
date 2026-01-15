@@ -21,7 +21,6 @@ just lint            # Clippy with warnings as errors
 ## Toolchain
 
 - Rust nightly-2025-10-24 (Rust Edition 2024)
-- Uses `#![feature(never_type)]`
 
 ## Architecture
 

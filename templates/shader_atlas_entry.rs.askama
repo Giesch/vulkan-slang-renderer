@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
-use crate::renderer::vertex_description::VertexDescription;
+use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};

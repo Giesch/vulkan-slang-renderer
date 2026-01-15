@@ -16,14 +16,15 @@
       - [X] in try_render_slider, type_identifier does not include the f32 generic
       - [X] refactor the big if-else chain
 
-    - [ ] what happens when returning a facet editor struct in release mode?
+    - [X] what happens when returning a facet editor struct in release mode?
       ie, run serenity_crt in release
-    - [ ] what would happen when hot-reloading the debug struct?
+    - [-] what would happen when hot-reloading the debug struct?
       do we need to use the trait object version for this?
-      - [ ] would this break the associated type generic
-      - [ ] would this break the egui's ui state (ie, collapsed/uncollapsed)
+      - [-] does hot-reload break the associated type generic
+      - [ ] does hot-reload break egui's ui state (ie, collapsed/uncollapsed)
     - [X] can we make the egui window renameable?
-    - [ ] handle rescaling text/ui for 4k
+    - [X] handle rescaling game for 4k
+    - [ ] handle rescaling egui for 4k
 
   - [-] make egui integration configurable - use facet for editable fields
     ie, use a single reflectable type for exposing editable properties
@@ -299,6 +300,11 @@
 
 - [ ] split shader println into its own example
 - [ ] split up depth texture & viking room shaders
+
+- [ ] add change detection to slider / egui-facet-editor components
+  - ie, a 'changed this frame' boolean prop
+  - better api to have a changelist? maybe for Roc?
+
 
 * Future
 - [ ] OCAML as a scripting language?

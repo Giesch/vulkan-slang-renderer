@@ -356,7 +356,7 @@ impl GeneratedShaderImpl {
     }
 
     fn vertex_type_or_never(&self) -> &str {
-        self.vertex_type_name.as_deref().unwrap_or("!")
+        self.vertex_type_name.as_deref().unwrap_or("NoVertex")
     }
 }
 

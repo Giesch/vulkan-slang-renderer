@@ -1,5 +1,3 @@
-#![feature(never_type)]
-
 pub mod app;
 pub mod editor;
 pub mod game;

@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
-use crate::renderer::vertex_description::VertexDescription;
+use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
@@ -71,7 +71,7 @@ impl Shader {
     pub fn pipeline_config(
         self,
         resources: Resources<'_>,
-    ) -> PipelineConfig<'_, !, DrawVertexCount> {
+    ) -> PipelineConfig<'_, NoVertex, DrawVertexCount> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]

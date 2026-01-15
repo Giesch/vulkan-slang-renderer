@@ -1,5 +1,9 @@
 use ash::vk;
 
+/// Marker type for shaders that don't use vertex input buffers.
+/// Used as the vertex type parameter for fullscreen quads, procedural geometry, etc.
+pub enum NoVertex {}
+
 /// A marker for someday-generated types that get written to GPU memory
 ///
 /// An implementing struct must be repr(C, align(16))
@@ -8,7 +12,7 @@ pub trait GPUWrite {}
 
 impl GPUWrite for u8 {} // image bytes
 impl GPUWrite for u32 {} // index buffer
-impl GPUWrite for ! {}
+impl GPUWrite for NoVertex {}
 
 pub(super) unsafe fn write_to_gpu_buffer<T: GPUWrite>(
     device: &ash::Device,
