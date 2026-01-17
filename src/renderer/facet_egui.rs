@@ -1,21 +1,25 @@
 //! Auto-generated egui UI from facet reflection
 
-use crate::editor::Slider;
+use crate::editor::{Label, Slider};
 use egui::Ui;
 use facet::{Facet, Poke, PokeStruct, Shape, Type, UserType};
 
 /// Classification of a field's type for UI rendering.
 enum FieldKind {
     Slider,
+    Label,
     Collapsing,
 }
 
 /// Classify a field's type for rendering.
 /// Returns None for an unsupported editor type.
 fn classify_field(shape: &Shape) -> Option<FieldKind> {
-    // Check for Slider wrapper type
-    if is_slider(shape) {
+    if shape.is_type::<Slider>() {
         return Some(FieldKind::Slider);
+    }
+
+    if shape.is_type::<Label>() {
+        return Some(FieldKind::Label);
     }
 
     // Check for nested structs
@@ -26,16 +30,18 @@ fn classify_field(shape: &Shape) -> Option<FieldKind> {
     None
 }
 
-fn is_slider(shape: &Shape) -> bool {
-    shape.type_identifier == "Slider"
-}
-
 /// Render a Slider wrapper type.
 fn render_slider(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
     let slider = poke
         .get_mut::<Slider>()
         .expect("type mismatch: expected Slider");
     slider.render_ui(ui)
+}
+
+/// Render a Label wrapper type.
+fn render_label(ui: &mut Ui, poke: Poke<'_, '_>) {
+    let label = poke.get::<Label>().expect("type mismatch: expected Label");
+    label.render_ui(ui);
 }
 
 /// Render editable UI for any Facet type.
@@ -50,6 +56,10 @@ pub fn render_facet_ui<'a, T: Facet<'a>>(ui: &mut Ui, value: &mut T) -> bool {
 
     match kind {
         FieldKind::Slider => render_slider(ui, poke),
+        FieldKind::Label => {
+            render_label(ui, poke);
+            false
+        }
         FieldKind::Collapsing => {
             let poke_struct = poke.into_struct().expect("expected struct");
             render_collapsing(ui, poke_struct)
@@ -78,6 +88,9 @@ fn render_collapsing(ui: &mut Ui, mut poke_struct: PokeStruct<'_, '_>) -> bool {
                     if render_slider(ui, field_poke) {
                         modified = true;
                     }
+                }
+                FieldKind::Label => {
+                    render_label(ui, field_poke);
                 }
                 FieldKind::Collapsing => {
                     ui.collapsing(field_name, |ui| {

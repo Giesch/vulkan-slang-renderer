@@ -7,11 +7,13 @@
 //! https://moonside.games/posts/sdl-gpu-sprite-batcher/
 
 use std::f32::consts::TAU;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use facet::Facet;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
+use vulkan_slang_renderer::editor::Label;
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
@@ -26,17 +28,24 @@ fn main() -> Result<(), anyhow::Error> {
     SpriteBatch::run()
 }
 
+#[derive(Facet)]
+pub struct EditState {
+    fps: Label,
+}
+
 pub struct SpriteBatch {
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<SpriteBatchParams>,
     sprites_buffer: StorageBufferHandle<Sprite>,
     sprites: Vec<Sprite>,
+    edit_state: EditState,
+    last_frame_time: Instant,
 }
 
 const SPRITE_COUNT: usize = 8192;
 
 impl Game for SpriteBatch {
-    type EditState = ();
+    type EditState = EditState;
 
     fn window_title() -> &'static str {
         "Sprite Batch"
@@ -81,10 +90,21 @@ impl Game for SpriteBatch {
             params_buffer,
             sprites_buffer,
             sprites,
+            edit_state: EditState {
+                fps: Label::new("FPS: --"),
+            },
+            last_frame_time: Instant::now(),
         })
     }
 
     fn update(&mut self) {
+        let now = Instant::now();
+        let delta = now.duration_since(self.last_frame_time);
+        self.last_frame_time = now;
+
+        let fps = 1.0 / delta.as_secs_f64();
+        self.edit_state.fps.set(format!("{fps:.0}"));
+
         let window_size = Self::initial_window_size();
 
         for sprite in &mut self.sprites {
@@ -105,6 +125,10 @@ impl Game for SpriteBatch {
             gpu.write_uniform(&mut self.params_buffer, params);
             gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
         })
+    }
+
+    fn editor_ui(&mut self) -> Option<(&str, &mut Self::EditState)> {
+        Some(("Sprite Batch", &mut self.edit_state))
     }
 }
 

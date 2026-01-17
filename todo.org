@@ -1,61 +1,50 @@
 #+title: Todo
 
 * Now
-- [-] add egui as an editor ui
-  at least to the CRT example, maybe generally
-  is there a nice way to expose this to a scripting language?
-  - [X] add example egui integration
-  - [-] make egui integration optional
-    - [X] allow disabling it in dev
-    - [X] disable by default in release
-    - [X] see if it's possible to refactor begin/end egui frame
-      move into egui integration?
-      what about the vk frame, is that weird
-    - [X] make keyboard editing of fields work
-    - [X] facet_egui fixes
-      - [X] in try_render_slider, type_identifier does not include the f32 generic
-      - [X] refactor the big if-else chain
-
-    - [X] what happens when returning a facet editor struct in release mode?
-      ie, run serenity_crt in release
-    - [-] what would happen when hot-reloading the debug struct?
-      do we need to use the trait object version for this?
-      - [-] does hot-reload break the associated type generic
-      - [ ] does hot-reload break egui's ui state (ie, collapsed/uncollapsed)
-    - [X] can we make the egui window renameable?
-    - [X] handle rescaling game for 4k
-    - [ ] handle rescaling egui for 4k
-
-  - [-] make egui integration configurable - use facet for editable fields
-    ie, use a single reflectable type for exposing editable properties
-    add a new trait method for exposting this reflectable type
-    - [X] make the rust version work with passing a facet type
-    - [ ] switch from facet to a trait with a blanket impl for facet
-    - [ ] come up with a plan for implementing that trait from scripting lang
-  - [X] use the same number of frames in flight?
-    does this matter? maybe could be out-of-sync?
-
-  - [ ] egui undo stack?
-  - [ ] make it possible to have a 'save' button
-    - separate trait for that? include loading api
-    - api for implementing your own event buttons?
-      what would be nicer from roc/ts? direct imgui api?
-
-  - [ ] make an sdl rust pr to add window.start/stop_text_input()
-
-- [ ] learn about quaternions, euler angle camera rotation
-  3b1b visualization - maybe recreate here?
-
 - [-] go back over claude commits
   - [X] see if there's a nicer way to do raymarch camera rotation
   - [ ] double check alignment tests
   - [ ] review egui and facet again
   - [ ] read the facet docs
 
+- [ ] get rust hot reload working
+  dx or cargo-hot? try both?
+
+- [ ] get a spinning dragon curve example
+  prepare to live code that? and/or basic raymarching
+
 * Next
-- [X] get off of rust nightly
-  - [X] find a good replacement for never type in vertex config
-  - [X] remove 'fast build' config
+- [ ] look into frame-rate counter for sprite batch example
+  - is it accurate? the framerate seems hitchy
+
+- [ ] use super-sampling for ray-marching example?
+  is there a way to share the implementation?
+  would we need lambdas for colorForPixel?
+ 
+- [ ] learn about quaternions, euler angle camera rotation
+  - [ ] watch 3b1b visualization/interactive
+  - [ ] maybe recreate it as an example?
+
+- [ ] go through vulkan 1.3 tutorial
+
+- [ ] make an sdl rust pr to add window.start/stop_text_input()
+
+- [ ] get back to using a vendored version of slang
+  - [ ] find some way to ensure not accidentally using vulkan sdk
+    try static linking again?
+- [ ] look into slang prs
+  - add rich error info? file, line number, marked up source
+  - reflection on non-entrypoint modules?
+
+- [ ] egui editor improvements
+  - [ ] switch from facet to a 'wrapper' trait with a blanket impl for facet derives
+  - [ ] come up with a plan for implementing that trait from scripting lang
+  - [ ] egui editor undo stack?
+  - [ ] make it possible to have a 'save' button in egui
+    - separate trait for that? include loading api
+    - api for implementing your own event buttons?
+      what would be nicer from roc/ts? direct imgui api?
+    - properties api? like a godot scene, but focused on settings
 
 - [ ] add a way to test for vulkan validation errors
   claude has already started tailing the logs...
@@ -128,10 +117,6 @@
     first, make a separate example with a large number of different shapes
     https://www.reddit.com/r/GraphicsProgramming/comments/xlt2dr/how_to_improve_performance_of_a_ray_marched_scene/
 
-- [ ] Phong shading example
-  - [ ] load/generate a sphere model with normals
-  - [ ] render spheres with different 70s shading methods
-
 - [ ] add shadertoy/slang-rhi ocean example
   https://github.com/shader-slang/slang-rhi/blob/main/examples/shader-toy/ocean.slang
   https://github.com/shader-slang/slang-rhi/blob/main/examples/shader-toy/shader-toy.slang
@@ -143,15 +128,6 @@
 - [ ] it looks like the slang-rhi examples use a [format(COLOR_FORMAT)] annotation
   in the blit compute shader in examples/base/utils.h
   where is that defined and how is it used?
-
-- [ ] set up dioxus' hot patching
-
-- [ ] remove per-frame duplication of non-image resources
-  https://docs.vulkan.org/guide/latest/common_pitfalls.html#_resource_duplication_per_swapchain_image
-
-- [ ] double check if the old_pipelines drop queue for hot reload is necessary
-  ie, is it actually just fine to to just drop the old version of the shader
-    and its resources immediately (since they're really just vk handles)
 
 - [ ] fix linux perf bug in sprite batch example
   sprite batch example matches the SDL_gpu framerate on windows,
@@ -445,13 +421,15 @@
 - [ ] try out the CRT-Royale shader or other blurrier ones with the Dracula image
   https://docs.libretro.com/shader/crt/
 
+- [ ] figure out the right way to scale/upscale egui for a 4k monitor
+  setting pixels_per point to 2, ignoring upscaling, breaks click event position
+
 
 * Roc Questions
 - [ ] are ref-counted platform resource heaps still going to be a thing?
-- [ ] will compiler apis be available for compile-time reflection by platforms?
 - [ ] will there be some way to say "I'm trying to implement this interface"
   like to get nicer error messages
-- [ ] I think we can hack some reflection in via Encode/Decode
+- [X] I think we can hack some reflection in via Encode/Decode
   is that considered friendly/supported?
 
 

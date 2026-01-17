@@ -25,3 +25,24 @@ impl Slider {
         response.changed()
     }
 }
+
+/// A read-only text label for displaying values in the editor UI.
+#[derive(Clone, Debug, Facet)]
+pub struct Label {
+    pub text: String,
+}
+
+impl Label {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self { text: text.into() }
+    }
+
+    pub fn set(&mut self, text: impl Into<String>) {
+        self.text = text.into();
+    }
+
+    /// Render this label in egui. Always returns false (labels are read-only).
+    pub fn render_ui(&self, ui: &mut Ui) {
+        ui.label(&self.text);
+    }
+}

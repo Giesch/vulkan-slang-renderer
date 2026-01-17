@@ -29,6 +29,8 @@ FragInput vertMain(uint id : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
+    // based on the super-sampling at the end of this post
+    // https://danielchasehooper.com/posts/code-animated-rick
     let res = params.resolution;
 
     let rootSamples = 3; // 9 samples per pixel
