@@ -12,8 +12,6 @@ import projection;
 // which uses the method described in this blog post:
 // https://moonside.games/posts/sdl-gpu-sprite-batcher/
 
-extern static const bool columnMajor;
-
 ParameterBlock<SpriteBatchParams> params;
 
 struct SpriteBatchParams {

@@ -1,0 +1,151 @@
+{
+  "sourceFileName": "dragon.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "DragonParams",
+        "fields": [
+          {
+            "kind": "struct",
+            "fieldName": "camera",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 80
+            },
+            "structType": {
+              "typeName": "RayMarchCamera",
+              "fields": [
+                {
+                  "kind": "struct",
+                  "fieldName": "inverseViewProj",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 64
+                  },
+                  "structType": {
+                    "typeName": "Projection",
+                    "fields": [
+                      {
+                        "kind": "matrix",
+                        "fieldName": "matrix",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 64
+                        },
+                        "rowCount": 4,
+                        "columnCount": 4,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 64,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "time",
+            "binding": {
+              "kind": "uniform",
+              "offset": 80,
+              "size": 4
+            },
+            "scalarType": "float32"
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "input",
+        "binding": {
+          "kind": "varyingInput",
+          "index": 0,
+          "count": 1
+        },
+        "typeName": "FragInput",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "semanticName": "SV_POSITION",
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "centeredCoords",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 0,
+              "count": 1
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 96
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

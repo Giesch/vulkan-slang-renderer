@@ -1,21 +1,42 @@
 #+title: Todo
 
 * Now
+- [-] get a spinning dragon curve example
+  prepare to live code that? and/or basic raymarching
+  - [-] animate a dragon curve growing from a square/line
+    - [X] 2D dragon curve
+    - [ ] draw a slice of a 3D dragon curve
+    - [ ] try unioning it with rotations
+    - [ ] try spinning it
+
+  - [ ] make slides
+    - the time should be mostly demo
+    - include explanation of rays marching
+      use screenshots
+    - include screenshots of games using SDFs
+    - include a credits slide
+      - sebastian lague
+      - inigo quilez
+      - sdf engine guy
+
+  - rotate the full curve
+  - gradually increase the parameter to grow from a sphere?
+
 - [-] go back over claude commits
   - [X] see if there's a nicer way to do raymarch camera rotation
+  - [X] review egui and facet again
   - [ ] double check alignment tests
-  - [ ] review egui and facet again
   - [ ] read the facet docs
 
 - [ ] get rust hot reload working
   dx or cargo-hot? try both?
 
-- [ ] get a spinning dragon curve example
-  prepare to live code that? and/or basic raymarching
-
 * Next
 - [ ] look into frame-rate counter for sprite batch example
   - is it accurate? the framerate seems hitchy
+
+- [ ] slang has experimental rich diagnostics for the compiler api
+  with line numbers!
 
 - [ ] use super-sampling for ray-marching example?
   is there a way to share the implementation?
@@ -23,6 +44,7 @@
  
 - [ ] learn about quaternions, euler angle camera rotation
   - [ ] watch 3b1b visualization/interactive
+    https://eater.net/quaternions
   - [ ] maybe recreate it as an example?
 
 - [ ] go through vulkan 1.3 tutorial
