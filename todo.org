@@ -5,6 +5,8 @@
   prepare to live code that? and/or basic raymarching
   - [-] animate a dragon curve growing from a square/line
     - [X] 2D dragon curve
+    - [X] factor out a module for the 2D dragon curve
+    - [ ] factor out a module for ray marching
     - [ ] draw a slice of a 3D dragon curve
     - [ ] try unioning it with rotations
     - [ ] try spinning it
