@@ -6,6 +6,7 @@
 //! which uses the method described in this blog post:
 //! https://moonside.games/posts/sdl-gpu-sprite-batcher/
 
+use std::collections::VecDeque;
 use std::f32::consts::TAU;
 use std::time::{Duration, Instant};
 
@@ -40,9 +41,11 @@ pub struct SpriteBatch {
     sprites: Vec<Sprite>,
     edit_state: EditState,
     last_frame_time: Instant,
+    frame_times: VecDeque<Duration>,
 }
 
 const SPRITE_COUNT: usize = 8192;
+const FRAME_HISTORY_SIZE: usize = 60;
 
 impl Game for SpriteBatch {
     type EditState = EditState;
@@ -94,6 +97,7 @@ impl Game for SpriteBatch {
                 fps: Label::new("FPS: --"),
             },
             last_frame_time: Instant::now(),
+            frame_times: VecDeque::with_capacity(FRAME_HISTORY_SIZE),
         })
     }
 
@@ -102,7 +106,14 @@ impl Game for SpriteBatch {
         let delta = now.duration_since(self.last_frame_time);
         self.last_frame_time = now;
 
-        let fps = 1.0 / delta.as_secs_f64();
+        self.frame_times.push_back(delta);
+        if self.frame_times.len() > FRAME_HISTORY_SIZE {
+            self.frame_times.pop_front();
+        }
+
+        let total: Duration = self.frame_times.iter().sum();
+        let avg_frame_time = total.as_secs_f64() / self.frame_times.len() as f64;
+        let fps = 1.0 / avg_frame_time;
         self.edit_state.fps.set(format!("{fps:.0}"));
 
         let window_size = Self::initial_window_size();
