@@ -5,14 +5,7 @@ module dragon_curve;
 // dragon curve by Blake447 on shadertoy:
 // https://www.shadertoy.com/view/WdGcW3
 
-public struct DragonResult {
-    // distance to the curve
-    public float dist;
-    // the rotated and scaled uv used to build the curve
-    public float2 uv;
-}
-
-public DragonResult dragonCurveSDF(float2 uv) {
+public float dragonCurveSDF(float2 uv) {
     int ITERATIONS = 12;
 
     const float size = 5.0;
@@ -69,9 +62,7 @@ public DragonResult dragonCurveSDF(float2 uv) {
     float d2_sdf = sdf0(uv_scaled, p2, uv_midpoint, size, invalidate0.z);
     float d3_sdf = sdf0(uv_scaled, p3, uv_midpoint, size, invalidate0.w);
 
-    let dist = min(min(d0_sdf, d1_sdf), min(d2_sdf, d3_sdf));
-
-    return DragonResult(dist, uv);
+    return min(min(d0_sdf, d1_sdf), min(d2_sdf, d3_sdf));
 }
 
 float2 T(float2 v, int i) {
