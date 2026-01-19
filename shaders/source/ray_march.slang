@@ -82,9 +82,7 @@ func calculateNormal<W>(world: W, p: float3) -> float3 where W : IRayMarchWorld 
     );
 }
 
-// TODO initializer with required parameters?
-// or get rid of the struct
-// could we use a builder pattern?
+// TODO just pass the arguments
 struct BasicLightingParams<W> where W : IRayMarchWorld {
     W world;
     float3 currentPosition;
@@ -126,10 +124,8 @@ public interface IShape {
             let shape = buffer[i];
             let shapeDistance = shape.distance(position);
 
-            if (let existingHit = rayHit) {
-                if (shapeDistance < existingHit.distance) {
-                    rayHit = RayHit(shapeDistance, shape.color);
-                }
+            if (rayHit.hasValue && shapeDistance < rayHit.value.distance) {
+                rayHit = RayHit(shapeDistance, shape.color);
             } else {
                 rayHit = RayHit(shapeDistance, shape.color);
             }
