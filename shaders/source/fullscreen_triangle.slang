@@ -27,7 +27,7 @@ static const float2x2 reflectY = float2x2(
 );
 
 // for use with exactly 3 vertices
-public func fullscreenPosition(svVertexId: uint) -> FullscreenPosition {
+public FullscreenPosition fullscreenPosition(uint svVertexId) {
     let texCoord = fullScreenTriangleVerts[svVertexId];
     let svPosition = float4(2 * texCoord - 1.0, 0.0, 1.0);
 

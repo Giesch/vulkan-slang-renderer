@@ -1,11 +1,8 @@
 #language slang 2026
 
-// Raymarching is a 3D rendering technique suited to working with SDFs instead of triangle meshes.
-// https://michaelwalczyk.com/blog-ray-marching.html
-// https://youtu.be/mL8U8tIiRRg?list=PLImQaTpSAdsCnJon-Eir92SZMl7tPBS4Z&t=7288
-
 module ray_marching;
 
+import ray_march;
 import fullscreen_triangle;
 import ray_march_camera;
 import projection;
@@ -39,158 +36,48 @@ FragInput vertMain(uint id : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
+    let world = RayMarchWorld(
+        params.spheres,
+        params.sphereCount,
+        params.boxes,
+        params.boxCount
+    );
+
     let rayDirection = params.camera.rayDirection(input.centeredCoords);
-    let color = rayMarch(params.camera.position, rayDirection);
+    let color = rayMarch(
+        world,
+        params.camera.position,
+        rayDirection,
+        params.lightPosition,
+        lightColor
+    );
 
     return float4(color, 1.0);
 }
 
-func rayMarch(rayOrigin: float3, rayDirection: float3) -> float3 {
-    const int MAX_STEPS = 32;
-    const float MAX_TRACE_DISTANCE = 1000.0;
-    const float MIN_HIT_DISTANCE = 0.001;
+struct RayMarchWorld : IRayMarchWorld {
+    StructuredBuffer<Sphere> spheres;
+    uint sphereCount;
 
-    var distanceTraveled: float = 0.0;
+    StructuredBuffer<BoxRect> boxes;
+    uint boxCount;
 
-    for (int i = 0; i < MAX_STEPS; i++) {
-        let currentPosition: float3 = rayOrigin + distanceTraveled * rayDirection;
-        var closestDistance = float.maxValue;
+    Optional<RayHit> closestShape(float3 pos) {
+        let sphereRes = Sphere.closest(spheres, sphereCount, pos);
+        let boxRes = BoxRect.closest(boxes, boxCount, pos);
 
-        if (let hit = closestShape(currentPosition)) {
-            closestDistance = hit.distance;
-
-            if (closestDistance < MIN_HIT_DISTANCE) { // hit
-                let blp = BasicLightingParams(
-                    currentPosition,
-                    rayDirection,
-                    hit.objectColor,
-                    lightColor,
-                    params.lightPosition
-                );
-
-                return basicLighting(blp);
-            }
+        if (sphereRes.distance <= boxRes.distance) {
+            return sphereRes.rayHit;
         }
 
-        if (distanceTraveled >= MAX_TRACE_DISTANCE) { // miss
-            break;
-        }
-
-        distanceTraveled += closestDistance;
+        return boxRes.rayHit;
     }
-
-    // miss
-    return float3(0.0);
-}
-
-// TODO require passing
-struct BasicLightingParams {
-    float3 currentPosition;
-    float3 rayDirection;
-    float3 objectColor;
-    float3 lightColor;
-    float3 lightPosition;
-}
-
-// https://learnopengl.com/Lighting/Basic-Lighting
-func basicLighting(blp: BasicLightingParams) -> float3 {
-    let normal = calculateNormal(blp.currentPosition);
-    let lightDirection = normalize(blp.lightPosition - blp.currentPosition);
-
-    // naive ambient light
-    let ambientStrength = 0.005;
-    let ambient = ambientStrength * blp.lightColor;
-
-    // lambertian diffuse
-    let diffuse = blp.lightColor * max(0.0, dot(normal, lightDirection));
-
-    // blinn-phong specular reflection
-    let specularStrength = 0.25;
-    let shininess = 16.0;
-    float3 halfwayDirection = normalize(lightDirection + blp.rayDirection);
-    let specularIntensity = pow(max(dot(normal, halfwayDirection), 0.0), shininess);
-    let specular = specularStrength * blp.lightColor * specularIntensity;
-
-    return (ambient + diffuse + specular) * blp.objectColor;
-}
-
-func closestShape(pos: float3) -> Optional<RayHit> {
-    let sphereRes = Sphere.closest(params.spheres, params.sphereCount, pos);
-    let boxRes = BoxRect.closest(params.boxes, params.boxCount, pos);
-
-    if (sphereRes.distance <= boxRes.distance) {
-        return sphereRes.rayHit;
-    }
-
-    return boxRes.rayHit;
-}
-
-func closestShapeDist(pos: float3) -> float {
-    if (let hit = closestShape(pos)) {
-        return hit.distance;
-    }
-
-    return float.maxValue;
-}
-
-// https://iquilezles.org/articles/normalsSDF/
-func calculateNormal(p: float3) -> float3 {
-    const float h = 0.001;
-    const float2 k = float2(1.0, -1.0);
-
-    return normalize(
-        k.xyy * closestShapeDist(p + k.xyy * h) +
-        k.yyx * closestShapeDist(p + k.yyx * h) +
-        k.yxy * closestShapeDist(p + k.yxy * h) +
-        k.xxx * closestShapeDist(p + k.xxx * h)
-    );
-}
-
-struct RayHit {
-    float distance;
-    float3 objectColor;
-}
-
-struct RayHitDistance {
-    Optional<RayHit> rayHit;
-    float distance;
-}
-
-// a generic 3D SDF
-interface IShape {
-    static RayHitDistance closest(StructuredBuffer<This> buffer, int count, float3 position) {
-        var rayHit: Optional<RayHit> = none;
-
-        for (int i = 0; i < count; i++) {
-            let shape = buffer[i];
-            let shapeDistance = shape.distance(position);
-
-            if (let existingHit = rayHit) {
-                if (shapeDistance < existingHit.distance) {
-                    rayHit = RayHit(shapeDistance, shape.color);
-                }
-            } else {
-                rayHit = RayHit(shapeDistance, shape.color);
-            }
-        }
-
-        var dist = float.maxValue;
-        if (let hit = rayHit) {
-            dist = hit.distance;
-        }
-
-        return RayHitDistance(rayHit, dist);
-    }
-
-    property float3 color { get; }
-
-    float distance(float3 position);
 }
 
 
 // https://iquilezles.org/articles/distfunctions/
 
-struct Sphere : IShape {
+public struct Sphere : IShape {
     float3 center;
     float radius;
 
@@ -202,7 +89,7 @@ struct Sphere : IShape {
 }
 
 // https://www.youtube.com/watch?v=62-pRVZuS5c
-struct BoxRect : IShape {
+public struct BoxRect : IShape {
     Projection transform;
     float3 radii;
 

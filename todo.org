@@ -34,6 +34,7 @@
   dx or cargo-hot? try both?
 
 * Next
+- [ ] try using encase for
 - [ ] look into frame-rate counter for sprite batch example
   - is it accurate? the framerate seems hitchy
 
