@@ -30,3 +30,14 @@ float4 fragMain(FragInput input) : SV_Target {
     return dragonCurve(input.centeredCoords + arbitraryOffset, params.time);
 }
 
+float4 dragonCurve(float2 uv, float time) {
+    let res = dragonCurveSDF(uv);
+
+    float dist_scale = 0.25;
+    float dragon_edge = 1.0 - step(dist_scale, res.dist);
+
+    // kind of arbitrary color animation
+    float3 col = 0.5 + 0.5 * cos(time + res.uv.xyx / -8.0 + float3(0, 2, 4));
+
+    return float4(col * dragon_edge, 1);
+}
