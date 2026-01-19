@@ -5,7 +5,6 @@ module dragon;
 import dragon_curve;
 import fullscreen_triangle;
 import ray_march_camera;
-import projection;
 
 ParameterBlock<DragonParams> params;
 
