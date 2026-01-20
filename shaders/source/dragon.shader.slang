@@ -26,18 +26,16 @@ FragInput vertMain(uint id : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
-    let arbitraryOffset = float2(0.15, 0.075);
-    return dragonCurve(input.centeredCoords + arbitraryOffset, params.time);
+    return dragonCurve2D(input.centeredCoords, params.time);
 }
 
-float4 dragonCurve(float2 uv, float time) {
-    let dist = dragonCurveSDF(uv);
+float4 dragonCurve2D(float2 uv, float time) {
+    let recenterTweak = float2(0.15, 0.0);
+    let dist = dragonCurveSDF(uv + recenterTweak);
 
-    float dist_scale = 0.25;
-    float dragon_edge = 1.0 - step(dist_scale, dist);
+    float distScale = 0.25;
+    float dragonEdge = 1.0 - step(distScale, dist);
+    float3 rainbowAnimation = 0.5 + 0.5 * cos(time + 8 * uv.xyx + float3(0, 2, 4));
 
-    // kind of arbitrary color animation
-    float3 col = 0.5 + 0.5 * cos(time + 8 * uv.xyx + float3(0, 2, 4));
-
-    return float4(col * dragon_edge, 1);
+    return float4(rainbowAnimation * dragonEdge, 1);
 }
