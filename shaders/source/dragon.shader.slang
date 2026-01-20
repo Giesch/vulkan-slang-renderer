@@ -62,19 +62,36 @@ struct RayMarchWorld : IRayMarchWorld {
     float minHitDistance = 0.25;
 
     Optional<RayHit> closestShape(float3 pos) {
-        let dist2d = dragonCurveSDF(pos.xy);
+        // box sdf
+        let radii = float3(5.0);
+        let q = abs(pos) - radii;
+        let boxDist = length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
 
-        // Tube SDF: Z contributes to distance for proper tube normals
-        // zScale = 0.5 makes tube extend to z = ±0.5 (matching slab bounds)
-        let zScale = 0.5;
-        let tubeDist = sqrt(dist2d * dist2d + (pos.z * zScale) * (pos.z * zScale));
 
-        // Bound by Z planes (adds smooth falloff outside slab)
-        let halfDepth = 0.5;
-        let planeDist = max(0.0, abs(pos.z) - halfDepth);
-        let dist = length(float2(tubeDist, planeDist));
+        let xy = dragonCurveSDF(pos.xy);
+        // let yz = dragonCurveSDF(pos.yz);
+        // let zx = dragonCurveSDF(pos.zx);
+        // let dist = max(xy, max(yz, zx));
+        // let dist = xy;
 
-        float3 color = rainbowAnimation(pos.xy);
+        // let planeDist = max(0.0, abs(pos.z) - 0.5);
+        // let dist = length(float2(xy, planeDist));
+
+        let dist = max(boxDist, xy);
+
+        // claude tubes
+        // let dist2d = dragonCurveSDF(pos.xy);
+        // // Tube SDF: Z contributes to distance for proper tube normals
+        // // zScale = 0.5 makes tube extend to z = ±0.5 (matching slab bounds)
+        // let zScale = 0.5;
+        // let tubeDist = sqrt(dist2d * dist2d + (pos.z * zScale) * (pos.z * zScale));
+        // // Bound by Z planes (adds smooth falloff outside slab)
+        // let halfDepth = 0.5;
+        // let planeDist = max(0.0, abs(pos.z) - halfDepth);
+        // let dist = length(float2(tubeDist, planeDist));
+
+        float3 color = 0.25 + rainbowAnimation(pos.xy);
+        // float3 color = float3(0.5);
         return RayHit(dist, color);
     }
 }

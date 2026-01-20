@@ -6,7 +6,7 @@ module dragon_curve;
 // https://www.shadertoy.com/view/WdGcW3
 
 public float dragonCurveSDF(float2 uv) {
-    int ITERATIONS = 12;
+    int ITERATIONS = 8;
 
     const float size = 5.0;
 
