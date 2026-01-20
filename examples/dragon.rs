@@ -59,6 +59,30 @@ impl Game for Dragon {
         })
     }
 
+    fn input(&mut self, input: Input) {
+        match input {
+            Input::KeyDown(key) => match key {
+                Key::W => self.intent.forward = true,
+                Key::S => self.intent.backward = true,
+                Key::A => self.intent.left = true,
+                Key::D => self.intent.right = true,
+                Key::Q => self.intent.roll_left = true,
+                Key::E => self.intent.roll_right = true,
+                Key::Space => {}
+            },
+
+            Input::KeyUp(key) => match key {
+                Key::W => self.intent.forward = false,
+                Key::S => self.intent.backward = false,
+                Key::A => self.intent.left = false,
+                Key::D => self.intent.right = false,
+                Key::Q => self.intent.roll_left = false,
+                Key::E => self.intent.roll_right = false,
+                Key::Space => {}
+            },
+        }
+    }
+
     fn update(&mut self) {
         self.camera_controller.update(&self.intent);
     }

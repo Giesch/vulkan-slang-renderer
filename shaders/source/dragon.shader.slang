@@ -5,8 +5,12 @@ module dragon;
 import dragon_curve;
 import fullscreen_triangle;
 import ray_march_camera;
+import ray_march;
 
 ParameterBlock<DragonParams> params;
+
+static const float3 lightColor = float3(1.0);
+static const float3 lightPosition = float3(5.0);
 
 struct DragonParams {
     RayMarchCamera camera;
@@ -26,16 +30,53 @@ FragInput vertMain(uint id : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
-    return dragonCurve2D(input.centeredCoords, params.time);
+    // return dragonCurve2D(
+    //     input.centeredCoords + float2(0.15, 0.0),
+    //     params.time
+    // );
+
+    let uv = input.centeredCoords;
+
+    let rayDirection = params.camera.rayDirection(uv);
+    let color = rayMarch(
+        RayMarchWorld(),
+        params.camera.position,
+        rayDirection,
+        lightPosition,
+        lightColor
+   );
+
+    return float4(color, 1.0);
 }
 
 float4 dragonCurve2D(float2 uv, float time) {
-    let recenterTweak = float2(0.15, 0.0);
-    let dist = dragonCurveSDF(uv + recenterTweak);
+    let dist = dragonCurveSDF(uv);
 
-    float distScale = 0.25;
-    float dragonEdge = 1.0 - step(distScale, dist);
-    float3 rainbowAnimation = 0.5 + 0.5 * cos(time + 8 * uv.xyx + float3(0, 2, 4));
+    float dragonEdge = dist < 0.25 ? 1.0 : 0.0;
+    let color = rainbowAnimation(uv);
 
-    return float4(rainbowAnimation * dragonEdge, 1);
+    return float4(color * dragonEdge, 1.0);
+}
+
+struct RayMarchWorld : IRayMarchWorld {
+    float minHitDistance = 0.25;
+
+    Optional<RayHit> closestShape(float3 pos) {
+        let dist2d = dragonCurveSDF(pos.xy);
+
+
+        // single 2d slice
+        let sliceDepth = 0.5;
+        let distZ = abs(pos.z) - sliceDepth;
+        let dist = length(float2(dist2d, max(0.0, distZ)));
+
+
+        float3 color = rainbowAnimation(pos.xy);
+
+        return RayHit(dist, color);
+    }
+}
+
+float3 rainbowAnimation(float2 pos) {
+    return 0.5 + 0.5 * cos(params.time + 8 * pos.xyx + float3(0, 2, 4));
 }

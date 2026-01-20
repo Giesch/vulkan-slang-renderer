@@ -3,7 +3,12 @@
 module ray_march;
 
 public interface IRayMarchWorld {
+    // NOTE: returning 'none' here would mean no shapes in the scene,
+    // not no shape hit in the current step
+    // TODO: consider renaming 'RayHit' here? 'ClosestShape'?
     Optional<RayHit> closestShape(float3 pos);
+
+    property float minHitDistance { get; }
 
     float closestShapeDist(float3 pos) {
         if (let hit = closestShape(pos)) {
@@ -33,7 +38,6 @@ public float3 rayMarch<W>(
 ) where W : IRayMarchWorld {
     const int MAX_STEPS = 32;
     const float MAX_TRACE_DISTANCE = 1000.0;
-    const float MIN_HIT_DISTANCE = 0.001;
 
     var distanceTraveled: float = 0.0;
 
@@ -44,7 +48,7 @@ public float3 rayMarch<W>(
         if (let hit = world.closestShape(currentPosition)) {
             closestDistance = hit.distance;
 
-            if (closestDistance < MIN_HIT_DISTANCE) { // hit
+            if (closestDistance < world.minHitDistance) { // hit
                 let blp = BasicLightingParams<W>(
                     world,
                     currentPosition,

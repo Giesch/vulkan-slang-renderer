@@ -9,7 +9,7 @@ import projection;
 
 ParameterBlock<RayMarchingParams> params;
 
-static const float3 lightColor = float3(1);
+static const float3 lightColor = float3(1.0);
 
 struct RayMarchingParams {
     RayMarchCamera camera;
@@ -61,6 +61,8 @@ struct RayMarchWorld : IRayMarchWorld {
 
     StructuredBuffer<BoxRect> boxes;
     uint boxCount;
+
+    float minHitDistance = 0.001;
 
     Optional<RayHit> closestShape(float3 pos) {
         let sphereRes = Sphere.closest(spheres, sphereCount, pos);

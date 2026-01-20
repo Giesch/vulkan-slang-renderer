@@ -2,7 +2,7 @@
 
 module dragon_curve;
 
-// dragon curve by Blake447 on shadertoy:
+// original dragon curve by Blake447 on shadertoy:
 // https://www.shadertoy.com/view/WdGcW3
 
 public float dragonCurveSDF(float2 uv) {
@@ -93,6 +93,8 @@ float sdf0(float2 uv, float2 p, float2 middle_point, float size, float invalidat
 }
 
 float sdfLineSegment(float2 p, float2 a, float2 b) {
-    float h = clamp(dot(p - a, normalize(b - a)), 0.0, 1.0);
-    return length(p - (a + (b - a) * h) );
+    float2 pa = p - a;
+    float2 ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
 }
