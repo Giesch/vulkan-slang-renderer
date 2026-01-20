@@ -64,15 +64,17 @@ struct RayMarchWorld : IRayMarchWorld {
     Optional<RayHit> closestShape(float3 pos) {
         let dist2d = dragonCurveSDF(pos.xy);
 
+        // Tube SDF: Z contributes to distance for proper tube normals
+        // zScale = 0.5 makes tube extend to z = ±0.5 (matching slab bounds)
+        let zScale = 0.5;
+        let tubeDist = sqrt(dist2d * dist2d + (pos.z * zScale) * (pos.z * zScale));
 
-        // single 2d slice
-        let sliceDepth = 0.5;
-        let distZ = abs(pos.z) - sliceDepth;
-        let dist = length(float2(dist2d, max(0.0, distZ)));
-
+        // Bound by Z planes (adds smooth falloff outside slab)
+        let halfDepth = 0.5;
+        let planeDist = max(0.0, abs(pos.z) - halfDepth);
+        let dist = length(float2(tubeDist, planeDist));
 
         float3 color = rainbowAnimation(pos.xy);
-
         return RayHit(dist, color);
     }
 }
