@@ -13,68 +13,11 @@ info:
         "typeName": "DragonParams",
         "fields": [
           {
-            "kind": "struct",
-            "fieldName": "camera",
-            "binding": {
-              "kind": "uniform",
-              "offset": 0,
-              "size": 80
-            },
-            "structType": {
-              "typeName": "RayMarchCamera",
-              "fields": [
-                {
-                  "kind": "struct",
-                  "fieldName": "inverseViewProj",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 0,
-                    "size": 64
-                  },
-                  "structType": {
-                    "typeName": "Projection",
-                    "fields": [
-                      {
-                        "kind": "matrix",
-                        "fieldName": "matrix",
-                        "binding": {
-                          "kind": "uniform",
-                          "offset": 0,
-                          "size": 64
-                        },
-                        "rowCount": 4,
-                        "columnCount": 4,
-                        "elementType": {
-                          "kind": "scalar",
-                          "scalarType": "float32"
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "kind": "vector",
-                  "fieldName": "position",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 64,
-                    "size": 12
-                  },
-                  "elementCount": 3,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                }
-              ]
-            }
-          },
-          {
             "kind": "scalar",
             "fieldName": "time",
             "binding": {
               "kind": "uniform",
-              "offset": 80,
+              "offset": 0,
               "size": 4
             },
             "scalarType": "float32"
@@ -146,7 +89,7 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 96
+            "size": 16
           }
         ]
       }
