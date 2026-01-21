@@ -28,6 +28,7 @@ shader-debug example="viking_room":
 [windows]
 shader-debug example="viking_room":
     pwsh -Command { \
+      . ./scripts/load-env.ps1; \
       $env:RUST_LOG='info'; \
       $env:VK_LAYER_PRINTF_ONLY_PRESET='1'; \
       cargo run --example {{example}}; \
@@ -48,6 +49,7 @@ shaders:
 [windows]
 shaders:
     pwsh -Command { \
+      . ./scripts/load-env.ps1; \
       $env:GENERATE_RUST_SOURCE='true'; \
       cargo run --bin prepare_shaders; \
       cargo fmt; \
@@ -103,10 +105,19 @@ build-slang:
 [windows]
 build-slang:
     pwsh -Command { \
-      $env:SLANG_LIB_DIR="$PWD/vendor/slang/build/Release/lib"; \
-      $env:SLANG_INCLUDE_DIR="$PWD/vendor/slang/build/Release/include"; \
-      $env:SLANG_EXTERNAL_DIR="$PWD/vendor/slang/build/external"; \
+      . ./scripts/load-env.ps1; \
       cd vendor/slang; \
-      cmake --preset vs2022 -DSLANG_LIB_TYPE=STATIC; \
-      cmake --build --preset release; \
+      cmake --preset vs2022 '-DSLANG_LIB_TYPE=STATIC' '-DSLANG_ENABLE_SLANG_RHI=OFF' '-DSLANG_ENABLE_TESTS=OFF'; \
+      cmake --build --preset vs2022-release; \
+    }
+
+[unix]
+clean-slang:
+    rm -rf vendor/slang/build
+
+[windows]
+clean-slang:
+    pwsh -Command { \
+      . ./scripts/load-env.ps1; \
+      Remove-Item -Recurse -Force vendor/slang/build; \
     }
