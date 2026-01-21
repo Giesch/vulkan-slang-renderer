@@ -10,6 +10,7 @@ import ray_march;
 ParameterBlock<DragonParams> params;
 
 struct DragonParams {
+    float2 resolution;
     float time;
 }
 
@@ -26,8 +27,10 @@ FragInput vertMain(uint id : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
+    let aspectRatio = params.resolution.x / params.resolution.y;
     let recenterOffset = float2(0.15, 0.0);
-    let uv = input.centeredCoords + recenterOffset;
+    var uv = input.centeredCoords + recenterOffset;
+    uv.x *= aspectRatio;
     return dragonCurve2D(uv, params.time);
 }
 

@@ -22,7 +22,8 @@
       "WebFetch(domain:crates.io)",
       "WebSearch",
       "WebFetch(domain:fasterthanli.me)",
-      "WebFetch(domain:facet.rs)"
+      "WebFetch(domain:facet.rs)",
+      "WebFetch(domain:iquilezles.org)"
     ]
   },
   "statusLine": {

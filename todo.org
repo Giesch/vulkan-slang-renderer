@@ -7,6 +7,9 @@
   - [ ] test all examples with new slang version
   - [ ] test static slang build on windows
 
+- [ ] consider adding direnv for the .env
+  - would this replace the need for dir-locals.el as well?
+
 - [-] get a spinning dragon curve example
   prepare to live code that? and/or basic raymarching
   - [-] animate a dragon curve growing from a square/line

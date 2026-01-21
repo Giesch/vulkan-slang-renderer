@@ -8,11 +8,25 @@
         "typeName": "DragonParams",
         "fields": [
           {
+            "kind": "vector",
+            "fieldName": "resolution",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
             "kind": "scalar",
             "fieldName": "time",
             "binding": {
               "kind": "uniform",
-              "offset": 0,
+              "offset": 8,
               "size": 4
             },
             "scalarType": "float32"

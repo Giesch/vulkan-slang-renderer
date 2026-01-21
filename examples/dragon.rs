@@ -49,8 +49,10 @@ impl Game for Dragon {
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let time = (Instant::now() - self.start_time).as_secs_f32();
+        let resolution = renderer.window_resolution();
 
         let params = DragonParams {
+            resolution,
             time,
             _padding_0: Default::default(),
         };

@@ -24,8 +24,9 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct DragonParams {
+    pub resolution: glam::Vec2,
     pub time: f32,
-    pub _padding_0: [u8; 12],
+    pub _padding_0: [u8; 4],
 }
 
 impl GPUWrite for DragonParams {}
