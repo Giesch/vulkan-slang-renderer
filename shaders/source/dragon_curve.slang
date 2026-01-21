@@ -5,18 +5,43 @@ module dragon_curve;
 // original dragon curve by Blake447 on shadertoy:
 // https://www.shadertoy.com/view/WdGcW3
 
+static const int ITERATIONS = 12;
+static const float SIZE = 5.0;
+
+// Smooth minimum (Inigo Quilez technique)
+float smin(float a, float b, float k) {
+    k *= 4.0;
+    float h = max(k - abs(a - b), 0.0) / k;
+    return min(a, b) - h * h * k * 0.25;
+}
+
 public float dragonCurveSDF(float2 uv) {
-    int ITERATIONS = 12;
-
-    const float size = 5.0;
-
     for (int k = 0; k < ITERATIONS; k++) {
         uv = float2(uv.x + uv.y, uv.y - uv.x);
     }
 
-    float2 uv_scaled = uv * size * 0.5;
-    float2 uv_midpoint = floor(uv * size*0.5 + float2(0.5, 0.5));
+    float2 uv_scaled = uv * SIZE * 0.5;
 
+    // Continuous position for cell blending
+    float2 cell_pos = uv_scaled + float2(0.5, 0.5);
+    float2 cell_floor = floor(cell_pos);
+    float2 frac = cell_pos - cell_floor;
+
+    // Sample 4 neighboring cells and blend with smin
+    float d00 = dragonCurveSDF_cell(uv_scaled, cell_floor + float2(0.0, 0.0));
+    float d10 = dragonCurveSDF_cell(uv_scaled, cell_floor + float2(1.0, 0.0));
+    float d01 = dragonCurveSDF_cell(uv_scaled, cell_floor + float2(0.0, 1.0));
+    float d11 = dragonCurveSDF_cell(uv_scaled, cell_floor + float2(1.0, 1.0));
+
+    // Blend using smooth minimum for continuous distance field
+    const float blend_k = 0.1;
+    float d = smin(smin(d00, d10, blend_k), smin(d01, d11, blend_k), blend_k);
+
+    return d;
+}
+
+// Compute SDF for a single cell
+float dragonCurveSDF_cell(float2 uv_scaled, float2 uv_midpoint) {
     float2 p_cont = uv_scaled;
 
     float2 p0 = uv_midpoint + float2(0.5, 0);
@@ -50,17 +75,16 @@ public float dragonCurveSDF(float2 uv) {
         p_cont = T(p_cont, j);
     }
 
-    float4 invalidate0 = float4(
-        step(0.05, length(v0 - c0)),
-        step(0.05, length(v1 - c0)),
-        step(0.05, length(v2 - c0)),
-        step(0.05, length(v3 - c0))
-    );
+    // Raw divergence values for soft invalidation
+    float div0 = length(v0 - c0);
+    float div1 = length(v1 - c0);
+    float div2 = length(v2 - c0);
+    float div3 = length(v3 - c0);
 
-    float d0_sdf = sdf0(uv_scaled, p0, uv_midpoint, size, invalidate0.x);
-    float d1_sdf = sdf0(uv_scaled, p1, uv_midpoint, size, invalidate0.y);
-    float d2_sdf = sdf0(uv_scaled, p2, uv_midpoint, size, invalidate0.z);
-    float d3_sdf = sdf0(uv_scaled, p3, uv_midpoint, size, invalidate0.w);
+    float d0_sdf = sdf0(uv_scaled, p0, uv_midpoint, div0);
+    float d1_sdf = sdf0(uv_scaled, p1, uv_midpoint, div1);
+    float d2_sdf = sdf0(uv_scaled, p2, uv_midpoint, div2);
+    float d3_sdf = sdf0(uv_scaled, p3, uv_midpoint, div3);
 
     return min(min(d0_sdf, d1_sdf), min(d2_sdf, d3_sdf));
 }
@@ -83,13 +107,16 @@ float2 T(float2 v, int i) {
     return v_prime;
 }
 
-float sdf0(float2 uv, float2 p, float2 middle_point, float size, float invalidation) {
+// Soft invalidation: blend based on divergence instead of hard cutoff
+float sdf0(float2 uv, float2 p, float2 middle_point, float divergence) {
     float d = sdfLineSegment(uv, p, middle_point);
-    if (invalidation > 0.5) {
-        d = 0.5;
-    }
 
-    return d;
+    const float threshold = 0.05;
+    const float transitionWidth = 0.1;
+    float blend = smoothstep(threshold - transitionWidth * 0.5,
+                             threshold + transitionWidth * 0.5,
+                             divergence);
+    return lerp(d, max(d, 0.5), blend);
 }
 
 float sdfLineSegment(float2 p, float2 a, float2 b) {
