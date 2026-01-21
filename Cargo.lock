@@ -939,6 +939,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "link-cplusplus"
+version = "1.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f78c730aaa7d0b9336a299029ea49f9ee53b0ed06e9202e8cb7db9bae7b8c82"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1595,7 +1604,7 @@ dependencies = [
 [[package]]
 name = "shader-slang"
 version = "0.1.0"
-source = "git+https://github.com/FloatyMonkey/slang-rs.git#60767e4d5965cc8147623ff47d02af651f7ab761"
+source = "git+https://github.com/Giesch/slang-rs.git?branch=main#fad6e1450990645c0c0bb660ac86e56495c72b4f"
 dependencies = [
  "shader-slang-sys",
 ]
@@ -1603,9 +1612,10 @@ dependencies = [
 [[package]]
 name = "shader-slang-sys"
 version = "0.1.0"
-source = "git+https://github.com/FloatyMonkey/slang-rs.git#60767e4d5965cc8147623ff47d02af651f7ab761"
+source = "git+https://github.com/Giesch/slang-rs.git?branch=main#fad6e1450990645c0c0bb660ac86e56495c72b4f"
 dependencies = [
  "bindgen",
+ "link-cplusplus",
 ]
 
 [[package]]

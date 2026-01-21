@@ -87,3 +87,21 @@ setup-precommit:
 # lint and test for git pre-commit hook
 pre-commit: shaders && lint test
     git add shaders/compiled
+
+# get the slang git submodule and its submodules
+init-submodules:
+  git submodule update --init --recursive
+
+# build slang as a static library (requires cmake and ninja)
+[unix]
+build-slang:
+  cd vendor/slang && \
+    cmake --preset default -DSLANG_LIB_TYPE=STATIC && \
+    cmake --build --preset release
+
+# build slang as a static library (requires cmake, ninja, and visual studio)
+[windows]
+build-slang:
+  cd vendor/slang && \
+    cmake --preset vs2022 -DSLANG_LIB_TYPE=STATIC
+    cmake --build --preset release

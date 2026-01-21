@@ -29,17 +29,11 @@ facet = { version = "0.42", features = ["reflect"] }
 facet-core = { version = "0.42.0", features = ["std"] }
 
 [dependencies.shader-slang]
-# unreleased main
-git = "https://github.com/FloatyMonkey/slang-rs.git"
-#
-# unmerged static-build PR
-# git = "https://github.com/Giesch/slang-rs.git"
-# branch = "static-build"
-# default-features = false
-# features = ["static"]
-#
-# crates.io release
-# version = "0.1.0"
+# fork with static build changes
+git = "https://github.com/Giesch/slang-rs.git"
+branch = "main"
+default-features = false
+features = ["static"]
 
 [dev-dependencies]
 insta = { version = "1.43.2", features = ["json", "glob"] }

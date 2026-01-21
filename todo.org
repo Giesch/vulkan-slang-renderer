@@ -1,6 +1,12 @@
 #+title: Todo
 
 * Now
+- [-] add statically-linked slang based on slang-rs fork
+  - [X] get it working locally on linux
+  - [X] use a git dependency for the slang-rs fork
+  - [ ] test all examples with new slang version
+  - [ ] test static slang build on windows
+
 - [-] get a spinning dragon curve example
   prepare to live code that? and/or basic raymarching
   - [-] animate a dragon curve growing from a square/line
