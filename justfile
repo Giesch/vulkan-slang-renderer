@@ -116,7 +116,7 @@ build-slang:
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
       cd slang; \
-      cmake --preset vs2022 '-DSLANG_LIB_TYPE=STATIC' '-DSLANG_ENABLE_SLANG_RHI=OFF' '-DSLANG_ENABLE_TESTS=OFF'; \
+      cmake --preset vs2022 '-DSLANG_LIB_TYPE=STATIC'; \
       cmake --build --preset vs2022-release; \
     }
 
