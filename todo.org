@@ -458,6 +458,8 @@
 - [ ] figure out the right way to scale/upscale egui for a 4k monitor
   setting pixels_per point to 2, ignoring upscaling, breaks click event position
 
+- [ ] add a powershell script that loads .env file
+
 
 * Roc Questions
 - [ ] are ref-counted platform resource heaps still going to be a thing?

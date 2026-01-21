@@ -99,9 +99,14 @@ build-slang:
     cmake --preset default -DSLANG_LIB_TYPE=STATIC && \
     cmake --build --preset release
 
-# build slang as a static library (requires cmake, ninja, and visual studio)
+# build slang as a static library (requires cmake, ninja, python3, and visual studio)
 [windows]
 build-slang:
-  cd vendor/slang && \
-    cmake --preset vs2022 -DSLANG_LIB_TYPE=STATIC
-    cmake --build --preset release
+    pwsh -Command { \
+      $env:SLANG_LIB_DIR="$PWD/vendor/slang/build/Release/lib"; \
+      $env:SLANG_INCLUDE_DIR="$PWD/vendor/slang/build/Release/include"; \
+      $env:SLANG_EXTERNAL_DIR="$PWD/vendor/slang/build/external"; \
+      cd vendor/slang; \
+      cmake --preset vs2022 -DSLANG_LIB_TYPE=STATIC; \
+      cmake --build --preset release; \
+    }
