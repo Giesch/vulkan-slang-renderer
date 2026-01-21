@@ -106,7 +106,7 @@ init-submodules:
 # build slang as a static library (requires cmake and ninja)
 [unix]
 build-slang:
-  cd vendor/slang && \
+  cd slang && \
     cmake --preset default -DSLANG_LIB_TYPE=STATIC && \
     cmake --build --preset release
 
@@ -115,18 +115,18 @@ build-slang:
 build-slang:
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      cd vendor/slang; \
+      cd slang; \
       cmake --preset vs2022 '-DSLANG_LIB_TYPE=STATIC' '-DSLANG_ENABLE_SLANG_RHI=OFF' '-DSLANG_ENABLE_TESTS=OFF'; \
       cmake --build --preset vs2022-release; \
     }
 
 [unix]
 clean-slang:
-    rm -rf vendor/slang/build
+    rm -rf slang/build
 
 [windows]
 clean-slang:
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      Remove-Item -Recurse -Force vendor/slang/build; \
+      Remove-Item -Recurse -Force slang/build; \
     }

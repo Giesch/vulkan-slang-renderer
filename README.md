@@ -8,3 +8,7 @@ The idea is to provide generated type-safe CPU bindings for an arbitrary slang s
 ![Ray-marched Spheres](./screenshots/raymarch-spheres.png)
 ![2D SDFs](./screenshots/2d-sdfs.png)
 ![Vulkan Tutorial Viking Room](./screenshots/viking-room.png)
+
+## git submodules
+
+When cloning this repo, use `git clone --recursive` to pick up the slang submodule.

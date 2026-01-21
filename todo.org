@@ -1,14 +1,9 @@
 #+title: Todo
 
 * Now
-- [-] add statically-linked slang based on slang-rs fork
-  - [X] get it working locally on linux
-  - [X] use a git dependency for the slang-rs fork
-  - [ ] test all examples with new slang version
-  - [ ] test static slang build on windows
-
-- [ ] consider adding direnv for the .env
-  - would this replace the need for dir-locals.el as well?
+- [ ] test new slang fork change on windows
+  we should be able to run slang-rhi tests with static linking
+  change submodule to point at v2026.1-static on slang fork
 
 - [-] get a spinning dragon curve example
   prepare to live code that? and/or basic raymarching
@@ -43,7 +38,13 @@
   dx or cargo-hot? try both?
 
 * Next
-- [ ] try using encase for
+- [ ] add direnv for the .env
+  - this would be better for claude than remembering to use the justfile
+  - would this replace the need for dir-locals.el as well?
+    might need an emacs package for direnv
+  - supposedly it also works on windows?
+
+- [ ] try using encase for std140/430 formatting
 - [ ] look into frame-rate counter for sprite batch example
   - is it accurate? the framerate seems hitchy
 
@@ -168,6 +169,10 @@
   but has a slower framerate on linux for some reason
   - increasing MAX_FRAMES_IN_FLIGHT makes it faster at first,
     but then it hits a wall and slows down
+
+- [ ] fix `just shaders` on windows
+  - [ ] sort struct fields consistently
+  - [ ] find out why spv is different
 
 - [ ] simplify basic triangle example
   use an orthographic projection instead of mvp?
