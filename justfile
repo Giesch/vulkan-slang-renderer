@@ -14,8 +14,17 @@ check:
 
 
 # run dev build with shader hot reload
+[unix]
 dev example="basic_triangle":
     cargo run --example {{example}}
+
+# run dev build with shader hot reload
+[windows]
+dev example="basic_triangle":
+    pwsh -Command { \
+      . ./scripts/load-env.ps1; \
+      cargo run --example {{example}}; \
+    }
 
 
 # run with shader printf and vk validation layers at 'info'
