@@ -53,6 +53,7 @@ const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
 const ENABLE_SAMPLE_SHADING: bool = false;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
+const BUFFER_FRAME_COUNT: usize = MAX_FRAMES_IN_FLIGHT + 1;
 
 pub struct Renderer {
     // fields that are created once
@@ -110,15 +111,17 @@ pub struct Renderer {
 
     command_pool: vk::CommandPool,
     command_buffers: [vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT],
-    /// image semaphores indexed by current_frame
-    image_available: [vk::Semaphore; MAX_FRAMES_IN_FLIGHT],
+    /// image semaphores indexed by buffer_frame
+    image_available: [vk::Semaphore; BUFFER_FRAME_COUNT],
     /// render finished semaphores indexed by image_index
     /// ie, one per swapchain image, not per frame-in-flight
     render_finished: Vec<vk::Semaphore>,
     /// frame fences indexed by current_frame
     frames_in_flight: [vk::Fence; MAX_FRAMES_IN_FLIGHT],
-    /// looping index
+    /// looping index for sync primitives (0..MAX_FRAMES_IN_FLIGHT)
     current_frame: usize,
+    /// looping index for buffers (0..BUFFER_FRAME_COUNT)
+    buffer_frame: usize,
 
     pipelines: PipelineStorage,
     textures: TextureStorage,
@@ -391,6 +394,7 @@ impl Renderer {
             render_finished,
             frames_in_flight,
             current_frame: 0,
+            buffer_frame: 0,
 
             pipelines,
             textures,
@@ -447,10 +451,10 @@ impl Renderer {
     pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> anyhow::Result<UniformBufferHandle<T>> {
         let buffer_size = std::mem::size_of::<T>() as u64;
 
-        let mut buffers_per_frame: [Option<RawUniformBuffer>; MAX_FRAMES_IN_FLIGHT] =
-            [const { None }; MAX_FRAMES_IN_FLIGHT];
+        let mut buffers_per_frame: [Option<RawUniformBuffer>; BUFFER_FRAME_COUNT] =
+            [const { None }; BUFFER_FRAME_COUNT];
         #[expect(clippy::needless_range_loop)]
-        for i in 0..MAX_FRAMES_IN_FLIGHT {
+        for i in 0..BUFFER_FRAME_COUNT {
             let (buffer, device_mem) = create_memory_buffer(
                 &self.instance,
                 &self.device,
@@ -498,10 +502,10 @@ impl Renderer {
     ) -> anyhow::Result<StorageBufferHandle<T>> {
         let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
 
-        let mut buffers_per_frame: [Option<RawStorageBuffer>; MAX_FRAMES_IN_FLIGHT] =
-            [const { None }; MAX_FRAMES_IN_FLIGHT];
+        let mut buffers_per_frame: [Option<RawStorageBuffer>; BUFFER_FRAME_COUNT] =
+            [const { None }; BUFFER_FRAME_COUNT];
         #[expect(clippy::needless_range_loop)]
-        for i in 0..MAX_FRAMES_IN_FLIGHT {
+        for i in 0..BUFFER_FRAME_COUNT {
             let (buffer, device_mem) = create_memory_buffer(
                 &self.instance,
                 &self.device,
@@ -653,14 +657,14 @@ impl Renderer {
             textures
         };
 
-        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> =
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; BUFFER_FRAME_COUNT]> =
             config
                 .uniform_buffer_handles
                 .iter()
                 .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
                 .collect();
 
-        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> =
+        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer; BUFFER_FRAME_COUNT]> =
             config
                 .storage_buffer_handles
                 .iter()
@@ -983,7 +987,7 @@ impl Renderer {
         self.renderer_pipeline(pipeline_handle)
             .descriptor_sets
             .chunks(descriptor_sets_per_frame)
-            .nth(self.current_frame)
+            .nth(self.buffer_frame)
             .unwrap()
     }
 
@@ -999,19 +1003,12 @@ impl Renderer {
 
         let command_buffer = self.command_buffers[self.current_frame];
 
-        let fences = [self.frames_in_flight[self.current_frame]];
-        unsafe { self.device.wait_for_fences(&fences, true, u64::MAX)? };
-
-        // Free egui textures from the previous use of this frame slot
-        if let Some(egui) = &mut self.egui {
-            egui.free_pending_textures(self.current_frame);
-        }
-
-        let (image_index, swapchain_was_submoptimal_on_image_acquire) = unsafe {
+        // 1. Acquire swapchain image (can block on vsync)
+        let (image_index, swapchain_was_suboptimal_on_image_acquire) = unsafe {
             match self.swapchain_device_ext.acquire_next_image(
                 self.swapchain,
                 u64::MAX,
-                self.image_available[self.current_frame],
+                self.image_available[self.buffer_frame],
                 vk::Fence::null(),
             ) {
                 Ok(tup) => tup,
@@ -1024,15 +1021,26 @@ impl Renderer {
             }
         };
 
+        // 2. CPU buffer writes BEFORE fence wait
+        //    Safe because buffer[buffer_frame] was last used by frame (total - BUFFER_FRAME_COUNT)
+        //    and that frame's fence was waited for during frame (total - 1)
         let mut gpu = Gpu {
-            current_frame: self.current_frame,
+            buffer_frame: self.buffer_frame,
             uniform_buffers: &mut self.uniform_buffers,
             storage_buffers: &mut self.storage_buffers,
         };
         gpu_update(&mut gpu);
 
-        // NOTE only reset fences if we're submitting work
-        //   ie, after early returns
+        // 3. Wait for fence (command buffer reuse)
+        let fences = [self.frames_in_flight[self.current_frame]];
+        unsafe { self.device.wait_for_fences(&fences, true, u64::MAX)? };
+
+        // 4. Free egui textures (must be after fence wait)
+        if let Some(egui) = &mut self.egui {
+            egui.free_pending_textures(self.current_frame);
+        }
+
+        // 5. Reset fence and continue with submit
         unsafe { self.device.reset_fences(&fences)? };
 
         unsafe {
@@ -1041,7 +1049,7 @@ impl Renderer {
         }
         self.record_command_buffer(pipeline_handle, image_index, draw_call)?;
 
-        let wait_semaphores = [self.image_available[self.current_frame]];
+        let wait_semaphores = [self.image_available[self.buffer_frame]];
         let wait_dst_stage_mask = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let signal_semaphores = [self.render_finished[image_index as usize]];
         let submit_command_buffers = [command_buffer];
@@ -1082,9 +1090,11 @@ impl Renderer {
             }
         }
 
+        // 6. Advance both frame counters
         self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        self.buffer_frame = (self.buffer_frame + 1) % BUFFER_FRAME_COUNT;
 
-        if swapchain_was_submoptimal_on_image_acquire {
+        if swapchain_was_suboptimal_on_image_acquire {
             return self.recreate_swapchain();
         }
 
@@ -2272,16 +2282,16 @@ fn create_sync_objects(
     swapchain_images: &[vk::Image],
 ) -> Result<
     (
-        [vk::Semaphore; MAX_FRAMES_IN_FLIGHT],
+        [vk::Semaphore; BUFFER_FRAME_COUNT],
         Vec<vk::Semaphore>,
         [vk::Fence; MAX_FRAMES_IN_FLIGHT],
     ),
     anyhow::Error,
 > {
-    let mut image_available: [Option<vk::Semaphore>; MAX_FRAMES_IN_FLIGHT] =
-        [const { None }; MAX_FRAMES_IN_FLIGHT];
+    let mut image_available: [Option<vk::Semaphore>; BUFFER_FRAME_COUNT] =
+        [const { None }; BUFFER_FRAME_COUNT];
     #[expect(clippy::needless_range_loop)]
-    for i in 0..MAX_FRAMES_IN_FLIGHT {
+    for i in 0..BUFFER_FRAME_COUNT {
         image_available[i] = Some(unsafe { device.create_semaphore(&Default::default(), None)? });
     }
     let image_available = image_available.map(Option::unwrap);
@@ -2479,7 +2489,7 @@ fn create_descriptor_pool(
     pipeline_layout: &ShaderPipelineLayout,
 ) -> Result<vk::DescriptorPool, anyhow::Error> {
     let descriptor_sets_per_frame = pipeline_layout.descriptor_set_layouts.len() as u32;
-    let sets_across_frames = descriptor_sets_per_frame * MAX_FRAMES_IN_FLIGHT as u32;
+    let sets_across_frames = descriptor_sets_per_frame * BUFFER_FRAME_COUNT as u32;
 
     let total_counts: DescriptorCounts = pipeline_layout
         .descriptor_set_layouts
@@ -2550,8 +2560,8 @@ fn create_descriptor_sets(
     device: &ash::Device,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layouts: &[vk::DescriptorSetLayout],
-    uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]],
-    storage_buffers_in_layout_frame_order: &[&[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]],
+    uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer; BUFFER_FRAME_COUNT]],
+    storage_buffers_in_layout_frame_order: &[&[RawStorageBuffer; BUFFER_FRAME_COUNT]],
     textures: &[&Texture],
     layout_bindings: Vec<Vec<LayoutDescription>>,
 ) -> Result<Vec<vk::DescriptorSet>, anyhow::Error> {
@@ -2567,7 +2577,7 @@ fn create_descriptor_sets(
     //     frame_1_set_1_binding_1,
     // ]
     let mut set_layouts = vec![];
-    for _frame in 0..MAX_FRAMES_IN_FLIGHT {
+    for _frame in 0..BUFFER_FRAME_COUNT {
         for &descriptor_set_layout in descriptor_set_layouts {
             // i = frame * descriptor_set_layouts.len() + layout_offset;
             set_layouts.push(descriptor_set_layout);
@@ -2578,7 +2588,7 @@ fn create_descriptor_sets(
         .set_layouts(&set_layouts);
     let descriptor_sets = unsafe { device.allocate_descriptor_sets(&alloc_info)? };
 
-    for frame in 0..MAX_FRAMES_IN_FLIGHT {
+    for frame in 0..BUFFER_FRAME_COUNT {
         let mut uniform_buffer_index = 0;
         let mut storage_buffer_index = 0;
         let mut texture_index = 0;
@@ -3599,7 +3609,7 @@ impl shaders::json::ReflectedStageFlags {
 
 /// the interface a game uses to update gpu resources during a renderer draw call
 pub struct Gpu<'f> {
-    current_frame: usize,
+    buffer_frame: usize,
     uniform_buffers: &'f mut UniformBufferStorage,
     storage_buffers: &'f mut StorageBufferStorage,
 }
@@ -3608,7 +3618,7 @@ impl<'f> Gpu<'f> {
     pub fn write_uniform<T>(&mut self, uniform_buffer: &mut UniformBufferHandle<T>, data: T) {
         let mapped_mem = self
             .uniform_buffers
-            .get_mapped_mem_for_frame(uniform_buffer, self.current_frame);
+            .get_mapped_mem_for_frame(uniform_buffer, self.buffer_frame);
 
         *mapped_mem = data;
     }
@@ -3619,7 +3629,7 @@ impl<'f> Gpu<'f> {
 
         let mapped_mem = self
             .storage_buffers
-            .get_mapped_mem_for_frame(storage_buffer, self.current_frame);
+            .get_mapped_mem_for_frame(storage_buffer, self.buffer_frame);
 
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len_to_copy);
@@ -3632,7 +3642,7 @@ impl<'f> Gpu<'f> {
     {
         let mapped_mem = self
             .storage_buffers
-            .get_mapped_mem_for_frame(storage_buffer, self.current_frame);
+            .get_mapped_mem_for_frame(storage_buffer, self.buffer_frame);
 
         let len = storage_buffer.len() as usize;
         let items = unsafe { std::slice::from_raw_parts_mut(mapped_mem, len) };

@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use ash::vk;
 
-use super::MAX_FRAMES_IN_FLIGHT;
+use super::BUFFER_FRAME_COUNT;
 
 #[derive(Debug)]
 pub struct UniformBufferHandle<T> {
@@ -19,7 +19,7 @@ pub(super) struct RawUniformBuffer {
 
 // NOTE renderer has to enforce type safety
 // ordered first by handle index, then by frame
-pub(super) struct UniformBufferStorage(Vec<Option<[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]>>);
+pub(super) struct UniformBufferStorage(Vec<Option<[RawUniformBuffer; BUFFER_FRAME_COUNT]>>);
 
 impl UniformBufferStorage {
     pub fn new() -> Self {
@@ -28,7 +28,7 @@ impl UniformBufferStorage {
 
     pub fn add<T>(
         &mut self,
-        buffers_per_frame: [RawUniformBuffer; MAX_FRAMES_IN_FLIGHT],
+        buffers_per_frame: [RawUniformBuffer; BUFFER_FRAME_COUNT],
     ) -> UniformBufferHandle<T> {
         let handle = UniformBufferHandle {
             index: self.0.len(),
@@ -43,7 +43,7 @@ impl UniformBufferStorage {
     pub fn get_raw(
         &self,
         handle: &RawUniformBufferHandle,
-    ) -> &[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT] {
+    ) -> &[RawUniformBuffer; BUFFER_FRAME_COUNT] {
         self.0[handle.index].as_ref().unwrap()
     }
 
@@ -60,11 +60,11 @@ impl UniformBufferStorage {
     pub fn take<T>(
         &mut self,
         handle: UniformBufferHandle<T>,
-    ) -> [RawUniformBuffer; MAX_FRAMES_IN_FLIGHT] {
+    ) -> [RawUniformBuffer; BUFFER_FRAME_COUNT] {
         self.0[handle.index].take().unwrap()
     }
 
-    pub fn take_all(&mut self) -> Vec<[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> {
+    pub fn take_all(&mut self) -> Vec<[RawUniformBuffer; BUFFER_FRAME_COUNT]> {
         self.0
             .iter_mut()
             .filter_map(|option| option.take())

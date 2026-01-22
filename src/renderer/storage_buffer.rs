@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use ash::vk;
 
-use super::MAX_FRAMES_IN_FLIGHT;
+use super::BUFFER_FRAME_COUNT;
 
 #[derive(Debug)]
 pub struct StorageBufferHandle<T> {
@@ -27,7 +27,7 @@ pub(super) struct RawStorageBuffer {
 
 // NOTE renderer has to enforce type safety
 // ordered first by handle index, then by frame
-pub(super) struct StorageBufferStorage(Vec<Option<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]>>);
+pub(super) struct StorageBufferStorage(Vec<Option<[RawStorageBuffer; BUFFER_FRAME_COUNT]>>);
 
 impl StorageBufferStorage {
     pub fn new() -> Self {
@@ -36,7 +36,7 @@ impl StorageBufferStorage {
 
     pub fn add<T>(
         &mut self,
-        buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
+        buffers_per_frame: [RawStorageBuffer; BUFFER_FRAME_COUNT],
         len: u32,
     ) -> StorageBufferHandle<T> {
         let handle = StorageBufferHandle {
@@ -53,7 +53,7 @@ impl StorageBufferStorage {
     pub fn get_raw(
         &self,
         handle: &RawStorageBufferHandle,
-    ) -> &[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT] {
+    ) -> &[RawStorageBuffer; BUFFER_FRAME_COUNT] {
         self.0[handle.index].as_ref().unwrap()
     }
 
@@ -69,11 +69,11 @@ impl StorageBufferStorage {
     pub fn take<T>(
         &mut self,
         handle: StorageBufferHandle<T>,
-    ) -> [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT] {
+    ) -> [RawStorageBuffer; BUFFER_FRAME_COUNT] {
         self.0[handle.index].take().unwrap()
     }
 
-    pub fn take_all(&mut self) -> Vec<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> {
+    pub fn take_all(&mut self) -> Vec<[RawStorageBuffer; BUFFER_FRAME_COUNT]> {
         self.0
             .iter_mut()
             .filter_map(|option| option.take())
