@@ -1,32 +1,27 @@
 #+title: Todo
 
 * Now
-- [ ] test new slang fork change on windows
+- [X] test new slang fork change on windows
   we should be able to run slang-rhi tests with static linking
   change submodule to point at v2026.1-static on slang fork
 
-- [-] get a spinning dragon curve example
-  prepare to live code that? and/or basic raymarching
-  - [-] animate a dragon curve growing from a square/line
-    - [X] 2D dragon curve
-    - [X] factor out a module for the 2D dragon curve
-    - [ ] factor out a module for ray marching
-    - [ ] draw a slice of a 3D dragon curve
-    - [ ] try unioning it with rotations
-    - [ ] try spinning it
+- [-] koch curve example
+  - [X] basic render working
+  - [ ] add mouse rotation
+  - [ ] add time-based rotation
 
+- [ ] presentation
   - [ ] make slides
     - the time should be mostly demo
     - include explanation of rays marching
       use screenshots
     - include screenshots of games using SDFs
     - include a credits slide
+      - koch curve guy
       - sebastian lague
+        for ray marching screenshots
       - inigo quilez
       - sdf engine guy
-
-  - rotate the full curve
-  - gradually increase the parameter to grow from a sphere?
 
 - [-] go back over claude commits
   - [X] see if there's a nicer way to do raymarch camera rotation
@@ -61,6 +56,19 @@
   - [ ] maybe recreate it as an example?
 
 - [ ] go through vulkan 1.3 tutorial
+
+- [-] get a spinning dragon curve example
+  prepare to live code that? and/or basic raymarching
+  - [-] animate a dragon curve growing from a square/line
+    - [X] 2D dragon curve
+    - [X] factor out a module for the 2D dragon curve
+    - [ ] factor out a module for ray marching
+    - [ ] draw a slice of a 3D dragon curve
+    - [ ] try unioning it with rotations
+    - [ ] try spinning it
+
+  - rotate the full curve
+  - gradually increase the parameter to grow from a sphere?
 
 - [ ] make an sdl rust pr to add window.start/stop_text_input()
 

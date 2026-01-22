@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use glam::Vec2;
 
 use vulkan_slang_renderer::game::Game;
@@ -15,6 +17,7 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 pub struct KochCurve {
+    start_time: Instant,
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<KochCurveParams>,
 }
@@ -46,6 +49,7 @@ impl Game for KochCurve {
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         Ok(Self {
+            start_time: Instant::now(),
             pipeline,
             params_buffer,
         })
@@ -53,11 +57,12 @@ impl Game for KochCurve {
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let resolution = renderer.window_resolution();
+        let time = (Instant::now() - self.start_time).as_secs_f32();
         let params = KochCurveParams {
             resolution,
             // TODO
             mouse: Vec2::ZERO,
-            time: 0.0,
+            time,
             _padding_0: Default::default(),
         };
 
