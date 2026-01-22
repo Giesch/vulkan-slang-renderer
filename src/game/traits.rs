@@ -10,6 +10,16 @@ const DEFAULT_FRAME_DELAY: Duration = Duration::from_millis(15); // about 60 fps
 const DEFAULT_WINDOW_SIZE: (u32, u32) = (800, 600);
 const DEFAULT_WINDOW_TITLE: &str = "Game";
 
+/// Maximum MSAA sample count to use.
+/// The renderer will use the best supported sample count up to this limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MaxMSAASamples {
+    #[default]
+    Max8,
+    Max4,
+    Max2,
+}
+
 /// This is the only trait from this module to implement directly.
 pub trait Game {
     /// The debug state type that will be reflected in egui.
@@ -54,6 +64,12 @@ pub trait Game {
         None
     }
 
+    /// Override to limit the maximum MSAA sample count.
+    /// Default is Max8 (use best available up to 8x).
+    fn max_msaa_samples() -> MaxMSAASamples {
+        MaxMSAASamples::default()
+    }
+
     /// Returns the debug window name and a mutable reference to the debug state for egui rendering.
     /// Return None to disable debug UI for this frame.
     /// Default implementation returns None.
@@ -82,7 +98,8 @@ pub trait Game {
             Some(scale_override) => scale_override,
             None => compute_render_scale_for_display(&window),
         };
-        let mut renderer = Renderer::init(window, enable_egui, render_scale)?;
+        let max_msaa_samples = Self::max_msaa_samples();
+        let mut renderer = Renderer::init(window, enable_egui, render_scale, max_msaa_samples)?;
         let game = Self::setup(&mut renderer)?;
         let app = App::init(renderer, game)?;
 

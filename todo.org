@@ -1,15 +1,6 @@
 #+title: Todo
 
 * Now
-- [X] test new slang fork change on windows
-  we should be able to run slang-rhi tests with static linking
-  change submodule to point at v2026.1-static on slang fork
-
-- [-] koch curve example
-  - [X] basic render working
-  - [ ] add mouse rotation
-  - [ ] add time-based rotation
-
 - [ ] presentation
   - [ ] make slides
     - the time should be mostly demo
@@ -26,7 +17,8 @@
 - [-] go back over claude commits
   - [X] see if there's a nicer way to do raymarch camera rotation
   - [X] review egui and facet again
-  - [ ] double check alignment tests
+  - [-] double check alignment tests
+    replace these with encase
   - [ ] read the facet docs
 
 - [ ] get rust hot reload working
@@ -38,6 +30,18 @@
   - would this replace the need for dir-locals.el as well?
     might need an emacs package for direnv
   - supposedly it also works on windows?
+
+- [ ] add a way for claude to check for vulkan validation errors
+  - panic on validation error, based on an environment variable?
+  - set up a just command that runs an exammple with this env var
+  - add instructions about this just command to CLAUDE.md
+
+- [-] frame rate improvements on sprite batch example
+  - [X] fence wating at frame start
+  - [X] make msaa samples configurable
+    ie don't always take the max; pixel art doesn't even want it
+  - [ ] host coherent vs host cached storage buffers?
+  - [ ] figure out why the window size matters
 
 - [ ] try using encase for std140/430 formatting
 - [ ] look into frame-rate counter for sprite batch example

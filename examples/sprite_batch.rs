@@ -15,7 +15,7 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
 use vulkan_slang_renderer::editor::Label;
-use vulkan_slang_renderer::game::Game;
+use vulkan_slang_renderer::game::{Game, MaxMSAASamples};
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
     TextureFilter, UniformBufferHandle,
@@ -99,6 +99,10 @@ impl Game for SpriteBatch {
             last_frame_time: Instant::now(),
             frame_times: VecDeque::with_capacity(FRAME_HISTORY_SIZE),
         })
+    }
+
+    fn max_msaa_samples() -> MaxMSAASamples {
+        MaxMSAASamples::Max2
     }
 
     fn update(&mut self) {

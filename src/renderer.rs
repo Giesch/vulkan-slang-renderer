@@ -12,6 +12,7 @@ use glam::Vec2;
 use sdl3::sys::vulkan::SDL_Vulkan_DestroySurface;
 use sdl3::video::Window;
 
+use crate::game::MaxMSAASamples;
 use crate::shaders;
 use crate::shaders::atlas::{PrecompiledShader, ShaderAtlasEntry};
 
@@ -185,6 +186,7 @@ impl Renderer {
         window: Window,
         enable_egui: bool,
         render_scale: f32,
+        max_msaa_samples: MaxMSAASamples,
     ) -> Result<Self, anyhow::Error> {
         let render_scale = render_scale.clamp(0.25, 1.0);
         #[cfg(debug_assertions)]
@@ -251,7 +253,8 @@ impl Renderer {
             choose_physical_device(&instance, &surface_ext, surface)?;
         let device = create_logical_device(&instance, physical_device, &queue_family_indices)?;
 
-        let msaa_samples = get_max_usable_sample_count(physical_device_properties);
+        let msaa_samples =
+            get_max_usable_sample_count(physical_device_properties, max_msaa_samples);
 
         let graphics_queue = unsafe { device.get_device_queue(queue_family_indices.graphics, 0) };
         let presentation_queue =
@@ -3327,6 +3330,7 @@ fn generate_mipmaps(
 
 fn get_max_usable_sample_count(
     physical_device_properties: vk::PhysicalDeviceProperties,
+    max_msaa_samples: MaxMSAASamples,
 ) -> vk::SampleCountFlags {
     let vk::PhysicalDeviceLimits {
         framebuffer_color_sample_counts,
@@ -3335,17 +3339,19 @@ fn get_max_usable_sample_count(
     } = physical_device_properties.limits;
     let counts = framebuffer_color_sample_counts & framebuffer_depth_sample_counts;
 
-    // NOTE; it may be better to choose less than the maximum available
-    // for performance reasons
-    let descending_options = [
-        vk::SampleCountFlags::TYPE_8,
-        vk::SampleCountFlags::TYPE_4,
-        vk::SampleCountFlags::TYPE_2,
-    ];
+    let descending_options: &[vk::SampleCountFlags] = match max_msaa_samples {
+        MaxMSAASamples::Max8 => &[
+            vk::SampleCountFlags::TYPE_8,
+            vk::SampleCountFlags::TYPE_4,
+            vk::SampleCountFlags::TYPE_2,
+        ],
+        MaxMSAASamples::Max4 => &[vk::SampleCountFlags::TYPE_4, vk::SampleCountFlags::TYPE_2],
+        MaxMSAASamples::Max2 => &[vk::SampleCountFlags::TYPE_2],
+    };
 
     for option in descending_options {
-        if counts.contains(option) {
-            return option;
+        if counts.contains(*option) {
+            return *option;
         }
     }
 
