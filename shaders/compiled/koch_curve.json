@@ -1,0 +1,147 @@
+{
+  "sourceFileName": "koch_curve.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "KochCurveParams",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "resolution",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "mouse",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "time",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "resource",
+            "fieldName": "cubeMap",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "mainImage",
+    "stage": "fragment",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "input",
+        "binding": {
+          "kind": "varyingInput",
+          "index": 0,
+          "count": 1
+        },
+        "typeName": "FragInput",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "semanticName": "SV_POSITION",
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "pixel",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 0,
+              "count": 1
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          },
+          {
+            "binding": 1,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

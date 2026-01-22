@@ -1,6 +1,7 @@
 pub mod basic_triangle;
 pub mod depth_texture;
 pub mod dragon;
+pub mod koch_curve;
 pub mod ray_marching;
 pub mod sdf_2d;
 pub mod serenity_crt;
@@ -10,6 +11,7 @@ pub mod sprite_batch;
 pub struct ShaderAtlas {
     pub dragon: dragon::Shader,
     pub space_invaders: space_invaders::Shader,
+    pub koch_curve: koch_curve::Shader,
     pub serenity_crt: serenity_crt::Shader,
     pub sdf_2d: sdf_2d::Shader,
     pub basic_triangle: basic_triangle::Shader,
@@ -23,6 +25,7 @@ impl ShaderAtlas {
         Self {
             dragon: dragon::Shader::init(),
             space_invaders: space_invaders::Shader::init(),
+            koch_curve: koch_curve::Shader::init(),
             serenity_crt: serenity_crt::Shader::init(),
             sdf_2d: sdf_2d::Shader::init(),
             basic_triangle: basic_triangle::Shader::init(),
