@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use glam::Vec2;
 
-use vulkan_slang_renderer::game::Game;
+use vulkan_slang_renderer::game::{Game, Input, MouseButton};
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, TextureFilter,
     UniformBufferHandle,
@@ -20,6 +20,8 @@ pub struct KochCurve {
     start_time: Instant,
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<KochCurveParams>,
+    mouse_down: bool,
+    mouse_position: Vec2,
 }
 
 impl Game for KochCurve {
@@ -52,16 +54,46 @@ impl Game for KochCurve {
             start_time: Instant::now(),
             pipeline,
             params_buffer,
+            mouse_down: false,
+            mouse_position: Vec2::ZERO,
         })
     }
 
+    fn input(&mut self, input: Input) {
+        match input {
+            Input::MouseDown { button, x, y } => {
+                if button == MouseButton::Left {
+                    self.mouse_down = true;
+                    self.mouse_position = Vec2::new(x, y);
+                }
+            }
+
+            Input::MouseUp { button, .. } => {
+                if button == MouseButton::Left {
+                    self.mouse_down = false;
+                }
+            }
+
+            Input::MouseMotion { x, y } => {
+                if self.mouse_down {
+                    self.mouse_position = Vec2::new(x, y);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
-        let resolution = renderer.window_resolution();
         let time = (Instant::now() - self.start_time).as_secs_f32();
+
+        let resolution = renderer.window_resolution();
+        let mut mouse = self.mouse_position.clone();
+        mouse.y = resolution.y - mouse.y;
+
         let params = KochCurveParams {
             resolution,
-            // TODO
-            mouse: Vec2::ZERO,
+            mouse,
             time,
             _padding_0: Default::default(),
         };

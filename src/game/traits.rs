@@ -140,10 +140,21 @@ pub trait RuntimeGame {
     fn draw_edit_ui(&mut self, ctx: &egui::Context);
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Input {
     KeyUp(Key),
     KeyDown(Key),
+    MouseMotion { x: f32, y: f32 },
+    MouseDown { button: MouseButton, x: f32, y: f32 },
+    MouseUp { button: MouseButton, x: f32, y: f32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseButton {
+    Unknown,
+    Left,
+    Middle,
+    Right,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

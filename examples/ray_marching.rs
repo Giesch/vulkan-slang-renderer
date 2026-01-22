@@ -120,6 +120,8 @@ impl Game for RayMarching {
                 Key::E => self.intent.roll_right = false,
                 Key::Space => {}
             },
+
+            _ => {}
         }
     }
 

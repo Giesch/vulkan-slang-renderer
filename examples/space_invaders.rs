@@ -208,6 +208,8 @@ impl Game for SpaceInvaders {
                 Key::Space => self.player.intent.fire = false,
                 _ => {}
             },
+
+            _ => {}
         }
     }
 

@@ -5,7 +5,7 @@ use sdl3::sys::timer::SDL_DelayPrecise;
 
 use crate::game::traits::RuntimeGame;
 use crate::renderer::{FrameRenderer, Renderer};
-use crate::traits::{Input, Key};
+use crate::traits::{Input, Key, MouseButton};
 
 pub struct App {
     renderer: Renderer,
@@ -131,6 +131,41 @@ impl App {
                         continue;
                     };
                     let input = Input::KeyUp(key);
+                    self.game.input(input);
+                }
+
+                Event::MouseMotion { x, y, .. } => {
+                    let input = Input::MouseMotion { x, y };
+                    self.game.input(input);
+                }
+
+                Event::MouseButtonDown {
+                    mouse_btn, x, y, ..
+                } => {
+                    let button = match mouse_btn {
+                        sdl3::mouse::MouseButton::Left => MouseButton::Left,
+                        sdl3::mouse::MouseButton::Middle => MouseButton::Middle,
+                        sdl3::mouse::MouseButton::Right => MouseButton::Right,
+                        _ => MouseButton::Unknown,
+                    };
+
+                    let input = Input::MouseDown { button, x, y };
+
+                    self.game.input(input);
+                }
+
+                Event::MouseButtonUp {
+                    mouse_btn, x, y, ..
+                } => {
+                    let button = match mouse_btn {
+                        sdl3::mouse::MouseButton::Left => MouseButton::Left,
+                        sdl3::mouse::MouseButton::Middle => MouseButton::Middle,
+                        sdl3::mouse::MouseButton::Right => MouseButton::Right,
+                        _ => MouseButton::Unknown,
+                    };
+
+                    let input = Input::MouseUp { button, x, y };
+
                     self.game.input(input);
                 }
 
