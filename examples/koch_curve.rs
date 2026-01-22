@@ -1,7 +1,9 @@
 use std::time::Instant;
 
+use facet::Facet;
 use glam::Vec2;
 
+use vulkan_slang_renderer::editor::Slider;
 use vulkan_slang_renderer::game::{Game, Input, MouseButton};
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, TextureFilter,
@@ -16,8 +18,18 @@ fn main() -> Result<(), anyhow::Error> {
     KochCurve::run()
 }
 
+#[derive(Facet)]
+pub struct EditState {
+    pub koch_iterations: Slider,
+    pub scale_factor: Slider,
+    pub sphere_radius: Slider,
+    pub sphere_blend: Slider,
+    pub rotation_speed: Slider,
+}
+
 pub struct KochCurve {
     start_time: Instant,
+    edit_state: EditState,
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<KochCurveParams>,
     mouse_down: bool,
@@ -25,10 +37,14 @@ pub struct KochCurve {
 }
 
 impl Game for KochCurve {
-    type EditState = ();
+    type EditState = EditState;
 
     fn window_title() -> &'static str {
         "Koch Curve 3D"
+    }
+
+    fn editor_ui(&mut self) -> Option<(&str, &mut Self::EditState)> {
+        Some(("Koch Curve 3D", &mut self.edit_state))
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
@@ -50,8 +66,17 @@ impl Game for KochCurve {
         let pipeline_config = shader.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let edit_state = EditState {
+            koch_iterations: Slider::new(4.0, 1.0, 8.0),
+            scale_factor: Slider::new(3.0, 1.5, 5.0),
+            sphere_radius: Slider::new(0.5, 0.1, 2.0),
+            sphere_blend: Slider::new(0.5, 0.0, 1.0),
+            rotation_speed: Slider::new(0.2, 0.0, 1.0),
+        };
+
         Ok(Self {
             start_time: Instant::now(),
+            edit_state,
             pipeline,
             params_buffer,
             mouse_down: false,
@@ -95,6 +120,11 @@ impl Game for KochCurve {
             resolution,
             mouse,
             time,
+            koch_iterations: self.edit_state.koch_iterations.value,
+            scale_factor: self.edit_state.scale_factor.value,
+            sphere_radius: self.edit_state.sphere_radius.value,
+            sphere_blend: self.edit_state.sphere_blend.value,
+            rotation_speed: self.edit_state.rotation_speed.value,
             _padding_0: Default::default(),
         };
 

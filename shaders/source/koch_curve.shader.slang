@@ -20,6 +20,14 @@ struct KochCurveParams {
     float2 resolution;
     float2 mouse;
     float time;
+
+    // Debug UI parameters
+    float koch_iterations;   // Number of fractal iterations (cast to int)
+    float scale_factor;      // Scale multiplier per iteration
+    float sphere_radius;     // Size of blended sphere
+    float sphere_blend;      // Blend weight (0=koch only, 1=sphere only)
+    float rotation_speed;    // XZ rotation speed
+
     Sampler2D cubeMap;
 }
 
@@ -50,7 +58,7 @@ float2 N(float angle) {
     return float2(sin(angle), cos(angle));
 }
 
-float2 Koch(float2 uv) {
+float2 Koch(float2 uv, int iterations, float scaleFactor) {
     uv.x = abs(uv.x);
 
     float3 col = float3(0);
@@ -67,9 +75,9 @@ float2 Koch(float2 uv) {
 
     n = N((2./3.)*3.1415);
     uv.x += .5;
-    for(int i=0; i<4; i++) {
-        uv *= 3.;
-        scale *= 3.;
+    for(int i=0; i<iterations; i++) {
+        uv *= scaleFactor;
+        scale *= scaleFactor;
         uv.x -= 1.5;
 
         uv.x = abs(uv.x);
@@ -83,14 +91,15 @@ float2 Koch(float2 uv) {
 
 
 float GetDist(float3 p) {
-    p.xz = mul(Rot(params.time * 0.2), p.xz);
+    p.xz = mul(Rot(params.time * params.rotation_speed), p.xz);
 
-    float2 xz = Koch(float2(length(p.xz), p.y));
-    float2 yz = Koch(float2(length(p.yz), p.x));
-    float2 xy = Koch(float2(length(p.xy), p.z));
+    int iterations = int(params.koch_iterations);
+    float2 xz = Koch(float2(length(p.xz), p.y), iterations, params.scale_factor);
+    float2 yz = Koch(float2(length(p.yz), p.x), iterations, params.scale_factor);
+    float2 xy = Koch(float2(length(p.xy), p.z), iterations, params.scale_factor);
     float d = max(xy.x, max(yz.x, xz.x));
 
-    d = lerp(d, length(p)-.5, .5);
+    d = lerp(d, length(p) - params.sphere_radius, params.sphere_blend);
     return d;
 }
 

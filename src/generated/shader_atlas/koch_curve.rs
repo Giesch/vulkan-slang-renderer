@@ -22,11 +22,16 @@ pub struct KochCurveParams {
     pub resolution: glam::Vec2,
     pub mouse: glam::Vec2,
     pub time: f32,
-    pub _padding_0: [u8; 12],
+    pub koch_iterations: f32,
+    pub scale_factor: f32,
+    pub sphere_radius: f32,
+    pub sphere_blend: f32,
+    pub rotation_speed: f32,
+    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for KochCurveParams {}
-const _: () = assert!(std::mem::size_of::<KochCurveParams>() == 32);
+const _: () = assert!(std::mem::size_of::<KochCurveParams>() == 48);
 
 pub struct Resources<'a> {
     pub cube_map: &'a TextureHandle,

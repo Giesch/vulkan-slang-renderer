@@ -51,6 +51,56 @@ info:
             "scalarType": "float32"
           },
           {
+            "kind": "scalar",
+            "fieldName": "koch_iterations",
+            "binding": {
+              "kind": "uniform",
+              "offset": 20,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "scale_factor",
+            "binding": {
+              "kind": "uniform",
+              "offset": 24,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "sphere_radius",
+            "binding": {
+              "kind": "uniform",
+              "offset": 28,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "sphere_blend",
+            "binding": {
+              "kind": "uniform",
+              "offset": 32,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "rotation_speed",
+            "binding": {
+              "kind": "uniform",
+              "offset": 36,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
             "kind": "resource",
             "fieldName": "cubeMap",
             "binding": {
@@ -135,14 +185,14 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 32
+            "size": 48
           },
           {
             "binding": 1,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 32
+            "size": 48
           }
         ]
       }
