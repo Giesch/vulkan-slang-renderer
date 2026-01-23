@@ -56,6 +56,12 @@ impl App {
 
     // https://wiki.libsdl.org/SDL3/SDL_EventType
     pub fn handle_events(&mut self, event_pump: &mut EventPump) -> anyhow::Result<()> {
+        let egui_wants_pointer = self
+            .renderer
+            .egui()
+            .map(|e| e.ctx.wants_pointer_input())
+            .unwrap_or(false);
+
         for event in event_pump.poll_iter() {
             if let Some(egui) = self.renderer.egui() {
                 egui.handle_sdl_event(&event);
@@ -134,14 +140,14 @@ impl App {
                     self.game.input(input);
                 }
 
-                Event::MouseMotion { x, y, .. } => {
+                Event::MouseMotion { x, y, .. } if !egui_wants_pointer => {
                     let input = Input::MouseMotion { x, y };
                     self.game.input(input);
                 }
 
                 Event::MouseButtonDown {
                     mouse_btn, x, y, ..
-                } => {
+                } if !egui_wants_pointer => {
                     let button = match mouse_btn {
                         sdl3::mouse::MouseButton::Left => MouseButton::Left,
                         sdl3::mouse::MouseButton::Middle => MouseButton::Middle,
@@ -156,7 +162,7 @@ impl App {
 
                 Event::MouseButtonUp {
                     mouse_btn, x, y, ..
-                } => {
+                } if !egui_wants_pointer => {
                     let button = match mouse_btn {
                         sdl3::mouse::MouseButton::Left => MouseButton::Left,
                         sdl3::mouse::MouseButton::Middle => MouseButton::Middle,

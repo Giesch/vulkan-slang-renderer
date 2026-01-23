@@ -1,19 +1,6 @@
 #+title: Todo
 
 * Now
-- [ ] presentation
-  - [ ] make slides
-    - the time should be mostly demo
-    - include explanation of rays marching
-      use screenshots
-    - include screenshots of games using SDFs
-    - include a credits slide
-      - koch curve guy
-      - sebastian lague
-        for ray marching screenshots
-      - inigo quilez
-      - sdf engine guy
-
 - [-] go back over claude commits
   - [X] see if there's a nicer way to do raymarch camera rotation
   - [X] review egui and facet again
@@ -21,8 +8,13 @@
     replace these with encase
   - [ ] read the facet docs
 
-- [ ] get rust hot reload working
+- [ ] get rust hot reload workingA
   dx or cargo-hot? try both?
+  or go straight to TS / Roc?
+
+- [ ] presentation next week
+  - render fonts?
+  - add the caching to ray-marched SDFs?
 
 * Next
 - [ ] add direnv for the .env
@@ -44,6 +36,7 @@
   - [ ] figure out why the window size matters
 
 - [ ] try using encase for std140/430 formatting
+  is it possible to preserve the 'just one memcpy' aspect?
 - [ ] look into frame-rate counter for sprite batch example
   - is it accurate? the framerate seems hitchy
 

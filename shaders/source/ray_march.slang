@@ -37,7 +37,7 @@ public float3 rayMarch<W>(
     float3 lightColor,
 ) where W : IRayMarchWorld {
     const int MAX_STEPS = 32;
-    const float MAX_TRACE_DISTANCE = 1000.0;
+    const float MAX_DISTANCE = 1000.0;
 
     var distanceTraveled: float = 0.0;
 
@@ -62,7 +62,7 @@ public float3 rayMarch<W>(
             }
         }
 
-        if (distanceTraveled >= MAX_TRACE_DISTANCE) { // miss
+        if (distanceTraveled >= MAX_DISTANCE) { // miss
             break;
         }
 
