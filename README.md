@@ -9,6 +9,24 @@ The idea is to provide generated type-safe CPU bindings for an arbitrary slang s
 ![2D SDFs](./screenshots/2d-sdfs.png)
 ![Vulkan Tutorial Viking Room](./screenshots/viking-room.png)
 
-## git submodules
+## setup
+
+For now, only linux and windows are supported.
 
 When cloning this repo, use `git clone --recursive` to pick up the slang submodule.
+
+You'll need the following dependencies installed:
+- rust/cargo
+- just
+- direnv
+- clang
+- cmake
+
+Then run:
+
+``` sh
+direnv allow # allow loading env vars
+just build-slang # build slang from source (this will take a while)
+just dev # run the default triangle example
+```
+

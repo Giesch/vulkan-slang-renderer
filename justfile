@@ -1,7 +1,5 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
-# NOTE this does nothing on windows
-set dotenv-load := true
 
 # list all available just recipes
 list:

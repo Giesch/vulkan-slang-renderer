@@ -5,7 +5,9 @@ use heck::ToSnakeCase;
 
 use crate::util::relative_path;
 
-use super::{ReflectedShader, json::*, prepare_reflected_shader};
+use super::ReflectedShader;
+use super::json::*;
+use super::prepare_reflected_shader;
 
 pub struct Config {
     /// whether to write rust code (or only shader spirv & json)
@@ -25,7 +27,6 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         .filter_map(|entry_res| entry_res.ok())
         .map(|dir_entry| dir_entry.path())
         .filter(|path| {
-            // path.extension().is_some_and(|ext| ext == "slang")
             let file_name = path.file_name().unwrap().to_str().unwrap();
             file_name.ends_with(SHADER_FILE_SUFFIX)
         })
@@ -911,6 +912,7 @@ mod tests {
         write_precompiled_shaders(config).unwrap();
 
         // Run cargo check on the generated code to verify it compiles
+        // this primarily to test the generated const assertions
         {
             use std::fmt::Write;
 
