@@ -108,13 +108,16 @@ build-slang:
     cmake --preset default -DSLANG_LIB_TYPE=STATIC && \
     cmake --build --preset release
 
+# NOTE: the tests and slang-rhi dependency are temporarily disabled, 
+# until the mainline slang release depends on a version of slang-rhi with this change:
+# https://github.com/shader-slang/slang-rhi/pull/630
 # build slang as a static library (requires cmake, ninja, python3, and visual studio)
 [windows]
 build-slang:
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
       cd slang; \
-      cmake --preset vs2022 '-DSLANG_LIB_TYPE=STATIC'; \
+      cmake --preset vs2022 '-DSLANG_LIB_TYPE=STATIC' '-DSLANG_ENABLE_SLANG_RHI=OFF' '-DSLANG_ENABLE_TESTS=OFF'; \
       cmake --build --preset vs2022-release; \
     }
 
