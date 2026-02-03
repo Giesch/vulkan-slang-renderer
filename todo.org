@@ -1,26 +1,13 @@
 #+title: Todo
 
 * Now
-- [X] update slang to upstream
-
-- [-] add direnv for the .env
-  - this would be better for claude than remembering to use the justfile
-  - [X] set up direnv
-  - [X] get direnv working for cargo build script
-    this is the same problem emacs was having? yes
-  - [ ] ensure this is works on windows
-  - [ ] test that this works for claude
-  - [ ] remove the custom powershell script
-
-- [-] go back over claude commits
-  - [X] see if there's a nicer way to do raymarch camera rotation
-  - [X] review egui and facet again
-  - [X] read the facet docs
-  - [ ] read & understand alignment tests
+- [ ] basic compute shader example(s)
+  - [ ] read the official vulkan compute shader tutorial
+  - [ ] implement a version of claude_notes/render-graph/PLAN.md
 
 * Next
-- [ ] basic compute shader example(s)
-  - [ ] the official vulkan compute shader tutorial
+- [ ] text support with MSDF fonts
+  - read all the red blob games stuff
 
 - [ ] try rust hot reload
   dx or cargo-hot? try both?
@@ -38,13 +25,15 @@
   - [ ] host coherent vs host cached storage buffers?
   - [ ] figure out why the window size matters
 
-- [ ] try using encase for std140/430 formatting
+- [-] try using encase for std140/430 formatting
   is it possible to preserve the 'just one memcpy' aspect?
-- [ ] look into frame-rate counter for sprite batch example
+- [X] look into frame-rate counter for sprite batch example
   - is it accurate? the framerate seems hitchy
 
 - [ ] slang has experimental rich diagnostics for the compiler api
   with line numbers!
+  how can we use this for showing slang compiler errors in the view?
+  need text first
 
 - [ ] use super-sampling for ray-marching example?
   is there a way to share the implementation?
