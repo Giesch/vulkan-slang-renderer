@@ -12,22 +12,21 @@ Rust-based Vulkan renderer with Slang shader integration. Provides type-safe, re
 cargo check --all    # Check source and examples for type errors
 just shaders         # Generate shader bindings (MUST run after .slang changes)
 just test            # Run tests (snapshot testing via insta)
-cargo insta --accept # accept all modified snapshots
+cargo insta accept   # accept all modified snapshots
 just lint            # Clippy with warnings as errors
 ```
 
-**Important:** Always run `just shaders` after modifying any `.shader.slang` files to regenerate Rust bindings.
-
-## Toolchain
-
-- Rust nightly-2025-10-24 (Rust Edition 2024)
+### After changes
+- Always run `just shaders` after modifying any `.slang` files to regenerate Rust bindings.
+- Always use `cargo check --all` when changing rust files as a first pass
+- Always use `just test` when making changes to shaders/build_tasks.rs
 
 ## Architecture
 
 ### Core Modules (src/)
 - **app.rs** - Application event loop, SDL integration
 - **game.rs** - Game trait definitions and input system
-- **renderer.rs** - Main Vulkan rendering engine (~109KB)
+- **renderer.rs** - Main Vulkan rendering engine (~131KB)
 - **shaders.rs** - Slang compilation interface
 - **shader_watcher.rs** - Hot reload for shaders (debug builds only)
 - **generated/** - Auto-generated shader bindings (don't edit manually)
@@ -49,13 +48,21 @@ just lint            # Clippy with warnings as errors
 Implement this to create an application:
 ```rust
 pub trait Game {
-    fn setup(renderer: &mut Renderer) -> Result<Self>;
-    fn update(&mut self);
+    type EditState: for<'a> Facet<'a> + 'static;
+
+    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>;
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
+
+    // Optional overrides (have default implementations):
+    fn update(&mut self) {}
+    fn input(&mut self, _input: Input) {}
     fn window_title() -> &'static str;
     fn initial_window_size() -> (u32, u32);
-    fn input(&mut self, input: Input);
-    fn run() -> Result<()>;  // Entry point
+    fn frame_delay(&self) -> Duration;
+    fn render_scale() -> Option<f32>;
+    fn max_msaa_samples() -> MaxMSAASamples;
+    fn editor_ui(&mut self) -> Option<(&str, &mut Self::EditState)>;
+    fn run() -> anyhow::Result<()>;  // Entry point
 }
 ```
 
@@ -74,12 +81,16 @@ pub trait Game {
 
 ## Examples
 
-Run with `just dev example=NAME`:
+Run with `just dev NAME`:
 - basic_triangle - Minimal vertex/index buffer
 - depth_texture - Depth testing and textures
-- sprite_batch - Sprite rendering with storage buffers
-- space_invaders - Complete game example
+- dragon - Dragon curve fractal
+- koch_curve - Koch curve fractal
+- ray_marching - Ray marching SDF rendering
 - sdf_2d - SDF rendering (fullscreen quad)
+- serenity_crt - CRT shader effect
+- space_invaders - Complete game example
+- sprite_batch - Sprite rendering with storage buffers
 - viking_room - 3D model loading
 
 ## Testing
