@@ -70,42 +70,68 @@ info:
             }
           },
           {
-            "kind": "vector",
-            "fieldName": "cubePosition",
-            "binding": {
-              "kind": "uniform",
-              "offset": 80,
-              "size": 12
-            },
-            "elementCount": 3,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "vector",
-            "fieldName": "cubeRadii",
-            "binding": {
-              "kind": "uniform",
-              "offset": 96,
-              "size": 12
-            },
-            "elementCount": 3,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
             "kind": "scalar",
             "fieldName": "pickedObjectId",
             "binding": {
               "kind": "uniform",
-              "offset": 108,
+              "offset": 80,
               "size": 4
             },
             "scalarType": "uint32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "cubeCount",
+            "binding": {
+              "kind": "uniform",
+              "offset": 84,
+              "size": 4
+            },
+            "scalarType": "uint32"
+          },
+          {
+            "kind": "resource",
+            "fieldName": "cubes",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "structuredBuffer",
+            "resultType": {
+              "kind": "struct",
+              "typeName": "Cube",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "radii",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
           }
         ]
       }
@@ -174,7 +200,14 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 112
+            "size": 96
+          },
+          {
+            "binding": 1,
+            "descriptorType": "storageBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 96
           }
         ]
       }

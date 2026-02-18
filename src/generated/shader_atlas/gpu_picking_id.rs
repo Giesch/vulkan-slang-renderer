@@ -20,14 +20,24 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 #[repr(C, align(16))]
 pub struct GpuPickingIdParams {
     pub camera: RayMarchCamera,
-    pub cube_position: glam::Vec3,
-    pub _padding_0: [u8; 4],
-    pub cube_radii: glam::Vec3,
-    pub _padding_1: [u8; 4],
+    pub cube_count: u32,
+    pub _padding_0: [u8; 12],
 }
 
 impl GPUWrite for GpuPickingIdParams {}
-const _: () = assert!(std::mem::size_of::<GpuPickingIdParams>() == 112);
+const _: () = assert!(std::mem::size_of::<GpuPickingIdParams>() == 96);
+
+#[derive(Debug, Clone, Serialize)]
+#[repr(C, align(16))]
+pub struct Cube {
+    pub position: glam::Vec3,
+    pub _padding_0: [u8; 4],
+    pub radii: glam::Vec3,
+    pub _padding_1: [u8; 4],
+}
+
+impl GPUWrite for Cube {}
+const _: () = assert!(std::mem::size_of::<Cube>() == 32);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -47,6 +57,7 @@ pub struct Projection {
 impl GPUWrite for Projection {}
 
 pub struct Resources<'a> {
+    pub cubes: &'a StorageBufferHandle<Cube>,
     pub params_buffer: &'a UniformBufferHandle<GpuPickingIdParams>,
 }
 
@@ -83,6 +94,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
+            RawStorageBufferHandle::from_typed(resources.cubes),
         ];
 
         let vertex_config = VertexConfig::VertexCount;

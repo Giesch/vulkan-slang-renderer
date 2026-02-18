@@ -6,13 +6,18 @@ import fullscreen_triangle;
 import ray_march_camera;
 import projection;
 
+struct Cube {
+    float3 position;
+    float3 radii;
+}
+
 ParameterBlock<GpuPickingParams> params;
 
 struct GpuPickingParams {
     RayMarchCamera camera;
-    float3 cubePosition;
-    float3 cubeRadii;
     uint pickedObjectId;
+    uint cubeCount;
+    StructuredBuffer<Cube> cubes;
 }
 
 struct FragInput {
@@ -56,10 +61,10 @@ float4 fragMain(FragInput input) : SV_Target {
     var t: float = 0.0;
     for (int i = 0; i < MAX_STEPS; i++) {
         let p = rayOrigin + t * rayDir;
-        let d = sdBox(p - params.cubePosition, params.cubeRadii);
+        let d = sdBox(p - params.cubes[0].position, params.cubes[0].radii);
         if (d < MIN_DIST) {
             // hit the cube
-            let normal = calcNormal(p, params.cubePosition, params.cubeRadii);
+            let normal = calcNormal(p, params.cubes[0].position, params.cubes[0].radii);
 
             // base color or gold when picked
             float3 baseColor = float3(0.3, 0.5, 0.8);

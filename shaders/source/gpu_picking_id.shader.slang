@@ -6,12 +6,17 @@ import fullscreen_triangle;
 import ray_march_camera;
 import projection;
 
+struct Cube {
+    float3 position;
+    float3 radii;
+}
+
 ParameterBlock<GpuPickingIdParams> params;
 
 struct GpuPickingIdParams {
     RayMarchCamera camera;
-    float3 cubePosition;
-    float3 cubeRadii;
+    uint cubeCount;
+    StructuredBuffer<Cube> cubes;
 }
 
 struct FragInput {
@@ -43,7 +48,7 @@ uint fragMain(FragInput input) : SV_Target {
     var t: float = 0.0;
     for (int i = 0; i < MAX_STEPS; i++) {
         let p = rayOrigin + t * rayDir;
-        let d = sdBox(p - params.cubePosition, params.cubeRadii);
+        let d = sdBox(p - params.cubes[0].position, params.cubes[0].radii);
         if (d < MIN_DIST) {
             return 1u; // cube hit
         }

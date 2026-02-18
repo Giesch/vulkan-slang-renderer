@@ -2,7 +2,7 @@ use glam::{Mat4, Vec3};
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PickingPipelineHandle, PipelineHandle, Renderer,
-    UniformBufferHandle,
+    StorageBufferHandle, UniformBufferHandle,
 };
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
@@ -13,11 +13,16 @@ fn main() -> Result<(), anyhow::Error> {
     GpuPicking::run()
 }
 
+const MAX_CUBES: u32 = 256;
+
 struct GpuPicking {
     params_buffer: UniformBufferHandle<GpuPickingParams>,
     picking_params_buffer: UniformBufferHandle<gpu_picking_id::GpuPickingIdParams>,
+    cubes_buffer: StorageBufferHandle<Cube>,
+    picking_cubes_buffer: StorageBufferHandle<gpu_picking_id::Cube>,
     pipeline: PipelineHandle<DrawVertexCount>,
     picking_pipeline: PickingPipelineHandle,
+    cubes: Vec<Cube>,
     mouse_x: f32,
     mouse_y: f32,
 }
@@ -34,7 +39,9 @@ impl Game for GpuPicking {
 
         // Visual shader pipeline
         let params_buffer = renderer.create_uniform_buffer::<GpuPickingParams>()?;
+        let cubes_buffer = renderer.create_storage_buffer::<Cube>(MAX_CUBES)?;
         let visual_resources = Resources {
+            cubes: &cubes_buffer,
             params_buffer: &params_buffer,
         };
         let visual_config = atlas.gpu_picking.pipeline_config(visual_resources);
@@ -43,17 +50,30 @@ impl Game for GpuPicking {
         // Picking ID shader pipeline
         let picking_params_buffer =
             renderer.create_uniform_buffer::<gpu_picking_id::GpuPickingIdParams>()?;
+        let picking_cubes_buffer =
+            renderer.create_storage_buffer::<gpu_picking_id::Cube>(MAX_CUBES)?;
         let picking_resources = gpu_picking_id::Resources {
+            cubes: &picking_cubes_buffer,
             params_buffer: &picking_params_buffer,
         };
         let picking_config = atlas.gpu_picking_id.pipeline_config(picking_resources);
         let picking_pipeline = renderer.create_picking_pipeline(picking_config)?;
 
+        let cubes = vec![Cube {
+            position: Vec3::new(0.0, 0.0, 0.0),
+            _padding_0: Default::default(),
+            radii: Vec3::splat(0.8),
+            _padding_1: Default::default(),
+        }];
+
         Ok(Self {
             params_buffer,
             picking_params_buffer,
+            cubes_buffer,
+            picking_cubes_buffer,
             pipeline,
             picking_pipeline,
+            cubes,
             mouse_x: 0.0,
             mouse_y: 0.0,
         })
@@ -71,8 +91,6 @@ impl Game for GpuPicking {
         let aspect_ratio = renderer.aspect_ratio();
 
         let camera = build_camera(aspect_ratio);
-        let cube_position = Vec3::new(0.0, 0.0, 0.0);
-        let cube_radii = Vec3::splat(0.8);
 
         let mouse_position = [self.mouse_x, self.mouse_y];
 
@@ -82,33 +100,44 @@ impl Game for GpuPicking {
             &self.picking_pipeline,
             mouse_position,
             |gpu| {
-                gpu.write_uniform(
-                    &mut self.params_buffer,
-                    GpuPickingParams {
-                        camera: camera.clone(),
-                        cube_position,
+                let picking_params = GpuPickingParams {
+                    camera: camera.clone(),
+                    picked_object_id: picked_id,
+                    cube_count: self.cubes.len() as u32,
+                    _padding_0: Default::default(),
+                };
+                gpu.write_uniform(&mut self.params_buffer, picking_params);
+                gpu.write_storage(&mut self.cubes_buffer, &self.cubes);
+
+                let picking_id_params = gpu_picking_id::GpuPickingIdParams {
+                    camera: to_picking_camera(&camera),
+                    cube_count: self.cubes.len() as u32,
+                    _padding_0: Default::default(),
+                };
+                gpu.write_uniform(&mut self.picking_params_buffer, picking_id_params);
+
+                let picking_cubes: Vec<gpu_picking_id::Cube> = self
+                    .cubes
+                    .iter()
+                    .map(|c| gpu_picking_id::Cube {
+                        position: c.position,
                         _padding_0: Default::default(),
-                        cube_radii,
-                        picked_object_id: picked_id,
-                    },
-                );
-                gpu.write_uniform(
-                    &mut self.picking_params_buffer,
-                    gpu_picking_id::GpuPickingIdParams {
-                        camera: gpu_picking_id::RayMarchCamera {
-                            inverse_view_proj: gpu_picking_id::Projection {
-                                matrix: camera.inverse_view_proj.matrix,
-                            },
-                            position: camera.position,
-                        },
-                        cube_position,
-                        _padding_0: Default::default(),
-                        cube_radii,
+                        radii: c.radii,
                         _padding_1: Default::default(),
-                    },
-                );
+                    })
+                    .collect();
+                gpu.write_storage(&mut self.picking_cubes_buffer, &picking_cubes);
             },
         )
+    }
+}
+
+fn to_picking_camera(c: &RayMarchCamera) -> gpu_picking_id::RayMarchCamera {
+    gpu_picking_id::RayMarchCamera {
+        inverse_view_proj: gpu_picking_id::Projection {
+            matrix: c.inverse_view_proj.matrix,
+        },
+        position: c.position,
     }
 }
 
