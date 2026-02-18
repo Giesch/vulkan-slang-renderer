@@ -10,20 +10,22 @@
       "Bash(cargo clean:*)",
       "Bash(just shaders)",
       "Bash(just test:*)",
+      "Bash(just lint:*)",
       "Bash(cargo test:*)",
       "Bash(cargo insta:*)",
-      "Bash(just lint:*)",
       "Bash(git log:*)",
       "Bash(cargo doc:*)",
       "Bash(cargo build:*)",
       "Bash(cargo check:*)",
       "Bash(cargo tree:*)",
+      "WebSearch",
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:crates.io)",
-      "WebSearch",
       "WebFetch(domain:fasterthanli.me)",
       "WebFetch(domain:facet.rs)",
-      "WebFetch(domain:iquilezles.org)"
+      "WebFetch(domain:iquilezles.org)",
+      "WebFetch(domain:docs.vulkan.org)",
+      "Bash(vulkaninfo:*)"
     ]
   },
   "statusLine": {
