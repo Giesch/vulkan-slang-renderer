@@ -116,19 +116,20 @@ impl Game for GpuPicking {
                 };
                 gpu.write_uniform(&mut self.picking_params_buffer, picking_id_params);
 
-                let picking_cubes: Vec<gpu_picking_id::Cube> = self
-                    .cubes
-                    .iter()
-                    .map(|c| gpu_picking_id::Cube {
-                        position: c.position,
-                        _padding_0: Default::default(),
-                        radii: c.radii,
-                        _padding_1: Default::default(),
-                    })
-                    .collect();
+                let picking_cubes: Vec<gpu_picking_id::Cube> =
+                    self.cubes.iter().map(to_picking_id_cube).collect();
                 gpu.write_storage(&mut self.picking_cubes_buffer, &picking_cubes);
             },
         )
+    }
+}
+
+fn to_picking_id_cube(c: &Cube) -> gpu_picking_id::Cube {
+    gpu_picking_id::Cube {
+        position: c.position,
+        _padding_0: Default::default(),
+        radii: c.radii,
+        _padding_1: Default::default(),
     }
 }
 
