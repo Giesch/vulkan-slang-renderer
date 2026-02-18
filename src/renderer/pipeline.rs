@@ -26,6 +26,12 @@ pub struct PipelineHandle<T> {
     _phantom_data: PhantomData<T>,
 }
 
+/// Distinct from PipelineHandle<T> — compile-time prevents misuse with main draw calls
+#[derive(Debug)]
+pub struct PickingPipelineHandle {
+    pub(super) index: usize,
+}
+
 pub(super) struct PipelineStorage(Vec<Option<RendererPipeline>>);
 
 impl PipelineStorage {
@@ -44,7 +50,21 @@ impl PipelineStorage {
         handle
     }
 
+    pub fn add_picking(&mut self, pipeline: RendererPipeline) -> PickingPipelineHandle {
+        let handle = PickingPipelineHandle {
+            index: self.0.len(),
+        };
+
+        self.0.push(Some(pipeline));
+
+        handle
+    }
+
     pub fn get<T>(&self, handle: &PipelineHandle<T>) -> &RendererPipeline {
+        self.0[handle.index].as_ref().unwrap()
+    }
+
+    pub fn get_picking(&self, handle: &PickingPipelineHandle) -> &RendererPipeline {
         self.0[handle.index].as_ref().unwrap()
     }
 

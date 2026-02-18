@@ -9,9 +9,11 @@ pub mod koch_curve;
 pub mod serenity_crt;
 pub mod sdf_2d;
 pub mod basic_triangle;
+pub mod gpu_picking;
 pub mod ray_marching;
 pub mod depth_texture;
 pub mod sprite_batch;
+pub mod gpu_picking_id;
 
 
 pub struct ShaderAtlas {
@@ -21,9 +23,11 @@ pub struct ShaderAtlas {
     pub serenity_crt: serenity_crt::Shader,
     pub sdf_2d: sdf_2d::Shader,
     pub basic_triangle: basic_triangle::Shader,
+    pub gpu_picking: gpu_picking::Shader,
     pub ray_marching: ray_marching::Shader,
     pub depth_texture: depth_texture::Shader,
     pub sprite_batch: sprite_batch::Shader,
+    pub gpu_picking_id: gpu_picking_id::Shader,
 }
 
 impl ShaderAtlas {
@@ -35,9 +39,11 @@ impl ShaderAtlas {
             serenity_crt: serenity_crt::Shader::init(),
             sdf_2d: sdf_2d::Shader::init(),
             basic_triangle: basic_triangle::Shader::init(),
+            gpu_picking: gpu_picking::Shader::init(),
             ray_marching: ray_marching::Shader::init(),
             depth_texture: depth_texture::Shader::init(),
             sprite_batch: sprite_batch::Shader::init(),
+            gpu_picking_id: gpu_picking_id::Shader::init(),
         }
     }
 }

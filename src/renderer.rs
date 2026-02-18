@@ -48,6 +48,9 @@ pub use egui::EguiIntegration;
 
 pub mod facet_egui;
 
+mod picking;
+use picking::PickingResources;
+
 /// enables both the validation layer and debug utils logging
 const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
 /// applies MSAA-like sampling within textures
@@ -133,6 +136,9 @@ pub struct Renderer {
     egui_render_pass: Option<vk::RenderPass>,
     egui_framebuffers: Option<Vec<vk::Framebuffer>>,
     text_input_active: bool,
+
+    picking: Option<PickingResources>,
+    last_picked_object_id: u32,
 }
 
 fn calculate_render_extent(display_extent: vk::Extent2D, render_scale: f32) -> vk::Extent2D {
@@ -406,6 +412,8 @@ impl Renderer {
             egui,
             egui_render_pass,
             egui_framebuffers,
+            picking: None,
+            last_picked_object_id: 0,
             text_input_active: false,
         })
     }
@@ -560,6 +568,82 @@ impl Renderer {
         Ok(handle)
     }
 
+    pub fn create_picking_pipeline<V: VertexDescription>(
+        &mut self,
+        config: PipelineConfig<V, DrawVertexCount>,
+    ) -> anyhow::Result<PickingPipelineHandle> {
+        // Lazily initialize picking resources on first use
+        if self.picking.is_none() {
+            self.picking = Some(PickingResources::init(
+                &self.instance,
+                &self.device,
+                self.physical_device,
+                self.render_extent,
+            )?);
+        }
+
+        let picking = self.picking.as_ref().unwrap();
+
+        let pipeline_layout =
+            ShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
+        let pipeline = create_graphics_pipeline(
+            &self.device,
+            picking.render_pass,
+            vk::SampleCountFlags::TYPE_1,
+            &pipeline_layout,
+            &config.shader.vertex_binding_descriptions(),
+            &config.shader.vertex_attribute_descriptions(),
+            false, // no depth test for picking
+            false, // no blending for uint render target
+        )?;
+
+        let layout_bindings = config.shader.layout_bindings();
+        let descriptor_pool = create_descriptor_pool(&self.device, &pipeline_layout)?;
+
+        let textures = vec![];
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; BUFFER_FRAME_COUNT]> =
+            config
+                .uniform_buffer_handles
+                .iter()
+                .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
+                .collect();
+
+        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer; BUFFER_FRAME_COUNT]> =
+            config
+                .storage_buffer_handles
+                .iter()
+                .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
+                .collect();
+
+        let set_layouts: Vec<_> = pipeline_layout
+            .descriptor_set_layouts
+            .iter()
+            .map(|t| t.0)
+            .collect();
+        let descriptor_sets = create_descriptor_sets(
+            &self.device,
+            descriptor_pool,
+            &set_layouts,
+            &uniform_buffers_in_layout_frame_order,
+            &storage_buffers_in_layout_frame_order,
+            &textures,
+            layout_bindings,
+        )?;
+
+        let renderer_pipeline = RendererPipeline {
+            layout: pipeline_layout,
+            pipeline,
+            vertex_pipeline_config: VertexPipelineConfig::VertexCount,
+            descriptor_pool,
+            descriptor_sets,
+            shader: config.shader,
+            disable_depth_test: true,
+        };
+
+        let handle = self.pipelines.add_picking(renderer_pipeline);
+        Ok(handle)
+    }
+
     /// NOTE call this only after draining gpu commands
     pub fn drop_pipeline<D>(&mut self, pipeline_handle: PipelineHandle<D>) {
         let pipeline = self.pipelines.take(pipeline_handle);
@@ -609,6 +693,7 @@ impl Renderer {
             &config.shader.vertex_binding_descriptions(),
             &config.shader.vertex_attribute_descriptions(),
             !config.disable_depth_test,
+            true,
         )?;
 
         let vertex_pipeline_config = match &config.vertex_config {
@@ -705,6 +790,7 @@ impl Renderer {
         pipeline_handle: &PipelineHandle<D>,
         image_index: u32,
         draw_call: DrawCallConfig,
+        picking_config: Option<&PickingDrawConfig>,
     ) -> Result<(), anyhow::Error> {
         let command_buffer = self.command_buffers[self.current_frame];
 
@@ -712,6 +798,110 @@ impl Renderer {
         unsafe {
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)?;
+        }
+
+        // PICKING RENDER PASS (before main pass)
+        if let (Some(picking_config), Some(picking)) = (picking_config, self.picking.as_ref()) {
+            let picking_pipeline = self.pipelines.get_picking(&picking_config.picking_handle);
+            let picking_framebuffer = picking.framebuffers[self.current_frame];
+            let picking_render_area = vk::Rect2D::default()
+                .offset(vk::Offset2D::default())
+                .extent(self.render_extent);
+            let picking_clear = vk::ClearValue {
+                color: vk::ClearColorValue {
+                    uint32: [0, 0, 0, 0],
+                },
+            };
+            let picking_clear_values = [picking_clear];
+            let picking_render_pass_begin = vk::RenderPassBeginInfo::default()
+                .render_pass(picking.render_pass)
+                .framebuffer(picking_framebuffer)
+                .render_area(picking_render_area)
+                .clear_values(&picking_clear_values);
+
+            unsafe {
+                self.device.cmd_begin_render_pass(
+                    command_buffer,
+                    &picking_render_pass_begin,
+                    vk::SubpassContents::INLINE,
+                );
+
+                self.device.cmd_bind_pipeline(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    picking_pipeline.pipeline,
+                );
+            }
+
+            let viewport = vk::Viewport::default()
+                .x(0.0)
+                .y(0.0)
+                .width(self.render_extent.width as f32)
+                .height(self.render_extent.height as f32)
+                .min_depth(0.0)
+                .max_depth(1.0);
+            let viewports = [viewport];
+            unsafe { self.device.cmd_set_viewport(command_buffer, 0, &viewports) };
+
+            let scissor = vk::Rect2D::default()
+                .offset(vk::Offset2D::default())
+                .extent(self.render_extent);
+            let scissors = [scissor];
+            unsafe { self.device.cmd_set_scissor(command_buffer, 0, &scissors) };
+
+            let picking_descriptor_sets =
+                self.picking_descriptor_sets_for_frame(&picking_config.picking_handle);
+            unsafe {
+                self.device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    picking_pipeline.layout.pipeline_layout,
+                    0,
+                    picking_descriptor_sets,
+                    &[],
+                );
+
+                self.device.cmd_draw(command_buffer, 3, 1, 0, 0);
+                self.device.cmd_end_render_pass(command_buffer);
+            }
+
+            // Copy 1 pixel from picking image to readback buffer
+            let mouse_x =
+                picking_config.mouse_pixel[0].min(self.render_extent.width.saturating_sub(1));
+            let mouse_y =
+                picking_config.mouse_pixel[1].min(self.render_extent.height.saturating_sub(1));
+
+            let region = vk::BufferImageCopy::default()
+                .buffer_offset(0)
+                .buffer_row_length(0)
+                .buffer_image_height(0)
+                .image_subresource(
+                    vk::ImageSubresourceLayers::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(0)
+                        .base_array_layer(0)
+                        .layer_count(1),
+                )
+                .image_offset(vk::Offset3D {
+                    x: mouse_x as i32,
+                    y: mouse_y as i32,
+                    z: 0,
+                })
+                .image_extent(vk::Extent3D {
+                    width: 1,
+                    height: 1,
+                    depth: 1,
+                });
+
+            unsafe {
+                self.device.cmd_copy_image_to_buffer(
+                    command_buffer,
+                    picking.images[self.current_frame],
+                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    picking.readback_buffers[self.current_frame],
+                    &[region],
+                );
+            }
         }
 
         let framebuffer = self.swapchain_framebuffers[self.current_frame];
@@ -994,10 +1184,24 @@ impl Renderer {
             .unwrap()
     }
 
+    fn picking_descriptor_sets_for_frame(
+        &self,
+        handle: &PickingPipelineHandle,
+    ) -> &[vk::DescriptorSet] {
+        let pipeline = self.pipelines.get_picking(handle);
+        let descriptor_sets_per_frame = pipeline.layout.descriptor_set_layouts.len();
+        pipeline
+            .descriptor_sets
+            .chunks(descriptor_sets_per_frame)
+            .nth(self.buffer_frame)
+            .unwrap()
+    }
+
     fn draw_frame<D>(
         &mut self,
         pipeline_handle: &PipelineHandle<D>,
         draw_call: DrawCallConfig,
+        picking_config: Option<PickingDrawConfig>,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), anyhow::Error> {
         self.total_frames += 1;
@@ -1038,6 +1242,12 @@ impl Renderer {
         let fences = [self.frames_in_flight[self.current_frame]];
         unsafe { self.device.wait_for_fences(&fences, true, u64::MAX)? };
 
+        // 3b. Read picking result from staging buffer (written 2 frames ago, now safe to read)
+        if let Some(picking) = &self.picking {
+            let id = unsafe { *picking.readback_mapped[self.current_frame] };
+            self.last_picked_object_id = id;
+        }
+
         // 4. Free egui textures (must be after fence wait)
         if let Some(egui) = &mut self.egui {
             egui.free_pending_textures(self.current_frame);
@@ -1050,7 +1260,12 @@ impl Renderer {
             self.device
                 .reset_command_buffer(command_buffer, Default::default())?;
         }
-        self.record_command_buffer(pipeline_handle, image_index, draw_call)?;
+        self.record_command_buffer(
+            pipeline_handle,
+            image_index,
+            draw_call,
+            picking_config.as_ref(),
+        )?;
 
         let wait_semaphores = [self.image_available[self.buffer_frame]];
         let wait_dst_stage_mask = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -1215,6 +1430,15 @@ impl Renderer {
             )?);
         }
 
+        if let Some(picking) = &mut self.picking {
+            picking.recreate_images(
+                &self.instance,
+                &self.device,
+                self.physical_device,
+                self.render_extent,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -1324,6 +1548,7 @@ impl Renderer {
             &render_pipeline_mut.shader.vertex_binding_descriptions(),
             &render_pipeline_mut.shader.vertex_attribute_descriptions(),
             !render_pipeline_mut.disable_depth_test,
+            true,
         )?;
 
         info!("finished recompiling shaders");
@@ -1407,6 +1632,10 @@ impl Drop for Renderer {
                     self.device
                         .destroy_descriptor_set_layout(desc_set_layout, None);
                 }
+            }
+
+            if let Some(picking) = self.picking.take() {
+                picking.destroy(&self.device);
             }
 
             self.device.destroy_render_pass(self.render_pass, None);
@@ -2124,6 +2353,7 @@ fn create_graphics_pipeline(
     vertex_binding_descriptions: &[vk::VertexInputBindingDescription],
     vertex_attribute_descriptions: &[vk::VertexInputAttributeDescription],
     depth_test_enable: bool,
+    blend_enable: bool,
 ) -> Result<vk::Pipeline, anyhow::Error> {
     let vert_shader_spv = &pipeline_layout.vertex_shader.spv_bytes;
     let frag_shader_spv = &pipeline_layout.fragment_shader.spv_bytes;
@@ -2177,7 +2407,7 @@ fn create_graphics_pipeline(
 
     // color blend per attached framebuffer
     let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
-        .blend_enable(true)
+        .blend_enable(blend_enable)
         .color_blend_op(vk::BlendOp::ADD)
         .alpha_blend_op(vk::BlendOp::ADD)
         .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
@@ -2431,7 +2661,7 @@ fn copy_memory_buffer(
     Ok(())
 }
 
-fn create_memory_buffer(
+pub(super) fn create_memory_buffer(
     instance: &ash::Instance,
     device: &ash::Device,
     physical_device: vk::PhysicalDevice,
@@ -2811,7 +3041,7 @@ fn create_texture_image(
 }
 
 #[derive(Clone, Copy)]
-struct ImageOptions {
+pub(super) struct ImageOptions {
     extent: vk::Extent2D,
     format: vk::Format,
     tiling: vk::ImageTiling,
@@ -2821,7 +3051,7 @@ struct ImageOptions {
     msaa_samples: vk::SampleCountFlags,
 }
 
-fn create_vk_image(
+pub(super) fn create_vk_image(
     instance: &ash::Instance,
     device: &ash::Device,
     physical_device: vk::PhysicalDevice,
@@ -3022,7 +3252,7 @@ fn copy_buffer_to_image(
     Ok(())
 }
 
-fn create_image_view(
+pub(super) fn create_image_view(
     device: &ash::Device,
     image: vk::Image,
     format: vk::Format,
@@ -3709,7 +3939,7 @@ impl<'f> FrameRenderer<'f> {
 
         let draw_call = DrawCallConfig::IndexCount(index_count);
 
-        self.draw_frame(pipeline_handle, draw_call, gpu_update)
+        self.draw_frame(pipeline_handle, draw_call, None, gpu_update)
     }
 
     pub fn draw_vertex_count(
@@ -3719,17 +3949,45 @@ impl<'f> FrameRenderer<'f> {
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
         let draw_call = DrawCallConfig::VertexCount(vertex_count);
-        self.draw_frame(pipeline_handle, draw_call, gpu_update)
+        self.draw_frame(pipeline_handle, draw_call, None, gpu_update)
+    }
+
+    pub fn draw_vertex_count_with_picking(
+        self,
+        main_pipeline: &PipelineHandle<DrawVertexCount>,
+        vertex_count: u32,
+        picking_pipeline: &PickingPipelineHandle,
+        mouse_position: [f32; 2],
+        gpu_update: impl FnOnce(&mut Gpu),
+    ) -> Result<(), DrawError> {
+        let render_scale = self.0.render_scale;
+        let mouse_pixel = [
+            (mouse_position[0] * render_scale) as u32,
+            (mouse_position[1] * render_scale) as u32,
+        ];
+        let picking_config = PickingDrawConfig {
+            picking_handle: PickingPipelineHandle {
+                index: picking_pipeline.index,
+            },
+            mouse_pixel,
+        };
+        let draw_call = DrawCallConfig::VertexCount(vertex_count);
+        self.draw_frame(main_pipeline, draw_call, Some(picking_config), gpu_update)
+    }
+
+    pub fn picked_object_id(&self) -> u32 {
+        self.0.last_picked_object_id
     }
 
     fn draw_frame<D>(
         self,
         pipeline_handle: &PipelineHandle<D>,
         draw_call: DrawCallConfig,
+        picking_config: Option<PickingDrawConfig>,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
         self.0
-            .draw_frame(pipeline_handle, draw_call, gpu_update)
+            .draw_frame(pipeline_handle, draw_call, picking_config, gpu_update)
             .map_err(DrawError::DrawError)
     }
 }
@@ -3738,4 +3996,9 @@ impl<'f> FrameRenderer<'f> {
 enum DrawCallConfig {
     VertexCount(u32),
     IndexCount(u32),
+}
+
+struct PickingDrawConfig {
+    picking_handle: PickingPipelineHandle,
+    mouse_pixel: [u32; 2],
 }

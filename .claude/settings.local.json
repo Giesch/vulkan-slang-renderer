@@ -25,7 +25,9 @@
       "WebFetch(domain:facet.rs)",
       "WebFetch(domain:iquilezles.org)",
       "WebFetch(domain:docs.vulkan.org)",
-      "Bash(vulkaninfo:*)"
+      "Bash(vulkaninfo:*)",
+      "WebFetch(domain:danielchasehooper.com)",
+      "Bash(INSTA_UPDATE=no cargo test:*)"
     ]
   },
   "statusLine": {
