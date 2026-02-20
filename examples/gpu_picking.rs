@@ -59,12 +59,23 @@ impl Game for GpuPicking {
         let picking_config = atlas.gpu_picking_id.pipeline_config(picking_resources);
         let picking_pipeline = renderer.create_picking_pipeline(picking_config)?;
 
-        let cubes = vec![Cube {
-            position: Vec3::new(0.0, 0.0, 0.0),
-            _padding_0: Default::default(),
-            radii: Vec3::splat(0.8),
-            _padding_1: Default::default(),
-        }];
+        let mut cubes = Vec::new();
+        let radii = 0.3_f32;
+        let spacing: f32 = 1.0;
+        for x in -1..=1 {
+            for y in -1..=1 {
+                for z in -1..=1 {
+                    let position = spacing * Vec3::new(x as f32, y as f32, z as f32);
+
+                    cubes.push(Cube {
+                        position,
+                        _padding_0: Default::default(),
+                        radii: Vec3::splat(radii),
+                        _padding_1: Default::default(),
+                    });
+                }
+            }
+        }
 
         Ok(Self {
             params_buffer,
@@ -143,7 +154,7 @@ fn to_picking_camera(c: &RayMarchCamera) -> gpu_picking_id::RayMarchCamera {
 }
 
 fn build_camera(aspect_ratio: f32) -> RayMarchCamera {
-    let position = Vec3::new(3.0, 3.0, -3.0);
+    let position = Vec3::new(5.0, 5.0, -5.0);
     let target = Vec3::ZERO;
     let up = Vec3::Y;
 

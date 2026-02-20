@@ -73,15 +73,13 @@ impl PipelineStorage {
         self.0[handle.index].as_mut().unwrap()
     }
 
+    #[expect(unused)]
     pub fn take<T>(&mut self, handle: PipelineHandle<T>) -> RendererPipeline {
         self.0[handle.index].take().unwrap()
     }
 
     pub fn take_all(&mut self) -> Vec<RendererPipeline> {
-        self.0
-            .iter_mut()
-            .filter_map(|option| option.take())
-            .collect()
+        self.0.iter_mut().filter_map(|o| o.take()).collect()
     }
 }
 

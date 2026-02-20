@@ -570,7 +570,7 @@ impl Renderer {
 
     pub fn create_picking_pipeline<V: VertexDescription>(
         &mut self,
-        config: PipelineConfig<V, DrawVertexCount>,
+        picking_config: PipelineConfig<V, DrawVertexCount>,
     ) -> anyhow::Result<PickingPipelineHandle> {
         // Lazily initialize picking resources on first use
         if self.picking.is_none() {
@@ -581,41 +581,39 @@ impl Renderer {
                 self.render_extent,
             )?);
         }
-
         let picking = self.picking.as_ref().unwrap();
 
-        let pipeline_layout =
-            ShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
-        let pipeline = create_graphics_pipeline(
+        let picking_pipeline_layout =
+            ShaderPipelineLayout::create_from_atlas(&self.device, &*picking_config.shader)?;
+        let picking_pipeline = create_graphics_pipeline(
             &self.device,
             picking.render_pass,
             vk::SampleCountFlags::TYPE_1,
-            &pipeline_layout,
-            &config.shader.vertex_binding_descriptions(),
-            &config.shader.vertex_attribute_descriptions(),
+            &picking_pipeline_layout,
+            &picking_config.shader.vertex_binding_descriptions(),
+            &picking_config.shader.vertex_attribute_descriptions(),
             false, // no depth test for picking
             false, // no blending for uint render target
         )?;
 
-        let layout_bindings = config.shader.layout_bindings();
-        let descriptor_pool = create_descriptor_pool(&self.device, &pipeline_layout)?;
+        let layout_bindings = picking_config.shader.layout_bindings();
+        let descriptor_pool = create_descriptor_pool(&self.device, &picking_pipeline_layout)?;
 
-        let textures = vec![];
         let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; BUFFER_FRAME_COUNT]> =
-            config
+            picking_config
                 .uniform_buffer_handles
                 .iter()
                 .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
                 .collect();
 
         let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer; BUFFER_FRAME_COUNT]> =
-            config
+            picking_config
                 .storage_buffer_handles
                 .iter()
                 .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
                 .collect();
 
-        let set_layouts: Vec<_> = pipeline_layout
+        let set_layouts: Vec<_> = picking_pipeline_layout
             .descriptor_set_layouts
             .iter()
             .map(|t| t.0)
@@ -626,28 +624,22 @@ impl Renderer {
             &set_layouts,
             &uniform_buffers_in_layout_frame_order,
             &storage_buffers_in_layout_frame_order,
-            &textures,
+            &[],
             layout_bindings,
         )?;
 
         let renderer_pipeline = RendererPipeline {
-            layout: pipeline_layout,
-            pipeline,
+            layout: picking_pipeline_layout,
+            pipeline: picking_pipeline,
             vertex_pipeline_config: VertexPipelineConfig::VertexCount,
             descriptor_pool,
             descriptor_sets,
-            shader: config.shader,
+            shader: picking_config.shader,
             disable_depth_test: true,
         };
 
         let handle = self.pipelines.add_picking(renderer_pipeline);
         Ok(handle)
-    }
-
-    /// NOTE call this only after draining gpu commands
-    pub fn drop_pipeline<D>(&mut self, pipeline_handle: PipelineHandle<D>) {
-        let pipeline = self.pipelines.take(pipeline_handle);
-        self.destroy_pipeline(pipeline);
     }
 
     fn destroy_pipeline(&mut self, pipeline: RendererPipeline) {

@@ -128,9 +128,9 @@ public interface IShape {
             let shape = buffer[i];
             let shapeDistance = shape.distance(position);
 
-            if (rayHit.hasValue && shapeDistance < rayHit.value.distance) {
-                rayHit = RayHit(shapeDistance, shape.color);
-            } else {
+            let closestOfItsKind = rayHit.hasValue && shapeDistance < rayHit.value.distance;
+            let firstOfItsKind = !rayHit.hasValue;
+            if (closestOfItsKind || firstOfItsKind) {
                 rayHit = RayHit(shapeDistance, shape.color);
             }
         }

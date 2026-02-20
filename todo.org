@@ -1,6 +1,10 @@
 #+title: Todo
 
 * Now
+- [-] read / refactor gpu picking
+  - [X] shaders
+  - [ ] renderer changes
+
 - [ ] basic compute shader example(s)
   - [ ] read the official vulkan compute shader tutorial
   - [ ] implement a version of claude_notes/render-graph/PLAN.md
@@ -9,9 +13,7 @@
 - [ ] text support with MSDF fonts
   - read all the red blob games stuff
 
-- [ ] try rust hot reload
-  dx or cargo-hot? try both?
-  or go straight to TS / Roc?
+- [ ] Roc scripting
 
 - [ ] add a way for claude to check for vulkan validation errors
   - panic on validation error, based on an environment variable?
