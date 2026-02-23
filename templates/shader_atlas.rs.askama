@@ -1,9 +1,15 @@
 {%- for module_name in module_names -%}
 pub mod {{ module_name }};
+{%~ endfor -%}
+{%- for module_name in compute_module_names -%}
+pub mod {{ module_name }};
 {%~ endfor +%}
 
 pub struct ShaderAtlas {
 {%- for (field_name, type_prefix) in entries +%}
+    pub {{ field_name }}: {{type_prefix}}Shader,
+{%- endfor -%}
+{%- for (field_name, type_prefix) in compute_entries +%}
     pub {{ field_name }}: {{type_prefix}}Shader,
 {%- endfor +%}
 }
@@ -12,6 +18,9 @@ impl ShaderAtlas {
     pub fn init() -> Self {
         Self {
 {%- for (field_name, type_prefix) in entries +%}
+            {{ field_name }}: {{ type_prefix }}Shader::init(),
+{%- endfor -%}
+{%- for (field_name, type_prefix) in compute_entries +%}
             {{ field_name }}: {{ type_prefix }}Shader::init(),
 {%- endfor +%}
         }

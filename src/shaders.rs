@@ -26,6 +26,11 @@ pub struct ReflectedShader {
     pub reflection_json: ReflectionJson,
 }
 
+pub struct ReflectedComputeShader {
+    pub compute_shader: CompiledShader,
+    pub reflection_json: ComputeReflectionJson,
+}
+
 fn prepare_reflected_shader(
     source_file_name: &str,
     search_path: &str,
@@ -119,6 +124,98 @@ fn prepare_reflected_shader(
 #[cfg(debug_assertions)]
 pub fn dev_compile_slang_shaders(source_file_name: &str) -> anyhow::Result<ReflectedShader> {
     prepare_reflected_shader(source_file_name, "shaders/source")
+}
+
+fn prepare_reflected_compute_shader(
+    source_file_name: &str,
+    search_path: &str,
+) -> anyhow::Result<ReflectedComputeShader> {
+    let global_session = slang::GlobalSession::new().unwrap();
+    let search_path = CString::new(search_path).unwrap();
+
+    let session_options = slang::CompilerOptions::default()
+        .vulkan_use_entry_point_name(true)
+        .language(slang::SourceLanguage::Slang)
+        .optimization(slang::OptimizationLevel::High)
+        .emit_spirv_directly(true);
+    let session_options = match MATRIX_LAYOUT {
+        MatrixLayout::ColumnMajor => session_options.matrix_layout_column(true),
+        MatrixLayout::RowMajor => session_options.matrix_layout_row(true),
+    };
+
+    let target_desc = slang::TargetDesc::default()
+        .format(slang::CompileTarget::Spirv)
+        .profile(global_session.find_profile("glsl_450+spirv_1_6"));
+
+    let targets = [target_desc];
+    let search_paths = [search_path.as_ptr()];
+    let session_desc = slang::SessionDesc::default()
+        .targets(&targets)
+        .search_paths(&search_paths)
+        .options(&session_options);
+
+    let session = global_session.create_session(&session_desc).unwrap();
+
+    let shader_module = session.load_module(source_file_name)?;
+
+    let column_major = MATRIX_LAYOUT == MatrixLayout::ColumnMajor;
+    let cpu_constants_module_src = format!(
+        r#"
+        #language slang 2026
+        module cpu_constants;
+
+        export static const bool columnMajor = {column_major};
+        "#,
+    );
+    let cpu_constants_module = session.load_module_from_source_string(
+        "cpu_constants",
+        "cpu_constants.slang",
+        &cpu_constants_module_src,
+    )?;
+
+    // compute shaders have exactly 1 entry point
+    debug_assert!(shader_module.entry_points().len() == 1);
+
+    let mut components = vec![shader_module.clone().into()];
+    let mut compute_shader: Option<CompiledShader> = None;
+    for entry_point in shader_module.entry_points() {
+        let compiled_shader = compile_shader(
+            &entry_point,
+            &session,
+            &shader_module,
+            &cpu_constants_module,
+        )?;
+
+        assert!(
+            compiled_shader.stage == slang::Stage::Compute,
+            "expected compute stage, got {:?}",
+            compiled_shader.stage
+        );
+        compute_shader = Some(compiled_shader);
+
+        components.push(entry_point.clone().into());
+    }
+
+    let compute_shader = compute_shader
+        .unwrap_or_else(|| panic!("failed to load compute entry point for: {source_file_name}"));
+
+    let program = session.create_composite_component_type(&components)?;
+    let linked_program = program.link()?;
+    let program_layout = linked_program.layout(0)?;
+
+    let reflection_json = reflection::compute_reflection_json(source_file_name, program_layout)?;
+
+    Ok(ReflectedComputeShader {
+        compute_shader,
+        reflection_json,
+    })
+}
+
+#[cfg(debug_assertions)]
+pub fn dev_compile_slang_compute_shaders(
+    source_file_name: &str,
+) -> anyhow::Result<ReflectedComputeShader> {
+    prepare_reflected_compute_shader(source_file_name, "shaders/source")
 }
 
 pub struct CompiledShader {

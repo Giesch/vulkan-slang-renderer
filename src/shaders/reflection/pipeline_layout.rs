@@ -339,7 +339,7 @@ impl ReflectedBindingType {
             slang::BindingType::MutableFlag => todo!(),
             slang::BindingType::MutableTeture => todo!(),
             slang::BindingType::MutableTypedBuffer => todo!(),
-            slang::BindingType::MutableRawBuffer => todo!(),
+            slang::BindingType::MutableRawBuffer => Self::StorageBuffer,
             slang::BindingType::BaseMask => todo!(),
             slang::BindingType::ExtMask => todo!(),
             slang::BindingType::Unknown => todo!(),

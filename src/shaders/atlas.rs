@@ -36,3 +36,11 @@ pub struct PrecompiledShader {
     pub entry_point_name: CString,
     pub spv_bytes: Vec<u32>,
 }
+
+pub trait ComputeShaderAtlasEntry {
+    fn source_file_name(&self) -> &str;
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
+    fn precompiled_compute_shader(&self) -> PrecompiledShader;
+    fn pipeline_layout(&self) -> &ReflectedPipelineLayout;
+    fn workgroup_size(&self) -> [u32; 3];
+}

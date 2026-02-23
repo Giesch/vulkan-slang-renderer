@@ -14,7 +14,7 @@ use sdl3::video::Window;
 
 use crate::game::MaxMSAASamples;
 use crate::shaders;
-use crate::shaders::atlas::{PrecompiledShader, ShaderAtlasEntry};
+use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader, ShaderAtlasEntry};
 
 #[cfg(debug_assertions)]
 use crate::shader_watcher;
@@ -42,6 +42,9 @@ pub use storage_buffer::*;
 
 pub mod pipeline;
 pub use pipeline::*;
+
+pub mod ping_pong_buffer;
+pub use ping_pong_buffer::*;
 
 pub mod egui;
 pub use egui::EguiIntegration;
@@ -128,6 +131,7 @@ pub struct Renderer {
     buffer_frame: usize,
 
     pipelines: PipelineStorage,
+    compute_pipelines: ComputePipelineStorage,
     textures: TextureStorage,
     uniform_buffers: UniformBufferStorage,
     storage_buffers: StorageBufferStorage,
@@ -351,6 +355,7 @@ impl Renderer {
         )?;
 
         let pipelines = PipelineStorage::new();
+        let compute_pipelines = ComputePipelineStorage::new();
         let textures = TextureStorage::new();
         let uniform_buffers = UniformBufferStorage::new();
         let storage_buffers = StorageBufferStorage::new();
@@ -406,6 +411,7 @@ impl Renderer {
             buffer_frame: 0,
 
             pipelines,
+            compute_pipelines,
             textures,
             uniform_buffers,
             storage_buffers,
@@ -544,6 +550,28 @@ impl Renderer {
         Ok(handle)
     }
 
+    pub fn create_ping_pong_buffer<T: GPUWrite>(
+        &mut self,
+        len: u32,
+    ) -> anyhow::Result<PingPongBufferHandle<T>> {
+        let buf_a = self.create_storage_buffer::<T>(len)?;
+        let buf_b = self.create_storage_buffer::<T>(len)?;
+        Ok(PingPongBufferHandle::new([buf_a, buf_b]))
+    }
+
+    pub fn write_ping_pong_initial<T>(
+        &mut self,
+        ping_pong: &mut PingPongBufferHandle<T>,
+        data: &[T],
+    ) {
+        let mut gpu = Gpu {
+            buffer_frame: 0, // unused — write_ping_pong_initial writes all frames
+            uniform_buffers: &mut self.uniform_buffers,
+            storage_buffers: &mut self.storage_buffers,
+        };
+        gpu.write_ping_pong_initial(ping_pong, data);
+    }
+
     pub fn drop_storage_buffer<T>(&mut self, storage_buffer: StorageBufferHandle<T>) {
         let buffers_per_frame = self.storage_buffers.take(storage_buffer);
         for raw_storage_buffer in buffers_per_frame {
@@ -671,6 +699,117 @@ impl Renderer {
         }
     }
 
+    pub fn create_compute_pipeline(
+        &mut self,
+        config: ComputePipelineConfig,
+    ) -> anyhow::Result<PipelineHandle<Compute>> {
+        let pipeline_layout =
+            ComputeShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
+
+        let shader_module = {
+            let shader_module_create_info = vk::ShaderModuleCreateInfo::default()
+                .code(&pipeline_layout.compute_shader.spv_bytes);
+            unsafe {
+                self.device
+                    .create_shader_module(&shader_module_create_info, None)?
+            }
+        };
+
+        let stage = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::COMPUTE)
+            .module(shader_module)
+            .name(&pipeline_layout.compute_shader.entry_point_name);
+
+        let compute_pipeline_create_info = vk::ComputePipelineCreateInfo::default()
+            .stage(stage)
+            .layout(pipeline_layout.pipeline_layout);
+
+        let pipeline = unsafe {
+            self.device.create_compute_pipelines(
+                vk::PipelineCache::null(),
+                &[compute_pipeline_create_info],
+                None,
+            )
+        }
+        .map_err(|(_pipelines, err)| err)?[0];
+
+        unsafe {
+            self.device.destroy_shader_module(shader_module, None);
+        }
+
+        let layout_bindings = config.shader.layout_bindings();
+        let descriptor_pool = create_descriptor_pool_from_layouts(
+            &self.device,
+            &pipeline_layout.descriptor_set_layouts,
+        )?;
+
+        let textures = {
+            let mut textures = vec![];
+            for texture_handle in config.texture_handles {
+                let texture = self.textures.get(texture_handle);
+                textures.push(texture);
+            }
+            textures
+        };
+
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; BUFFER_FRAME_COUNT]> =
+            config
+                .uniform_buffer_handles
+                .iter()
+                .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
+                .collect();
+
+        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer; BUFFER_FRAME_COUNT]> =
+            config
+                .storage_buffer_handles
+                .iter()
+                .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
+                .collect();
+
+        let set_layouts: Vec<_> = pipeline_layout
+            .descriptor_set_layouts
+            .iter()
+            .map(|t| t.0)
+            .collect();
+        let descriptor_sets = create_descriptor_sets(
+            &self.device,
+            descriptor_pool,
+            &set_layouts,
+            &uniform_buffers_in_layout_frame_order,
+            &storage_buffers_in_layout_frame_order,
+            &textures,
+            layout_bindings,
+        )?;
+
+        let compute_renderer_pipeline = ComputeRendererPipeline {
+            layout: pipeline_layout,
+            pipeline,
+            descriptor_pool,
+            descriptor_sets,
+            shader: config.shader,
+        };
+
+        let handle = self.compute_pipelines.add(compute_renderer_pipeline);
+
+        Ok(handle)
+    }
+
+    fn destroy_compute_pipeline(&mut self, pipeline: ComputeRendererPipeline) {
+        unsafe {
+            self.device
+                .destroy_descriptor_pool(pipeline.descriptor_pool, None);
+
+            for &(desc_set_layout, _) in &pipeline.layout.descriptor_set_layouts {
+                self.device
+                    .destroy_descriptor_set_layout(desc_set_layout, None);
+            }
+
+            self.device.destroy_pipeline(pipeline.pipeline, None);
+            self.device
+                .destroy_pipeline_layout(pipeline.layout.pipeline_layout, None);
+        }
+    }
+
     fn init_pipeline<V: VertexDescription, D: DrawCall>(
         &mut self,
         config: PipelineConfig<V, D>,
@@ -783,6 +922,7 @@ impl Renderer {
         image_index: u32,
         draw_call: DrawCallConfig,
         picking_config: Option<&PickingDrawConfig>,
+        pending_compute: &[PendingComputeCommand],
     ) -> Result<(), anyhow::Error> {
         let command_buffer = self.command_buffers[self.current_frame];
 
@@ -790,6 +930,73 @@ impl Renderer {
         unsafe {
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)?;
+        }
+
+        // COMPUTE DISPATCHES (before any render passes)
+        for cmd in pending_compute {
+            match cmd {
+                PendingComputeCommand::Dispatch {
+                    pipeline_index,
+                    group_count,
+                } => {
+                    let compute_pipeline = self.compute_pipelines.get_by_index(*pipeline_index);
+                    let descriptor_sets_per_frame =
+                        compute_pipeline.layout.descriptor_set_layouts.len();
+                    let compute_descriptor_sets = compute_pipeline
+                        .descriptor_sets
+                        .chunks(descriptor_sets_per_frame)
+                        .nth(self.buffer_frame)
+                        .unwrap();
+
+                    unsafe {
+                        self.device.cmd_bind_pipeline(
+                            command_buffer,
+                            vk::PipelineBindPoint::COMPUTE,
+                            compute_pipeline.pipeline,
+                        );
+
+                        self.device.cmd_bind_descriptor_sets(
+                            command_buffer,
+                            vk::PipelineBindPoint::COMPUTE,
+                            compute_pipeline.layout.pipeline_layout,
+                            0,
+                            compute_descriptor_sets,
+                            &[],
+                        );
+
+                        self.device.cmd_dispatch(
+                            command_buffer,
+                            group_count[0],
+                            group_count[1],
+                            group_count[2],
+                        );
+                    }
+                }
+
+                PendingComputeCommand::Barrier {
+                    src_stage,
+                    dst_stage,
+                    src_access,
+                    dst_access,
+                } => {
+                    let memory_barrier = vk::MemoryBarrier::default()
+                        .src_access_mask(*src_access)
+                        .dst_access_mask(*dst_access);
+                    let memory_barriers = [memory_barrier];
+
+                    unsafe {
+                        self.device.cmd_pipeline_barrier(
+                            command_buffer,
+                            *src_stage,
+                            *dst_stage,
+                            vk::DependencyFlags::empty(),
+                            &memory_barriers,
+                            &[],
+                            &[],
+                        );
+                    }
+                }
+            }
         }
 
         // PICKING RENDER PASS (before main pass)
@@ -1176,6 +1383,20 @@ impl Renderer {
             .unwrap()
     }
 
+    #[expect(unused)]
+    fn descriptor_sets_for_compute_frame(
+        &self,
+        pipeline_handle: &PipelineHandle<Compute>,
+    ) -> &[vk::DescriptorSet] {
+        let compute_pipeline = self.compute_pipelines.get(pipeline_handle);
+        let descriptor_sets_per_frame = compute_pipeline.layout.descriptor_set_layouts.len();
+        compute_pipeline
+            .descriptor_sets
+            .chunks(descriptor_sets_per_frame)
+            .nth(self.buffer_frame)
+            .unwrap()
+    }
+
     fn picking_descriptor_sets_for_frame(
         &self,
         handle: &PickingPipelineHandle,
@@ -1194,11 +1415,21 @@ impl Renderer {
         pipeline_handle: &PipelineHandle<D>,
         draw_call: DrawCallConfig,
         picking_config: Option<PickingDrawConfig>,
+        pending_compute: Vec<PendingComputeCommand>,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), anyhow::Error> {
         self.total_frames += 1;
         #[cfg(debug_assertions)]
-        self.check_for_shader_recompile(pipeline_handle)?;
+        {
+            let compute_indices: Vec<usize> = pending_compute
+                .iter()
+                .filter_map(|cmd| match cmd {
+                    PendingComputeCommand::Dispatch { pipeline_index, .. } => Some(*pipeline_index),
+                    _ => None,
+                })
+                .collect();
+            self.check_for_shader_recompile(pipeline_handle, &compute_indices)?;
+        }
 
         let command_buffer = self.command_buffers[self.current_frame];
 
@@ -1257,6 +1488,7 @@ impl Renderer {
             image_index,
             draw_call,
             picking_config.as_ref(),
+            &pending_compute,
         )?;
 
         let wait_semaphores = [self.image_available[self.buffer_frame]];
@@ -1458,6 +1690,7 @@ impl Renderer {
     fn check_for_shader_recompile<D>(
         &mut self,
         pipeline_handle: &PipelineHandle<D>,
+        compute_pipeline_indices: &[usize],
     ) -> Result<(), anyhow::Error> {
         // drop old graphics reloaded pipelines for frames that are no longer needed
         let mut to_remove = vec![];
@@ -1493,6 +1726,9 @@ impl Renderer {
         if !edit_events.is_empty() {
             info!("recompiling shaders...");
             self.try_shader_recompile(pipeline_handle, &edit_events)?;
+            for &compute_index in compute_pipeline_indices {
+                self.try_compute_shader_recompile(compute_index)?;
+            }
         }
 
         Ok(())
@@ -1544,6 +1780,79 @@ impl Renderer {
         )?;
 
         info!("finished recompiling shaders");
+
+        Ok(())
+    }
+
+    #[cfg(debug_assertions)]
+    fn try_compute_shader_recompile(
+        &mut self,
+        compute_pipeline_index: usize,
+    ) -> Result<(), anyhow::Error> {
+        let compute_pipeline = self.compute_pipelines.get_by_index(compute_pipeline_index);
+
+        let mut tmp_layout = match ComputeShaderPipelineLayout::create_from_atlas(
+            &self.device,
+            &*compute_pipeline.shader,
+        ) {
+            Ok(layout) => layout,
+            Err(e) => {
+                error!("failed to compile compute shader: {e}");
+                return Ok(());
+            }
+        };
+
+        let compute_pipeline_mut = self
+            .compute_pipelines
+            .get_mut_by_index(compute_pipeline_index);
+
+        std::mem::swap(&mut tmp_layout, &mut compute_pipeline_mut.layout);
+
+        let descriptor_set_layouts = tmp_layout
+            .descriptor_set_layouts
+            .into_iter()
+            .map(|t| t.0)
+            .collect();
+        self.old_pipelines.push((
+            self.total_frames,
+            compute_pipeline_mut.pipeline,
+            tmp_layout.pipeline_layout,
+            descriptor_set_layouts,
+        ));
+
+        // Create new compute pipeline
+        let shader_module = {
+            let shader_module_create_info = vk::ShaderModuleCreateInfo::default()
+                .code(&compute_pipeline_mut.layout.compute_shader.spv_bytes);
+            unsafe {
+                self.device
+                    .create_shader_module(&shader_module_create_info, None)?
+            }
+        };
+
+        let stage = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::COMPUTE)
+            .module(shader_module)
+            .name(&compute_pipeline_mut.layout.compute_shader.entry_point_name);
+
+        let compute_pipeline_create_info = vk::ComputePipelineCreateInfo::default()
+            .stage(stage)
+            .layout(compute_pipeline_mut.layout.pipeline_layout);
+
+        compute_pipeline_mut.pipeline = unsafe {
+            self.device.create_compute_pipelines(
+                vk::PipelineCache::null(),
+                &[compute_pipeline_create_info],
+                None,
+            )
+        }
+        .map_err(|(_pipelines, err)| err)?[0];
+
+        unsafe {
+            self.device.destroy_shader_module(shader_module, None);
+        }
+
+        info!("finished recompiling compute shader");
 
         Ok(())
     }
@@ -1642,6 +1951,9 @@ impl Drop for Renderer {
             }
             for pipeline in self.pipelines.take_all() {
                 self.destroy_pipeline(pipeline);
+            }
+            for compute_pipeline in self.compute_pipelines.take_all() {
+                self.destroy_compute_pipeline(compute_pipeline);
             }
             for buffers_per_frame in self.uniform_buffers.take_all() {
                 for uniform_buffer in buffers_per_frame {
@@ -1770,6 +2082,10 @@ impl QueueFamilyIndices {
         for (i, family) in queue_families.iter().enumerate() {
             // NOTE this also implies vk::QueueFlags::TRANSFER
             if family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                debug_assert!(
+                    family.queue_flags.contains(vk::QueueFlags::COMPUTE),
+                    "Graphics queue family must also support compute"
+                );
                 graphics = Some(i as u32);
             }
 
@@ -2707,6 +3023,43 @@ fn find_memory_type_index(
     }
 
     Err(anyhow::anyhow!("failed to find suitable memory type"))
+}
+
+fn create_descriptor_pool_from_layouts(
+    device: &ash::Device,
+    descriptor_set_layouts: &[(ash::vk::DescriptorSetLayout, DescriptorCounts)],
+) -> Result<vk::DescriptorPool, anyhow::Error> {
+    let descriptor_sets_per_frame = descriptor_set_layouts.len() as u32;
+    let sets_across_frames = descriptor_sets_per_frame * BUFFER_FRAME_COUNT as u32;
+
+    let total_counts: DescriptorCounts = descriptor_set_layouts.iter().map(|tup| tup.1).sum();
+
+    let uniform_buffer_pool_size = vk::DescriptorPoolSize::default()
+        .ty(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(sets_across_frames * total_counts.uniform_buffers);
+    let storage_buffer_pool_size = vk::DescriptorPoolSize::default()
+        .ty(vk::DescriptorType::STORAGE_BUFFER)
+        .descriptor_count(sets_across_frames * total_counts.storage_buffers);
+    let sampler_pool_size = vk::DescriptorPoolSize::default()
+        .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(sets_across_frames * total_counts.combined_texture_samplers);
+
+    let pool_sizes: Vec<vk::DescriptorPoolSize> = [
+        uniform_buffer_pool_size,
+        storage_buffer_pool_size,
+        sampler_pool_size,
+    ]
+    .into_iter()
+    .filter(|s| s.descriptor_count != 0)
+    .collect();
+
+    let pool_create_info = vk::DescriptorPoolCreateInfo::default()
+        .pool_sizes(&pool_sizes)
+        .max_sets(sets_across_frames);
+
+    let pool = unsafe { device.create_descriptor_pool(&pool_create_info, None)? };
+
+    Ok(pool)
 }
 
 fn create_descriptor_pool(
@@ -3677,6 +4030,59 @@ impl ShaderPipelineLayout {
     }
 }
 
+pub(crate) struct ComputeShaderPipelineLayout {
+    compute_shader: PrecompiledShader,
+
+    // NOTE the renderer is expected to clean up these fields correctly
+    // they need special handling during hot reload
+    pipeline_layout: ash::vk::PipelineLayout,
+    descriptor_set_layouts: Vec<(ash::vk::DescriptorSetLayout, DescriptorCounts)>,
+}
+
+impl ComputeShaderPipelineLayout {
+    #[cfg(debug_assertions)]
+    fn create_from_atlas(
+        device: &ash::Device,
+        shader: &dyn ComputeShaderAtlasEntry,
+    ) -> Result<Self, anyhow::Error> {
+        let shaders::ReflectedComputeShader {
+            compute_shader,
+            reflection_json,
+        } = shaders::dev_compile_slang_compute_shaders(shader.source_file_name())?;
+
+        let compute_shader = PrecompiledShader {
+            spv_bytes: compute_shader.spv_bytes()?,
+            entry_point_name: compute_shader.entry_point_name,
+        };
+
+        let (pipeline_layout, descriptor_set_layouts) =
+            unsafe { reflection_json.pipeline_layout.vk_create(device)? };
+
+        Ok(ComputeShaderPipelineLayout {
+            compute_shader,
+            pipeline_layout,
+            descriptor_set_layouts,
+        })
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn create_from_atlas(
+        device: &ash::Device,
+        shader: &dyn ComputeShaderAtlasEntry,
+    ) -> Result<Self, anyhow::Error> {
+        let precompiled = shader.precompiled_compute_shader();
+
+        let (pipeline_layout, descriptor_set_layouts) =
+            unsafe { shader.pipeline_layout().vk_create(device)? };
+
+        Ok(ComputeShaderPipelineLayout {
+            compute_shader: precompiled,
+            pipeline_layout,
+            descriptor_set_layouts,
+        })
+    }
+}
+
 impl shaders::json::ReflectedDescriptorSetLayout {
     unsafe fn vk_create(
         &self,
@@ -3864,6 +4270,36 @@ impl<'f> Gpu<'f> {
         }
     }
 
+    pub fn write_ping_pong_initial<T>(
+        &mut self,
+        ping_pong: &mut PingPongBufferHandle<T>,
+        data: &[T],
+    ) {
+        // Write to both sides so that the first frame has valid data regardless of which is read
+        for frame in 0..BUFFER_FRAME_COUNT {
+            {
+                let read_buf = ping_pong.read_buffer_mut();
+                let len = data.len().min(read_buf.len() as usize);
+                let mapped = self
+                    .storage_buffers
+                    .get_mapped_mem_for_frame(read_buf, frame);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
+                }
+            }
+            {
+                let write_buf = ping_pong.write_buffer_mut();
+                let len = data.len().min(write_buf.len() as usize);
+                let mapped = self
+                    .storage_buffers
+                    .get_mapped_mem_for_frame(write_buf, frame);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
+                }
+            }
+        }
+    }
+
     pub fn sort_storage_by<T, F>(&mut self, storage_buffer: &mut StorageBufferHandle<T>, compare: F)
     where
         F: FnMut(&T, &T) -> Ordering,
@@ -3879,9 +4315,25 @@ impl<'f> Gpu<'f> {
     }
 }
 
+enum PendingComputeCommand {
+    Dispatch {
+        pipeline_index: usize,
+        group_count: [u32; 3],
+    },
+    Barrier {
+        src_stage: vk::PipelineStageFlags,
+        dst_stage: vk::PipelineStageFlags,
+        src_access: vk::AccessFlags,
+        dst_access: vk::AccessFlags,
+    },
+}
+
 /// a one-time-use reference to the renderer,
 /// for making a frame's single draw call
-pub struct FrameRenderer<'f>(&'f mut Renderer);
+pub struct FrameRenderer<'f> {
+    renderer: &'f mut Renderer,
+    pending_compute: Vec<PendingComputeCommand>,
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum DrawError {
@@ -3891,28 +4343,53 @@ pub enum DrawError {
 
 impl<'f> FrameRenderer<'f> {
     pub fn new(renderer: &'f mut Renderer) -> Self {
-        Self(renderer)
+        Self {
+            renderer,
+            pending_compute: vec![],
+        }
     }
 
     pub fn aspect_ratio(&self) -> f32 {
-        self.0.aspect_ratio
+        self.renderer.aspect_ratio
     }
 
     pub fn window_resolution(&self) -> Vec2 {
-        Vec2::new(self.0.width, self.0.height)
+        Vec2::new(self.renderer.width, self.renderer.height)
     }
 
     /// Returns the internal render resolution (may be lower than display with render scaling)
     pub fn render_resolution(&self) -> Vec2 {
         Vec2::new(
-            self.0.render_extent.width as f32,
-            self.0.render_extent.height as f32,
+            self.renderer.render_extent.width as f32,
+            self.renderer.render_extent.height as f32,
         )
     }
 
     /// Returns the current render scale (0.25 to 1.0)
     pub fn render_scale(&self) -> f32 {
-        self.0.render_scale
+        self.renderer.render_scale
+    }
+
+    pub fn dispatch(&mut self, pipeline: &PipelineHandle<Compute>, x: u32, y: u32, z: u32) {
+        self.pending_compute.push(PendingComputeCommand::Dispatch {
+            pipeline_index: pipeline.index(),
+            group_count: [x, y, z],
+        });
+    }
+
+    pub fn memory_barrier(
+        &mut self,
+        src_stage: vk::PipelineStageFlags,
+        dst_stage: vk::PipelineStageFlags,
+        src_access: vk::AccessFlags,
+        dst_access: vk::AccessFlags,
+    ) {
+        self.pending_compute.push(PendingComputeCommand::Barrier {
+            src_stage,
+            dst_stage,
+            src_access,
+            dst_access,
+        });
     }
 
     pub fn draw_indexed(
@@ -3921,7 +4398,7 @@ impl<'f> FrameRenderer<'f> {
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
         let index_count = match &self
-            .0
+            .renderer
             .renderer_pipeline(pipeline_handle)
             .vertex_pipeline_config
         {
@@ -3952,7 +4429,7 @@ impl<'f> FrameRenderer<'f> {
         mouse_position: [f32; 2],
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
-        let render_scale = self.0.render_scale;
+        let render_scale = self.renderer.render_scale;
         let mouse_pixel = [
             (mouse_position[0] * render_scale) as u32,
             (mouse_position[1] * render_scale) as u32,
@@ -3968,7 +4445,7 @@ impl<'f> FrameRenderer<'f> {
     }
 
     pub fn picked_object_id(&self) -> u32 {
-        self.0.last_picked_object_id
+        self.renderer.last_picked_object_id
     }
 
     fn draw_frame<D>(
@@ -3978,8 +4455,14 @@ impl<'f> FrameRenderer<'f> {
         picking_config: Option<PickingDrawConfig>,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
-        self.0
-            .draw_frame(pipeline_handle, draw_call, picking_config, gpu_update)
+        self.renderer
+            .draw_frame(
+                pipeline_handle,
+                draw_call,
+                picking_config,
+                self.pending_compute,
+                gpu_update,
+            )
             .map_err(DrawError::DrawError)
     }
 }

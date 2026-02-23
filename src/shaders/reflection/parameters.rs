@@ -15,6 +15,12 @@ pub struct VertFragEntryPoints {
     pub fragment_entry_point: EntryPoint,
 }
 
+pub struct ComputeParameters {
+    pub global_parameters: Vec<GlobalParameter>,
+    pub compute_entry_point: EntryPoint,
+    pub workgroup_size: [u32; 3],
+}
+
 pub fn reflect_entry_points(
     program_layout: &slang::reflection::Shader,
 ) -> anyhow::Result<Parameters> {
@@ -328,6 +334,86 @@ fn scalar_from_slang(scalar: slang::ScalarType) -> ScalarType {
 
 // returns None for a param with a semantic,
 // where value will be provided by the driver
+pub fn reflect_compute_entry_point(
+    program_layout: &slang::reflection::Shader,
+) -> anyhow::Result<ComputeParameters> {
+    let mut global_parameters: Vec<GlobalParameter> = vec![];
+    for global_param in program_layout.parameters() {
+        let parameter_name = global_param.name().unwrap().to_string();
+
+        if global_param.type_layout().unwrap().kind() != slang::TypeKind::ParameterBlock {
+            anyhow::bail!(
+                "non-ParameterBlock global: {parameter_name}; only ParameterBlock globals are supported"
+            )
+        }
+
+        let element_type_layout = global_param
+            .type_layout()
+            .unwrap()
+            .element_type_layout()
+            .unwrap();
+
+        let element_type = match element_type_layout.kind() {
+            slang::TypeKind::Struct => {
+                let element_type_name = element_type_layout.name().unwrap().to_string();
+                let fields = reflect_struct_fields(element_type_layout)?;
+
+                ParameterBlockElementType {
+                    type_name: element_type_name,
+                    fields,
+                }
+            }
+
+            k => unimplemented!("type kind reflection not implemented: {k:?}"),
+        };
+
+        let parameter_block = ParameterBlockGlobalParameter {
+            parameter_name,
+            element_type,
+        };
+        let global_parameter = GlobalParameter::ParameterBlock(parameter_block);
+
+        global_parameters.push(global_parameter);
+    }
+
+    let mut compute_entry_point: Option<EntryPoint> = None;
+    let mut workgroup_size: Option<[u32; 3]> = None;
+
+    for entry_point in program_layout.entry_points() {
+        let entry_point_name = entry_point.name().unwrap().to_string();
+
+        let params = vec![];
+        // Compute entry point parameters are system values (SV_DispatchThreadID, etc.)
+        // and don't need to be reflected for code generation
+
+        match entry_point.stage() {
+            slang::Stage::Compute => {
+                let tgs = entry_point.compute_thread_group_size();
+                workgroup_size = Some([tgs[0] as u32, tgs[1] as u32, tgs[2] as u32]);
+
+                compute_entry_point = Some(EntryPoint {
+                    entry_point_name,
+                    stage: EntryPointStage::Compute,
+                    parameters: params,
+                });
+            }
+
+            _ => anyhow::bail!("expected compute entry point"),
+        }
+    }
+
+    let compute_entry_point =
+        compute_entry_point.ok_or_else(|| anyhow::anyhow!("failed to find compute entry point"))?;
+    let workgroup_size =
+        workgroup_size.ok_or_else(|| anyhow::anyhow!("failed to find workgroup size"))?;
+
+    Ok(ComputeParameters {
+        global_parameters,
+        compute_entry_point,
+        workgroup_size,
+    })
+}
+
 fn param_binding(param: &slang::reflection::VariableLayout) -> Option<Binding> {
     let category = param.category().unwrap();
 

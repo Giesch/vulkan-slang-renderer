@@ -4,6 +4,8 @@ pub mod dragon;
 pub mod gpu_picking;
 pub mod gpu_picking_id;
 pub mod koch_curve;
+pub mod particle_render;
+pub mod particles_compute;
 pub mod ray_marching;
 pub mod sdf_2d;
 pub mod serenity_crt;
@@ -13,6 +15,7 @@ pub mod sprite_batch;
 pub struct ShaderAtlas {
     pub dragon: dragon::Shader,
     pub space_invaders: space_invaders::Shader,
+    pub particle_render: particle_render::Shader,
     pub koch_curve: koch_curve::Shader,
     pub serenity_crt: serenity_crt::Shader,
     pub sdf_2d: sdf_2d::Shader,
@@ -22,6 +25,7 @@ pub struct ShaderAtlas {
     pub depth_texture: depth_texture::Shader,
     pub sprite_batch: sprite_batch::Shader,
     pub gpu_picking_id: gpu_picking_id::Shader,
+    pub particles_compute: particles_compute::Shader,
 }
 
 impl ShaderAtlas {
@@ -29,6 +33,7 @@ impl ShaderAtlas {
         Self {
             dragon: dragon::Shader::init(),
             space_invaders: space_invaders::Shader::init(),
+            particle_render: particle_render::Shader::init(),
             koch_curve: koch_curve::Shader::init(),
             serenity_crt: serenity_crt::Shader::init(),
             sdf_2d: sdf_2d::Shader::init(),
@@ -38,6 +43,7 @@ impl ShaderAtlas {
             depth_texture: depth_texture::Shader::init(),
             sprite_batch: sprite_batch::Shader::init(),
             gpu_picking_id: gpu_picking_id::Shader::init(),
+            particles_compute: particles_compute::Shader::init(),
         }
     }
 }

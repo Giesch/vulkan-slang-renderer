@@ -26,3 +26,19 @@ pub fn reflection_json(
 
     Ok(reflection_json)
 }
+
+pub fn compute_reflection_json(
+    source_file_name: &str,
+    program_layout: &slang::reflection::Shader,
+) -> anyhow::Result<ComputeReflectionJson> {
+    let result = reflect_compute_entry_point(program_layout)?;
+    let pipeline_layout = reflect_pipeline_layout(program_layout);
+
+    Ok(ComputeReflectionJson {
+        source_file_name: source_file_name.to_string(),
+        global_parameters: result.global_parameters,
+        compute_entry_point: result.compute_entry_point,
+        workgroup_size: result.workgroup_size,
+        pipeline_layout,
+    })
+}

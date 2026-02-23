@@ -1,0 +1,139 @@
+// GENERATED FILE (do not edit directly)
+
+{% for line in module_doc_lines -%}
+//! {{ line }}
+{%- endfor %}
+
+use std::ffi::CString;
+use std::io::Cursor;
+
+use ash::util::read_spv;
+use serde::Serialize;
+
+use crate::renderer::gpu_write::GPUWrite;
+use crate::renderer::*;
+use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
+use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
+{% for def in struct_defs %}
+{%~ match def.trait_derive_line() -%}
+{%- when Some with (derive_line) -%}
+{{derive_line}}
+{%- when None -%}
+{%- endmatch +%}
+{%- match def.repr() -%}
+{%- when Some with (repr) +%}
+{{ repr }}
+{%~ when None -%}
+{%- endmatch -%}
+pub struct {{ def.type_name }} {
+{%~ for field in def.fields +%}    pub {{ field.field_name }}: {{ field.type_name }},
+{% endfor -%}
+}
+{%- if def.gpu_write() +%}
+
+impl GPUWrite for {{ def.type_name }} {}
+{%- endif %}
+{%- match def.expected_size() -%}
+{%- when Some with (size) +%}
+const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
+{%- when None -%}
+{%- endmatch %}
+{% endfor %}
+
+pub const WORKGROUP_SIZE: [u32; 3] = [{{ shader_impl.workgroup_size[0] }}, {{ shader_impl.workgroup_size[1] }}, {{ shader_impl.workgroup_size[2] }}];
+
+pub struct {{ shader_impl.shader_type_name }} {
+    pub reflection_json: ComputeReflectionJson,
+}
+
+impl {{ shader_impl.shader_type_name }} {
+    pub fn init() -> Self {
+        let json_str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/compiled/{{ shader_impl.shader_name }}.comp.json"
+        ));
+
+        let reflection_json: ComputeReflectionJson = serde_json::from_str(json_str).unwrap();
+
+        Self { reflection_json }
+    }
+
+    pub fn pipeline_config(
+        self,
+        resources: Resources<'_>,
+    ) -> ComputePipelineConfig<'_> {
+        // NOTE each of these must be in descriptor set layout order in the reflection json
+
+        #[rustfmt::skip]
+        let texture_handles = vec![
+{%- for texture_field in shader_impl.resources_texture_fields +%}
+            resources.{{ texture_field }},
+{%- endfor +%}
+        ];
+
+        #[rustfmt::skip]
+        let uniform_buffer_handles = vec![
+{%- for buffer_field in shader_impl.resources_uniform_buffer_fields +%}
+            RawUniformBufferHandle::from_typed(resources.{{ buffer_field }}),
+{%- endfor +%}
+        ];
+
+        #[rustfmt::skip]
+        let storage_buffer_handles = vec![
+{%- for buffer_field in shader_impl.resources_storage_buffer_fields +%}
+            RawStorageBufferHandle::from_typed(resources.{{ buffer_field }}),
+{%- endfor +%}
+        ];
+
+        ComputePipelineConfig {
+            shader: Box::new(self),
+            texture_handles,
+            uniform_buffer_handles,
+            storage_buffer_handles,
+        }
+    }
+
+    fn comp_entry_point_name(&self) -> CString {
+        let entry_point = self
+            .reflection_json
+            .compute_entry_point
+            .entry_point_name
+            .clone();
+
+        CString::new(entry_point).unwrap()
+    }
+
+    fn comp_spv(&self) -> Vec<u32> {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/compiled/{{ shader_impl.shader_name }}.comp.spv"
+        ));
+        let byte_reader = &mut Cursor::new(bytes);
+        read_spv(byte_reader).expect("failed to convert spv byte layout")
+    }
+}
+
+impl ComputeShaderAtlasEntry for {{ shader_impl.shader_type_name }} {
+    fn source_file_name(&self) -> &str {
+        &self.reflection_json.source_file_name
+    }
+
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
+        self.reflection_json.layout_bindings()
+    }
+
+    fn precompiled_compute_shader(&self) -> PrecompiledShader {
+        PrecompiledShader {
+            entry_point_name: self.comp_entry_point_name(),
+            spv_bytes: self.comp_spv(),
+        }
+    }
+
+    fn pipeline_layout(&self) -> &ReflectedPipelineLayout {
+        &self.reflection_json.pipeline_layout
+    }
+
+    fn workgroup_size(&self) -> [u32; 3] {
+        self.reflection_json.workgroup_size
+    }
+}

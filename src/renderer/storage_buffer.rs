@@ -17,6 +17,31 @@ impl<T> StorageBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
+
+    #[expect(unused)]
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Reinterpret the handle as a different type.
+    /// Both types must have the same size and alignment.
+    pub fn cast<U>(&self) -> StorageBufferHandle<U> {
+        assert_eq!(
+            std::mem::size_of::<T>(),
+            std::mem::size_of::<U>(),
+            "StorageBufferHandle::cast requires same-size types"
+        );
+        assert_eq!(
+            std::mem::align_of::<T>(),
+            std::mem::align_of::<U>(),
+            "StorageBufferHandle::cast requires same-alignment types"
+        );
+        StorageBufferHandle {
+            index: self.index,
+            len: self.len,
+            _phantom_data: PhantomData,
+        }
+    }
 }
 
 pub(super) struct RawStorageBuffer {

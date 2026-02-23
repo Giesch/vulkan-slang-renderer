@@ -2,10 +2,13 @@ use std::marker::PhantomData;
 
 use ash::vk;
 
-use crate::shaders::atlas::ShaderAtlasEntry;
+use crate::shaders::atlas::{ComputeShaderAtlasEntry, ShaderAtlasEntry};
 
 use super::vertex_description::VertexDescription;
-use super::{RawStorageBufferHandle, RawUniformBufferHandle, ShaderPipelineLayout, TextureHandle};
+use super::{
+    ComputeShaderPipelineLayout, RawStorageBufferHandle, RawUniformBufferHandle,
+    ShaderPipelineLayout, TextureHandle,
+};
 
 /// A marker trait for different draw call types
 pub trait DrawCall {}
@@ -20,10 +23,20 @@ impl DrawCall for DrawVertexCount {}
 pub struct DrawIndexed;
 impl DrawCall for DrawIndexed {}
 
+/// A marker for compute pipelines
+pub struct Compute;
+impl DrawCall for Compute {}
+
 #[derive(Debug)]
 pub struct PipelineHandle<T> {
     index: usize,
     _phantom_data: PhantomData<T>,
+}
+
+impl<T> PipelineHandle<T> {
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
 }
 
 /// Distinct from PipelineHandle<T> — compile-time prevents misuse with main draw calls
@@ -161,4 +174,64 @@ impl<'t, V: VertexDescription> PipelineConfigBuilder<'t, V> {
             disable_depth_test: self.disable_depth_test,
         }
     }
+}
+
+// --- Compute pipeline types ---
+
+pub(super) struct ComputeRendererPipeline {
+    pub layout: ComputeShaderPipelineLayout,
+    pub pipeline: vk::Pipeline,
+    pub descriptor_pool: vk::DescriptorPool,
+    pub descriptor_sets: Vec<vk::DescriptorSet>,
+    #[cfg_attr(not(debug_assertions), expect(unused))]
+    pub shader: Box<dyn ComputeShaderAtlasEntry>,
+}
+
+pub(super) struct ComputePipelineStorage(Vec<Option<ComputeRendererPipeline>>);
+
+impl ComputePipelineStorage {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
+    pub fn add(&mut self, pipeline: ComputeRendererPipeline) -> PipelineHandle<Compute> {
+        let handle = PipelineHandle {
+            index: self.0.len(),
+            _phantom_data: PhantomData,
+        };
+
+        self.0.push(Some(pipeline));
+
+        handle
+    }
+
+    pub fn get(&self, handle: &PipelineHandle<Compute>) -> &ComputeRendererPipeline {
+        self.0[handle.index].as_ref().unwrap()
+    }
+
+    #[cfg(debug_assertions)]
+    #[expect(unused)]
+    pub fn get_mut(&mut self, handle: &PipelineHandle<Compute>) -> &mut ComputeRendererPipeline {
+        self.0[handle.index].as_mut().unwrap()
+    }
+
+    pub fn get_by_index(&self, index: usize) -> &ComputeRendererPipeline {
+        self.0[index].as_ref().unwrap()
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn get_mut_by_index(&mut self, index: usize) -> &mut ComputeRendererPipeline {
+        self.0[index].as_mut().unwrap()
+    }
+
+    pub fn take_all(&mut self) -> Vec<ComputeRendererPipeline> {
+        self.0.iter_mut().filter_map(|o| o.take()).collect()
+    }
+}
+
+pub struct ComputePipelineConfig<'t> {
+    pub(crate) shader: Box<dyn ComputeShaderAtlasEntry>,
+    pub(crate) texture_handles: Vec<&'t TextureHandle>,
+    pub(crate) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
+    pub(crate) storage_buffer_handles: Vec<RawStorageBufferHandle>,
 }
