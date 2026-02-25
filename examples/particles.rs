@@ -1,10 +1,12 @@
+use std::time::Instant;
+
 use ash::vk;
 use glam::{Vec2, Vec4};
 
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
-    Compute, DrawError, DrawVertexCount, FrameRenderer, PingPongBufferHandle, PipelineHandle,
-    Renderer, UniformBufferHandle,
+    Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer,
+    StorageBufferFrameStrategy, StorageBufferHandle, UniformBufferHandle,
 };
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
@@ -18,9 +20,11 @@ fn main() -> Result<(), anyhow::Error> {
 const NUM_PARTICLES: u32 = 4096;
 
 struct Particles {
+    last_frame: Instant,
     compute_pipeline: PipelineHandle<Compute>,
     render_pipeline: PipelineHandle<DrawVertexCount>,
-    ping_pong: PingPongBufferHandle<particles_compute::Particle>,
+    #[expect(unused)] // used only on the GPU after startup
+    particle_buffer: StorageBufferHandle<particles_compute::Particle>,
     sim_params_buffer: UniformBufferHandle<particles_compute::SimParams>,
     render_params_buffer: UniformBufferHandle<particle_render::RenderParams>,
 }
@@ -42,30 +46,32 @@ impl Game for Particles {
     {
         let initial_particles = create_initial_particles();
 
-        let mut ping_pong =
-            renderer.create_ping_pong_buffer::<particles_compute::Particle>(NUM_PARTICLES)?;
+        let mut particle_buffer =
+            renderer.create_storage_buffer::<particles_compute::Particle>(NUM_PARTICLES)?;
 
         let sim_params_buffer = renderer.create_uniform_buffer::<particles_compute::SimParams>()?;
 
         let render_params_buffer =
             renderer.create_uniform_buffer::<particle_render::RenderParams>()?;
 
-        renderer.write_ping_pong_initial(&mut ping_pong, &initial_particles);
+        renderer.write_storage_all_frames(&mut particle_buffer, &initial_particles);
 
-        // Create compute pipeline
+        // Create compute pipeline — both inputs point to the same buffer,
+        // frame offsets handle the ping-pong via descriptor set wiring
         let shaders = ShaderAtlas::init();
 
         let compute_resources = particles_compute::Resources {
-            particles_in: ping_pong.read_buffer(),
-            particles_out: ping_pong.write_buffer(),
+            particles_in: &particle_buffer,
+            particles_out: &particle_buffer,
             sim_params_buffer: &sim_params_buffer,
         };
-        let compute_config = shaders.particles_compute.pipeline_config(compute_resources);
+        let mut compute_config = shaders.particles_compute.pipeline_config(compute_resources);
+        // particles_in reads previous frame (offset -1), particles_out writes current frame (offset 0)
+        compute_config.storage_buffer_frame_strategy = StorageBufferFrameStrategy::PingPong;
         let compute_pipeline = renderer.create_compute_pipeline(compute_config)?;
 
-        // Create render pipeline — cast Particle type to match render shader's expected type
-        let read_buf_for_render: &_ = ping_pong.read_buffer();
-        let render_particles = read_buf_for_render.cast::<particle_render::Particle>();
+        // Create render pipeline — reads current frame's data (default offset 0)
+        let render_particles = particle_buffer.cast::<particle_render::Particle>();
         let render_resources = particle_render::Resources {
             particles: &render_particles,
             render_params_buffer: &render_params_buffer,
@@ -73,23 +79,28 @@ impl Game for Particles {
         let render_config = shaders.particle_render.pipeline_config(render_resources);
         let render_pipeline = renderer.create_pipeline(render_config)?;
 
+        let last_frame = Instant::now();
+
         Ok(Self {
+            last_frame,
             compute_pipeline,
             render_pipeline,
-            ping_pong,
+            particle_buffer,
             sim_params_buffer,
             render_params_buffer,
         })
     }
 
     fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
-        let delta_time = 0.016; // ~60fps fixed timestep
+        let now = Instant::now();
+        let delta_time = (now - self.last_frame).as_secs_f32();
+        self.last_frame = now;
 
-        // let workgroup_count = (NUM_PARTICLES + particles_compute::WORKGROUP_SIZE[0] - 1)
-        //     / particles_compute::WORKGROUP_SIZE[0];
+        let workgroup_size = particles_compute::WORKGROUP_SIZE[0];
+        let workgroup_count = (NUM_PARTICLES + workgroup_size - 1) / workgroup_size;
 
-        // // Dispatch compute shader
-        // renderer.dispatch(&self.compute_pipeline, workgroup_count, 1, 1);
+        // Dispatch compute shader
+        renderer.dispatch(&self.compute_pipeline, workgroup_count, 1, 1);
 
         // Barrier: compute writes must complete before vertex shader reads
         renderer.memory_barrier(
@@ -116,9 +127,6 @@ impl Game for Particles {
                 },
             );
         })?;
-
-        // Swap ping-pong buffers for next frame
-        self.ping_pong.swap();
 
         Ok(())
     }

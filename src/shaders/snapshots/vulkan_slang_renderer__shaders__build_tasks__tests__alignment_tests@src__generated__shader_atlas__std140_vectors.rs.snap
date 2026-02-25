@@ -83,6 +83,7 @@ impl Shader {
             texture_handles,
             uniform_buffer_handles,
             storage_buffer_handles,
+            storage_buffer_frame_strategy: StorageBufferFrameStrategy::default(),
             disable_depth_test: false,
         }
         .build()

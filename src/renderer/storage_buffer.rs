@@ -18,11 +18,8 @@ impl<T> StorageBufferHandle<T> {
         self.len
     }
 
-    #[expect(unused)]
-    pub(crate) fn index(&self) -> usize {
-        self.index
-    }
-
+    // FIXME this is only used for equivalent generated types
+    // change codegen to make a single type per source slang module
     /// Reinterpret the handle as a different type.
     /// Both types must have the same size and alignment.
     pub fn cast<U>(&self) -> StorageBufferHandle<U> {

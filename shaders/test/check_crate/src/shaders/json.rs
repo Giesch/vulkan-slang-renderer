@@ -22,4 +22,18 @@ pub struct EntryPoint {
 }
 
 #[derive(Deserialize)]
+pub struct ComputeReflectionJson {
+    pub source_file_name: String,
+    pub compute_entry_point: EntryPoint,
+    pub workgroup_size: [u32; 3],
+    pub pipeline_layout: ReflectedPipelineLayout,
+}
+
+impl ComputeReflectionJson {
+    pub fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
+        vec![]
+    }
+}
+
+#[derive(Deserialize)]
 pub struct ReflectedPipelineLayout;

@@ -39,13 +39,29 @@ pub enum VertexConfig<V> {
     VertexCount,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub enum StorageBufferFrameStrategy {
+    #[default]
+    Standard,
+    PingPong,
+}
+
 pub struct PipelineConfigBuilder<'a, V> {
     pub shader: Box<dyn crate::shaders::atlas::ShaderAtlasEntry>,
     pub vertex_config: VertexConfig<V>,
     pub texture_handles: Vec<&'a TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
+    pub storage_buffer_frame_strategy: StorageBufferFrameStrategy,
     pub disable_depth_test: bool,
+}
+
+pub struct ComputePipelineConfig<'a> {
+    pub shader: Box<dyn crate::shaders::atlas::ComputeShaderAtlasEntry>,
+    pub texture_handles: Vec<&'a TextureHandle>,
+    pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
+    pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
+    pub storage_buffer_frame_strategy: StorageBufferFrameStrategy,
 }
 
 impl<'a, V> PipelineConfigBuilder<'a, V> {

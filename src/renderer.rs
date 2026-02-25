@@ -43,9 +43,6 @@ pub use storage_buffer::*;
 pub mod pipeline;
 pub use pipeline::*;
 
-pub mod ping_pong_buffer;
-pub use ping_pong_buffer::*;
-
 pub mod egui;
 pub use egui::EguiIntegration;
 
@@ -129,6 +126,9 @@ pub struct Renderer {
     current_frame: usize,
     /// looping index for buffers (0..BUFFER_FRAME_COUNT)
     buffer_frame: usize,
+
+    compute_finished: [vk::Semaphore; BUFFER_FRAME_COUNT],
+    has_compute_pipelines: bool,
 
     pipelines: PipelineStorage,
     compute_pipelines: ComputePipelineStorage,
@@ -287,7 +287,7 @@ impl Renderer {
         let swapchain_images = unsafe { swapchain_device_ext.get_swapchain_images(swapchain)? };
         let swapchain_image_views =
             create_swapchain_image_views(&device, image_format, &swapchain_images)?;
-        let (image_available, render_finished, frames_in_flight) =
+        let (image_available, render_finished, frames_in_flight, compute_finished) =
             create_sync_objects(&device, &swapchain_images)?;
 
         let render_pass = create_render_pass(
@@ -409,6 +409,9 @@ impl Renderer {
             frames_in_flight,
             current_frame: 0,
             buffer_frame: 0,
+
+            compute_finished,
+            has_compute_pipelines: false,
 
             pipelines,
             compute_pipelines,
@@ -550,26 +553,14 @@ impl Renderer {
         Ok(handle)
     }
 
-    pub fn create_ping_pong_buffer<T: GPUWrite>(
-        &mut self,
-        len: u32,
-    ) -> anyhow::Result<PingPongBufferHandle<T>> {
-        let buf_a = self.create_storage_buffer::<T>(len)?;
-        let buf_b = self.create_storage_buffer::<T>(len)?;
-        Ok(PingPongBufferHandle::new([buf_a, buf_b]))
-    }
-
-    pub fn write_ping_pong_initial<T>(
-        &mut self,
-        ping_pong: &mut PingPongBufferHandle<T>,
-        data: &[T],
-    ) {
-        let mut gpu = Gpu {
-            buffer_frame: 0, // unused — write_ping_pong_initial writes all frames
-            uniform_buffers: &mut self.uniform_buffers,
-            storage_buffers: &mut self.storage_buffers,
-        };
-        gpu.write_ping_pong_initial(ping_pong, data);
+    pub fn write_storage_all_frames<T>(&mut self, buf: &mut StorageBufferHandle<T>, data: &[T]) {
+        let len = data.len().min(buf.len() as usize);
+        for frame in 0..BUFFER_FRAME_COUNT {
+            let mapped = self.storage_buffers.get_mapped_mem_for_frame(buf, frame);
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
+            }
+        }
     }
 
     pub fn drop_storage_buffer<T>(&mut self, storage_buffer: StorageBufferHandle<T>) {
@@ -654,6 +645,7 @@ impl Renderer {
             &storage_buffers_in_layout_frame_order,
             &[],
             layout_bindings,
+            StorageBufferFrameStrategy::Standard,
         )?;
 
         let renderer_pipeline = RendererPipeline {
@@ -779,6 +771,7 @@ impl Renderer {
             &storage_buffers_in_layout_frame_order,
             &textures,
             layout_bindings,
+            config.storage_buffer_frame_strategy,
         )?;
 
         let compute_renderer_pipeline = ComputeRendererPipeline {
@@ -790,6 +783,7 @@ impl Renderer {
         };
 
         let handle = self.compute_pipelines.add(compute_renderer_pipeline);
+        self.has_compute_pipelines = true;
 
         Ok(handle)
     }
@@ -903,6 +897,7 @@ impl Renderer {
             &storage_buffers_in_layout_frame_order,
             &textures,
             layout_bindings,
+            config.storage_buffer_frame_strategy,
         )?;
 
         Ok(RendererPipeline {
@@ -1491,10 +1486,41 @@ impl Renderer {
             &pending_compute,
         )?;
 
-        let wait_semaphores = [self.image_available[self.buffer_frame]];
-        let wait_dst_stage_mask = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let signal_semaphores = [self.render_finished[image_index as usize]];
         let submit_command_buffers = [command_buffer];
+
+        // When compute pipelines exist, add cross-frame synchronization:
+        // - Wait on the previous frame's compute_finished semaphore (so reads see prior writes)
+        // - Signal this frame's compute_finished semaphore (for the next frame to wait on)
+        let (wait_semaphores, wait_dst_stage_mask, signal_semaphores);
+        if self.has_compute_pipelines && self.total_frames > 1 {
+            let prev_buffer_frame =
+                (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
+            wait_semaphores = vec![
+                self.image_available[self.buffer_frame],
+                self.compute_finished[prev_buffer_frame],
+            ];
+            wait_dst_stage_mask = vec![
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+            ];
+            signal_semaphores = vec![
+                self.render_finished[image_index as usize],
+                self.compute_finished[self.buffer_frame],
+            ];
+        } else if self.has_compute_pipelines {
+            // First frame: no previous compute to wait on, but still signal
+            wait_semaphores = vec![self.image_available[self.buffer_frame]];
+            wait_dst_stage_mask = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+            signal_semaphores = vec![
+                self.render_finished[image_index as usize],
+                self.compute_finished[self.buffer_frame],
+            ];
+        } else {
+            wait_semaphores = vec![self.image_available[self.buffer_frame]];
+            wait_dst_stage_mask = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+            signal_semaphores = vec![self.render_finished[image_index as usize]];
+        }
+
         let submit_info = vk::SubmitInfo::default()
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_dst_stage_mask)
@@ -1510,8 +1536,9 @@ impl Renderer {
 
         let swapchains = [self.swapchain];
         let image_indices = [image_index];
+        let present_wait = [self.render_finished[image_index as usize]];
         let present_info = vk::PresentInfoKHR::default()
-            .wait_semaphores(&signal_semaphores)
+            .wait_semaphores(&present_wait)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         unsafe {
@@ -1900,6 +1927,9 @@ impl Drop for Renderer {
                 self.device.destroy_semaphore(*semaphore, None);
             }
             for semaphore in &self.image_available {
+                self.device.destroy_semaphore(*semaphore, None);
+            }
+            for semaphore in &self.compute_finished {
                 self.device.destroy_semaphore(*semaphore, None);
             }
 
@@ -2826,6 +2856,7 @@ fn create_sync_objects(
         [vk::Semaphore; BUFFER_FRAME_COUNT],
         Vec<vk::Semaphore>,
         [vk::Fence; MAX_FRAMES_IN_FLIGHT],
+        [vk::Semaphore; BUFFER_FRAME_COUNT],
     ),
     anyhow::Error,
 > {
@@ -2853,7 +2884,20 @@ fn create_sync_objects(
     }
     let frames_in_flight = frames_in_flight.map(Option::unwrap);
 
-    Ok((image_available, render_finished, frames_in_flight))
+    let mut compute_finished: [Option<vk::Semaphore>; BUFFER_FRAME_COUNT] =
+        [const { None }; BUFFER_FRAME_COUNT];
+    #[expect(clippy::needless_range_loop)]
+    for i in 0..BUFFER_FRAME_COUNT {
+        compute_finished[i] = Some(unsafe { device.create_semaphore(&Default::default(), None)? });
+    }
+    let compute_finished = compute_finished.map(Option::unwrap);
+
+    Ok((
+        image_available,
+        render_finished,
+        frames_in_flight,
+        compute_finished,
+    ))
 }
 
 fn create_vertex_buffer<V: GPUWrite>(
@@ -3142,6 +3186,7 @@ fn create_descriptor_sets(
     storage_buffers_in_layout_frame_order: &[&[RawStorageBuffer; BUFFER_FRAME_COUNT]],
     textures: &[&Texture],
     layout_bindings: Vec<Vec<LayoutDescription>>,
+    storage_buffer_frame_strategy: StorageBufferFrameStrategy,
 ) -> Result<Vec<vk::DescriptorSet>, anyhow::Error> {
     // this vec and the resulting vec of descriptor sets are arranged like this:
     // [
@@ -3205,7 +3250,18 @@ fn create_descriptor_sets(
                     LayoutDescription::Storage(storage_buffer_description) => {
                         let raw_storage_buffers_by_frame =
                             storage_buffers_in_layout_frame_order[storage_buffer_index];
-                        let storage_buffer: vk::Buffer = raw_storage_buffers_by_frame[frame].buffer;
+                        let offset =
+                            match storage_buffer_frame_strategy {
+                                StorageBufferFrameStrategy::Standard => 0,
+                                StorageBufferFrameStrategy::PingPong => {
+                                    if storage_buffer_index == 0 { -1 } else { 0 }
+                                }
+                            };
+                        let effective_frame = ((frame as i32 + offset)
+                            .rem_euclid(BUFFER_FRAME_COUNT as i32))
+                            as usize;
+                        let storage_buffer: vk::Buffer =
+                            raw_storage_buffers_by_frame[effective_frame].buffer;
 
                         // "If range is not equal to VK_WHOLE_SIZE, range must be less than or equal to the size of buffer minus offset"
                         // https://docs.vulkan.org/refpages/latest/refpages/source/VkDescriptorBufferInfo.html
@@ -4267,36 +4323,6 @@ impl<'f> Gpu<'f> {
 
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len_to_copy);
-        }
-    }
-
-    pub fn write_ping_pong_initial<T>(
-        &mut self,
-        ping_pong: &mut PingPongBufferHandle<T>,
-        data: &[T],
-    ) {
-        // Write to both sides so that the first frame has valid data regardless of which is read
-        for frame in 0..BUFFER_FRAME_COUNT {
-            {
-                let read_buf = ping_pong.read_buffer_mut();
-                let len = data.len().min(read_buf.len() as usize);
-                let mapped = self
-                    .storage_buffers
-                    .get_mapped_mem_for_frame(read_buf, frame);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
-                }
-            }
-            {
-                let write_buf = ping_pong.write_buffer_mut();
-                let len = data.len().min(write_buf.len() as usize);
-                let mapped = self
-                    .storage_buffers
-                    .get_mapped_mem_for_frame(write_buf, frame);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
-                }
-            }
         }
     }
 

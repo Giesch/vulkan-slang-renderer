@@ -1,13 +1,20 @@
 #+title: Todo
 
 * Now
-- [-] read / refactor gpu picking
+- [X] read / refactor gpu picking
   - [X] shaders
-  - [ ] renderer changes
+  - [X] renderer changes
 
-- [ ] basic compute shader example(s)
-  - [ ] read the official vulkan compute shader tutorial
-  - [ ] implement a version of claude_notes/render-graph/PLAN.md
+- [X] basic compute shader example(s)
+  - [X] read the official vulkan compute shader tutorial
+  - [X] implement a version of claude_notes/render-graph/00_PLAN.md
+
+- [ ] post-claude cleanup
+  - [ ] review the compute shader commits
+  - [ ] look for refactoring opportunities
+  - [ ] deduplicate matching gpu types
+    - [ ] use reflected source module name to generate only one struct
+    - [ ] remove cast method from storage buffer handle
 
 * Next
 - [ ] text support with MSDF fonts

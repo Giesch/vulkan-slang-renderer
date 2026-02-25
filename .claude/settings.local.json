@@ -27,7 +27,8 @@
       "WebFetch(domain:docs.vulkan.org)",
       "Bash(vulkaninfo:*)",
       "WebFetch(domain:danielchasehooper.com)",
-      "Bash(INSTA_UPDATE=no cargo test:*)"
+      "Bash(INSTA_UPDATE=no cargo test:*)",
+      "WebFetch(domain:vulkan-tutorial.com)"
     ]
   },
   "statusLine": {
