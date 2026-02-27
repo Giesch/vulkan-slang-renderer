@@ -20,6 +20,8 @@ use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
+pub use super::projection::{Projection};
+
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -58,14 +60,6 @@ pub struct Sprite {
 
 impl GPUWrite for Sprite {}
 const _: () = assert!(std::mem::size_of::<Sprite>() == 64);
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct Projection {
-    pub matrix: glam::Mat4,
-}
-
-impl GPUWrite for Projection {}
 
 pub struct Resources<'a> {
     pub sprites: &'a StorageBufferHandle<Sprite>,

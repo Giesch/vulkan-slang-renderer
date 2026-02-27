@@ -9,6 +9,8 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+pub use super::projection::Projection;
+pub use super::ray_march_camera::RayMarchCamera;
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -53,23 +55,6 @@ pub struct Sphere {
 
 impl GPUWrite for Sphere {}
 const _: () = assert!(std::mem::size_of::<Sphere>() == 32);
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct RayMarchCamera {
-    pub inverse_view_proj: Projection,
-    pub position: glam::Vec3,
-}
-
-impl GPUWrite for RayMarchCamera {}
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct Projection {
-    pub matrix: glam::Mat4,
-}
-
-impl GPUWrite for Projection {}
 
 pub struct Resources<'a> {
     pub spheres: &'a StorageBufferHandle<Sphere>,

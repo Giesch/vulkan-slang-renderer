@@ -71,9 +71,8 @@ impl Game for Particles {
         let compute_pipeline = renderer.create_compute_pipeline(compute_config)?;
 
         // Create render pipeline — reads current frame's data (default offset 0)
-        let render_particles = particle_buffer.cast::<particle_render::Particle>();
         let render_resources = particle_render::Resources {
-            particles: &render_particles,
+            particles: &particle_buffer,
             render_params_buffer: &render_params_buffer,
         };
         let render_config = shaders.particle_render.pipeline_config(render_resources);

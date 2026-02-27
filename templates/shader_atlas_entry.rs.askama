@@ -17,6 +17,9 @@ use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
+{% for import in shared_module_imports -%}
+pub use super::{{ import.module_name }}::{ {{- import.type_names|join(", ") -}} };
+{% endfor %}
 {% for def in struct_defs %}
 {%~ match def.trait_derive_line() -%}
 {%- when Some with (derive_line) -%}

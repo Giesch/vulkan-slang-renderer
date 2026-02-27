@@ -1,0 +1,37 @@
+// GENERATED FILE (do not edit directly)
+
+{% for line in module_doc_lines -%}
+//! {{ line }}
+{%- endfor %}
+
+use serde::Serialize;
+
+use crate::renderer::gpu_write::GPUWrite;
+{% for import in cross_module_imports -%}
+use super::{{ import.module_name }}::{ {{- import.type_names|join(", ") -}} };
+{% endfor %}
+{% for def in struct_defs %}
+{%~ match def.trait_derive_line() -%}
+{%- when Some with (derive_line) -%}
+{{derive_line}}
+{%- when None -%}
+{%- endmatch +%}
+{%- match def.repr() -%}
+{%- when Some with (repr) +%}
+{{ repr }}
+{%~ when None -%}
+{%- endmatch -%}
+pub struct {{ def.type_name }} {
+{%~ for field in def.fields +%}    pub {{ field.field_name }}: {{ field.type_name }},
+{% endfor -%}
+}
+{%- if def.gpu_write() +%}
+
+impl GPUWrite for {{ def.type_name }} {}
+{%- endif %}
+{%- match def.expected_size() -%}
+{%- when Some with (size) +%}
+const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
+{%- when None -%}
+{%- endmatch %}
+{% endfor %}

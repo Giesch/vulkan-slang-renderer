@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::CString;
 
 use shader_slang as slang;
@@ -18,6 +19,19 @@ enum MatrixLayout {
     ColumnMajor,
     #[allow(dead_code)]
     RowMajor,
+}
+
+fn load_cpu_constants_module(session: &slang::Session) -> anyhow::Result<slang::Module> {
+    let column_major = MATRIX_LAYOUT == MatrixLayout::ColumnMajor;
+    let src = format!(
+        r#"
+        #language slang 2026
+        module cpu_constants;
+
+        export static const bool columnMajor = {column_major};
+        "#,
+    );
+    Ok(session.load_module_from_source_string("cpu_constants", "cpu_constants.slang", &src)?)
 }
 
 pub struct ReflectedShader {
@@ -62,21 +76,7 @@ fn prepare_reflected_shader(
     let session = global_session.create_session(&session_desc).unwrap();
 
     let shader_module = session.load_module(source_file_name)?;
-
-    let column_major = MATRIX_LAYOUT == MatrixLayout::ColumnMajor;
-    let cpu_constants_module_src = format!(
-        r#"
-        #language slang 2026
-        module cpu_constants;
-
-        export static const bool columnMajor = {column_major};
-        "#,
-    );
-    let cpu_constants_module = session.load_module_from_source_string(
-        "cpu_constants",
-        "cpu_constants.slang",
-        &cpu_constants_module_src,
-    )?;
+    let cpu_constants_module = load_cpu_constants_module(&session)?;
 
     // the examples have 1 vert and 1 frag shader
     debug_assert!(shader_module.entry_points().len() == 2);
@@ -157,21 +157,7 @@ fn prepare_reflected_compute_shader(
     let session = global_session.create_session(&session_desc).unwrap();
 
     let shader_module = session.load_module(source_file_name)?;
-
-    let column_major = MATRIX_LAYOUT == MatrixLayout::ColumnMajor;
-    let cpu_constants_module_src = format!(
-        r#"
-        #language slang 2026
-        module cpu_constants;
-
-        export static const bool columnMajor = {column_major};
-        "#,
-    );
-    let cpu_constants_module = session.load_module_from_source_string(
-        "cpu_constants",
-        "cpu_constants.slang",
-        &cpu_constants_module_src,
-    )?;
+    let cpu_constants_module = load_cpu_constants_module(&session)?;
 
     // compute shaders have exactly 1 entry point
     debug_assert!(shader_module.entry_points().len() == 1);
@@ -216,6 +202,54 @@ pub fn dev_compile_slang_compute_shaders(
     source_file_name: &str,
 ) -> anyhow::Result<ReflectedComputeShader> {
     prepare_reflected_compute_shader(source_file_name, "shaders/source")
+}
+
+pub fn reflect_shared_module_types(
+    module_names: &[&str],
+    search_path: &str,
+) -> anyhow::Result<HashMap<String, String>> {
+    let global_session = slang::GlobalSession::new().unwrap();
+    let search_path = CString::new(search_path).unwrap();
+
+    let session_options = slang::CompilerOptions::default()
+        .language(slang::SourceLanguage::Slang)
+        .no_code_gen(true);
+    let session_options = match MATRIX_LAYOUT {
+        MatrixLayout::ColumnMajor => session_options.matrix_layout_column(true),
+        MatrixLayout::RowMajor => session_options.matrix_layout_row(true),
+    };
+
+    let target_desc = slang::TargetDesc::default()
+        .format(slang::CompileTarget::Spirv)
+        .profile(global_session.find_profile("glsl_450+spirv_1_6"));
+
+    let targets = [target_desc];
+    let search_paths = [search_path.as_ptr()];
+    let session_desc = slang::SessionDesc::default()
+        .targets(&targets)
+        .search_paths(&search_paths)
+        .options(&session_options);
+
+    let session = global_session.create_session(&session_desc).unwrap();
+
+    let _cpu_constants_module = load_cpu_constants_module(&session)?;
+
+    let mut type_to_module: HashMap<String, String> = HashMap::new();
+
+    for &module_name in module_names {
+        let module = session.load_module(module_name)?;
+        let module_decl = module.module_reflection();
+
+        for child in module_decl.children() {
+            if child.kind() == slang::DeclKind::Struct
+                && let Some(name) = child.name()
+            {
+                type_to_module.insert(name.to_string(), module_name.to_string());
+            }
+        }
+    }
+
+    Ok(type_to_module)
 }
 
 pub struct CompiledShader {

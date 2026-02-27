@@ -9,14 +9,18 @@
   - [X] read the official vulkan compute shader tutorial
   - [X] implement a version of claude_notes/render-graph/00_PLAN.md
 
-- [ ] post-claude cleanup
-  - [ ] review the compute shader commits
-  - [ ] look for refactoring opportunities
-  - [ ] deduplicate matching gpu types
-    - [ ] use reflected source module name to generate only one struct
-    - [ ] remove cast method from storage buffer handle
+- [X] post-claude cleanup
+  - [X] review the compute shader commits
+  - [X] look for refactoring opportunities
+  - [X] deduplicate matching gpu types
+    - [X] use reflected source module name to generate only one struct
+    - [X] remove cast method from storage buffer handle
 
 * Next
+- [ ] profile startup
+  find the source of the black screen
+  maybe do more work before opening the window
+
 - [ ] text support with MSDF fonts
   - read all the red blob games stuff
 

@@ -3,6 +3,11 @@ source: src/shaders/build_tasks.rs
 info:
   relative_path: src/generated/shader_atlas.rs
 ---
+pub mod gpu_picking_common;
+pub mod mvp;
+pub mod particle;
+pub mod projection;
+pub mod ray_march_camera;
 pub mod dragon;
 pub mod space_invaders;
 pub mod particle_render;

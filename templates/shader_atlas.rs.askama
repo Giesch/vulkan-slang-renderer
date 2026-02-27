@@ -1,3 +1,6 @@
+{%- for module_name in shared_module_names -%}
+pub mod {{ module_name }};
+{%~ endfor -%}
 {%- for module_name in module_names -%}
 pub mod {{ module_name }};
 {%~ endfor -%}

@@ -18,6 +18,7 @@
       "Bash(cargo build:*)",
       "Bash(cargo check:*)",
       "Bash(cargo tree:*)",
+      "Bash(cargo metadata:*)",
       "WebSearch",
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:crates.io)",

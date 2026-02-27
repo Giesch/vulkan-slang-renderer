@@ -14,6 +14,9 @@ use crate::renderer::gpu_write::GPUWrite;
 use crate::renderer::*;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
+{% for import in shared_module_imports -%}
+pub use super::{{ import.module_name }}::{ {{- import.type_names|join(", ") -}} };
+{% endfor %}
 {% for def in struct_defs %}
 {%~ match def.trait_derive_line() -%}
 {%- when Some with (derive_line) -%}

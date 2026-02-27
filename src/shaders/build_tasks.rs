@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 
 use askama::Template;
 use heck::ToSnakeCase;
@@ -52,20 +53,15 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         })
         .collect();
 
-    let mut generated_source_files = vec![];
-
-    // generate top-level rust modules
-    if config.generate_rust_source {
-        add_top_level_rust_modules(
-            &slang_file_names,
-            &compute_slang_file_names,
-            &mut generated_source_files,
-        );
-    }
+    // Build type→module map from shared slang modules
+    let type_to_module = reflect_slang_module_types(&config.shaders_source_dir);
 
     let search_path = config.shaders_source_dir.to_str().unwrap();
 
-    // generate per-shader files (graphics)
+    // Pass 1: Compile all shaders, write SPIR-V/JSON, collect intermediate build data
+    let mut graphics_data: Vec<GraphicsShaderData> = vec![];
+    let mut compute_data: Vec<ComputeShaderData> = vec![];
+
     for slang_file_name in &slang_file_names {
         let ReflectedShader {
             vertex_shader,
@@ -73,58 +69,125 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             reflection_json,
         } = prepare_reflected_shader(slang_file_name, search_path)?;
 
-        if config.generate_rust_source {
-            let source_file = build_generated_source_file(&reflection_json);
-            generated_source_files.push(source_file);
-        }
-
         let source_file_name = &reflection_json.source_file_name;
-
         std::fs::create_dir_all(&config.compiled_shaders_dir)?;
 
-        let reflection_json = serde_json::to_string_pretty(&reflection_json)?;
+        let reflection_json_str = serde_json::to_string_pretty(&reflection_json)?;
         let reflection_json_file_name = source_file_name.replace(SHADER_FILE_SUFFIX, ".json");
-        let json_path = &config.compiled_shaders_dir.join(&reflection_json_file_name);
-        std::fs::write(json_path, reflection_json)?;
+        std::fs::write(
+            config.compiled_shaders_dir.join(&reflection_json_file_name),
+            reflection_json_str,
+        )?;
 
         let spv_vert_file_name = source_file_name.replace(SHADER_FILE_SUFFIX, ".vert.spv");
-        let vert_path = &config.compiled_shaders_dir.join(&spv_vert_file_name);
-        std::fs::write(vert_path, vertex_shader.shader_bytecode.as_slice())?;
+        std::fs::write(
+            config.compiled_shaders_dir.join(&spv_vert_file_name),
+            vertex_shader.shader_bytecode.as_slice(),
+        )?;
 
         let spv_frag_file_name = source_file_name.replace(SHADER_FILE_SUFFIX, ".frag.spv");
-        let frag_path = &config.compiled_shaders_dir.join(&spv_frag_file_name);
-        std::fs::write(frag_path, fragment_shader.shader_bytecode.as_slice())?;
+        std::fs::write(
+            config.compiled_shaders_dir.join(&spv_frag_file_name),
+            fragment_shader.shader_bytecode.as_slice(),
+        )?;
+
+        if config.generate_rust_source {
+            graphics_data.push(collect_graphics_shader_data(
+                &reflection_json,
+                &type_to_module,
+            ));
+        }
     }
 
-    // generate per-shader files (compute)
     for slang_file_name in &compute_slang_file_names {
         let ReflectedComputeShader {
             compute_shader,
             reflection_json,
         } = prepare_reflected_compute_shader(slang_file_name, search_path)?;
 
-        if config.generate_rust_source {
-            let source_file = build_generated_compute_source_file(&reflection_json);
-            generated_source_files.push(source_file);
-        }
-
         let source_file_name = &reflection_json.source_file_name;
-
         std::fs::create_dir_all(&config.compiled_shaders_dir)?;
 
         let reflection_json_str = serde_json::to_string_pretty(&reflection_json)?;
         let reflection_json_file_name =
             source_file_name.replace(COMPUTE_SHADER_FILE_SUFFIX, ".comp.json");
-        let json_path = &config.compiled_shaders_dir.join(&reflection_json_file_name);
-        std::fs::write(json_path, reflection_json_str)?;
+        std::fs::write(
+            config.compiled_shaders_dir.join(&reflection_json_file_name),
+            reflection_json_str,
+        )?;
 
         let spv_comp_file_name = source_file_name.replace(COMPUTE_SHADER_FILE_SUFFIX, ".comp.spv");
-        let comp_path = &config.compiled_shaders_dir.join(&spv_comp_file_name);
-        std::fs::write(comp_path, compute_shader.shader_bytecode.as_slice())?;
+        std::fs::write(
+            config.compiled_shaders_dir.join(&spv_comp_file_name),
+            compute_shader.shader_bytecode.as_slice(),
+        )?;
+
+        if config.generate_rust_source {
+            compute_data.push(collect_compute_shader_data(
+                &reflection_json,
+                &type_to_module,
+            ));
+        }
     }
 
-    for source_file in &generated_source_files {
-        write_generated_file(&config, source_file)?;
+    if config.generate_rust_source {
+        let mut generated_source_files = vec![];
+
+        // Pass 2: Identify shared modules from all shader struct defs
+        let all_shader_defs: Vec<(String, Vec<GeneratedStructDefinition>)> = graphics_data
+            .iter()
+            .map(|d| (d.shader_name.clone(), d.struct_defs.clone()))
+            .chain(
+                compute_data
+                    .iter()
+                    .map(|d| (d.shader_name.clone(), d.struct_defs.clone())),
+            )
+            .collect();
+
+        let shared_modules = collect_shared_modules(&all_shader_defs);
+
+        // Generate shared module files
+        for (module_name, module_defs) in &shared_modules {
+            let cross_imports = cross_module_imports(module_name, module_defs, &shared_modules);
+
+            let template = SharedModuleTemplate {
+                module_doc_lines: vec![format!(
+                    "shared types from slang module: {module_name}.slang"
+                )],
+                cross_module_imports: cross_imports,
+                struct_defs: module_defs.clone(),
+            };
+
+            let file_name = format!("{module_name}.rs");
+            generated_source_files.push(GeneratedFile {
+                relative_path: relative_path(["generated", "shader_atlas", &file_name]),
+                content: template.render().unwrap(),
+            });
+        }
+
+        // Generate per-shader files with shared types filtered out
+        for data in &graphics_data {
+            let file = render_graphics_shader_file(data, &shared_modules);
+            generated_source_files.push(file);
+        }
+
+        for data in &compute_data {
+            let file = render_compute_shader_file(data, &shared_modules);
+            generated_source_files.push(file);
+        }
+
+        // Generate top-level module files
+        let shared_module_names: Vec<String> = shared_modules.keys().cloned().collect();
+        add_top_level_rust_modules(
+            &slang_file_names,
+            &compute_slang_file_names,
+            &shared_module_names,
+            &mut generated_source_files,
+        );
+
+        for source_file in &generated_source_files {
+            write_generated_file(&config, source_file)?;
+        }
     }
 
     Ok(())
@@ -133,6 +196,7 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
 fn add_top_level_rust_modules(
     slang_file_names: &[String],
     compute_slang_file_names: &[String],
+    shared_module_names: &[String],
     generated_source_files: &mut Vec<GeneratedFile>,
 ) {
     let module_names: Vec<String> = slang_file_names
@@ -162,6 +226,7 @@ fn add_top_level_rust_modules(
         .collect();
 
     let shader_atlas_module = ShaderAtlasModule {
+        shared_module_names: shared_module_names.to_vec(),
         module_names,
         entries,
         compute_module_names,
@@ -181,8 +246,20 @@ fn add_top_level_rust_modules(
     generated_source_files.push(top_generated_module);
 }
 
-/// generate the matching rust source for a specific slang shader
-fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFile {
+/// Intermediate data collected from a graphics shader before rendering
+struct GraphicsShaderData {
+    shader_name: String,
+    struct_defs: Vec<GeneratedStructDefinition>,
+    vertex_impl_blocks: Vec<VertexImplBlock>,
+    shader_impl: GeneratedShaderImpl,
+    source_file_name: String,
+}
+
+/// Collect struct definitions and template data from a graphics shader (without rendering)
+fn collect_graphics_shader_data(
+    reflection_json: &ReflectionJson,
+    type_to_module: &HashMap<String, String>,
+) -> GraphicsShaderData {
     let mut struct_defs = vec![];
     let mut vertex_impl_blocks = vec![];
 
@@ -227,6 +304,7 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
 
                 let def = GeneratedStructDefinition {
                     type_name: struct_param.type_name.to_string(),
+                    source_module: None,
                     fields: generated_fields,
                     trait_derives: vec!["Debug", "Clone", "Serialize"],
                     alignment: Some(Alignment::Std140),
@@ -262,11 +340,9 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
     }
 
     for GlobalParameter::ParameterBlock(parameter_block) in &reflection_json.global_parameters {
-        // Generate std140 struct fields with proper padding
         let (param_block_fields, _struct_alignment, expected_size) =
             generate_std140_struct_fields(&parameter_block.element_type.fields, &mut struct_defs);
 
-        // Collect required resources (textures, storage buffers, etc.)
         for field in &parameter_block.element_type.fields {
             if let Some(req) = required_resource(field) {
                 required_resources.push(req);
@@ -276,13 +352,13 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
         let type_name = &parameter_block.element_type.type_name;
         struct_defs.push(GeneratedStructDefinition {
             type_name: type_name.to_string(),
+            source_module: None,
             fields: param_block_fields,
             trait_derives: vec!["Debug", "Clone", "Serialize"],
             alignment: Some(Alignment::Std140),
             expected_size: Some(expected_size),
         });
 
-        // the default-added parameter block uniform buffer
         let param_name = parameter_block.parameter_name.to_snake_case();
         let element_type_name = parameter_block.element_type.type_name.clone();
         required_resources.push(RequiredResource {
@@ -319,6 +395,7 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
 
     let resources_struct = GeneratedStructDefinition {
         type_name: "Resources<'a>".to_string(),
+        source_module: None,
         fields: resources_fields,
         trait_derives: vec![],
         alignment: None,
@@ -329,10 +406,6 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
     let shader_name = reflection_json
         .source_file_name
         .replace(SHADER_FILE_SUFFIX, "");
-    let file_name = reflection_json
-        .source_file_name
-        .replace(SHADER_FILE_SUFFIX, ".rs");
-    let relative_file_path = relative_path(["generated", "shader_atlas", &file_name]);
 
     // NOTE these must be in descriptor set layout order in the reflection json
     let mut resources_texture_fields: Vec<String> = vec![];
@@ -363,22 +436,51 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
         resources_storage_buffer_fields,
     };
 
+    // Tag struct defs with source module info
+    tag_source_modules(&mut struct_defs, type_to_module, &shader_name);
+
+    GraphicsShaderData {
+        shader_name,
+        struct_defs,
+        vertex_impl_blocks,
+        shader_impl,
+        source_file_name: reflection_json.source_file_name.clone(),
+    }
+}
+
+/// Render a graphics shader file, filtering out shared types and adding imports
+fn render_graphics_shader_file(
+    data: &GraphicsShaderData,
+    shared_modules: &BTreeMap<String, Vec<GeneratedStructDefinition>>,
+) -> GeneratedFile {
+    let shared_module_imports = shared_imports_for_shader(&data.struct_defs, shared_modules);
+
+    // Filter out shared types — they're in their own module files
+    let local_struct_defs: Vec<GeneratedStructDefinition> = data
+        .struct_defs
+        .iter()
+        .filter(|d| d.source_module.is_none())
+        .cloned()
+        .collect();
+
     let module_doc_lines = vec![format!(
         "generated from slang shader: {}",
-        reflection_json.source_file_name
+        data.source_file_name
     )];
 
     let content = ShaderAtlasEntryModule {
         module_doc_lines,
-        struct_defs,
-        vertex_impl_blocks,
-        shader_impl,
+        shared_module_imports,
+        struct_defs: local_struct_defs,
+        vertex_impl_blocks: data.vertex_impl_blocks.clone(),
+        shader_impl: data.shader_impl.clone(),
     }
     .render()
     .unwrap();
 
+    let file_name = data.source_file_name.replace(SHADER_FILE_SUFFIX, ".rs");
     GeneratedFile {
-        relative_path: relative_file_path,
+        relative_path: relative_path(["generated", "shader_atlas", &file_name]),
         content,
     }
 }
@@ -386,6 +488,7 @@ fn build_generated_source_file(reflection_json: &ReflectionJson) -> GeneratedFil
 #[derive(Template)]
 #[template(path = "shader_atlas.rs.askama", escape = "none")]
 struct ShaderAtlasModule {
+    shared_module_names: Vec<String>,
     module_names: Vec<String>,
     /// field name and type name prefix
     entries: Vec<(String, String)>,
@@ -398,6 +501,7 @@ struct ShaderAtlasModule {
 #[template(path = "shader_atlas_entry.rs.askama", escape = "none")]
 struct ShaderAtlasEntryModule {
     module_doc_lines: Vec<String>,
+    shared_module_imports: Vec<SharedModuleImport>,
     struct_defs: Vec<GeneratedStructDefinition>,
     vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
@@ -407,10 +511,12 @@ struct ShaderAtlasEntryModule {
 #[template(path = "shader_compute_entry.rs.askama", escape = "none")]
 struct ShaderComputeEntryModule {
     module_doc_lines: Vec<String>,
+    shared_module_imports: Vec<SharedModuleImport>,
     struct_defs: Vec<GeneratedStructDefinition>,
     shader_impl: GeneratedComputeShaderImpl,
 }
 
+#[derive(Clone)]
 struct GeneratedComputeShaderImpl {
     shader_name: String,
     shader_type_name: String,
@@ -420,6 +526,7 @@ struct GeneratedComputeShaderImpl {
     resources_storage_buffer_fields: Vec<String>,
 }
 
+#[derive(Clone)]
 struct GeneratedShaderImpl {
     shader_name: String,
     shader_type_name: String,
@@ -443,17 +550,26 @@ impl GeneratedShaderImpl {
     }
 }
 
-/// generate the matching rust source for a specific slang compute shader
-fn build_generated_compute_source_file(reflection_json: &ComputeReflectionJson) -> GeneratedFile {
+/// Intermediate data collected from a compute shader before rendering
+struct ComputeShaderData {
+    shader_name: String,
+    struct_defs: Vec<GeneratedStructDefinition>,
+    shader_impl: GeneratedComputeShaderImpl,
+    source_file_name: String,
+}
+
+/// Collect struct definitions and template data from a compute shader (without rendering)
+fn collect_compute_shader_data(
+    reflection_json: &ComputeReflectionJson,
+    type_to_module: &HashMap<String, String>,
+) -> ComputeShaderData {
     let mut struct_defs = vec![];
     let mut required_resources = vec![];
 
     for GlobalParameter::ParameterBlock(parameter_block) in &reflection_json.global_parameters {
-        // Generate std140 struct fields with proper padding
         let (param_block_fields, _struct_alignment, expected_size) =
             generate_std140_struct_fields(&parameter_block.element_type.fields, &mut struct_defs);
 
-        // Collect required resources (textures, storage buffers, etc.)
         for field in &parameter_block.element_type.fields {
             if let Some(req) = required_resource(field) {
                 required_resources.push(req);
@@ -463,13 +579,13 @@ fn build_generated_compute_source_file(reflection_json: &ComputeReflectionJson) 
         let type_name = &parameter_block.element_type.type_name;
         struct_defs.push(GeneratedStructDefinition {
             type_name: type_name.to_string(),
+            source_module: None,
             fields: param_block_fields,
             trait_derives: vec!["Debug", "Clone", "Serialize"],
             alignment: Some(Alignment::Std140),
             expected_size: Some(expected_size),
         });
 
-        // the default-added parameter block uniform buffer
         let param_name = parameter_block.parameter_name.to_snake_case();
         let element_type_name = parameter_block.element_type.type_name.clone();
         required_resources.push(RequiredResource {
@@ -502,6 +618,7 @@ fn build_generated_compute_source_file(reflection_json: &ComputeReflectionJson) 
 
     let resources_struct = GeneratedStructDefinition {
         type_name: "Resources<'a>".to_string(),
+        source_module: None,
         fields: resources_fields,
         trait_derives: vec![],
         alignment: None,
@@ -512,9 +629,6 @@ fn build_generated_compute_source_file(reflection_json: &ComputeReflectionJson) 
     let shader_name = reflection_json
         .source_file_name
         .replace(COMPUTE_SHADER_FILE_SUFFIX, "");
-    let module_name = format!("{shader_name}_compute");
-    let file_name = format!("{module_name}.rs");
-    let relative_file_path = relative_path(["generated", "shader_atlas", &file_name]);
 
     // NOTE these must be in descriptor set layout order in the reflection json
     let mut resources_texture_fields: Vec<String> = vec![];
@@ -536,7 +650,7 @@ fn build_generated_compute_source_file(reflection_json: &ComputeReflectionJson) 
     }
 
     let shader_impl = GeneratedComputeShaderImpl {
-        shader_name,
+        shader_name: shader_name.clone(),
         shader_type_name: "Shader".to_string(),
         workgroup_size: reflection_json.workgroup_size,
         resources_texture_fields,
@@ -544,21 +658,49 @@ fn build_generated_compute_source_file(reflection_json: &ComputeReflectionJson) 
         resources_storage_buffer_fields,
     };
 
+    // Tag struct defs with source module info
+    tag_source_modules(&mut struct_defs, type_to_module, &shader_name);
+
+    ComputeShaderData {
+        shader_name,
+        struct_defs,
+        shader_impl,
+        source_file_name: reflection_json.source_file_name.clone(),
+    }
+}
+
+/// Render a compute shader file, filtering out shared types and adding imports
+fn render_compute_shader_file(
+    data: &ComputeShaderData,
+    shared_modules: &BTreeMap<String, Vec<GeneratedStructDefinition>>,
+) -> GeneratedFile {
+    let shared_module_imports = shared_imports_for_shader(&data.struct_defs, shared_modules);
+
+    let local_struct_defs: Vec<GeneratedStructDefinition> = data
+        .struct_defs
+        .iter()
+        .filter(|d| d.source_module.is_none())
+        .cloned()
+        .collect();
+
     let module_doc_lines = vec![format!(
         "generated from slang compute shader: {}",
-        reflection_json.source_file_name
+        data.source_file_name
     )];
 
     let content = ShaderComputeEntryModule {
         module_doc_lines,
-        struct_defs,
-        shader_impl,
+        shared_module_imports,
+        struct_defs: local_struct_defs,
+        shader_impl: data.shader_impl.clone(),
     }
     .render()
     .unwrap();
 
+    let module_name = format!("{}_compute", data.shader_name);
+    let file_name = format!("{module_name}.rs");
     GeneratedFile {
-        relative_path: relative_file_path,
+        relative_path: relative_path(["generated", "shader_atlas", &file_name]),
         content,
     }
 }
@@ -721,6 +863,7 @@ fn gather_struct_defs(
                                 struct_defs,
                                 GeneratedStructDefinition {
                                     type_name: struct_result_type.type_name.clone(),
+                                    source_module: None,
                                     fields,
                                     trait_derives: vec!["Debug", "Clone", "Serialize"],
                                     alignment,
@@ -784,6 +927,7 @@ fn gather_struct_defs(
 
             let sub_struct_def = GeneratedStructDefinition {
                 type_name: type_name.clone(),
+                source_module: None,
                 fields: generated_sub_fields,
                 trait_derives: vec!["Debug", "Clone", "Serialize"],
                 alignment: nested_alignment,
@@ -854,9 +998,11 @@ fn resource_type_name(result_type: &ResourceResultType) -> String {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct GeneratedStructDefinition {
     type_name: String,
+    /// Which slang module this type originated from (None = local to the shader)
+    source_module: Option<String>,
     fields: Vec<GeneratedStructFieldDefinition>,
     trait_derives: Vec<&'static str>,
     alignment: Option<Alignment>, // None = CPU only
@@ -887,7 +1033,7 @@ impl GeneratedStructDefinition {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct GeneratedStructFieldDefinition {
     field_name: String,
     type_name: String,
@@ -924,11 +1070,13 @@ fn write_generated_file(config: &Config, source_file: &GeneratedFile) -> anyhow:
     Ok(())
 }
 
+#[derive(Clone)]
 struct VertexImplBlock {
     type_name: String,
     attribute_descriptions: Vec<VertexAttributeDescription>,
 }
 
+#[derive(Clone)]
 struct VertexAttributeDescription {
     field_name: String,
     format: String,
@@ -1058,6 +1206,162 @@ impl Alignment {
             }
         }
     }
+}
+
+/// Reflects all `.slang` files in the source directory that are NOT shader files
+/// (i.e., shared/utility modules), extracting `struct` declarations via the Slang reflection API.
+/// Returns a map of `type_name → module_name`.
+fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, String> {
+    let mut module_names = Vec::new();
+
+    for entry in std::fs::read_dir(shaders_source_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+
+        if file_name.ends_with(SHADER_FILE_SUFFIX)
+            || file_name.ends_with(COMPUTE_SHADER_FILE_SUFFIX)
+        {
+            continue;
+        }
+        if !file_name.ends_with(".slang") {
+            continue;
+        }
+
+        let module_name = file_name.strip_suffix(".slang").unwrap().to_string();
+        module_names.push(module_name);
+    }
+
+    let search_path = shaders_source_dir.to_str().unwrap();
+    let module_name_refs: Vec<&str> = module_names.iter().map(|s| s.as_str()).collect();
+    super::reflect_shared_module_types(&module_name_refs, search_path)
+        .unwrap_or_else(|e| panic!("failed to reflect shared modules: {e}"))
+}
+
+/// Tag struct definitions with their source module based on the type→module map.
+/// Recursively tags nested structs.
+fn tag_source_modules(
+    struct_defs: &mut [GeneratedStructDefinition],
+    type_to_module: &HashMap<String, String>,
+    current_shader_module: &str,
+) {
+    for def in struct_defs.iter_mut() {
+        if let Some(module) = type_to_module.get(&def.type_name)
+            && module != current_shader_module
+        {
+            def.source_module = Some(module.clone());
+        }
+    }
+}
+
+struct SharedModuleImport {
+    module_name: String,
+    type_names: Vec<String>,
+}
+
+/// Collect shared type definitions from all shaders into per-module groups.
+/// Returns (module_name → definitions) for types that appear in more than one shader.
+fn collect_shared_modules(
+    all_shader_defs: &[(String, Vec<GeneratedStructDefinition>)],
+) -> BTreeMap<String, Vec<GeneratedStructDefinition>> {
+    let mut modules: BTreeMap<String, Vec<GeneratedStructDefinition>> = BTreeMap::new();
+
+    for (_shader_name, defs) in all_shader_defs {
+        for def in defs {
+            if let Some(ref module_name) = def.source_module {
+                let module_defs = modules.entry(module_name.clone()).or_default();
+                // Only add if not already present (dedup by type_name)
+                if !module_defs.iter().any(|d| d.type_name == def.type_name) {
+                    module_defs.push(def.clone());
+                }
+            }
+        }
+    }
+
+    modules
+}
+
+/// Determine which shared modules a shader needs to import, and which type names.
+/// Only imports types directly referenced by local (non-shared) struct fields.
+fn shared_imports_for_shader(
+    struct_defs: &[GeneratedStructDefinition],
+    shared_modules: &BTreeMap<String, Vec<GeneratedStructDefinition>>,
+) -> Vec<SharedModuleImport> {
+    let mut imports: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    // Check which shared types are directly referenced by local struct fields
+    for def in struct_defs {
+        if def.source_module.is_some() {
+            continue; // skip shared types themselves
+        }
+        for field in &def.fields {
+            for (module_name, module_defs) in shared_modules {
+                for module_def in module_defs {
+                    // Check exact match or contained within generic type (e.g., StorageBufferHandle<Cube>)
+                    if field.type_name == module_def.type_name
+                        || field.type_name.contains(&module_def.type_name)
+                    {
+                        imports
+                            .entry(module_name.clone())
+                            .or_default()
+                            .insert(module_def.type_name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    imports
+        .into_iter()
+        .map(|(module_name, type_names)| SharedModuleImport {
+            module_name,
+            type_names: type_names.into_iter().collect(),
+        })
+        .collect()
+}
+
+/// Determine cross-module imports for a shared module.
+/// For example, ray_march_camera.rs needs to import Projection from projection.rs.
+fn cross_module_imports(
+    module_name: &str,
+    module_defs: &[GeneratedStructDefinition],
+    all_shared_modules: &BTreeMap<String, Vec<GeneratedStructDefinition>>,
+) -> Vec<SharedModuleImport> {
+    let mut imports: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    for def in module_defs {
+        for field in &def.fields {
+            for (other_module, other_defs) in all_shared_modules {
+                if other_module == module_name {
+                    continue;
+                }
+                for other_def in other_defs {
+                    if field.type_name == other_def.type_name {
+                        imports
+                            .entry(other_module.clone())
+                            .or_default()
+                            .insert(other_def.type_name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    imports
+        .into_iter()
+        .map(|(module_name, type_names)| SharedModuleImport {
+            module_name,
+            type_names: type_names.into_iter().collect(),
+        })
+        .collect()
+}
+
+#[derive(Template)]
+#[template(path = "shader_shared_module.rs.askama", escape = "none")]
+struct SharedModuleTemplate {
+    module_doc_lines: Vec<String>,
+    cross_module_imports: Vec<SharedModuleImport>,
+    struct_defs: Vec<GeneratedStructDefinition>,
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ use std::io::Cursor;
 use ash::util::read_spv;
 use serde::Serialize;
 
+pub use super::particle::Particle;
 use crate::renderer::gpu_write::GPUWrite;
 use crate::renderer::*;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
@@ -22,17 +23,6 @@ pub struct SimParams {
 
 impl GPUWrite for SimParams {}
 const _: () = assert!(std::mem::size_of::<SimParams>() == 16);
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct Particle {
-    pub position: glam::Vec2,
-    pub velocity: glam::Vec2,
-    pub color: glam::Vec4,
-}
-
-impl GPUWrite for Particle {}
-const _: () = assert!(std::mem::size_of::<Particle>() == 32);
 
 pub struct Resources<'a> {
     pub particles_in: &'a StorageBufferHandle<Particle>,

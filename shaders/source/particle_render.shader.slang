@@ -2,11 +2,7 @@
 
 module particle_render;
 
-struct Particle {
-    float2 position;
-    float2 velocity;
-    float4 color;
-}
+import particle;
 
 ParameterBlock<RenderParams> renderParams;
 

@@ -17,28 +17,6 @@ impl<T> StorageBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
-
-    // FIXME this is only used for equivalent generated types
-    // change codegen to make a single type per source slang module
-    /// Reinterpret the handle as a different type.
-    /// Both types must have the same size and alignment.
-    pub fn cast<U>(&self) -> StorageBufferHandle<U> {
-        assert_eq!(
-            std::mem::size_of::<T>(),
-            std::mem::size_of::<U>(),
-            "StorageBufferHandle::cast requires same-size types"
-        );
-        assert_eq!(
-            std::mem::align_of::<T>(),
-            std::mem::align_of::<U>(),
-            "StorageBufferHandle::cast requires same-alignment types"
-        );
-        StorageBufferHandle {
-            index: self.index,
-            len: self.len,
-            _phantom_data: PhantomData,
-        }
-    }
 }
 
 pub(super) struct RawStorageBuffer {

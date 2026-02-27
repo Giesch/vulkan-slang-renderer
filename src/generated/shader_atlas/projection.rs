@@ -1,0 +1,15 @@
+// GENERATED FILE (do not edit directly)
+
+//! shared types from slang module: projection.slang
+
+use serde::Serialize;
+
+use crate::renderer::gpu_write::GPUWrite;
+
+#[derive(Debug, Clone, Serialize)]
+#[repr(C, align(16))]
+pub struct Projection {
+    pub matrix: glam::Mat4,
+}
+
+impl GPUWrite for Projection {}

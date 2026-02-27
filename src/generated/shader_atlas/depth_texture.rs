@@ -9,6 +9,7 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+pub use super::mvp::MVPMatrices;
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -24,16 +25,6 @@ pub struct DepthTextureParams {
 
 impl GPUWrite for DepthTextureParams {}
 const _: () = assert!(std::mem::size_of::<DepthTextureParams>() == 192);
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct MVPMatrices {
-    pub model: glam::Mat4,
-    pub view: glam::Mat4,
-    pub proj: glam::Mat4,
-}
-
-impl GPUWrite for MVPMatrices {}
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

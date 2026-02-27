@@ -2,18 +2,14 @@
 
 module particles_compute;
 
+import particle;
+
 ParameterBlock<SimParams> simParams;
 
 struct SimParams {
     StructuredBuffer<Particle> particlesIn;
     RWStructuredBuffer<Particle> particlesOut;
     float deltaTime;
-}
-
-struct Particle {
-    float2 position;
-    float2 velocity;
-    float4 color;
 }
 
 [numthreads(256, 1, 1)]

@@ -1,0 +1,24 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: src/generated/shader_atlas/mvp.rs
+---
+// GENERATED FILE (do not edit directly)
+
+//! shared types from slang module: mvp.slang
+
+use serde::Serialize;
+
+use crate::renderer::gpu_write::GPUWrite;
+
+
+#[derive(Debug, Clone, Serialize)]
+#[repr(C, align(16))]
+pub struct MVPMatrices {
+    pub model: glam::Mat4,
+    pub view: glam::Mat4,
+    pub proj: glam::Mat4,
+}
+
+impl GPUWrite for MVPMatrices {}
+const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);

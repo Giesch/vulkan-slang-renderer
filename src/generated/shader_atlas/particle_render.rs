@@ -9,6 +9,7 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+pub use super::particle::Particle;
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -25,17 +26,6 @@ pub struct RenderParams {
 
 impl GPUWrite for RenderParams {}
 const _: () = assert!(std::mem::size_of::<RenderParams>() == 16);
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct Particle {
-    pub position: glam::Vec2,
-    pub velocity: glam::Vec2,
-    pub color: glam::Vec4,
-}
-
-impl GPUWrite for Particle {}
-const _: () = assert!(std::mem::size_of::<Particle>() == 32);
 
 pub struct Resources<'a> {
     pub particles: &'a StorageBufferHandle<Particle>,

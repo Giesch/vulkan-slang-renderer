@@ -9,6 +9,7 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+pub use super::projection::Projection;
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -24,14 +25,6 @@ pub struct SpriteBatchParams {
 
 impl GPUWrite for SpriteBatchParams {}
 const _: () = assert!(std::mem::size_of::<SpriteBatchParams>() == 64);
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct Projection {
-    pub matrix: glam::Mat4,
-}
-
-impl GPUWrite for Projection {}
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
