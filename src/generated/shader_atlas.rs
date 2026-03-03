@@ -6,6 +6,8 @@ pub mod gpu_picking_common;
 pub mod gpu_picking_id;
 pub mod koch_curve;
 pub mod mvp;
+pub mod paint_brush_compute;
+pub mod paint_display;
 pub mod particle;
 pub mod particle_render;
 pub mod particles_compute;
@@ -29,8 +31,10 @@ pub struct ShaderAtlas {
     pub ray_marching: ray_marching::Shader,
     pub depth_texture: depth_texture::Shader,
     pub sprite_batch: sprite_batch::Shader,
+    pub paint_display: paint_display::Shader,
     pub gpu_picking_id: gpu_picking_id::Shader,
     pub particles_compute: particles_compute::Shader,
+    pub paint_brush_compute: paint_brush_compute::Shader,
 }
 
 impl ShaderAtlas {
@@ -47,8 +51,10 @@ impl ShaderAtlas {
             ray_marching: ray_marching::Shader::init(),
             depth_texture: depth_texture::Shader::init(),
             sprite_batch: sprite_batch::Shader::init(),
+            paint_display: paint_display::Shader::init(),
             gpu_picking_id: gpu_picking_id::Shader::init(),
             particles_compute: particles_compute::Shader::init(),
+            paint_brush_compute: paint_brush_compute::Shader::init(),
         }
     }
 }

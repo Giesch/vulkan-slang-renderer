@@ -173,6 +173,7 @@ pub struct ResourceStructField {
 #[serde(rename_all = "camelCase")]
 pub enum ResourceShape {
     Texture2D,
+    RWTexture2D,
     StructuredBuffer,
 }
 

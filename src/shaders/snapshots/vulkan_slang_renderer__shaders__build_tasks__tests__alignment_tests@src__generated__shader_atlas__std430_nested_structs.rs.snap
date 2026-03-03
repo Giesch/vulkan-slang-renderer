@@ -54,7 +54,6 @@ impl GPUWrite for InnerData {}
 
 pub struct Resources<'a> {
     pub data: &'a StorageBufferHandle<OuterData>,
-    pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
 
@@ -87,12 +86,15 @@ impl Shader {
 
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
-            RawUniformBufferHandle::from_typed(resources.params_buffer),
         ];
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
             RawStorageBufferHandle::from_typed(resources.data),
+        ];
+
+        #[rustfmt::skip]
+        let storage_texture_handles = vec![
         ];
 
         let vertex_config = VertexConfig::VertexCount;
@@ -103,6 +105,7 @@ impl Shader {
             texture_handles,
             uniform_buffer_handles,
             storage_buffer_handles,
+            storage_texture_handles,
             storage_buffer_frame_strategy: StorageBufferFrameStrategy::default(),
             disable_depth_test: false,
         }

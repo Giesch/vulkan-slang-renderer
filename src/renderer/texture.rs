@@ -51,4 +51,5 @@ pub(super) struct Texture {
     pub(super) sampler: vk::Sampler,
     #[expect(unused)] // currently unused after init
     pub(super) mip_levels: u32,
+    pub(super) image_layout: vk::ImageLayout,
 }

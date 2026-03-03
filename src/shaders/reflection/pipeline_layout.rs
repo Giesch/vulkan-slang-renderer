@@ -337,7 +337,7 @@ impl ReflectedBindingType {
             slang::BindingType::RayTracingAccelerationStructure => todo!(),
             slang::BindingType::ExistentialValue => todo!(),
             slang::BindingType::MutableFlag => todo!(),
-            slang::BindingType::MutableTeture => todo!(),
+            slang::BindingType::MutableTeture => Self::StorageImage,
             slang::BindingType::MutableTypedBuffer => todo!(),
             slang::BindingType::MutableRawBuffer => Self::StorageBuffer,
             slang::BindingType::BaseMask => todo!(),

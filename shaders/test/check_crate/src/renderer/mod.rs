@@ -9,6 +9,7 @@ use std::marker::PhantomData;
 pub struct UniformBufferHandle<T>(PhantomData<T>);
 pub struct StorageBufferHandle<T>(PhantomData<T>);
 pub struct TextureHandle;
+pub struct StorageTextureHandle;
 
 pub struct RawUniformBufferHandle;
 impl RawUniformBufferHandle {
@@ -52,6 +53,7 @@ pub struct PipelineConfigBuilder<'a, V> {
     pub texture_handles: Vec<&'a TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
+    pub storage_texture_handles: Vec<&'a StorageTextureHandle>,
     pub storage_buffer_frame_strategy: StorageBufferFrameStrategy,
     pub disable_depth_test: bool,
 }
@@ -61,6 +63,7 @@ pub struct ComputePipelineConfig<'a> {
     pub texture_handles: Vec<&'a TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
+    pub storage_texture_handles: Vec<&'a StorageTextureHandle>,
     pub storage_buffer_frame_strategy: StorageBufferFrameStrategy,
 }
 

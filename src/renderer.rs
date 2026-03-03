@@ -40,6 +40,9 @@ pub use uniform_buffer::*;
 pub mod storage_buffer;
 pub use storage_buffer::*;
 
+pub mod storage_texture;
+pub use storage_texture::*;
+
 pub mod pipeline;
 pub use pipeline::*;
 
@@ -133,6 +136,7 @@ pub struct Renderer {
     pipelines: PipelineStorage,
     compute_pipelines: ComputePipelineStorage,
     textures: TextureStorage,
+    storage_textures: StorageTextureStorage,
     uniform_buffers: UniformBufferStorage,
     storage_buffers: StorageBufferStorage,
 
@@ -416,6 +420,7 @@ impl Renderer {
             pipelines,
             compute_pipelines,
             textures,
+            storage_textures: StorageTextureStorage::new(),
             uniform_buffers,
             storage_buffers,
             egui,
@@ -463,9 +468,133 @@ impl Renderer {
         unsafe {
             self.device.destroy_sampler(texture.sampler, None);
             self.device.destroy_image_view(texture.image_view, None);
-            self.device.destroy_image(texture.image, None);
-            self.device.free_memory(texture.image_memory, None);
+            if texture.image_memory != vk::DeviceMemory::null() {
+                self.device.destroy_image(texture.image, None);
+                self.device.free_memory(texture.image_memory, None);
+            }
         }
+    }
+
+    pub fn create_storage_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        format: vk::Format,
+    ) -> anyhow::Result<StorageTextureHandle> {
+        let (image, image_memory) = create_vk_image(
+            &self.instance,
+            &self.device,
+            self.physical_device,
+            ImageOptions {
+                extent: vk::Extent2D { width, height },
+                format,
+                tiling: vk::ImageTiling::OPTIMAL,
+                usage: vk::ImageUsageFlags::STORAGE
+                    | vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_DST,
+                memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                mip_levels: 1,
+                msaa_samples: vk::SampleCountFlags::TYPE_1,
+            },
+        )?;
+
+        transition_image_layout(
+            &self.device,
+            self.command_pool,
+            self.graphics_queue,
+            image,
+            format,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::GENERAL,
+            1,
+        )?;
+
+        let image_view =
+            create_image_view(&self.device, image, format, vk::ImageAspectFlags::COLOR, 1)?;
+
+        let storage_texture = storage_texture::StorageTexture {
+            image,
+            image_memory,
+            image_view,
+            format,
+            width,
+            height,
+        };
+
+        let handle = self.storage_textures.add(storage_texture);
+
+        Ok(handle)
+    }
+
+    /// Create a sampled TextureHandle that aliases the same image as the given storage texture.
+    /// The image stays in GENERAL layout (valid for both storage and sampled access).
+    pub fn storage_texture_as_sampled(
+        &mut self,
+        storage_texture_handle: &StorageTextureHandle,
+    ) -> anyhow::Result<TextureHandle> {
+        let st = self.storage_textures.get(storage_texture_handle);
+
+        let image_view = create_image_view(
+            &self.device,
+            st.image,
+            st.format,
+            vk::ImageAspectFlags::COLOR,
+            1,
+        )?;
+
+        let sampler = create_texture_sampler(
+            &self.device,
+            self.physical_device_properties,
+            TextureFilter::Linear,
+        )?;
+
+        let texture = texture::Texture {
+            source_file_name: "storage_texture_sampled_alias".to_string(),
+            image: st.image,
+            image_memory: vk::DeviceMemory::null(), // owned by storage texture, not this alias
+            image_view,
+            sampler,
+            mip_levels: 1,
+            image_layout: vk::ImageLayout::GENERAL,
+        };
+
+        let handle = self.textures.add(texture);
+
+        Ok(handle)
+    }
+
+    pub fn clear_storage_texture(
+        &self,
+        handle: &StorageTextureHandle,
+        clear_color: vk::ClearColorValue,
+    ) -> anyhow::Result<()> {
+        let st = self.storage_textures.get(handle);
+
+        let command_buffer = begin_single_time_commands(&self.device, self.command_pool)?;
+
+        let subresource_range = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .level_count(1)
+            .layer_count(1);
+
+        unsafe {
+            self.device.cmd_clear_color_image(
+                command_buffer,
+                st.image,
+                vk::ImageLayout::GENERAL,
+                &clear_color,
+                &[subresource_range],
+            );
+        }
+
+        end_single_time_commands(
+            &self.device,
+            self.command_pool,
+            self.graphics_queue,
+            command_buffer,
+        )?;
+
+        Ok(())
     }
 
     pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> anyhow::Result<UniformBufferHandle<T>> {
@@ -644,6 +773,7 @@ impl Renderer {
             &uniform_buffers_in_layout_frame_order,
             &storage_buffers_in_layout_frame_order,
             &[],
+            &[],
             layout_bindings,
             StorageBufferFrameStrategy::Standard,
         )?;
@@ -758,6 +888,12 @@ impl Renderer {
                 .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
                 .collect();
 
+        let storage_images: Vec<&storage_texture::StorageTexture> = config
+            .storage_texture_handles
+            .iter()
+            .map(|handle| self.storage_textures.get(handle))
+            .collect();
+
         let set_layouts: Vec<_> = pipeline_layout
             .descriptor_set_layouts
             .iter()
@@ -770,6 +906,7 @@ impl Renderer {
             &uniform_buffers_in_layout_frame_order,
             &storage_buffers_in_layout_frame_order,
             &textures,
+            &storage_images,
             layout_bindings,
             config.storage_buffer_frame_strategy,
         )?;
@@ -884,6 +1021,12 @@ impl Renderer {
                 .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
                 .collect();
 
+        let storage_images: Vec<&storage_texture::StorageTexture> = config
+            .storage_texture_handles
+            .iter()
+            .map(|handle| self.storage_textures.get(handle))
+            .collect();
+
         let set_layouts: Vec<_> = pipeline_layout
             .descriptor_set_layouts
             .iter()
@@ -896,6 +1039,7 @@ impl Renderer {
             &uniform_buffers_in_layout_frame_order,
             &storage_buffers_in_layout_frame_order,
             &textures,
+            &storage_images,
             layout_bindings,
             config.storage_buffer_frame_strategy,
         )?;
@@ -1978,6 +2122,12 @@ impl Drop for Renderer {
 
             for texture in self.textures.take_all() {
                 self.destroy_texture(texture);
+            }
+            for storage_texture in self.storage_textures.take_all() {
+                self.device
+                    .destroy_image_view(storage_texture.image_view, None);
+                self.device.destroy_image(storage_texture.image, None);
+                self.device.free_memory(storage_texture.image_memory, None);
             }
             for pipeline in self.pipelines.take_all() {
                 self.destroy_pipeline(pipeline);
@@ -3069,6 +3219,29 @@ fn find_memory_type_index(
     Err(anyhow::anyhow!("failed to find suitable memory type"))
 }
 
+fn descriptor_pool_sizes(
+    sets_across_frames: u32,
+    total_counts: &DescriptorCounts,
+) -> Vec<vk::DescriptorPoolSize> {
+    [
+        vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(sets_across_frames * total_counts.uniform_buffers),
+        vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::STORAGE_BUFFER)
+            .descriptor_count(sets_across_frames * total_counts.storage_buffers),
+        vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(sets_across_frames * total_counts.combined_texture_samplers),
+        vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::STORAGE_IMAGE)
+            .descriptor_count(sets_across_frames * total_counts.storage_images),
+    ]
+    .into_iter()
+    .filter(|s| s.descriptor_count != 0)
+    .collect()
+}
+
 fn create_descriptor_pool_from_layouts(
     device: &ash::Device,
     descriptor_set_layouts: &[(ash::vk::DescriptorSetLayout, DescriptorCounts)],
@@ -3078,24 +3251,7 @@ fn create_descriptor_pool_from_layouts(
 
     let total_counts: DescriptorCounts = descriptor_set_layouts.iter().map(|tup| tup.1).sum();
 
-    let uniform_buffer_pool_size = vk::DescriptorPoolSize::default()
-        .ty(vk::DescriptorType::UNIFORM_BUFFER)
-        .descriptor_count(sets_across_frames * total_counts.uniform_buffers);
-    let storage_buffer_pool_size = vk::DescriptorPoolSize::default()
-        .ty(vk::DescriptorType::STORAGE_BUFFER)
-        .descriptor_count(sets_across_frames * total_counts.storage_buffers);
-    let sampler_pool_size = vk::DescriptorPoolSize::default()
-        .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(sets_across_frames * total_counts.combined_texture_samplers);
-
-    let pool_sizes: Vec<vk::DescriptorPoolSize> = [
-        uniform_buffer_pool_size,
-        storage_buffer_pool_size,
-        sampler_pool_size,
-    ]
-    .into_iter()
-    .filter(|s| s.descriptor_count != 0)
-    .collect();
+    let pool_sizes = descriptor_pool_sizes(sets_across_frames, &total_counts);
 
     let pool_create_info = vk::DescriptorPoolCreateInfo::default()
         .pool_sizes(&pool_sizes)
@@ -3119,24 +3275,7 @@ fn create_descriptor_pool(
         .map(|tup| tup.1)
         .sum();
 
-    let uniform_buffer_pool_size = vk::DescriptorPoolSize::default()
-        .ty(vk::DescriptorType::UNIFORM_BUFFER)
-        .descriptor_count(sets_across_frames * total_counts.uniform_buffers);
-    let storage_buffer_pool_size = vk::DescriptorPoolSize::default()
-        .ty(vk::DescriptorType::STORAGE_BUFFER)
-        .descriptor_count(sets_across_frames * total_counts.storage_buffers);
-    let sampler_pool_size = vk::DescriptorPoolSize::default()
-        .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(sets_across_frames * total_counts.combined_texture_samplers);
-
-    let pool_sizes: Vec<vk::DescriptorPoolSize> = [
-        uniform_buffer_pool_size,
-        storage_buffer_pool_size,
-        sampler_pool_size,
-    ]
-    .into_iter()
-    .filter(|s| s.descriptor_count != 0)
-    .collect();
+    let pool_sizes = descriptor_pool_sizes(sets_across_frames, &total_counts);
 
     let pool_create_info = vk::DescriptorPoolCreateInfo::default()
         .pool_sizes(&pool_sizes)
@@ -3152,6 +3291,7 @@ pub enum LayoutDescription {
     Uniform(UniformBufferDescription),
     Texture(TextureDescription),
     Storage(StorageBufferDescription),
+    StorageImage(StorageImageDescription),
 }
 
 #[derive(Debug)]
@@ -3172,9 +3312,15 @@ pub struct StorageBufferDescription {
 
 #[derive(Debug)]
 pub struct TextureDescription {
-    pub layout: vk::ImageLayout,
     pub binding: u32,
     // the number of descriptors in the descriptor set
+    pub descriptor_count: u32,
+}
+
+#[derive(Debug)]
+pub struct StorageImageDescription {
+    pub layout: vk::ImageLayout,
+    pub binding: u32,
     pub descriptor_count: u32,
 }
 
@@ -3185,6 +3331,7 @@ fn create_descriptor_sets(
     uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer; BUFFER_FRAME_COUNT]],
     storage_buffers_in_layout_frame_order: &[&[RawStorageBuffer; BUFFER_FRAME_COUNT]],
     textures: &[&Texture],
+    storage_images: &[&storage_texture::StorageTexture],
     layout_bindings: Vec<Vec<LayoutDescription>>,
     storage_buffer_frame_strategy: StorageBufferFrameStrategy,
 ) -> Result<Vec<vk::DescriptorSet>, anyhow::Error> {
@@ -3215,6 +3362,7 @@ fn create_descriptor_sets(
         let mut uniform_buffer_index = 0;
         let mut storage_buffer_index = 0;
         let mut texture_index = 0;
+        let mut storage_image_index = 0;
 
         #[expect(clippy::needless_range_loop)]
         for layout_offset in 0..descriptor_set_layouts.len() {
@@ -3289,7 +3437,7 @@ fn create_descriptor_sets(
                         let texture = textures[texture_index];
 
                         let image_info = vk::DescriptorImageInfo::default()
-                            .image_layout(texture_description.layout)
+                            .image_layout(texture.image_layout)
                             .image_view(texture.image_view)
                             .sampler(texture.sampler);
                         let image_info = [image_info];
@@ -3304,6 +3452,26 @@ fn create_descriptor_sets(
                         let writes = [image_write];
                         unsafe { device.update_descriptor_sets(&writes, &[]) };
                         texture_index += 1;
+                    }
+
+                    LayoutDescription::StorageImage(storage_image_description) => {
+                        let storage_image = storage_images[storage_image_index];
+
+                        let image_info = vk::DescriptorImageInfo::default()
+                            .image_layout(storage_image_description.layout)
+                            .image_view(storage_image.image_view);
+                        let image_info = [image_info];
+                        let image_write = vk::WriteDescriptorSet::default()
+                            .dst_set(dst_set)
+                            .dst_binding(storage_image_description.binding)
+                            .dst_array_element(0)
+                            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                            .descriptor_count(storage_image_description.descriptor_count)
+                            .image_info(&image_info);
+
+                        let writes = [image_write];
+                        unsafe { device.update_descriptor_sets(&writes, &[]) };
+                        storage_image_index += 1;
                     }
                 }
             }
@@ -3353,6 +3521,7 @@ fn create_texture(
         mip_levels,
         image_view: texture_image_view,
         sampler: texture_sampler,
+        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
     })
 }
 
@@ -3572,6 +3741,14 @@ fn transition_image_layout(
 
             src_stage_mask = vk::PipelineStageFlags::TRANSFER;
             dst_stage_mask = vk::PipelineStageFlags::FRAGMENT_SHADER;
+        }
+
+        (vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL) => {
+            barrier.src_access_mask = Default::default();
+            barrier.dst_access_mask = Default::default();
+
+            src_stage_mask = vk::PipelineStageFlags::TOP_OF_PIPE;
+            dst_stage_mask = vk::PipelineStageFlags::COMPUTE_SHADER;
         }
 
         (vk::ImageLayout::UNDEFINED, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL) => {
@@ -4169,6 +4346,7 @@ impl shaders::json::ReflectedBindingType {
             Self::ConstantBuffer => vk::DescriptorType::UNIFORM_BUFFER,
             Self::CombinedTextureSampler => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             Self::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
+            Self::StorageImage => vk::DescriptorType::STORAGE_IMAGE,
         }
     }
 }
@@ -4215,6 +4393,7 @@ struct DescriptorCounts {
     uniform_buffers: u32,
     storage_buffers: u32,
     combined_texture_samplers: u32,
+    storage_images: u32,
 }
 
 impl std::iter::Sum for DescriptorCounts {
@@ -4237,6 +4416,7 @@ impl std::ops::Add for DescriptorCounts {
             storage_buffers: self.storage_buffers + rhs.storage_buffers,
             combined_texture_samplers: self.combined_texture_samplers
                 + rhs.combined_texture_samplers,
+            storage_images: self.storage_images + rhs.storage_images,
         }
     }
 }
@@ -4246,12 +4426,14 @@ impl DescriptorCounts {
         uniform_buffers: 0,
         storage_buffers: 0,
         combined_texture_samplers: 0,
+        storage_images: 0,
     };
 
     fn from_descriptor_set_layout(set_layout: &ReflectedDescriptorSetLayout) -> Self {
         let mut uniform_buffers = 0;
         let mut storage_buffers = 0;
         let mut combined_texture_samplers = 0;
+        let mut storage_images = 0;
         for binding in &set_layout.binding_ranges {
             match binding.descriptor_type {
                 shaders::json::ReflectedBindingType::ConstantBuffer => {
@@ -4263,6 +4445,9 @@ impl DescriptorCounts {
                 shaders::json::ReflectedBindingType::CombinedTextureSampler => {
                     combined_texture_samplers += 1;
                 }
+                shaders::json::ReflectedBindingType::StorageImage => {
+                    storage_images += 1;
+                }
                 shaders::json::ReflectedBindingType::Sampler => todo!(),
                 shaders::json::ReflectedBindingType::Texture => todo!(),
             }
@@ -4272,6 +4457,7 @@ impl DescriptorCounts {
             uniform_buffers,
             storage_buffers,
             combined_texture_samplers,
+            storage_images,
         }
     }
 }

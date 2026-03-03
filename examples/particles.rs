@@ -118,6 +118,7 @@ impl Game for Particles {
                     _padding_0: Default::default(),
                 },
             );
+
             gpu.write_uniform(
                 &mut self.render_params_buffer,
                 particle_render::RenderParams {

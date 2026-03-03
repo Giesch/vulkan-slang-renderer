@@ -74,6 +74,10 @@ impl Shader {
         let storage_buffer_handles = vec![
         ];
 
+        #[rustfmt::skip]
+        let storage_texture_handles = vec![
+        ];
+
         let vertex_config = VertexConfig::VertexCount;
 
         PipelineConfigBuilder {
@@ -82,6 +86,7 @@ impl Shader {
             texture_handles,
             uniform_buffer_handles,
             storage_buffer_handles,
+            storage_texture_handles,
             storage_buffer_frame_strategy: StorageBufferFrameStrategy::default(),
             disable_depth_test: false,
         }

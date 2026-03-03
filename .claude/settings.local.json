@@ -19,6 +19,9 @@
       "Bash(cargo check:*)",
       "Bash(cargo tree:*)",
       "Bash(cargo metadata:*)",
+      "Bash(timeout 3 just dev:*)",
+      "Bash(INSTA_UPDATE=no cargo test:*)",
+      "Bash(INSTA_UPDATE=always cargo test:*)",
       "WebSearch",
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:crates.io)",
@@ -28,8 +31,8 @@
       "WebFetch(domain:docs.vulkan.org)",
       "Bash(vulkaninfo:*)",
       "WebFetch(domain:danielchasehooper.com)",
-      "Bash(INSTA_UPDATE=no cargo test:*)",
-      "WebFetch(domain:vulkan-tutorial.com)"
+      "WebFetch(domain:vulkan-tutorial.com)",
+      "WebFetch(domain:grail.cs.washington.edu)"
     ]
   },
   "statusLine": {

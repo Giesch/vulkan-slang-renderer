@@ -50,7 +50,8 @@ pub fn layout_bindings_from_pipeline_layout(
             use ash::vk;
 
             use crate::renderer::{
-                StorageBufferDescription, TextureDescription, UniformBufferDescription,
+                StorageBufferDescription, StorageImageDescription, TextureDescription,
+                UniformBufferDescription,
             };
             use crate::shaders::json::ReflectedBindingType;
 
@@ -77,7 +78,14 @@ pub fn layout_bindings_from_pipeline_layout(
 
                     ReflectedBindingType::CombinedTextureSampler => {
                         LayoutDescription::Texture(TextureDescription {
-                            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            binding: b.binding,
+                            descriptor_count: 1,
+                        })
+                    }
+
+                    ReflectedBindingType::StorageImage => {
+                        LayoutDescription::StorageImage(StorageImageDescription {
+                            layout: vk::ImageLayout::GENERAL,
                             binding: b.binding,
                             descriptor_count: 1,
                         })

@@ -48,6 +48,7 @@ pub enum ReflectedBindingType {
     ConstantBuffer,
     CombinedTextureSampler,
     StorageBuffer,
+    StorageImage,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]

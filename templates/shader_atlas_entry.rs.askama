@@ -112,6 +112,13 @@ impl {{ shader_impl.shader_type_name }} {
             RawStorageBufferHandle::from_typed(resources.{{ buffer_field }}),
 {%- endfor +%}
         ];
+
+        #[rustfmt::skip]
+        let storage_texture_handles = vec![
+{%- for texture_field in shader_impl.resources_storage_texture_fields +%}
+            resources.{{ texture_field }},
+{%- endfor +%}
+        ];
 {%+ if shader_impl.vertex_type_name.is_some() +%}
         let vertex_config =
             VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
@@ -124,6 +131,7 @@ impl {{ shader_impl.shader_type_name }} {
             texture_handles,
             uniform_buffer_handles,
             storage_buffer_handles,
+            storage_texture_handles,
             storage_buffer_frame_strategy: StorageBufferFrameStrategy::default(),
             disable_depth_test: false,
         }

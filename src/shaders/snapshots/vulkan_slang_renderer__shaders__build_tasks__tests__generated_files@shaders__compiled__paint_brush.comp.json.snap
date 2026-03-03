@@ -1,0 +1,179 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: shaders/compiled/paint_brush.comp.json
+---
+{
+  "sourceFileName": "paint_brush.compute.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "brushParams",
+      "elementType": {
+        "typeName": "BrushParams",
+        "fields": [
+          {
+            "kind": "resource",
+            "fieldName": "canvas",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "strokePoints",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 2,
+              "count": 1
+            },
+            "resourceShape": "structuredBuffer",
+            "resultType": {
+              "kind": "struct",
+              "typeName": "StrokePoint",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "_pad",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "pointCount",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 4
+            },
+            "scalarType": "uint32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "brushRadius",
+            "binding": {
+              "kind": "uniform",
+              "offset": 4,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "brushOpacity",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "vector",
+            "fieldName": "brushColor",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "canvasSize",
+            "binding": {
+              "kind": "uniform",
+              "offset": 32,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "computeEntryPoint": {
+    "entryPointName": "computeMain",
+    "stage": "compute",
+    "parameters": []
+  },
+  "workgroupSize": [
+    16,
+    16,
+    1
+  ],
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 48
+          },
+          {
+            "binding": 1,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 48
+          },
+          {
+            "binding": 2,
+            "descriptorType": "storageBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 48
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

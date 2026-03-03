@@ -1,11 +1,6 @@
----
-source: src/shaders/build_tasks.rs
-info:
-  relative_path: src/generated/shader_atlas/std430_matrices.rs
----
 // GENERATED FILE (do not edit directly)
 
-//! generated from slang shader: std430_matrices.shader.slang
+//! generated from slang shader: paint_display.shader.slang
 
 use std::ffi::CString;
 use std::io::Cursor;
@@ -21,33 +16,16 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
-
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
-pub struct Params {
-}
+pub struct DisplayParams {}
 
-impl GPUWrite for Params {}
-const _: () = assert!(std::mem::size_of::<Params>() == 0);
-
-#[derive(Debug, Clone, Serialize)]
-#[repr(C, align(16))]
-pub struct MatrixData {
-    pub a: glam::Mat2,
-    pub b: glam::Mat3,
-    pub c: glam::Mat4,
-    pub d: f32,
-    pub _padding_0: [u8; 12],
-}
-
-impl GPUWrite for MatrixData {}
-const _: () = assert!(std::mem::size_of::<MatrixData>() == 144);
+impl GPUWrite for DisplayParams {}
+const _: () = assert!(std::mem::size_of::<DisplayParams>() == 0);
 
 pub struct Resources<'a> {
-    pub data: &'a StorageBufferHandle<MatrixData>,
+    pub canvas: &'a TextureHandle,
 }
-
-
 
 pub struct Shader {
     pub reflection_json: ReflectionJson,
@@ -57,7 +35,7 @@ impl Shader {
     pub fn init() -> Self {
         let json_str = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/std430_matrices.json"
+            "/shaders/compiled/paint_display.json"
         ));
 
         let reflection_json: ReflectionJson = serde_json::from_str(json_str).unwrap();
@@ -73,6 +51,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
+            resources.canvas,
         ];
 
         #[rustfmt::skip]
@@ -81,7 +60,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
-            RawStorageBufferHandle::from_typed(resources.data),
         ];
 
         #[rustfmt::skip]
@@ -126,7 +104,7 @@ impl Shader {
     fn vert_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/std430_matrices.vert.spv"
+            "/shaders/compiled/paint_display.vert.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")
@@ -135,7 +113,7 @@ impl Shader {
     fn frag_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/std430_matrices.frag.spv"
+            "/shaders/compiled/paint_display.frag.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")

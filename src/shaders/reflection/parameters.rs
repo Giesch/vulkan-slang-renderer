@@ -262,7 +262,14 @@ fn reflect_struct_fields(
                 let slang_base_shape = slang_base_shape(shape_with_flags);
 
                 let resource_shape = match slang_base_shape {
-                    slang::ResourceShape::SlangTexture2d => ResourceShape::Texture2D,
+                    slang::ResourceShape::SlangTexture2d => {
+                        let access = field_type_layout.resource_access();
+                        if access == Some(slang::ResourceAccess::ReadWrite) {
+                            ResourceShape::RWTexture2D
+                        } else {
+                            ResourceShape::Texture2D
+                        }
+                    }
                     slang::ResourceShape::SlangStructuredBuffer => ResourceShape::StructuredBuffer,
                     s => todo!("unhandled slang base shape: {s:?}"),
                 };

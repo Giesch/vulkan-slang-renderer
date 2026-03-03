@@ -1,0 +1,102 @@
+{
+  "sourceFileName": "paint_display.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "displayParams",
+      "elementType": {
+        "typeName": "DisplayParams",
+        "fields": [
+          {
+            "kind": "resource",
+            "fieldName": "canvas",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 0,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "input",
+        "binding": {
+          "kind": "varyingInput",
+          "index": 0,
+          "count": 1
+        },
+        "typeName": "FragInput",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "semanticName": "SV_POSITION",
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "texCoord",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 0,
+              "count": 1
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 0
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}
