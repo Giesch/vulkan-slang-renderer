@@ -20,6 +20,7 @@
       "Bash(cargo tree:*)",
       "Bash(cargo metadata:*)",
       "Bash(timeout 3 just dev:*)",
+      "Bash(jq:*)",
       "Bash(INSTA_UPDATE=no cargo test:*)",
       "Bash(INSTA_UPDATE=always cargo test:*)",
       "WebSearch",
