@@ -23,11 +23,10 @@ FragInput vertMain(uint id : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
-    float4 paint = displayParams.canvas.Sample(input.texCoord);
+    let paint = displayParams.canvas.Sample(input.texCoord);
 
-    // Composite paint over white paper
-    float3 paper = float3(1.0);
-    float3 color = paint.rgb * paint.a + paper * (1.0 - paint.a);
+    let white = float3(1.0);
+    let color = paint.rgb * paint.a + white * (1.0 - paint.a);
 
     return float4(color, 1.0);
 }

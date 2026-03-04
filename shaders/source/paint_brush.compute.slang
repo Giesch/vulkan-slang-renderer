@@ -35,21 +35,23 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     float4 existing = brushParams.canvas[pixel];
 
     for (uint i = 0; i < brushParams.pointCount; i++) {
-        float2 brushPos = brushParams.strokePoints[i].position;
-        float dist = distance(pixelCenter, brushPos);
+        let brushPos = brushParams.strokePoints[i].position;
+        let dist = distance(pixelCenter, brushPos);
 
         if (dist > brushParams.brushRadius)
             continue;
 
         // Smooth falloff using smoothstep
-        float t = dist / brushParams.brushRadius;
-        float alpha = (1.0 - smoothstep(0.6, 1.0, t)) * brushParams.brushOpacity;
+        let t = dist / brushParams.brushRadius;
+        let alpha = (1.0 - smoothstep(0.6, 1.0, t)) * brushParams.brushOpacity;
 
         // Alpha blend: brush over existing
-        float outAlpha = alpha + existing.a * (1.0 - alpha);
+        let outAlpha = alpha + existing.a * (1.0 - alpha);
         float3 outColor;
         if (outAlpha > 0.0) {
-            outColor = (brushParams.brushColor.rgb * alpha + existing.rgb * existing.a * (1.0 - alpha)) / outAlpha;
+            let brushComponent = brushParams.brushColor.rgb * alpha;
+            let existingComponent = existing.rgb * existing.a * (1.0 - alpha);
+            outColor = (brushComponent + existingComponent) / outAlpha;
         } else {
             outColor = float3(0.0);
         }
