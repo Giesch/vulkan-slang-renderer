@@ -24,6 +24,24 @@
                 "scalarType": "float32"
               }
             }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "paperHeight",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
           }
         ]
       }
@@ -89,6 +107,13 @@
         "bindingRanges": [
           {
             "binding": 0,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 0
+          },
+          {
+            "binding": 1,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",

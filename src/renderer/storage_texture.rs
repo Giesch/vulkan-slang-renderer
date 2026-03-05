@@ -35,8 +35,6 @@ pub(super) struct StorageTexture {
     pub(super) image_memory: vk::DeviceMemory,
     pub(super) image_view: vk::ImageView,
     pub(super) format: vk::Format,
-    #[expect(unused)]
     pub(super) width: u32,
-    #[expect(unused)]
     pub(super) height: u32,
 }

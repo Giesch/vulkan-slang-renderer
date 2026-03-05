@@ -566,7 +566,7 @@ impl Renderer {
     pub fn clear_storage_texture(
         &self,
         handle: &StorageTextureHandle,
-        clear_color: vk::ClearColorValue,
+        clear_color: [f32; 4],
     ) -> anyhow::Result<()> {
         let st = self.storage_textures.get(handle);
 
@@ -582,7 +582,9 @@ impl Renderer {
                 command_buffer,
                 st.image,
                 vk::ImageLayout::GENERAL,
-                &clear_color,
+                &vk::ClearColorValue {
+                    float32: clear_color,
+                },
                 &[subresource_range],
             );
         }
@@ -593,6 +595,125 @@ impl Renderer {
             self.graphics_queue,
             command_buffer,
         )?;
+
+        Ok(())
+    }
+
+    /// Upload CPU data to a storage texture via a staging buffer.
+    /// The texture must already be in GENERAL layout (as created by `create_storage_texture`).
+    pub fn write_storage_texture<T: GPUWrite>(
+        &self,
+        handle: &StorageTextureHandle,
+        data: &[T],
+    ) -> anyhow::Result<()> {
+        let st = self.storage_textures.get(handle);
+        let buffer_size = std::mem::size_of_val(data) as u64;
+
+        let (staging_buffer, staging_buffer_memory) = create_memory_buffer(
+            &self.instance,
+            &self.device,
+            self.physical_device,
+            buffer_size,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        )?;
+
+        unsafe { write_to_gpu_buffer(&self.device, staging_buffer_memory, data)? };
+
+        let command_buffer = begin_single_time_commands(&self.device, self.command_pool)?;
+
+        // Transition GENERAL -> TRANSFER_DST_OPTIMAL
+        let subresource_range = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .level_count(1)
+            .layer_count(1);
+
+        let barrier_to_transfer = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::GENERAL)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(st.image)
+            .subresource_range(subresource_range)
+            .src_access_mask(Default::default())
+            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
+
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+                Default::default(),
+                &[],
+                &[],
+                &[barrier_to_transfer],
+            );
+        }
+
+        // Copy buffer to image
+        let image_subresource = vk::ImageSubresourceLayers::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .mip_level(0)
+            .base_array_layer(0)
+            .layer_count(1);
+
+        let extent = vk::Extent2D {
+            width: st.width,
+            height: st.height,
+        };
+
+        let region = vk::BufferImageCopy::default()
+            .buffer_offset(0)
+            .buffer_row_length(0)
+            .buffer_image_height(0)
+            .image_subresource(image_subresource)
+            .image_offset(vk::Offset3D::default())
+            .image_extent(extent.into());
+
+        unsafe {
+            self.device.cmd_copy_buffer_to_image(
+                command_buffer,
+                staging_buffer,
+                st.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[region],
+            );
+        }
+
+        // Transition TRANSFER_DST_OPTIMAL -> GENERAL
+        let barrier_to_general = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::GENERAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(st.image)
+            .subresource_range(subresource_range)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                Default::default(),
+                &[],
+                &[],
+                &[barrier_to_general],
+            );
+        }
+
+        end_single_time_commands(
+            &self.device,
+            self.command_pool,
+            self.graphics_queue,
+            command_buffer,
+        )?;
+
+        unsafe {
+            self.device.destroy_buffer(staging_buffer, None);
+            self.device.free_memory(staging_buffer_memory, None);
+        }
 
         Ok(())
     }

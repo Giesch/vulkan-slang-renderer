@@ -25,6 +25,7 @@ const _: () = assert!(std::mem::size_of::<DisplayParams>() == 0);
 
 pub struct Resources<'a> {
     pub canvas: &'a TextureHandle,
+    pub paper_height: &'a TextureHandle,
 }
 
 pub struct Shader {
@@ -52,6 +53,7 @@ impl Shader {
         #[rustfmt::skip]
         let texture_handles = vec![
             resources.canvas,
+            resources.paper_height,
         ];
 
         #[rustfmt::skip]

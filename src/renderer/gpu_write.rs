@@ -11,6 +11,7 @@ pub enum NoVertex {}
 pub trait GPUWrite {}
 
 impl GPUWrite for u8 {} // image bytes
+impl GPUWrite for f32 {} // storage texture data
 impl GPUWrite for u32 {} // index buffer
 impl GPUWrite for NoVertex {}
 

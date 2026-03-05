@@ -8,6 +8,7 @@ ParameterBlock<DisplayParams> displayParams;
 
 struct DisplayParams {
     Sampler2D canvas;
+    Sampler2D paperHeight;
 }
 
 struct FragInput {
@@ -24,9 +25,13 @@ FragInput vertMain(uint id : SV_VertexID) {
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
     let paint = displayParams.canvas.Sample(input.texCoord);
+    let h = displayParams.paperHeight.Sample(input.texCoord).r;
 
-    let white = float3(1.0);
-    let color = paint.rgb * paint.a + white * (1.0 - paint.a);
+    // paper height texture
+    let paperBase = float3(0.96, 0.94, 0.90);
+    let paperColor = paperBase * lerp(0.95, 1.02, h);
+
+    let color = paint.rgb * paint.a + paperColor * (1.0 - paint.a);
 
     return float4(color, 1.0);
 }
