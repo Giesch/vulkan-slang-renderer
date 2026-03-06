@@ -288,51 +288,56 @@ mod noise {
         value
     }
 
-    /// Worley (cellular) noise — distance to nearest random feature point
-    fn worley(x: f32, y: f32) -> f32 {
+    /// Worley (cellular) noise returning (F1, F2) — nearest and second-nearest distances.
+    /// `jitter` controls how far feature points deviate from cell centers (0.0=grid, 1.0=fully random).
+    fn worley(x: f32, y: f32, jitter: f32) -> (f32, f32) {
         let ix = x.floor() as i32;
         let iy = y.floor() as i32;
+        let fx = x - x.floor();
+        let fy = y - y.floor();
 
-        let mut min_dist = f32::MAX;
+        let mut f1 = f32::MAX;
+        let mut f2 = f32::MAX;
 
         for dy in -1..=1 {
             for dx in -1..=1 {
-                let nx = ix + dx;
-                let ny = iy + dy;
-                let (px, py) = hash2(nx as f32 + 100.0, ny as f32 + 100.0);
-                let point_x = nx as f32 + px;
-                let point_y = ny as f32 + py;
-                let dist_x = x - point_x;
-                let dist_y = y - point_y;
-                let dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
-                if dist < min_dist {
-                    min_dist = dist;
+                let (px, py) = hash2((ix + dx) as f32, (iy + dy) as f32);
+                let px = 0.5 + jitter * (px - 0.5);
+                let py = 0.5 + jitter * (py - 0.5);
+                let vx = dx as f32 + px - fx;
+                let vy = dy as f32 + py - fy;
+                let d = vx * vx + vy * vy;
+                if d < f1 {
+                    f2 = f1;
+                    f1 = d;
+                } else if d < f2 {
+                    f2 = d;
                 }
             }
         }
 
-        min_dist
+        (f1.sqrt(), f2.sqrt())
     }
 
     /// Generate paper height map data as R32F floats, normalized to [0, 1]
     pub fn generate_paper_height_map(width: u32, height: u32) -> Vec<f32> {
         let perlin_scale = 8.0;
-        let worley_scale = 16.0;
+        let worley_scale = 48.0; // high freq → fine weave
+        let jitter = 0.25; // semi-regular cells (0.0=grid, 1.0=fully random)
 
         let mut data = Vec::with_capacity((width * height) as usize);
 
         for y in 0..height {
             for x in 0..width {
-                let nx = x as f32 / width as f32 * perlin_scale;
-                let ny = y as f32 / height as f32 * perlin_scale;
+                let nx = x as f32 / width as f32;
+                let ny = y as f32 / height as f32;
 
-                let p = perlin_fbm(nx, ny);
+                let p = perlin_fbm(nx * perlin_scale, ny * perlin_scale);
 
-                let wx = x as f32 / width as f32 * worley_scale;
-                let wy = y as f32 / height as f32 * worley_scale;
-                let w = worley(wx, wy);
+                let (f1a, f2a) = worley(nx * worley_scale, ny * worley_scale, jitter);
+                let w = (0.5 * (f2a - f1a)).sqrt();
 
-                let h = 0.6 * p + 0.4 * w;
+                let h = 0.7 * p + 0.3 * w;
                 data.push(h);
             }
         }
