@@ -27,6 +27,7 @@ struct Watercolor {
     // Buffers
     stroke_points_buffer: StorageBufferHandle<paint_brush_compute::StrokePoint>,
     brush_params_buffer: UniformBufferHandle<paint_brush_compute::BrushParams>,
+    display_params_buffer: UniformBufferHandle<paint_display::DisplayParams>,
 
     // Input state
     painting: bool,
@@ -77,6 +78,8 @@ impl Game for Watercolor {
             )?;
         let brush_params_buffer =
             renderer.create_uniform_buffer::<paint_brush_compute::BrushParams>()?;
+        let display_params_buffer =
+            renderer.create_uniform_buffer::<paint_display::DisplayParams>()?;
         let shaders = ShaderAtlas::init();
 
         let brush_resources = paint_brush_compute::Resources {
@@ -90,6 +93,7 @@ impl Game for Watercolor {
         let display_resources = paint_display::Resources {
             canvas: &canvas_sampled,
             paper_height: &paper_height_sampled,
+            display_params_buffer: &display_params_buffer,
         };
         let display_config = shaders.paint_display.pipeline_config(display_resources);
         let display_pipeline = renderer.create_pipeline(display_config)?;
@@ -99,6 +103,7 @@ impl Game for Watercolor {
             display_pipeline,
             stroke_points_buffer,
             brush_params_buffer,
+            display_params_buffer,
             painting: false,
             stroke_points: Vec::new(),
             prev_mouse_pos: None,
@@ -176,6 +181,7 @@ impl Game for Watercolor {
         let brush_opacity = self.brush_opacity;
         let brush_params_buffer = &mut self.brush_params_buffer;
         let stroke_points_buffer = &mut self.stroke_points_buffer;
+        let display_params_buffer = &mut self.display_params_buffer;
 
         let window_size = renderer.window_resolution();
         let canvas_size = Vec2::new(CANVAS_WIDTH as f32, CANVAS_HEIGHT as f32);
@@ -196,6 +202,14 @@ impl Game for Watercolor {
 
                 gpu.write_storage(stroke_points_buffer, &gpu_points);
             }
+
+            gpu.write_uniform(
+                display_params_buffer,
+                paint_display::DisplayParams {
+                    texel_size: Vec2::new(1.0 / CANVAS_WIDTH as f32, 1.0 / CANVAS_HEIGHT as f32),
+                    _padding_0: Default::default(),
+                },
+            );
 
             gpu.write_uniform(
                 brush_params_buffer,

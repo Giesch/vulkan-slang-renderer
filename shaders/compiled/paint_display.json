@@ -12,7 +12,7 @@
             "fieldName": "canvas",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 0,
+              "index": 1,
               "count": 1
             },
             "resourceShape": "texture2D",
@@ -30,7 +30,7 @@
             "fieldName": "paperHeight",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 1,
+              "index": 2,
               "count": 1
             },
             "resourceShape": "texture2D",
@@ -41,6 +41,20 @@
                 "kind": "scalar",
                 "scalarType": "float32"
               }
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "texelSize",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
             }
           }
         ]
@@ -107,17 +121,24 @@
         "bindingRanges": [
           {
             "binding": 0,
-            "descriptorType": "combinedTextureSampler",
+            "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 0
+            "size": 16
           },
           {
             "binding": 1,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 0
+            "size": 16
+          },
+          {
+            "binding": 2,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
           }
         ]
       }

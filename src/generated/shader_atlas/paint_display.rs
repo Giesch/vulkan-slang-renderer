@@ -18,14 +18,18 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
-pub struct DisplayParams {}
+pub struct DisplayParams {
+    pub texel_size: glam::Vec2,
+    pub _padding_0: [u8; 8],
+}
 
 impl GPUWrite for DisplayParams {}
-const _: () = assert!(std::mem::size_of::<DisplayParams>() == 0);
+const _: () = assert!(std::mem::size_of::<DisplayParams>() == 16);
 
 pub struct Resources<'a> {
     pub canvas: &'a TextureHandle,
     pub paper_height: &'a TextureHandle,
+    pub display_params_buffer: &'a UniformBufferHandle<DisplayParams>,
 }
 
 pub struct Shader {
@@ -58,6 +62,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
+            RawUniformBufferHandle::from_typed(resources.display_params_buffer),
         ];
 
         #[rustfmt::skip]
