@@ -1,6 +1,11 @@
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
 use ash::vk;
+use facet::Facet;
 use glam::{Vec2, Vec3, Vec4};
 
+use vulkan_slang_renderer::editor::Label;
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer,
@@ -24,11 +29,18 @@ fn main() -> Result<(), anyhow::Error> {
     Watercolor::run()
 }
 
+#[derive(Facet)]
+pub struct EditState {
+    fps: Label,
+}
+
+const FRAME_HISTORY_SIZE: usize = 60;
+
 const CANVAS_WIDTH: u32 = 1024;
 const CANVAS_HEIGHT: u32 = 768;
 const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
 const JACOBI_ITERATIONS: u32 = 20;
-const SIM_STEPS_PER_FRAME: u32 = 3;
+const SIM_STEPS_PER_FRAME: u32 = 1;
 
 // Simulation parameters
 const DT: f32 = 0.5;
@@ -162,6 +174,11 @@ struct Watercolor {
     active_pigment: u32,
     brush_radius: f32,
     brush_opacity: f32,
+
+    // FPS tracking
+    edit_state: EditState,
+    last_frame_time: Instant,
+    frame_times: VecDeque<Duration>,
 }
 
 fn compute_barrier(renderer: &mut FrameRenderer) {
@@ -246,7 +263,7 @@ fn pigment_properties(index: u32) -> wc_transfer_pigment_compute::PigmentPropert
 }
 
 impl Game for Watercolor {
-    type EditState = ();
+    type EditState = EditState;
 
     fn window_title() -> &'static str {
         "Watercolor"
@@ -685,7 +702,33 @@ impl Game for Watercolor {
             active_pigment: 0,
             brush_radius: 20.0,
             brush_opacity: 0.5,
+
+            edit_state: EditState {
+                fps: Label::new("FPS: --"),
+            },
+            last_frame_time: Instant::now(),
+            frame_times: VecDeque::with_capacity(FRAME_HISTORY_SIZE),
         })
+    }
+
+    fn update(&mut self) {
+        let now = Instant::now();
+        let delta = now.duration_since(self.last_frame_time);
+        self.last_frame_time = now;
+
+        self.frame_times.push_back(delta);
+        if self.frame_times.len() > FRAME_HISTORY_SIZE {
+            self.frame_times.pop_front();
+        }
+
+        let total: Duration = self.frame_times.iter().sum();
+        let avg_frame_time = total.as_secs_f64() / self.frame_times.len() as f64;
+        let fps = 1.0 / avg_frame_time;
+        self.edit_state.fps.set(format!("{fps:.0}"));
+    }
+
+    fn editor_ui(&mut self) -> Option<(&str, &mut Self::EditState)> {
+        Some(("Watercolor", &mut self.edit_state))
     }
 
     fn input(&mut self, input: Input) {
