@@ -4,6 +4,8 @@
 
 Implement an interactive watercolor painting application based on Curtis et al. "Computer-Generated Watercolor." The user paints brushstrokes with the mouse; a shallow-water fluid simulation drives pigment transport across the canvas; Kubelka-Munk compositing renders the final image.
 
+The paper is available [here](https://grail.cs.washington.edu/projects/watercolor/paper_small.pdf).
+
 The renderer currently lacks RWTexture2D support, so Phase 1 adds that infrastructure before building the application.
 
 ## Phase 1: Add RWTexture2D (Storage Image) Support

@@ -1,0 +1,382 @@
+{
+  "sourceFileName": "wc_transfer_pigment.compute.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "resource",
+            "fieldName": "pigment",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "deposit",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 2,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "paperHeight",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 3,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "wetMask",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 4,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "gridSize",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "transferRate",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "_pad",
+            "binding": {
+              "kind": "uniform",
+              "offset": 12,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment0",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 16
+            },
+            "structType": {
+              "typeName": "PigmentProperties",
+              "fields": [
+                {
+                  "kind": "scalar",
+                  "fieldName": "density",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "stainingPower",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 4,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "granulation",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment1",
+            "binding": {
+              "kind": "uniform",
+              "offset": 32,
+              "size": 16
+            },
+            "structType": {
+              "typeName": "PigmentProperties",
+              "fields": [
+                {
+                  "kind": "scalar",
+                  "fieldName": "density",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "stainingPower",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 4,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "granulation",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment2",
+            "binding": {
+              "kind": "uniform",
+              "offset": 48,
+              "size": 16
+            },
+            "structType": {
+              "typeName": "PigmentProperties",
+              "fields": [
+                {
+                  "kind": "scalar",
+                  "fieldName": "density",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "stainingPower",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 4,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "granulation",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment3",
+            "binding": {
+              "kind": "uniform",
+              "offset": 64,
+              "size": 16
+            },
+            "structType": {
+              "typeName": "PigmentProperties",
+              "fields": [
+                {
+                  "kind": "scalar",
+                  "fieldName": "density",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "stainingPower",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 4,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "granulation",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "computeEntryPoint": {
+    "entryPointName": "computeMain",
+    "stage": "compute",
+    "parameters": []
+  },
+  "workgroupSize": [
+    16,
+    16,
+    1
+  ],
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 1,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 2,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 3,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 4,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

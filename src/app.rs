@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use sdl3::EventPump;
 use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::Keycode;
@@ -25,6 +27,8 @@ impl App {
     }
 
     pub fn run_loop(mut self, mut event_pump: EventPump) -> anyhow::Result<()> {
+        let mut end_of_last_frame = Instant::now();
+
         loop {
             let Ok(()) = self.handle_events(&mut event_pump) else {
                 break;
@@ -45,8 +49,12 @@ impl App {
                 self.game.draw_frame(frame_renderer)?;
             }
 
-            let frame_delay = self.game.frame_delay().as_nanos() as u64;
-            unsafe { SDL_DelayPrecise(frame_delay) };
+            let spent_frame_time = (Instant::now() - end_of_last_frame).as_nanos() as u64;
+            let frame_time = self.game.frame_delay().as_nanos() as u64;
+            let remaining_frame_time = frame_time.saturating_sub(spent_frame_time);
+            unsafe { SDL_DelayPrecise(remaining_frame_time) };
+
+            end_of_last_frame = Instant::now();
         }
 
         self.renderer.drain_gpu()?;

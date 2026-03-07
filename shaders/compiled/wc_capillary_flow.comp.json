@@ -1,0 +1,220 @@
+{
+  "sourceFileName": "wc_capillary_flow.compute.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "resource",
+            "fieldName": "saturationIn",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "wetMaskIn",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 2,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "pressure",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 3,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "paperHeight",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 4,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "saturationOut",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 5,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "wetMaskOut",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 6,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "gridSize",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "absorbRate",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "diffuseRate",
+            "binding": {
+              "kind": "uniform",
+              "offset": 12,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "capacity",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "sigma",
+            "binding": {
+              "kind": "uniform",
+              "offset": 20,
+              "size": 4
+            },
+            "scalarType": "float32"
+          }
+        ]
+      }
+    }
+  ],
+  "computeEntryPoint": {
+    "entryPointName": "computeMain",
+    "stage": "compute",
+    "parameters": []
+  },
+  "workgroupSize": [
+    16,
+    16,
+    1
+  ],
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          },
+          {
+            "binding": 1,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          },
+          {
+            "binding": 2,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          },
+          {
+            "binding": 3,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          },
+          {
+            "binding": 4,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          },
+          {
+            "binding": 5,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          },
+          {
+            "binding": 6,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

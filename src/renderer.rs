@@ -3355,6 +3355,9 @@ fn descriptor_pool_sizes(
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .descriptor_count(sets_across_frames * total_counts.combined_texture_samplers),
         vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::SAMPLED_IMAGE)
+            .descriptor_count(sets_across_frames * total_counts.sampled_images),
+        vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::STORAGE_IMAGE)
             .descriptor_count(sets_across_frames * total_counts.storage_images),
     ]
@@ -3436,6 +3439,8 @@ pub struct TextureDescription {
     pub binding: u32,
     // the number of descriptors in the descriptor set
     pub descriptor_count: u32,
+    // true for SAMPLED_IMAGE (separate texture), false for COMBINED_IMAGE_SAMPLER
+    pub sampled_image_only: bool,
 }
 
 #[derive(Debug)]
@@ -3557,6 +3562,12 @@ fn create_descriptor_sets(
                     LayoutDescription::Texture(texture_description) => {
                         let texture = textures[texture_index];
 
+                        let descriptor_type = if texture_description.sampled_image_only {
+                            vk::DescriptorType::SAMPLED_IMAGE
+                        } else {
+                            vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+                        };
+
                         let image_info = vk::DescriptorImageInfo::default()
                             .image_layout(texture.image_layout)
                             .image_view(texture.image_view)
@@ -3566,7 +3577,7 @@ fn create_descriptor_sets(
                             .dst_set(dst_set)
                             .dst_binding(texture_description.binding)
                             .dst_array_element(0)
-                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_type(descriptor_type)
                             .descriptor_count(texture_description.descriptor_count)
                             .image_info(&image_info);
 
@@ -4514,6 +4525,7 @@ struct DescriptorCounts {
     uniform_buffers: u32,
     storage_buffers: u32,
     combined_texture_samplers: u32,
+    sampled_images: u32,
     storage_images: u32,
 }
 
@@ -4537,6 +4549,7 @@ impl std::ops::Add for DescriptorCounts {
             storage_buffers: self.storage_buffers + rhs.storage_buffers,
             combined_texture_samplers: self.combined_texture_samplers
                 + rhs.combined_texture_samplers,
+            sampled_images: self.sampled_images + rhs.sampled_images,
             storage_images: self.storage_images + rhs.storage_images,
         }
     }
@@ -4547,6 +4560,7 @@ impl DescriptorCounts {
         uniform_buffers: 0,
         storage_buffers: 0,
         combined_texture_samplers: 0,
+        sampled_images: 0,
         storage_images: 0,
     };
 
@@ -4554,6 +4568,7 @@ impl DescriptorCounts {
         let mut uniform_buffers = 0;
         let mut storage_buffers = 0;
         let mut combined_texture_samplers = 0;
+        let mut sampled_images = 0;
         let mut storage_images = 0;
         for binding in &set_layout.binding_ranges {
             match binding.descriptor_type {
@@ -4569,8 +4584,12 @@ impl DescriptorCounts {
                 shaders::json::ReflectedBindingType::StorageImage => {
                     storage_images += 1;
                 }
-                shaders::json::ReflectedBindingType::Sampler => todo!(),
-                shaders::json::ReflectedBindingType::Texture => todo!(),
+                shaders::json::ReflectedBindingType::Sampler => {
+                    // Separate sampler — not currently used, counted for pool allocation
+                }
+                shaders::json::ReflectedBindingType::Texture => {
+                    sampled_images += 1;
+                }
             }
         }
 
@@ -4578,6 +4597,7 @@ impl DescriptorCounts {
             uniform_buffers,
             storage_buffers,
             combined_texture_samplers,
+            sampled_images,
             storage_images,
         }
     }

@@ -109,6 +109,7 @@ impl Game for RayMarching {
                 Key::Q => self.intent.roll_left = true,
                 Key::E => self.intent.roll_right = true,
                 Key::Space => {}
+                _ => {}
             },
 
             Input::KeyUp(key) => match key {
@@ -119,6 +120,7 @@ impl Game for RayMarching {
                 Key::Q => self.intent.roll_left = false,
                 Key::E => self.intent.roll_right = false,
                 Key::Space => {}
+                _ => {}
             },
 
             _ => {}

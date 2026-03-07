@@ -9,10 +9,38 @@
         "fields": [
           {
             "kind": "resource",
-            "fieldName": "canvas",
+            "fieldName": "wetMask",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 1,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "pressure",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 2,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "pigment",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 3,
               "count": 1
             },
             "resourceShape": "rWTexture2D",
@@ -30,7 +58,7 @@
             "fieldName": "strokePoints",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 2,
+              "index": 4,
               "count": 1
             },
             "resourceShape": "structuredBuffer",
@@ -44,20 +72,6 @@
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
-                    "size": 8
-                  },
-                  "elementCount": 2,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                },
-                {
-                  "kind": "vector",
-                  "fieldName": "_pad",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 8,
                     "size": 8
                   },
                   "elementCount": 2,
@@ -100,8 +114,18 @@
             "scalarType": "float32"
           },
           {
+            "kind": "scalar",
+            "fieldName": "brushPressure",
+            "binding": {
+              "kind": "uniform",
+              "offset": 12,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
             "kind": "vector",
-            "fieldName": "brushColor",
+            "fieldName": "pigmentColor",
             "binding": {
               "kind": "uniform",
               "offset": 16,
@@ -161,6 +185,20 @@
           },
           {
             "binding": 2,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 48
+          },
+          {
+            "binding": 3,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 48
+          },
+          {
+            "binding": 4,
             "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",

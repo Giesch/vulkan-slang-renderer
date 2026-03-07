@@ -14,7 +14,7 @@ info:
         "fields": [
           {
             "kind": "resource",
-            "fieldName": "canvas",
+            "fieldName": "deposit",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 1,
@@ -60,6 +60,268 @@ info:
             "elementType": {
               "kind": "scalar",
               "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "_pad",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment0",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "K",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "S",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad1",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 28,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment1",
+            "binding": {
+              "kind": "uniform",
+              "offset": 48,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "K",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "S",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad1",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 28,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment2",
+            "binding": {
+              "kind": "uniform",
+              "offset": 80,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "K",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "S",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad1",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 28,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment3",
+            "binding": {
+              "kind": "uniform",
+              "offset": 112,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "K",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "S",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "_pad1",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 28,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
             }
           }
         ]
@@ -129,21 +391,21 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 16
+            "size": 144
           },
           {
             "binding": 1,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 16
+            "size": 144
           },
           {
             "binding": 2,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 16
+            "size": 144
           }
         ]
       }

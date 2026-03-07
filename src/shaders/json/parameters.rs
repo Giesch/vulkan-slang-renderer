@@ -180,8 +180,15 @@ pub enum ResourceShape {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ResourceResultType {
+    Scalar(ScalarResultType),
     Vector(VectorResultType),
     Struct(StructResultType),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScalarResultType {
+    pub scalar_type: ScalarType,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

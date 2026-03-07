@@ -10,20 +10,27 @@
     - [X] fix vulkan validation errors
     - [X] fix mouse offset
 
-    - [ ] understand and refactor
+    - [-] understand and refactor
       - [ ] usage of `image_memory: vk::DeviceMemory::null()`
         for an alias that doesn't own the image memory
         is there a way to avoid that? is it a problem?
       - [ ] remove hardcoded parameters
         - [ ] canvas size (based on this laptop?)
         - [ ] max stroke points per frame?
-      - [ ] why is the texture preserved across app runs?
+      - [X] why is the texture preserved across app runs?
         accidental use of uninitialized gpu memory, that happens to repeat
-      - [ ] wtf is up with pad0 in BrushParams
-      - [ ] are width and height needed/used on StorageTexture?
+      - [X] wtf is up with pad0 in BrushParams
+      - [X] are width and height needed/used on StorageTexture?
 
-  - [ ] gradually add simulation layers
+  - [X] gradually add simulation layers
 
+  - [ ] fix paper texture
+    get noise results more like figure 4
+    avoid the current toilet paper look
+
+  - [ ] speed up the simulation
+    add even more ticks per frame?
+    is this causing lock-up for the mouse somehow?
 
 * Next
 - [ ] profile startup

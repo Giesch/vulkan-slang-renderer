@@ -303,6 +303,11 @@ fn reflect_struct_fields(
                         ResourceResultType::Struct(struct_result_type)
                     }
 
+                    slang::TypeKind::Scalar => {
+                        let scalar_type = scalar_from_slang(result_type.scalar_type());
+                        ResourceResultType::Scalar(ScalarResultType { scalar_type })
+                    }
+
                     k => todo!("result type kind not handled: {k:?}"),
                 };
 

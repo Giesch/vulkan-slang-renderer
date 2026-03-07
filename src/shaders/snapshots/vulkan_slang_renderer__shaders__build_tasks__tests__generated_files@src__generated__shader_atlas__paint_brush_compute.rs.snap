@@ -25,10 +25,10 @@ pub struct BrushParams {
     pub point_count: u32,
     pub brush_radius: f32,
     pub brush_opacity: f32,
-    pub _padding_0: [u8; 4],
-    pub brush_color: glam::Vec4,
+    pub brush_pressure: f32,
+    pub pigment_color: glam::Vec4,
     pub canvas_size: glam::Vec2,
-    pub _padding_1: [u8; 8],
+    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for BrushParams {}
@@ -38,14 +38,15 @@ const _: () = assert!(std::mem::size_of::<BrushParams>() == 48);
 #[repr(C, align(8))]
 pub struct StrokePoint {
     pub position: glam::Vec2,
-    pub pad: glam::Vec2,
 }
 
 impl GPUWrite for StrokePoint {}
-const _: () = assert!(std::mem::size_of::<StrokePoint>() == 16);
+const _: () = assert!(std::mem::size_of::<StrokePoint>() == 8);
 
 pub struct Resources<'a> {
-    pub canvas: &'a StorageTextureHandle,
+    pub wet_mask: &'a StorageTextureHandle,
+    pub pressure: &'a StorageTextureHandle,
+    pub pigment: &'a StorageTextureHandle,
     pub stroke_points: &'a StorageBufferHandle<StrokePoint>,
     pub brush_params_buffer: &'a UniformBufferHandle<BrushParams>,
 }
@@ -91,7 +92,9 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_texture_handles = vec![
-            resources.canvas,
+            resources.wet_mask,
+            resources.pressure,
+            resources.pigment,
         ];
 
         ComputePipelineConfig {

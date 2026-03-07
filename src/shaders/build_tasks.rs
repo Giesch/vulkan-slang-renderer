@@ -865,6 +865,8 @@ fn gather_struct_defs(
 
                 ResourceShape::StructuredBuffer => {
                     match &res.result_type {
+                        ResourceResultType::Scalar(_) => {}
+
                         ResourceResultType::Vector(vector_result_type) => {
                             match vector_result_type.element_type {
                                 VectorElementType::Scalar(_) => {}
@@ -1010,6 +1012,11 @@ fn required_resource(field: &StructField) -> Option<RequiredResource> {
 
 fn resource_type_name(result_type: &ResourceResultType) -> String {
     match result_type {
+        ResourceResultType::Scalar(s) => match s.scalar_type {
+            ScalarType::Float32 => "f32".to_string(),
+            ScalarType::Uint32 => "u32".to_string(),
+        },
+
         ResourceResultType::Vector(v) => match &v.element_type {
             VectorElementType::Scalar(s) => {
                 let element_type = match s.scalar_type {

@@ -1,0 +1,110 @@
+{
+  "sourceFileName": "wc_gaussian_blur.compute.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "resource",
+            "fieldName": "inputTex",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "outputTex",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 2,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "gridSize",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "direction",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "computeEntryPoint": {
+    "entryPointName": "computeMain",
+    "stage": "compute",
+    "parameters": []
+  },
+  "workgroupSize": [
+    16,
+    16,
+    1
+  ],
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          },
+          {
+            "binding": 1,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          },
+          {
+            "binding": 2,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

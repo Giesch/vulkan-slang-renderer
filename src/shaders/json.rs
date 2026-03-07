@@ -80,6 +80,7 @@ pub fn layout_bindings_from_pipeline_layout(
                         LayoutDescription::Texture(TextureDescription {
                             binding: b.binding,
                             descriptor_count: 1,
+                            sampled_image_only: false,
                         })
                     }
 
@@ -88,6 +89,14 @@ pub fn layout_bindings_from_pipeline_layout(
                             layout: vk::ImageLayout::GENERAL,
                             binding: b.binding,
                             descriptor_count: 1,
+                        })
+                    }
+
+                    ReflectedBindingType::Texture => {
+                        LayoutDescription::Texture(TextureDescription {
+                            binding: b.binding,
+                            descriptor_count: 1,
+                            sampled_image_only: true,
                         })
                     }
 

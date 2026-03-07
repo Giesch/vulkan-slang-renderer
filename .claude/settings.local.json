@@ -33,7 +33,8 @@
       "Bash(vulkaninfo:*)",
       "WebFetch(domain:danielchasehooper.com)",
       "WebFetch(domain:vulkan-tutorial.com)",
-      "WebFetch(domain:grail.cs.washington.edu)"
+      "WebFetch(domain:grail.cs.washington.edu)",
+      "Bash(INSTA_UPDATE=new cargo test:*)"
     ]
   },
   "statusLine": {
