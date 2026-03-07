@@ -1,3 +1,6 @@
+//! A painting program based on the watercolor simulation described in this paper:
+//! https://grail.cs.washington.edu/projects/watercolor/paper_small.pdf
+
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
