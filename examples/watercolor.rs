@@ -8,7 +8,7 @@ use ash::vk;
 use facet::Facet;
 use glam::{Vec2, Vec3, Vec4};
 
-use vulkan_slang_renderer::editor::{Label, Slider};
+use vulkan_slang_renderer::editor::{Checkbox, Label, Slider};
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer,
@@ -36,6 +36,7 @@ fn main() -> Result<(), anyhow::Error> {
 pub struct EditState {
     fps: Label,
     brush_concentration: Slider,
+    show_wet_mask: Checkbox,
 }
 
 const FRAME_HISTORY_SIZE: usize = 60;
@@ -145,7 +146,7 @@ struct Watercolor {
     blur_v_and_flow_pipelines: [PipelineHandle<Compute>; 2],
     advect_and_transfer_pipelines: [PipelineHandle<Compute>; 2],
     capillary_flow_pipelines: [PipelineHandle<Compute>; 2],
-    display_pipeline: PipelineHandle<DrawVertexCount>,
+    display_pipelines: [PipelineHandle<DrawVertexCount>; 2],
 
     // Buffers
     stroke_points_buffer: StorageBufferHandle<paint_brush_compute::StrokePoint>,
@@ -606,15 +607,28 @@ impl Game for Watercolor {
             ]
         };
 
-        // Display pipeline
-        let display_pipeline = {
-            let s = ShaderAtlas::init();
-            let display_resources = paint_display::Resources {
-                deposit: &deposit_sampled,
-                paper_height: &paper_height_sampled,
-                display_params_buffer: &display_params_buffer,
-            };
-            renderer.create_pipeline(s.paint_display.pipeline_config(display_resources))?
+        // Display pipeline: 2 variants for wet_mask parity
+        let display_pipelines = {
+            let s0 = ShaderAtlas::init();
+            let s1 = ShaderAtlas::init();
+            [
+                renderer.create_pipeline(s0.paint_display.pipeline_config(
+                    paint_display::Resources {
+                        deposit: &deposit_sampled,
+                        paper_height: &paper_height_sampled,
+                        wet_mask: wet_mask.read(false),
+                        display_params_buffer: &display_params_buffer,
+                    },
+                ))?,
+                renderer.create_pipeline(s1.paint_display.pipeline_config(
+                    paint_display::Resources {
+                        deposit: &deposit_sampled,
+                        paper_height: &paper_height_sampled,
+                        wet_mask: wet_mask.read(true),
+                        display_params_buffer: &display_params_buffer,
+                    },
+                ))?,
+            ]
         };
 
         Ok(Self {
@@ -637,7 +651,7 @@ impl Game for Watercolor {
             blur_v_and_flow_pipelines,
             advect_and_transfer_pipelines,
             capillary_flow_pipelines,
-            display_pipeline,
+            display_pipelines,
 
             stroke_points_buffer,
             brush_params_buffer,
@@ -665,6 +679,7 @@ impl Game for Watercolor {
             edit_state: EditState {
                 fps: Label::new("FPS: --"),
                 brush_concentration: Slider::new(0.3, 0.01, 1.0),
+                show_wet_mask: Checkbox::new(false),
             },
             last_frame_time: Instant::now(),
             frame_times: VecDeque::with_capacity(FRAME_HISTORY_SIZE),
@@ -875,7 +890,7 @@ impl Game for Watercolor {
         let advect_and_transfer_params_buffer = &mut self.advect_and_transfer_params_buffer;
         let capillary_flow_params_buffer = &mut self.capillary_flow_params_buffer;
 
-        renderer.draw_vertex_count(&self.display_pipeline, 3, |gpu| {
+        renderer.draw_vertex_count(&self.display_pipelines[self.sim_parity as usize], 3, |gpu| {
             // Upload stroke points
             if point_count > 0 {
                 let gpu_points: Vec<paint_brush_compute::StrokePoint> = stroke_points
@@ -997,7 +1012,12 @@ impl Game for Watercolor {
                 display_params_buffer,
                 paint_display::DisplayParams {
                     texel_size,
-                    pad: Vec2::ZERO,
+                    show_wet_mask: if self.edit_state.show_wet_mask.checked {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                    pad: 0.0,
                     pigment0: pigment_km(0),
                     pigment1: pigment_km(1),
                     pigment2: pigment_km(2),

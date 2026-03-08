@@ -16,8 +16,10 @@ struct PigmentKM {
 struct DisplayParams {
     Sampler2D deposit;
     Sampler2D paperHeight;
+    Sampler2D wetMask;
     float2 texelSize;
-    float2 _pad;
+    float showWetMask;
+    float _pad;
     PigmentKM pigment0;
     PigmentKM pigment1;
     PigmentKM pigment2;
@@ -83,6 +85,13 @@ float3 compositeLayer(float3 R_layer, float3 T_layer, float3 R_sub) {
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
     let uv = input.texCoord;
+
+    // Debug: show wet mask as grayscale
+    if (displayParams.showWetMask > 0.5) {
+        let wet = displayParams.wetMask.Sample(uv).r;
+        return float4(wet, wet, wet, 1.0);
+    }
+
     let ts = displayParams.texelSize;
 
     // Sample height map neighbors for bump mapping

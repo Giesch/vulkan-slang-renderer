@@ -26,6 +26,23 @@ impl Slider {
     }
 }
 
+/// A boolean toggle edited via egui::Checkbox.
+#[derive(Clone, Debug, Facet)]
+pub struct Checkbox {
+    pub checked: bool,
+}
+
+impl Checkbox {
+    pub fn new(checked: bool) -> Self {
+        Self { checked }
+    }
+
+    /// Render this checkbox in egui, returning true if the value changed.
+    pub fn render_ui(&mut self, ui: &mut Ui) -> bool {
+        ui.checkbox(&mut self.checked, "").changed()
+    }
+}
+
 /// A read-only text label for displaying values in the editor UI.
 #[derive(Clone, Debug, Facet)]
 pub struct Label {

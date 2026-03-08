@@ -49,6 +49,24 @@ info:
             }
           },
           {
+            "kind": "resource",
+            "fieldName": "wetMask",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 3,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
             "kind": "vector",
             "fieldName": "texelSize",
             "binding": {
@@ -63,18 +81,24 @@ info:
             }
           },
           {
-            "kind": "vector",
-            "fieldName": "_pad",
+            "kind": "scalar",
+            "fieldName": "showWetMask",
             "binding": {
               "kind": "uniform",
               "offset": 8,
-              "size": 8
+              "size": 4
             },
-            "elementCount": 2,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "_pad",
+            "binding": {
+              "kind": "uniform",
+              "offset": 12,
+              "size": 4
+            },
+            "scalarType": "float32"
           },
           {
             "kind": "struct",
@@ -402,6 +426,13 @@ info:
           },
           {
             "binding": 2,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 144
+          },
+          {
+            "binding": 3,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",

@@ -26,7 +26,8 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 #[repr(C, align(16))]
 pub struct DisplayParams {
     pub texel_size: glam::Vec2,
-    pub pad: glam::Vec2,
+    pub show_wet_mask: f32,
+    pub pad: f32,
     pub pigment0: PigmentKM,
     pub pigment1: PigmentKM,
     pub pigment2: PigmentKM,
@@ -50,6 +51,7 @@ impl GPUWrite for PigmentKM {}
 pub struct Resources<'a> {
     pub deposit: &'a TextureHandle,
     pub paper_height: &'a TextureHandle,
+    pub wet_mask: &'a TextureHandle,
     pub display_params_buffer: &'a UniformBufferHandle<DisplayParams>,
 }
 
@@ -81,6 +83,7 @@ impl Shader {
         let texture_handles = vec![
             resources.deposit,
             resources.paper_height,
+            resources.wet_mask,
         ];
 
         #[rustfmt::skip]

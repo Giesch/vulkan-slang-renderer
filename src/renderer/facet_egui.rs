@@ -1,12 +1,13 @@
 //! Auto-generated egui UI from facet reflection
 
-use crate::editor::{Label, Slider};
+use crate::editor::{Checkbox, Label, Slider};
 use egui::Ui;
 use facet::{Facet, Poke, PokeStruct, Shape, Type, UserType};
 
 /// Classification of a field's type for UI rendering.
 enum FieldKind {
     Slider,
+    Checkbox,
     Label,
     Collapsing,
 }
@@ -16,6 +17,10 @@ enum FieldKind {
 fn classify_field(shape: &Shape) -> Option<FieldKind> {
     if shape.is_type::<Slider>() {
         return Some(FieldKind::Slider);
+    }
+
+    if shape.is_type::<Checkbox>() {
+        return Some(FieldKind::Checkbox);
     }
 
     if shape.is_type::<Label>() {
@@ -38,6 +43,14 @@ fn render_slider(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
     slider.render_ui(ui)
 }
 
+/// Render a Checkbox wrapper type.
+fn render_checkbox(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
+    let checkbox = poke
+        .get_mut::<Checkbox>()
+        .expect("type mismatch: expected Checkbox");
+    checkbox.render_ui(ui)
+}
+
 /// Render a Label wrapper type.
 fn render_label(ui: &mut Ui, poke: Poke<'_, '_>) {
     let label = poke.get::<Label>().expect("type mismatch: expected Label");
@@ -56,6 +69,7 @@ pub fn render_facet_ui<'a, T: Facet<'a>>(ui: &mut Ui, value: &mut T) -> bool {
 
     match kind {
         FieldKind::Slider => render_slider(ui, poke),
+        FieldKind::Checkbox => render_checkbox(ui, poke),
         FieldKind::Label => {
             render_label(ui, poke);
             false
@@ -86,6 +100,11 @@ fn render_collapsing(ui: &mut Ui, mut poke_struct: PokeStruct<'_, '_>) -> bool {
             match kind {
                 FieldKind::Slider => {
                     if render_slider(ui, field_poke) {
+                        modified = true;
+                    }
+                }
+                FieldKind::Checkbox => {
+                    if render_checkbox(ui, field_poke) {
                         modified = true;
                     }
                 }

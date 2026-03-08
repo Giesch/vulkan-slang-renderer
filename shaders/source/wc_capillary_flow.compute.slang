@@ -40,15 +40,20 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
         s += min(params.absorbRate * max(p, 0.0), params.capacity - s);
     }
 
-    // (b) Diffuse: gather from neighbors (only uphill flow — from higher saturation)
+    // (b) Diffuse: gather from wet neighbors only (uphill flow)
     let sL = params.saturationIn[clamp(pixel + int2(-1, 0), int2(0), gs - 1)];
     let sR = params.saturationIn[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
     let sD = params.saturationIn[clamp(pixel + int2(0, -1), int2(0), gs - 1)];
     let sU = params.saturationIn[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
 
+    let wL = params.wetMaskIn[clamp(pixel + int2(-1, 0), int2(0), gs - 1)];
+    let wR = params.wetMaskIn[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
+    let wD = params.wetMaskIn[clamp(pixel + int2(0, -1), int2(0), gs - 1)];
+    let wU = params.wetMaskIn[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
+
     let diffusion = params.diffuseRate * (
-        max(sL - s, 0.0) + max(sR - s, 0.0) +
-        max(sD - s, 0.0) + max(sU - s, 0.0)
+        max(sL - s, 0.0) * step(0.001, wL) + max(sR - s, 0.0) * step(0.001, wR) +
+        max(sD - s, 0.0) * step(0.001, wD) + max(sU - s, 0.0) * step(0.001, wU)
     );
     s = min(s + diffusion, params.capacity);
 
