@@ -7,12 +7,10 @@ import watercolor_common;
 ParameterBlock<Params> params;
 
 struct Params {
-    Texture2D<float> uIn;
-    Texture2D<float> vIn;
+    RWTexture2D<float> u;
+    RWTexture2D<float> v;
     Texture2D<float> pressure;
     Texture2D<float> wetMask;
-    RWTexture2D<float> uOut;
-    RWTexture2D<float> vOut;
     float2 gridSize;
 }
 
@@ -31,9 +29,9 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     // u at (i+0.5, j): dp/dx = p[i+1,j] - p[i,j]
     let pR = params.pressure[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
     let pC = params.pressure[pixel];
-    params.uOut[pixel] = (params.uIn[pixel] - (pR - pC)) * wet;
+    params.u[pixel] = (params.u[pixel] - (pR - pC)) * wet;
 
     // v at (i, j+0.5): dp/dy = p[i,j+1] - p[i,j]
     let pU = params.pressure[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
-    params.vOut[pixel] = (params.vIn[pixel] - (pU - pC)) * wet;
+    params.v[pixel] = (params.v[pixel] - (pU - pC)) * wet;
 }

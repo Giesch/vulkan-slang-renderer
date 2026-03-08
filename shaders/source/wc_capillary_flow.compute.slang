@@ -18,6 +18,7 @@ struct Params {
     float diffuseRate;
     float capacity;
     float sigma;    // wet mask expansion threshold
+    float dryThreshold;    // saturation below which cell becomes dry
 }
 
 [numthreads(16, 16, 1)]
@@ -57,6 +58,8 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     float newWet = wet;
     if (s > params.sigma) {
         newWet = 1.0;
+    } else if (s < params.dryThreshold) {
+        newWet = 0.0;
     }
     params.wetMaskOut[pixel] = newWet;
 }

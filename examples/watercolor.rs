@@ -41,13 +41,13 @@ const FRAME_HISTORY_SIZE: usize = 60;
 const CANVAS_WIDTH: u32 = 1024;
 const CANVAS_HEIGHT: u32 = 768;
 const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
-const JACOBI_ITERATIONS: u32 = 3;
+const JACOBI_ITERATIONS: u32 = 10;
 const SIM_STEPS_PER_FRAME: u32 = 1;
 
 // Simulation parameters
 const DT: f32 = 0.5;
 const MU: f32 = 0.1;
-const KAPPA: f32 = 0.01;
+const KAPPA: f32 = 0.05;
 const ETA: f32 = 0.03;
 const SLOPE_STRENGTH: f32 = 5.0;
 const BRUSH_PRESSURE: f32 = 2.0;
@@ -56,6 +56,7 @@ const ABSORB_RATE: f32 = 0.05;
 const DIFFUSE_RATE: f32 = 0.03;
 const CAPILLARY_CAPACITY: f32 = 1.0;
 const CAPILLARY_SIGMA: f32 = 0.3;
+const DRY_THRESHOLD: f32 = 0.05;
 
 /// Ping-pong pair: two storage textures + two sampled aliases
 struct PingPong {
@@ -461,12 +462,10 @@ impl Game for Watercolor {
                 renderer.create_compute_pipeline(
                     s0.wc_project_velocity_compute.pipeline_config(
                         wc_project_velocity_compute::Resources {
-                            u_in: velocity_u.read(true),
-                            v_in: velocity_v.read(true),
-                            pressure: pressure.read(false), // will be set correctly at dispatch time
+                            u: velocity_u.read_storage(true),
+                            v: velocity_v.read_storage(true),
+                            pressure: pressure.read(false),
                             wet_mask: wet_mask.read(false),
-                            u_out: velocity_u.write(true),
-                            v_out: velocity_v.write(true),
                             params_buffer: &project_vel_params_buffer,
                         },
                     ),
@@ -474,12 +473,10 @@ impl Game for Watercolor {
                 renderer.create_compute_pipeline(
                     s1.wc_project_velocity_compute.pipeline_config(
                         wc_project_velocity_compute::Resources {
-                            u_in: velocity_u.read(false),
-                            v_in: velocity_v.read(false),
-                            pressure: pressure.read(false), // pressure parity always returns to false after even Jacobi iters
+                            u: velocity_u.read_storage(false),
+                            v: velocity_v.read_storage(false),
+                            pressure: pressure.read(false),
                             wet_mask: wet_mask.read(true),
-                            u_out: velocity_u.write(false),
-                            v_out: velocity_v.write(false),
                             params_buffer: &project_vel_params_buffer,
                         },
                     ),
@@ -521,6 +518,7 @@ impl Game for Watercolor {
                             input_tex: &blur_temp_sampled,
                             wet_mask: wet_mask.read(false),
                             pressure: pressure.read_storage(false),
+                            saturation: saturation.read_storage(false),
                             params_buffer: &blur_v_and_flow_params_buffer,
                         },
                     ),
@@ -531,6 +529,7 @@ impl Game for Watercolor {
                             input_tex: &blur_temp_sampled,
                             wet_mask: wet_mask.read(true),
                             pressure: pressure.read_storage(false),
+                            saturation: saturation.read_storage(true),
                             params_buffer: &blur_v_and_flow_params_buffer,
                         },
                     ),
@@ -985,6 +984,7 @@ impl Game for Watercolor {
                     diffuse_rate: DIFFUSE_RATE,
                     capacity: CAPILLARY_CAPACITY,
                     sigma: CAPILLARY_SIGMA,
+                    dry_threshold: DRY_THRESHOLD,
                     _padding_0: Default::default(),
                 },
             );

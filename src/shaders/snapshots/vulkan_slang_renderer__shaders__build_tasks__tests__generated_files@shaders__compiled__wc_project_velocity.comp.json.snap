@@ -14,13 +14,13 @@ info:
         "fields": [
           {
             "kind": "resource",
-            "fieldName": "uIn",
+            "fieldName": "u",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 1,
               "count": 1
             },
-            "resourceShape": "texture2D",
+            "resourceShape": "rWTexture2D",
             "resultType": {
               "kind": "scalar",
               "scalarType": "float32"
@@ -28,13 +28,13 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "vIn",
+            "fieldName": "v",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 2,
               "count": 1
             },
-            "resourceShape": "texture2D",
+            "resourceShape": "rWTexture2D",
             "resultType": {
               "kind": "scalar",
               "scalarType": "float32"
@@ -63,34 +63,6 @@ info:
               "count": 1
             },
             "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "resource",
-            "fieldName": "uOut",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 5,
-              "count": 1
-            },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "resource",
-            "fieldName": "vOut",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 6,
-              "count": 1
-            },
-            "resourceShape": "rWTexture2D",
             "resultType": {
               "kind": "scalar",
               "scalarType": "float32"
@@ -137,14 +109,14 @@ info:
           },
           {
             "binding": 1,
-            "descriptorType": "texture",
+            "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 16
           },
           {
             "binding": 2,
-            "descriptorType": "texture",
+            "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 16
@@ -159,20 +131,6 @@ info:
           {
             "binding": 4,
             "descriptorType": "texture",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 16
-          },
-          {
-            "binding": 5,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 16
-          },
-          {
-            "binding": 6,
-            "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 16

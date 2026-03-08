@@ -144,6 +144,16 @@
               "size": 4
             },
             "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "dryThreshold",
+            "binding": {
+              "kind": "uniform",
+              "offset": 24,
+              "size": 4
+            },
+            "scalarType": "float32"
           }
         ]
       }

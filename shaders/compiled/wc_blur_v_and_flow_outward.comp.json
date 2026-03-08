@@ -50,6 +50,20 @@
             }
           },
           {
+            "kind": "resource",
+            "fieldName": "saturation",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 4,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
@@ -114,6 +128,13 @@
           },
           {
             "binding": 3,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          },
+          {
+            "binding": 4,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",

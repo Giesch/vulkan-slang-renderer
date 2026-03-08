@@ -12,6 +12,7 @@ struct Params {
     Texture2D<float> inputTex;   // blur_temp (horizontally blurred wet_mask)
     Texture2D<float> wetMask;
     RWTexture2D<float> pressure;
+    RWTexture2D<float> saturation;
     float2 gridSize;
     float eta;
 }
@@ -51,5 +52,9 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     // so we compute the vertical blur inline and use the result directly —
     // eliminating the blurred_mask intermediate texture, 1 dispatch, and 1 barrier.
     let wet = params.wetMask[pixel];
-    params.pressure[pixel] += -params.eta * (1.0 - blurred) * wet;
+    let flowTerm = params.eta * (1.0 - blurred) * wet;
+    params.pressure[pixel] -= flowTerm;
+
+    // Drain saturation at wet edges (fluid removal per Curtis et al.)
+    params.saturation[pixel] = max(params.saturation[pixel] - flowTerm, 0.0);
 }

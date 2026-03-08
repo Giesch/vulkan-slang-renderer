@@ -64,12 +64,14 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     if (wet < 0.001) {
         advected = params.pigmentIn[pixel];
     } else {
-        // Cell-center velocity by averaging staggered components
-        let uL = params.uIn[clamp(pixel + int2(-1, 0), int2(0), gs - 1)];
-        let uR = params.uIn[pixel];
-        let vD = params.vIn[clamp(pixel + int2(0, -1), int2(0), gs - 1)];
-        let vU = params.vIn[pixel];
-        let vel = float2((uL + uR) * 0.5, (vD + vU) * 0.5);
+        // Cell-center velocity at (i+0.5, j+0.5) by interpolating staggered components
+        // u at (i+0.5, j+0.5): average u[i,j] and u[i,j+1]
+        let u0 = params.uIn[pixel];                                        // u at (i+0.5, j)
+        let u1 = params.uIn[clamp(pixel + int2(0, 1), int2(0), gs - 1)];   // u at (i+0.5, j+1)
+        // v at (i+0.5, j+0.5): average v[i,j] and v[i+1,j]
+        let v0 = params.vIn[pixel];                                        // v at (i, j+0.5)
+        let v1 = params.vIn[clamp(pixel + int2(1, 0), int2(0), gs - 1)];   // v at (i+1, j+0.5)
+        let vel = float2((u0 + u1) * 0.5, (v0 + v1) * 0.5);
 
         // Semi-Lagrangian backtrace
         let pos = float2(pixel) + 0.5;

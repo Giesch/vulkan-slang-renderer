@@ -28,6 +28,7 @@ pub struct Resources<'a> {
     pub input_tex: &'a TextureHandle,
     pub wet_mask: &'a TextureHandle,
     pub pressure: &'a StorageTextureHandle,
+    pub saturation: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -70,6 +71,7 @@ impl Shader {
         #[rustfmt::skip]
         let storage_texture_handles = vec![
             resources.pressure,
+            resources.saturation,
         ];
 
         ComputePipelineConfig {

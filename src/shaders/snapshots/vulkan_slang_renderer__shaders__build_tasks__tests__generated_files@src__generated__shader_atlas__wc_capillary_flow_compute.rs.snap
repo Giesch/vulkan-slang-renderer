@@ -27,7 +27,8 @@ pub struct Params {
     pub diffuse_rate: f32,
     pub capacity: f32,
     pub sigma: f32,
-    pub _padding_0: [u8; 8],
+    pub dry_threshold: f32,
+    pub _padding_0: [u8; 4],
 }
 
 impl GPUWrite for Params {}
