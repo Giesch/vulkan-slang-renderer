@@ -21,6 +21,7 @@
         accidental use of uninitialized gpu memory, that happens to repeat
       - [X] wtf is up with pad0 in BrushParams
       - [X] are width and height needed/used on StorageTexture?
+      - [ ] review all of the watercolor example
 
   - [X] gradually add simulation layers
 
@@ -32,9 +33,10 @@
     add even more ticks per frame?
     is this causing lock-up for the mouse somehow?
 
+
 * Next
 - [ ] profile startup
-  find the source of the black screen
+  find the source of the black screen (and duration)
   maybe do more work before opening the window
 
 - [ ] fix codegen edge cases

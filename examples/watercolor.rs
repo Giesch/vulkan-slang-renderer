@@ -8,7 +8,7 @@ use ash::vk;
 use facet::Facet;
 use glam::{Vec2, Vec3, Vec4};
 
-use vulkan_slang_renderer::editor::Label;
+use vulkan_slang_renderer::editor::{Label, Slider};
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer,
@@ -34,6 +34,7 @@ fn main() -> Result<(), anyhow::Error> {
 #[derive(Facet)]
 pub struct EditState {
     fps: Label,
+    brush_concentration: Slider,
 }
 
 const FRAME_HISTORY_SIZE: usize = 60;
@@ -662,6 +663,7 @@ impl Game for Watercolor {
 
             edit_state: EditState {
                 fps: Label::new("FPS: --"),
+                brush_concentration: Slider::new(0.3, 0.01, 1.0),
             },
             last_frame_time: Instant::now(),
             frame_times: VecDeque::with_capacity(FRAME_HISTORY_SIZE),
@@ -890,11 +892,12 @@ impl Game for Watercolor {
 
             // Pigment color: concentration in the active channel
             let mut pigment_color = Vec4::ZERO;
+            let c = self.edit_state.brush_concentration.value;
             match active_pigment {
-                0 => pigment_color.x = 1.0,
-                1 => pigment_color.y = 1.0,
-                2 => pigment_color.z = 1.0,
-                _ => pigment_color.w = 1.0,
+                0 => pigment_color.x = c,
+                1 => pigment_color.y = c,
+                2 => pigment_color.z = c,
+                _ => pigment_color.w = c,
             }
 
             gpu.write_uniform(
