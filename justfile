@@ -62,6 +62,10 @@ shaders:
       cargo fmt; \
     }
 
+# generate watercolor paper height map texture
+paper-texture:
+    cargo run --bin generate_paper_texture --release
+
 # export space invaders aseprite files as one sprite sheet
 [unix]
 sprites:

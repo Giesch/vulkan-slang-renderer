@@ -38,7 +38,8 @@
       "Bash(INSTA_UPDATE=new cargo test:*)",
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:scrtwpns.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(just paper-texture:*)"
     ]
   },
   "statusLine": {
