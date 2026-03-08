@@ -55,10 +55,24 @@
           },
           {
             "kind": "resource",
-            "fieldName": "strokePoints",
+            "fieldName": "saturation",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 4,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "strokePoints",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 5,
               "count": 1
             },
             "resourceShape": "structuredBuffer",
@@ -199,6 +213,13 @@
           },
           {
             "binding": 4,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 48
+          },
+          {
+            "binding": 5,
             "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",

@@ -9,12 +9,10 @@ ParameterBlock<Params> params;
 struct Params {
     Texture2D<float> saturationIn;
     Texture2D<float> wetMaskIn;
-    Texture2D<float> pressure;
     Texture2D<float> paperHeight;
     RWTexture2D<float> saturationOut;
     RWTexture2D<float> wetMaskOut;
     float2 gridSize;
-    float absorbRate;
     float diffuseRate;
     float capacity;
     float sigma;    // wet mask expansion threshold
@@ -32,13 +30,7 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     let gs = int2(params.gridSize);
 
     float s = params.saturationIn[pixel];
-    let p = params.pressure[pixel];
     let wet = params.wetMaskIn[pixel];
-
-    // (a) Absorb water from pressure
-    if (wet > 0.0) {
-        s += min(params.absorbRate * max(p, 0.0), params.capacity - s);
-    }
 
     // (b) Diffuse: gather from wet neighbors only (uphill flow)
     let sL = params.saturationIn[clamp(pixel + int2(-1, 0), int2(0), gs - 1)];

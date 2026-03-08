@@ -23,12 +23,11 @@ use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 #[repr(C, align(16))]
 pub struct Params {
     pub grid_size: glam::Vec2,
-    pub absorb_rate: f32,
     pub diffuse_rate: f32,
     pub capacity: f32,
     pub sigma: f32,
     pub dry_threshold: f32,
-    pub _padding_0: [u8; 4],
+    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for Params {}
@@ -37,7 +36,6 @@ const _: () = assert!(std::mem::size_of::<Params>() == 32);
 pub struct Resources<'a> {
     pub saturation_in: &'a TextureHandle,
     pub wet_mask_in: &'a TextureHandle,
-    pub pressure: &'a TextureHandle,
     pub paper_height: &'a TextureHandle,
     pub saturation_out: &'a StorageTextureHandle,
     pub wet_mask_out: &'a StorageTextureHandle,
@@ -73,7 +71,6 @@ impl Shader {
         let texture_handles = vec![
             resources.saturation_in,
             resources.wet_mask_in,
-            resources.pressure,
             resources.paper_height,
         ];
 

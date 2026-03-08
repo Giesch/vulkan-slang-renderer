@@ -12,6 +12,7 @@ struct BrushParams {
     RWTexture2D<float> wetMask;
     RWTexture2D<float> pressure;
     RWTexture2D<float4> pigment;
+    RWTexture2D<float> saturation;
     StructuredBuffer<StrokePoint> strokePoints;
     uint pointCount;
     float brushRadius;
@@ -51,6 +52,9 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
 
         // Add pressure (drives initial outward flow)
         brushParams.pressure[pixel] += brushParams.brushPressure * alpha;
+
+        // Saturate paper where painted
+        brushParams.saturation[pixel] = 1.0;
 
         // Add pigment concentration
         brushParams.pigment[pixel] += brushParams.pigmentColor * alpha;

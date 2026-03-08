@@ -55,7 +55,6 @@ const ETA: f32 = 0.03;
 const SLOPE_STRENGTH: f32 = 5.0;
 const BRUSH_PRESSURE: f32 = 2.0;
 const TRANSFER_RATE: f32 = 0.02;
-const ABSORB_RATE: f32 = 0.05;
 const DIFFUSE_RATE: f32 = 0.03;
 const CAPILLARY_CAPACITY: f32 = 1.0;
 const CAPILLARY_SIGMA: f32 = 0.3;
@@ -357,6 +356,7 @@ impl Game for Watercolor {
                         wet_mask: wet_mask.read_storage(false),
                         pressure: pressure.read_storage(false),
                         pigment: pigment.read_storage(false),
+                        saturation: saturation.read_storage(false),
                         stroke_points: &stroke_points_buffer,
                         brush_params_buffer: &brush_params_buffer,
                     },
@@ -366,6 +366,7 @@ impl Game for Watercolor {
                         wet_mask: wet_mask.read_storage(true),
                         pressure: pressure.read_storage(false), // pressure always at 0
                         pigment: pigment.read_storage(true),
+                        saturation: saturation.read_storage(true),
                         stroke_points: &stroke_points_buffer,
                         brush_params_buffer: &brush_params_buffer,
                     },
@@ -586,7 +587,6 @@ impl Game for Watercolor {
                     wc_capillary_flow_compute::Resources {
                         saturation_in: saturation.read(false),
                         wet_mask_in: wet_mask.read(false),
-                        pressure: pressure.read(false),
                         paper_height: &paper_height_sampled,
                         saturation_out: saturation.write(false),
                         wet_mask_out: wet_mask.write(false),
@@ -597,7 +597,6 @@ impl Game for Watercolor {
                     wc_capillary_flow_compute::Resources {
                         saturation_in: saturation.read(true),
                         wet_mask_in: wet_mask.read(true),
-                        pressure: pressure.read(false), // pressure always at index 0
                         paper_height: &paper_height_sampled,
                         saturation_out: saturation.write(true),
                         wet_mask_out: wet_mask.write(true),
@@ -890,141 +889,144 @@ impl Game for Watercolor {
         let advect_and_transfer_params_buffer = &mut self.advect_and_transfer_params_buffer;
         let capillary_flow_params_buffer = &mut self.capillary_flow_params_buffer;
 
-        renderer.draw_vertex_count(&self.display_pipelines[self.sim_parity as usize], 3, |gpu| {
-            // Upload stroke points
-            if point_count > 0 {
-                let gpu_points: Vec<paint_brush_compute::StrokePoint> = stroke_points
-                    [..point_count as usize]
-                    .iter()
-                    .map(|&position| {
-                        let canvas_pos = position * grid_size / window_size;
-                        paint_brush_compute::StrokePoint {
-                            position: canvas_pos,
-                        }
-                    })
-                    .collect();
-                gpu.write_storage(stroke_points_buffer, &gpu_points);
-            }
+        renderer.draw_vertex_count(
+            &self.display_pipelines[self.sim_parity as usize],
+            3,
+            |gpu| {
+                // Upload stroke points
+                if point_count > 0 {
+                    let gpu_points: Vec<paint_brush_compute::StrokePoint> = stroke_points
+                        [..point_count as usize]
+                        .iter()
+                        .map(|&position| {
+                            let canvas_pos = position * grid_size / window_size;
+                            paint_brush_compute::StrokePoint {
+                                position: canvas_pos,
+                            }
+                        })
+                        .collect();
+                    gpu.write_storage(stroke_points_buffer, &gpu_points);
+                }
 
-            // Pigment color: concentration in the active channel
-            let mut pigment_color = Vec4::ZERO;
-            let c = self.edit_state.brush_concentration.value;
-            match active_pigment {
-                0 => pigment_color.x = c,
-                1 => pigment_color.y = c,
-                2 => pigment_color.z = c,
-                _ => pigment_color.w = c,
-            }
+                // Pigment color: concentration in the active channel
+                let mut pigment_color = Vec4::ZERO;
+                let c = self.edit_state.brush_concentration.value;
+                match active_pigment {
+                    0 => pigment_color.x = c,
+                    1 => pigment_color.y = c,
+                    2 => pigment_color.z = c,
+                    _ => pigment_color.w = c,
+                }
 
-            gpu.write_uniform(
-                brush_params_buffer,
-                paint_brush_compute::BrushParams {
-                    point_count,
-                    brush_radius,
-                    brush_opacity,
-                    brush_pressure: BRUSH_PRESSURE,
-                    pigment_color,
-                    canvas_size: grid_size,
-                    _padding_0: Default::default(),
-                },
-            );
-
-            gpu.write_uniform(
-                update_vel_params_buffer,
-                wc_update_velocity_compute::Params {
-                    grid_size,
-                    texel_size,
-                    dt: DT,
-                    mu: MU,
-                    kappa: KAPPA,
-                    slope_strength: SLOPE_STRENGTH,
-                },
-            );
-
-            gpu.write_uniform(
-                divergence_params_buffer,
-                wc_divergence_compute::Params {
-                    grid_size,
-                    _padding_0: Default::default(),
-                },
-            );
-
-            gpu.write_uniform(
-                pressure_jacobi_params_buffer,
-                wc_pressure_jacobi_compute::Params {
-                    grid_size,
-                    _padding_0: Default::default(),
-                },
-            );
-
-            gpu.write_uniform(
-                project_vel_params_buffer,
-                wc_project_velocity_compute::Params {
-                    grid_size,
-                    _padding_0: Default::default(),
-                },
-            );
-
-            gpu.write_uniform(
-                blur_h_params_buffer,
-                wc_gaussian_blur_compute::Params {
-                    grid_size,
-                    direction: Vec2::new(1.0, 0.0),
-                },
-            );
-
-            gpu.write_uniform(
-                blur_v_and_flow_params_buffer,
-                wc_blur_v_and_flow_outward_compute::Params {
-                    grid_size,
-                    eta: ETA,
-                    _padding_0: Default::default(),
-                },
-            );
-
-            gpu.write_uniform(
-                advect_and_transfer_params_buffer,
-                wc_advect_and_transfer_pigment_compute::Params {
-                    grid_size,
-                    dt: DT,
-                    transfer_rate: TRANSFER_RATE,
-                    pigment0: pigment_properties(0),
-                    pigment1: pigment_properties(1),
-                    pigment2: pigment_properties(2),
-                    pigment3: pigment_properties(3),
-                },
-            );
-
-            gpu.write_uniform(
-                capillary_flow_params_buffer,
-                wc_capillary_flow_compute::Params {
-                    grid_size,
-                    absorb_rate: ABSORB_RATE,
-                    diffuse_rate: DIFFUSE_RATE,
-                    capacity: CAPILLARY_CAPACITY,
-                    sigma: CAPILLARY_SIGMA,
-                    dry_threshold: DRY_THRESHOLD,
-                    _padding_0: Default::default(),
-                },
-            );
-
-            gpu.write_uniform(
-                display_params_buffer,
-                paint_display::DisplayParams {
-                    texel_size,
-                    show_wet_mask: if self.edit_state.show_wet_mask.checked {
-                        1.0
-                    } else {
-                        0.0
+                gpu.write_uniform(
+                    brush_params_buffer,
+                    paint_brush_compute::BrushParams {
+                        point_count,
+                        brush_radius,
+                        brush_opacity,
+                        brush_pressure: BRUSH_PRESSURE,
+                        pigment_color,
+                        canvas_size: grid_size,
+                        _padding_0: Default::default(),
                     },
-                    pad: 0.0,
-                    pigment0: pigment_km(0),
-                    pigment1: pigment_km(1),
-                    pigment2: pigment_km(2),
-                    pigment3: pigment_km(3),
-                },
-            );
-        })?;
+                );
+
+                gpu.write_uniform(
+                    update_vel_params_buffer,
+                    wc_update_velocity_compute::Params {
+                        grid_size,
+                        texel_size,
+                        dt: DT,
+                        mu: MU,
+                        kappa: KAPPA,
+                        slope_strength: SLOPE_STRENGTH,
+                    },
+                );
+
+                gpu.write_uniform(
+                    divergence_params_buffer,
+                    wc_divergence_compute::Params {
+                        grid_size,
+                        _padding_0: Default::default(),
+                    },
+                );
+
+                gpu.write_uniform(
+                    pressure_jacobi_params_buffer,
+                    wc_pressure_jacobi_compute::Params {
+                        grid_size,
+                        _padding_0: Default::default(),
+                    },
+                );
+
+                gpu.write_uniform(
+                    project_vel_params_buffer,
+                    wc_project_velocity_compute::Params {
+                        grid_size,
+                        _padding_0: Default::default(),
+                    },
+                );
+
+                gpu.write_uniform(
+                    blur_h_params_buffer,
+                    wc_gaussian_blur_compute::Params {
+                        grid_size,
+                        direction: Vec2::new(1.0, 0.0),
+                    },
+                );
+
+                gpu.write_uniform(
+                    blur_v_and_flow_params_buffer,
+                    wc_blur_v_and_flow_outward_compute::Params {
+                        grid_size,
+                        eta: ETA,
+                        _padding_0: Default::default(),
+                    },
+                );
+
+                gpu.write_uniform(
+                    advect_and_transfer_params_buffer,
+                    wc_advect_and_transfer_pigment_compute::Params {
+                        grid_size,
+                        dt: DT,
+                        transfer_rate: TRANSFER_RATE,
+                        pigment0: pigment_properties(0),
+                        pigment1: pigment_properties(1),
+                        pigment2: pigment_properties(2),
+                        pigment3: pigment_properties(3),
+                    },
+                );
+
+                gpu.write_uniform(
+                    capillary_flow_params_buffer,
+                    wc_capillary_flow_compute::Params {
+                        grid_size,
+                        diffuse_rate: DIFFUSE_RATE,
+                        capacity: CAPILLARY_CAPACITY,
+                        sigma: CAPILLARY_SIGMA,
+                        dry_threshold: DRY_THRESHOLD,
+                        _padding_0: Default::default(),
+                    },
+                );
+
+                gpu.write_uniform(
+                    display_params_buffer,
+                    paint_display::DisplayParams {
+                        texel_size,
+                        show_wet_mask: if self.edit_state.show_wet_mask.checked {
+                            1.0
+                        } else {
+                            0.0
+                        },
+                        pad: 0.0,
+                        pigment0: pigment_km(0),
+                        pigment1: pigment_km(1),
+                        pigment2: pigment_km(2),
+                        pigment3: pigment_km(3),
+                    },
+                );
+            },
+        )?;
 
         Ok(())
     }

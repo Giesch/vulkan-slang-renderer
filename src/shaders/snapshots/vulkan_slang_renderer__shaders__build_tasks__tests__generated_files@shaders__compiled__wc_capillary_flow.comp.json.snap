@@ -42,7 +42,7 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "pressure",
+            "fieldName": "paperHeight",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 3,
@@ -56,24 +56,10 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "paperHeight",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 4,
-              "count": 1
-            },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "resource",
             "fieldName": "saturationOut",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 5,
+              "index": 4,
               "count": 1
             },
             "resourceShape": "rWTexture2D",
@@ -87,7 +73,7 @@ info:
             "fieldName": "wetMaskOut",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 6,
+              "index": 5,
               "count": 1
             },
             "resourceShape": "rWTexture2D",
@@ -112,7 +98,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "absorbRate",
+            "fieldName": "diffuseRate",
             "binding": {
               "kind": "uniform",
               "offset": 8,
@@ -122,7 +108,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "diffuseRate",
+            "fieldName": "capacity",
             "binding": {
               "kind": "uniform",
               "offset": 12,
@@ -132,7 +118,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "capacity",
+            "fieldName": "sigma",
             "binding": {
               "kind": "uniform",
               "offset": 16,
@@ -142,20 +128,10 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "sigma",
-            "binding": {
-              "kind": "uniform",
-              "offset": 20,
-              "size": 4
-            },
-            "scalarType": "float32"
-          },
-          {
-            "kind": "scalar",
             "fieldName": "dryThreshold",
             "binding": {
               "kind": "uniform",
-              "offset": 24,
+              "offset": 20,
               "size": 4
             },
             "scalarType": "float32"
@@ -208,20 +184,13 @@ info:
           },
           {
             "binding": 4,
-            "descriptorType": "texture",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 32
-          },
-          {
-            "binding": 5,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 32
           },
           {
-            "binding": 6,
+            "binding": 5,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",

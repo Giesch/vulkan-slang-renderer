@@ -41,6 +41,7 @@ pub struct Resources<'a> {
     pub wet_mask: &'a StorageTextureHandle,
     pub pressure: &'a StorageTextureHandle,
     pub pigment: &'a StorageTextureHandle,
+    pub saturation: &'a StorageTextureHandle,
     pub stroke_points: &'a StorageBufferHandle<StrokePoint>,
     pub brush_params_buffer: &'a UniformBufferHandle<BrushParams>,
 }
@@ -85,6 +86,7 @@ impl Shader {
             resources.wet_mask,
             resources.pressure,
             resources.pigment,
+            resources.saturation,
         ];
 
         ComputePipelineConfig {
