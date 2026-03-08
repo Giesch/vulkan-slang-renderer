@@ -14,6 +14,7 @@
       "Bash(cargo test:*)",
       "Bash(cargo insta:*)",
       "Bash(git log:*)",
+      "Bash(git diff:*)",
       "Bash(cargo doc:*)",
       "Bash(cargo build:*)",
       "Bash(cargo check:*)",
@@ -34,7 +35,10 @@
       "WebFetch(domain:danielchasehooper.com)",
       "WebFetch(domain:vulkan-tutorial.com)",
       "WebFetch(domain:grail.cs.washington.edu)",
-      "Bash(INSTA_UPDATE=new cargo test:*)"
+      "Bash(INSTA_UPDATE=new cargo test:*)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:scrtwpns.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   },
   "statusLine": {

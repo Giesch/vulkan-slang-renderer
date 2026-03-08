@@ -52,7 +52,9 @@ impl App {
             let spent_frame_time = (Instant::now() - end_of_last_frame).as_nanos() as u64;
             let frame_time = self.game.frame_delay().as_nanos() as u64;
             let remaining_frame_time = frame_time.saturating_sub(spent_frame_time);
-            unsafe { SDL_DelayPrecise(remaining_frame_time) };
+            if remaining_frame_time > 0 {
+                unsafe { SDL_DelayPrecise(remaining_frame_time) };
+            }
 
             end_of_last_frame = Instant::now();
         }

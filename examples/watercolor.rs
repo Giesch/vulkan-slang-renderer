@@ -18,14 +18,13 @@ use vulkan_slang_renderer::renderer::{
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
 use vulkan_slang_renderer::generated::shader_atlas::paint_brush_compute;
 use vulkan_slang_renderer::generated::shader_atlas::paint_display;
+use vulkan_slang_renderer::generated::shader_atlas::wc_advect_and_transfer_pigment_compute;
+use vulkan_slang_renderer::generated::shader_atlas::wc_blur_v_and_flow_outward_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_capillary_flow_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_divergence_compute;
-use vulkan_slang_renderer::generated::shader_atlas::wc_flow_outward_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_gaussian_blur_compute;
-use vulkan_slang_renderer::generated::shader_atlas::wc_move_pigment_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_pressure_jacobi_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_project_velocity_compute;
-use vulkan_slang_renderer::generated::shader_atlas::wc_transfer_pigment_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_update_velocity_compute;
 
 fn main() -> Result<(), anyhow::Error> {
@@ -42,7 +41,7 @@ const FRAME_HISTORY_SIZE: usize = 60;
 const CANVAS_WIDTH: u32 = 1024;
 const CANVAS_HEIGHT: u32 = 768;
 const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
-const JACOBI_ITERATIONS: u32 = 20;
+const JACOBI_ITERATIONS: u32 = 3;
 const SIM_STEPS_PER_FRAME: u32 = 1;
 
 // Simulation parameters
@@ -132,8 +131,6 @@ struct Watercolor {
     divergence: StorageTextureHandle,
     #[expect(unused)]
     blur_temp: StorageTextureHandle,
-    #[expect(unused)]
-    blurred_mask: StorageTextureHandle,
 
     // Pipelines
     brush_pipelines: [PipelineHandle<Compute>; 2],
@@ -142,10 +139,8 @@ struct Watercolor {
     pressure_jacobi_pipelines: [PipelineHandle<Compute>; 2],
     project_velocity_pipelines: [PipelineHandle<Compute>; 2],
     blur_h_pipelines: [PipelineHandle<Compute>; 2],
-    blur_v_pipeline: PipelineHandle<Compute>,
-    flow_outward_pipelines: [PipelineHandle<Compute>; 2],
-    move_pigment_pipelines: [PipelineHandle<Compute>; 2],
-    transfer_pigment_pipelines: [PipelineHandle<Compute>; 2],
+    blur_v_and_flow_pipelines: [PipelineHandle<Compute>; 2],
+    advect_and_transfer_pipelines: [PipelineHandle<Compute>; 2],
     capillary_flow_pipelines: [PipelineHandle<Compute>; 2],
     display_pipeline: PipelineHandle<DrawVertexCount>,
 
@@ -158,10 +153,9 @@ struct Watercolor {
     pressure_jacobi_params_buffer: UniformBufferHandle<wc_pressure_jacobi_compute::Params>,
     project_vel_params_buffer: UniformBufferHandle<wc_project_velocity_compute::Params>,
     blur_h_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
-    blur_v_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
-    flow_outward_params_buffer: UniformBufferHandle<wc_flow_outward_compute::Params>,
-    move_pigment_params_buffer: UniformBufferHandle<wc_move_pigment_compute::Params>,
-    transfer_pigment_params_buffer: UniformBufferHandle<wc_transfer_pigment_compute::Params>,
+    blur_v_and_flow_params_buffer: UniformBufferHandle<wc_blur_v_and_flow_outward_compute::Params>,
+    advect_and_transfer_params_buffer:
+        UniformBufferHandle<wc_advect_and_transfer_pigment_compute::Params>,
     capillary_flow_params_buffer: UniformBufferHandle<wc_capillary_flow_compute::Params>,
 
     // Parity tracking
@@ -202,64 +196,70 @@ fn compute_to_frag_barrier(renderer: &mut FrameRenderer) {
     );
 }
 
-// Default Kubelka-Munk pigment presets
+// Kubelka-Munk K/S values from Curtis et al. "Computer-Generated Watercolor" Figure 5
+// K: absorption, S: scattering (derived via KM inversion, Section 5.1)
 fn pigment_km(index: u32) -> paint_display::PigmentKM {
     match index {
         0 => paint_display::PigmentKM {
-            // Ultramarine Blue
-            k: Vec3::new(0.1, 0.2, 0.01),
+            // French Ultramarine (k)
+            k: Vec3::new(0.86, 0.86, 0.06),
             pad0: 0.0,
-            s: Vec3::new(0.5, 0.3, 1.0),
+            s: Vec3::new(0.005, 0.005, 0.09),
             pad1: 0.0,
         },
         1 => paint_display::PigmentKM {
-            // Cadmium Yellow
-            k: Vec3::new(0.01, 0.01, 0.5),
+            // Hansa Yellow (i)
+            k: Vec3::new(0.06, 0.21, 1.78),
             pad0: 0.0,
-            s: Vec3::new(1.0, 0.8, 0.1),
+            s: Vec3::new(0.50, 0.88, 0.009),
             pad1: 0.0,
         },
         2 => paint_display::PigmentKM {
-            // Alizarin Crimson
-            k: Vec3::new(0.05, 0.8, 0.7),
+            // Quinacridone Rose (a)
+            k: Vec3::new(0.22, 1.47, 0.57),
             pad0: 0.0,
-            s: Vec3::new(0.8, 0.1, 0.1),
+            s: Vec3::new(0.05, 0.003, 0.03),
             pad1: 0.0,
         },
         _ => paint_display::PigmentKM {
-            // Burnt Sienna
-            k: Vec3::new(0.2, 0.5, 0.8),
+            // Hookers Green (d)
+            k: Vec3::new(1.62, 0.61, 1.64),
             pad0: 0.0,
-            s: Vec3::new(0.5, 0.3, 0.1),
+            s: Vec3::new(0.01, 0.012, 0.003),
             pad1: 0.0,
         },
     }
 }
 
-fn pigment_properties(index: u32) -> wc_transfer_pigment_compute::PigmentProperties {
+// Pigment properties (ρ, ω, γ) from Curtis et al. Figure 5
+fn pigment_properties(index: u32) -> wc_advect_and_transfer_pigment_compute::PigmentProperties {
     match index {
-        0 => wc_transfer_pigment_compute::PigmentProperties {
-            density: 2.0,
-            staining_power: 1.5,
-            granulation: 0.7,
+        0 => wc_advect_and_transfer_pigment_compute::PigmentProperties {
+            // French Ultramarine (k)
+            density: 0.01,
+            staining_power: 3.1,
+            granulation: 0.91,
             pad0: 0.0,
         },
-        1 => wc_transfer_pigment_compute::PigmentProperties {
-            density: 1.5,
-            staining_power: 0.8,
-            granulation: 0.2,
+        1 => wc_advect_and_transfer_pigment_compute::PigmentProperties {
+            // Hansa Yellow (i)
+            density: 0.06,
+            staining_power: 1.0,
+            granulation: 0.08,
             pad0: 0.0,
         },
-        2 => wc_transfer_pigment_compute::PigmentProperties {
-            density: 1.8,
-            staining_power: 3.0,
-            granulation: 0.3,
+        2 => wc_advect_and_transfer_pigment_compute::PigmentProperties {
+            // Quinacridone Rose (a)
+            density: 0.02,
+            staining_power: 5.5,
+            granulation: 0.81,
             pad0: 0.0,
         },
-        _ => wc_transfer_pigment_compute::PigmentProperties {
-            density: 2.5,
-            staining_power: 2.0,
-            granulation: 0.8,
+        _ => wc_advect_and_transfer_pigment_compute::PigmentProperties {
+            // Hookers Green (d)
+            density: 0.09,
+            staining_power: 1.0,
+            granulation: 0.41,
             pad0: 0.0,
         },
     }
@@ -308,11 +308,6 @@ impl Game for Watercolor {
         renderer.clear_storage_texture(&blur_temp, [0.0, 0.0, 0.0, 0.0])?;
         let blur_temp_sampled = renderer.storage_texture_as_sampled(&blur_temp)?;
 
-        let blurred_mask =
-            renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
-        renderer.clear_storage_texture(&blurred_mask, [0.0, 0.0, 0.0, 0.0])?;
-        let blurred_mask_sampled = renderer.storage_texture_as_sampled(&blurred_mask)?;
-
         // Paper height map
         let paper_height =
             renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
@@ -339,14 +334,10 @@ impl Game for Watercolor {
             renderer.create_uniform_buffer::<wc_project_velocity_compute::Params>()?;
         let blur_h_params_buffer =
             renderer.create_uniform_buffer::<wc_gaussian_blur_compute::Params>()?;
-        let blur_v_params_buffer =
-            renderer.create_uniform_buffer::<wc_gaussian_blur_compute::Params>()?;
-        let flow_outward_params_buffer =
-            renderer.create_uniform_buffer::<wc_flow_outward_compute::Params>()?;
-        let move_pigment_params_buffer =
-            renderer.create_uniform_buffer::<wc_move_pigment_compute::Params>()?;
-        let transfer_pigment_params_buffer =
-            renderer.create_uniform_buffer::<wc_transfer_pigment_compute::Params>()?;
+        let blur_v_and_flow_params_buffer =
+            renderer.create_uniform_buffer::<wc_blur_v_and_flow_outward_compute::Params>()?;
+        let advect_and_transfer_params_buffer =
+            renderer.create_uniform_buffer::<wc_advect_and_transfer_pigment_compute::Params>()?;
         let capillary_flow_params_buffer =
             renderer.create_uniform_buffer::<wc_capillary_flow_compute::Params>()?;
 
@@ -518,97 +509,66 @@ impl Game for Watercolor {
             ]
         };
 
-        // Gaussian blur V: blur_temp → blurred_mask (single pipeline, no parity)
-        let blur_v_pipeline = {
-            let s = ShaderAtlas::init();
-            renderer.create_compute_pipeline(s.wc_gaussian_blur_compute.pipeline_config(
-                wc_gaussian_blur_compute::Resources {
-                    input_tex: &blur_temp_sampled,
-                    output_tex: &blurred_mask,
-                    params_buffer: &blur_v_params_buffer,
-                },
-            ))?
-        };
-
-        // Flow outward: reads blurred_mask + wet_mask, writes pressure in-place
-        // 2 pipelines for wet_mask parity (pressure is RW so always same handle)
-        let flow_outward_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
-            [
-                renderer.create_compute_pipeline(s0.wc_flow_outward_compute.pipeline_config(
-                    wc_flow_outward_compute::Resources {
-                        blurred_mask: &blurred_mask_sampled,
-                        wet_mask: wet_mask.read(false),
-                        pressure: pressure.read_storage(false),
-                        params_buffer: &flow_outward_params_buffer,
-                    },
-                ))?,
-                renderer.create_compute_pipeline(s1.wc_flow_outward_compute.pipeline_config(
-                    wc_flow_outward_compute::Resources {
-                        blurred_mask: &blurred_mask_sampled,
-                        wet_mask: wet_mask.read(true),
-                        pressure: pressure.read_storage(false), // pressure always at index 0
-                        params_buffer: &flow_outward_params_buffer,
-                    },
-                ))?,
-            ]
-        };
-
-        // Move pigment: 2 pipelines for pigment parity
-        // After vel update+project, vel_parity returns to starting value = same as pigment_parity
-        // wet_mask hasn't changed yet at this point
-        let move_pigment_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
-            [
-                renderer.create_compute_pipeline(s0.wc_move_pigment_compute.pipeline_config(
-                    wc_move_pigment_compute::Resources {
-                        pigment_in: pigment.read(false),
-                        u_in: velocity_u.read(false),
-                        v_in: velocity_v.read(false),
-                        wet_mask: wet_mask.read(false),
-                        pigment_out: pigment.write(false),
-                        params_buffer: &move_pigment_params_buffer,
-                    },
-                ))?,
-                renderer.create_compute_pipeline(s1.wc_move_pigment_compute.pipeline_config(
-                    wc_move_pigment_compute::Resources {
-                        pigment_in: pigment.read(true),
-                        u_in: velocity_u.read(true),
-                        v_in: velocity_v.read(true),
-                        wet_mask: wet_mask.read(true),
-                        pigment_out: pigment.write(true),
-                        params_buffer: &move_pigment_params_buffer,
-                    },
-                ))?,
-            ]
-        };
-
-        // Transfer pigment: in-place on pigment+deposit, 2 pipelines for pigment parity
-        let transfer_pigment_pipelines = {
+        // Blur V + Flow outward (fused): vertical blur of blur_temp + flow formula into pressure
+        // 2 pipelines for wet_mask parity
+        let blur_v_and_flow_pipelines = {
             let s0 = ShaderAtlas::init();
             let s1 = ShaderAtlas::init();
             [
                 renderer.create_compute_pipeline(
-                    s0.wc_transfer_pigment_compute.pipeline_config(
-                        wc_transfer_pigment_compute::Resources {
-                            pigment: pigment.read_storage(false),
-                            deposit: &deposit,
-                            paper_height: &paper_height_sampled,
+                    s0.wc_blur_v_and_flow_outward_compute.pipeline_config(
+                        wc_blur_v_and_flow_outward_compute::Resources {
+                            input_tex: &blur_temp_sampled,
                             wet_mask: wet_mask.read(false),
-                            params_buffer: &transfer_pigment_params_buffer,
+                            pressure: pressure.read_storage(false),
+                            params_buffer: &blur_v_and_flow_params_buffer,
                         },
                     ),
                 )?,
                 renderer.create_compute_pipeline(
-                    s1.wc_transfer_pigment_compute.pipeline_config(
-                        wc_transfer_pigment_compute::Resources {
-                            pigment: pigment.read_storage(true),
-                            deposit: &deposit,
-                            paper_height: &paper_height_sampled,
+                    s1.wc_blur_v_and_flow_outward_compute.pipeline_config(
+                        wc_blur_v_and_flow_outward_compute::Resources {
+                            input_tex: &blur_temp_sampled,
                             wet_mask: wet_mask.read(true),
-                            params_buffer: &transfer_pigment_params_buffer,
+                            pressure: pressure.read_storage(false),
+                            params_buffer: &blur_v_and_flow_params_buffer,
+                        },
+                    ),
+                )?,
+            ]
+        };
+
+        // Advect + transfer pigment: 2 pipelines for pigment parity
+        // Reads pigment at sim parity, writes to !sim parity, plus deposit RW
+        let advect_and_transfer_pipelines = {
+            let s0 = ShaderAtlas::init();
+            let s1 = ShaderAtlas::init();
+            [
+                renderer.create_compute_pipeline(
+                    s0.wc_advect_and_transfer_pigment_compute.pipeline_config(
+                        wc_advect_and_transfer_pigment_compute::Resources {
+                            pigment_in: pigment.read(false),
+                            u_in: velocity_u.read(false),
+                            v_in: velocity_v.read(false),
+                            wet_mask: wet_mask.read(false),
+                            paper_height: &paper_height_sampled,
+                            pigment_out: pigment.write(false),
+                            deposit: &deposit,
+                            params_buffer: &advect_and_transfer_params_buffer,
+                        },
+                    ),
+                )?,
+                renderer.create_compute_pipeline(
+                    s1.wc_advect_and_transfer_pigment_compute.pipeline_config(
+                        wc_advect_and_transfer_pigment_compute::Resources {
+                            pigment_in: pigment.read(true),
+                            u_in: velocity_u.read(true),
+                            v_in: velocity_v.read(true),
+                            wet_mask: wet_mask.read(true),
+                            paper_height: &paper_height_sampled,
+                            pigment_out: pigment.write(true),
+                            deposit: &deposit,
+                            params_buffer: &advect_and_transfer_params_buffer,
                         },
                     ),
                 )?,
@@ -666,7 +626,6 @@ impl Game for Watercolor {
             deposit,
             divergence,
             blur_temp,
-            blurred_mask,
 
             brush_pipelines,
             update_velocity_pipelines,
@@ -674,10 +633,8 @@ impl Game for Watercolor {
             project_velocity_pipelines,
             pressure_jacobi_pipelines,
             blur_h_pipelines,
-            blur_v_pipeline,
-            flow_outward_pipelines,
-            move_pigment_pipelines,
-            transfer_pigment_pipelines,
+            blur_v_and_flow_pipelines,
+            advect_and_transfer_pipelines,
             capillary_flow_pipelines,
             display_pipeline,
 
@@ -689,10 +646,8 @@ impl Game for Watercolor {
             pressure_jacobi_params_buffer,
             project_vel_params_buffer,
             blur_h_params_buffer,
-            blur_v_params_buffer,
-            flow_outward_params_buffer,
-            move_pigment_params_buffer,
-            transfer_pigment_params_buffer,
+            blur_v_and_flow_params_buffer,
+            advect_and_transfer_params_buffer,
             capillary_flow_params_buffer,
 
             pressure_parity: false,
@@ -849,7 +804,7 @@ impl Game for Watercolor {
                 workgroup_y,
                 1,
             );
-            compute_barrier(&mut renderer);
+            // No barrier needed: project velocity writes u/v, blur H reads wet_mask — no hazard
 
             // 6. Gaussian blur H (wet_mask → blur_temp)
             renderer.dispatch(
@@ -860,38 +815,25 @@ impl Game for Watercolor {
             );
             compute_barrier(&mut renderer);
 
-            // 7. Gaussian blur V (blur_temp → blurred_mask)
-            renderer.dispatch(&self.blur_v_pipeline, workgroup_x, workgroup_y, 1);
-            compute_barrier(&mut renderer);
-
-            // 8. Flow outward (modify pressure in-place)
+            // 7. Blur V + Flow outward (fused: vertical blur of blur_temp → flow formula into pressure)
             renderer.dispatch(
-                &self.flow_outward_pipelines[sim as usize],
+                &self.blur_v_and_flow_pipelines[sim as usize],
                 workgroup_x,
                 workgroup_y,
                 1,
             );
             compute_barrier(&mut renderer);
 
-            // 9. Move pigment (advection)
+            // 9. Advect + transfer pigment (combined)
             renderer.dispatch(
-                &self.move_pigment_pipelines[sim as usize],
+                &self.advect_and_transfer_pipelines[sim as usize],
                 workgroup_x,
                 workgroup_y,
                 1,
             );
             compute_barrier(&mut renderer);
 
-            // 10. Transfer pigment (in-place on pigment at !sim)
-            renderer.dispatch(
-                &self.transfer_pigment_pipelines[(!sim) as usize],
-                workgroup_x,
-                workgroup_y,
-                1,
-            );
-            compute_barrier(&mut renderer);
-
-            // 11. Capillary flow (saturation + wet_mask at sim → writes to !sim)
+            // 10. Capillary flow (saturation + wet_mask at sim → writes to !sim)
             renderer.dispatch(
                 &self.capillary_flow_pipelines[sim as usize],
                 workgroup_x,
@@ -927,10 +869,8 @@ impl Game for Watercolor {
         let pressure_jacobi_params_buffer = &mut self.pressure_jacobi_params_buffer;
         let project_vel_params_buffer = &mut self.project_vel_params_buffer;
         let blur_h_params_buffer = &mut self.blur_h_params_buffer;
-        let blur_v_params_buffer = &mut self.blur_v_params_buffer;
-        let flow_outward_params_buffer = &mut self.flow_outward_params_buffer;
-        let move_pigment_params_buffer = &mut self.move_pigment_params_buffer;
-        let transfer_pigment_params_buffer = &mut self.transfer_pigment_params_buffer;
+        let blur_v_and_flow_params_buffer = &mut self.blur_v_and_flow_params_buffer;
+        let advect_and_transfer_params_buffer = &mut self.advect_and_transfer_params_buffer;
         let capillary_flow_params_buffer = &mut self.capillary_flow_params_buffer;
 
         renderer.draw_vertex_count(&self.display_pipeline, 3, |gpu| {
@@ -1016,16 +956,8 @@ impl Game for Watercolor {
             );
 
             gpu.write_uniform(
-                blur_v_params_buffer,
-                wc_gaussian_blur_compute::Params {
-                    grid_size,
-                    direction: Vec2::new(0.0, 1.0),
-                },
-            );
-
-            gpu.write_uniform(
-                flow_outward_params_buffer,
-                wc_flow_outward_compute::Params {
+                blur_v_and_flow_params_buffer,
+                wc_blur_v_and_flow_outward_compute::Params {
                     grid_size,
                     eta: ETA,
                     _padding_0: Default::default(),
@@ -1033,20 +965,11 @@ impl Game for Watercolor {
             );
 
             gpu.write_uniform(
-                move_pigment_params_buffer,
-                wc_move_pigment_compute::Params {
+                advect_and_transfer_params_buffer,
+                wc_advect_and_transfer_pigment_compute::Params {
                     grid_size,
                     dt: DT,
-                    _padding_0: Default::default(),
-                },
-            );
-
-            gpu.write_uniform(
-                transfer_pigment_params_buffer,
-                wc_transfer_pigment_compute::Params {
-                    grid_size,
                     transfer_rate: TRANSFER_RATE,
-                    pad: 0.0,
                     pigment0: pigment_properties(0),
                     pigment1: pigment_properties(1),
                     pigment2: pigment_properties(2),

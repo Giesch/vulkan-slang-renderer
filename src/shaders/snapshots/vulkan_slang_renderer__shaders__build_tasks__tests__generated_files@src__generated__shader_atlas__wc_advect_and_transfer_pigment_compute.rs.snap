@@ -1,11 +1,11 @@
 ---
 source: src/shaders/build_tasks.rs
 info:
-  relative_path: src/generated/shader_atlas/wc_transfer_pigment_compute.rs
+  relative_path: src/generated/shader_atlas/wc_advect_and_transfer_pigment_compute.rs
 ---
 // GENERATED FILE (do not edit directly)
 
-//! generated from slang compute shader: wc_transfer_pigment.compute.slang
+//! generated from slang compute shader: wc_advect_and_transfer_pigment.compute.slang
 
 use std::ffi::CString;
 use std::io::Cursor;
@@ -23,8 +23,8 @@ use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 #[repr(C, align(16))]
 pub struct Params {
     pub grid_size: glam::Vec2,
+    pub dt: f32,
     pub transfer_rate: f32,
-    pub pad: f32,
     pub pigment0: PigmentProperties,
     pub pigment1: PigmentProperties,
     pub pigment2: PigmentProperties,
@@ -46,10 +46,13 @@ pub struct PigmentProperties {
 impl GPUWrite for PigmentProperties {}
 
 pub struct Resources<'a> {
-    pub pigment: &'a StorageTextureHandle,
-    pub deposit: &'a StorageTextureHandle,
-    pub paper_height: &'a TextureHandle,
+    pub pigment_in: &'a TextureHandle,
+    pub u_in: &'a TextureHandle,
+    pub v_in: &'a TextureHandle,
     pub wet_mask: &'a TextureHandle,
+    pub paper_height: &'a TextureHandle,
+    pub pigment_out: &'a StorageTextureHandle,
+    pub deposit: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -64,7 +67,7 @@ impl Shader {
     pub fn init() -> Self {
         let json_str = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/wc_transfer_pigment.comp.json"
+            "/shaders/compiled/wc_advect_and_transfer_pigment.comp.json"
         ));
 
         let reflection_json: ComputeReflectionJson = serde_json::from_str(json_str).unwrap();
@@ -80,8 +83,11 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.paper_height,
+            resources.pigment_in,
+            resources.u_in,
+            resources.v_in,
             resources.wet_mask,
+            resources.paper_height,
         ];
 
         #[rustfmt::skip]
@@ -95,7 +101,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_texture_handles = vec![
-            resources.pigment,
+            resources.pigment_out,
             resources.deposit,
         ];
 
@@ -122,7 +128,7 @@ impl Shader {
     fn comp_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/wc_transfer_pigment.comp.spv"
+            "/shaders/compiled/wc_advect_and_transfer_pigment.comp.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")

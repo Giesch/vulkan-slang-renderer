@@ -1,10 +1,5 @@
----
-source: src/shaders/build_tasks.rs
-info:
-  relative_path: shaders/compiled/wc_transfer_pigment.comp.json
----
 {
-  "sourceFileName": "wc_transfer_pigment.compute.slang",
+  "sourceFileName": "wc_advect_and_transfer_pigment.compute.slang",
   "globalParameters": [
     {
       "kind": "parameterBlock",
@@ -14,13 +9,13 @@ info:
         "fields": [
           {
             "kind": "resource",
-            "fieldName": "pigment",
+            "fieldName": "pigmentIn",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 1,
               "count": 1
             },
-            "resourceShape": "rWTexture2D",
+            "resourceShape": "texture2D",
             "resultType": {
               "kind": "vector",
               "elementCount": 4,
@@ -32,25 +27,21 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "deposit",
+            "fieldName": "uIn",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 2,
               "count": 1
             },
-            "resourceShape": "rWTexture2D",
+            "resourceShape": "texture2D",
             "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
+              "kind": "scalar",
+              "scalarType": "float32"
             }
           },
           {
             "kind": "resource",
-            "fieldName": "paperHeight",
+            "fieldName": "vIn",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 3,
@@ -77,6 +68,56 @@ info:
             }
           },
           {
+            "kind": "resource",
+            "fieldName": "paperHeight",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 5,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "pigmentOut",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 6,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "deposit",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 7,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
@@ -92,7 +133,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "transferRate",
+            "fieldName": "dt",
             "binding": {
               "kind": "uniform",
               "offset": 8,
@@ -102,7 +143,7 @@ info:
           },
           {
             "kind": "scalar",
-            "fieldName": "_pad",
+            "fieldName": "transferRate",
             "binding": {
               "kind": "uniform",
               "offset": 12,
@@ -353,14 +394,14 @@ info:
           },
           {
             "binding": 1,
-            "descriptorType": "storageImage",
+            "descriptorType": "texture",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 80
           },
           {
             "binding": 2,
-            "descriptorType": "storageImage",
+            "descriptorType": "texture",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 80
@@ -375,6 +416,27 @@ info:
           {
             "binding": 4,
             "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 5,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 6,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 7,
+            "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 80

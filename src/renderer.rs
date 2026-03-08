@@ -2010,6 +2010,10 @@ impl Renderer {
             to_remove.push(i);
         }
         for i in to_remove {
+            // FIXME this can panic
+            // and a panic here does not free GPU resources correctly
+            // or at least in the correct order
+            // it seems like it's wrong specifically for compute shaders
             self.old_pipelines.swap_remove(i);
         }
 

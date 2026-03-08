@@ -98,7 +98,7 @@ float4 fragMain(FragInput input) : SV_Target {
     let normal = normalize(float3(-dhdx, -dhdy, 1.0));
 
     // Lambertian lighting
-    let lightDir = normalize(float3(-1.0, -1.0, 2.0));
+    let lightDir = normalize(float3(1.0, 1.0, 2.0)); // light from the upper left
     let ambient = 0.6;
     let diffuse = max(dot(normal, lightDir), 0.0);
     let lighting = ambient + (1.0 - ambient) * diffuse;
@@ -109,21 +109,29 @@ float4 fragMain(FragInput input) : SV_Target {
     // Sample deposited pigment (4 channels)
     let dep = displayParams.deposit.Sample(uv);
 
-    // Kubelka-Munk compositing: layer each pigment over paper
+    // Kubelka-Munk compositing per Curtis et al. Section 5.2:
+    // When a layer contains multiple pigments, K and S are weighted
+    // in proportion to each pigment's relative thickness.
     PigmentKM pigments[4] = {
         displayParams.pigment0, displayParams.pigment1,
         displayParams.pigment2, displayParams.pigment3
     };
 
+    float totalThickness = dep.x + dep.y + dep.z + dep.w;
     float3 R_total = paperBase;
 
-    for (int i = 0; i < 4; i++) {
-        let thickness = dep[i];
-        if (thickness < 0.001)
-            continue;
+    if (totalThickness > 0.001) {
+        float3 K_mix = float3(0.0);
+        float3 S_mix = float3(0.0);
+        for (int i = 0; i < 4; i++) {
+            K_mix += dep[i] * pigments[i].K;
+            S_mix += dep[i] * pigments[i].S;
+        }
+        K_mix /= totalThickness;
+        S_mix /= totalThickness;
 
-        let R_layer = kmReflectance(pigments[i].K, pigments[i].S, thickness);
-        let T_layer = kmTransmittance(pigments[i].K, pigments[i].S, thickness);
+        let R_layer = kmReflectance(K_mix, S_mix, totalThickness);
+        let T_layer = kmTransmittance(K_mix, S_mix, totalThickness);
         R_total = compositeLayer(R_layer, T_layer, R_total);
     }
 

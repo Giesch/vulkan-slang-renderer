@@ -1,19 +1,19 @@
 #language slang 2026
 
-/// Separable Gaussian blur pass (horizontal or vertical, selected by `direction` param).
-/// See: https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-40-incremental-computation-gaussian
+/// Fused vertical Gaussian blur + flow outward pass.
 
-module wc_gaussian_blur;
+module wc_blur_v_and_flow_outward;
 
 import watercolor_common;
 
 ParameterBlock<Params> params;
 
 struct Params {
-    Texture2D<float> inputTex;
-    RWTexture2D<float> outputTex;
+    Texture2D<float> inputTex;   // blur_temp (horizontally blurred wet_mask)
+    Texture2D<float> wetMask;
+    RWTexture2D<float> pressure;
     float2 gridSize;
-    float2 direction; // (1,0) for horizontal, (0,1) for vertical
+    float eta;
 }
 
 static const int RADIUS = 10;
@@ -33,17 +33,23 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
         return;
 
     let gs = int2(params.gridSize);
-    let dir = int2(params.direction);
 
+    // Vertical Gaussian blur (reading from horizontally-blurred blur_temp)
     float weightSum = 0.0;
     float valueSum = 0.0;
 
     for (int i = -RADIUS; i <= RADIUS; i++) {
-        let samplePos = clamp(pixel + dir * i, int2(0), gs - 1);
+        let samplePos = clamp(pixel + int2(0, i), int2(0), gs - 1);
         let w = WEIGHTS[abs(i)];
         valueSum += params.inputTex[samplePos] * w;
         weightSum += w;
     }
 
-    params.outputTex[pixel] = valueSum / weightSum;
+    let blurred = valueSum / weightSum;
+
+    // Flow outward only reads blurred_mask at the same texel (no neighbor access),
+    // so we compute the vertical blur inline and use the result directly —
+    // eliminating the blurred_mask intermediate texture, 1 dispatch, and 1 barrier.
+    let wet = params.wetMask[pixel];
+    params.pressure[pixel] += -params.eta * (1.0 - blurred) * wet;
 }
