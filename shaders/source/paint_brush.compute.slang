@@ -38,14 +38,14 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
 
     for (uint i = 0; i < brushParams.pointCount; i++) {
         let brushPos = brushParams.strokePoints[i].position;
-        let dist = distance(pixelCenter, brushPos);
+        let distance = distance(pixelCenter, brushPos);
 
-        if (dist > brushParams.brushRadius)
+        if (distance > brushParams.brushRadius)
             continue;
 
         // Smooth falloff using smoothstep
-        let t = dist / brushParams.brushRadius;
-        let alpha = (1.0 - smoothstep(0.6, 1.0, t)) * brushParams.brushOpacity;
+        let normalizedDistance = distance / brushParams.brushRadius;
+        let alpha = (1.0 - smoothstep(0.6, 1.0, normalizedDistance)) * brushParams.brushOpacity;
 
         // Mark wet area
         brushParams.wetMask[pixel] = 1.0;

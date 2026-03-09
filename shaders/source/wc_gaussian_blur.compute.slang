@@ -24,17 +24,17 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     if (!inBounds(dispatchThreadID.xy, params.gridSize))
         return;
 
-    let gs = int2(params.gridSize);
-    let dir = int2(params.direction);
+    let gridSize = int2(params.gridSize);
+    let direction = int2(params.direction);
 
     float weightSum = 0.0;
     float valueSum = 0.0;
 
     for (int i = -BLUR_RADIUS; i <= BLUR_RADIUS; i++) {
-        let samplePos = clamp(pixel + dir * i, int2(0), gs - 1);
-        let w = BLUR_WEIGHTS[abs(i)];
-        valueSum += params.inputTex[samplePos] * w;
-        weightSum += w;
+        let samplePos = clamp(pixel + direction * i, int2(0), gridSize - 1);
+        let weight = BLUR_WEIGHTS[abs(i)];
+        valueSum += params.inputTex[samplePos] * weight;
+        weightSum += weight;
     }
 
     params.outputTex[pixel] = valueSum / weightSum;

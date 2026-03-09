@@ -40,9 +40,9 @@ const _: () = assert!(std::mem::size_of::<DisplayParams>() == 144);
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct PigmentKM {
-    pub k: glam::Vec3,
+    pub absorption: glam::Vec3,
     pub pad0: f32,
-    pub s: glam::Vec3,
+    pub scattering: glam::Vec3,
     pub pad1: f32,
 }
 

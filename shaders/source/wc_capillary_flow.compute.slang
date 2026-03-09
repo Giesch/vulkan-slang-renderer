@@ -27,35 +27,35 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     if (!inBounds(dispatchThreadID.xy, params.gridSize))
         return;
 
-    let gs = int2(params.gridSize);
+    let gridSize = int2(params.gridSize);
 
-    float s = params.saturationIn[pixel];
-    let wet = params.wetMaskIn[pixel];
+    float saturation = params.saturationIn[pixel];
+    let wetMask = params.wetMaskIn[pixel];
 
     // (b) Diffuse: gather from wet neighbors only (uphill flow)
-    let sL = params.saturationIn[clamp(pixel + int2(-1, 0), int2(0), gs - 1)];
-    let sR = params.saturationIn[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
-    let sD = params.saturationIn[clamp(pixel + int2(0, -1), int2(0), gs - 1)];
-    let sU = params.saturationIn[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
+    let saturationLeft = params.saturationIn[clamp(pixel + int2(-1, 0), int2(0), gridSize - 1)];
+    let saturationRight = params.saturationIn[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
+    let saturationDown = params.saturationIn[clamp(pixel + int2(0, -1), int2(0), gridSize - 1)];
+    let saturationUp = params.saturationIn[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
 
-    let wL = params.wetMaskIn[clamp(pixel + int2(-1, 0), int2(0), gs - 1)];
-    let wR = params.wetMaskIn[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
-    let wD = params.wetMaskIn[clamp(pixel + int2(0, -1), int2(0), gs - 1)];
-    let wU = params.wetMaskIn[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
+    let wetLeft = params.wetMaskIn[clamp(pixel + int2(-1, 0), int2(0), gridSize - 1)];
+    let wetRight = params.wetMaskIn[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
+    let wetDown = params.wetMaskIn[clamp(pixel + int2(0, -1), int2(0), gridSize - 1)];
+    let wetUp = params.wetMaskIn[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
 
     let diffusion = params.diffuseRate * (
-        max(sL - s, 0.0) * step(0.001, wL) + max(sR - s, 0.0) * step(0.001, wR) +
-        max(sD - s, 0.0) * step(0.001, wD) + max(sU - s, 0.0) * step(0.001, wU)
+        max(saturationLeft - saturation, 0.0) * step(0.001, wetLeft) + max(saturationRight - saturation, 0.0) * step(0.001, wetRight) +
+        max(saturationDown - saturation, 0.0) * step(0.001, wetDown) + max(saturationUp - saturation, 0.0) * step(0.001, wetUp)
     );
-    s = min(s + diffusion, params.capacity);
+    saturation = min(saturation + diffusion, params.capacity);
 
-    params.saturationOut[pixel] = s;
+    params.saturationOut[pixel] = saturation;
 
     // (c) Expand wet mask where saturation exceeds threshold
-    float newWet = wet;
-    if (s > params.sigma) {
+    float newWet = wetMask;
+    if (saturation > params.sigma) {
         newWet = 1.0;
-    } else if (s < params.dryThreshold) {
+    } else if (saturation < params.dryThreshold) {
         newWet = 0.0;
     }
     params.wetMaskOut[pixel] = newWet;

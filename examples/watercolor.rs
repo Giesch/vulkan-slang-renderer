@@ -190,7 +190,7 @@ enum Pigment {
 
 struct PigmentData {
     // Kubelka-Munk K/S values (absorption/scattering, Section 5.1)
-    absorbtion: Vec3,
+    absorption: Vec3,
     scattering: Vec3,
     // Physical properties (ρ, ω, γ)
     density: f32,
@@ -201,7 +201,7 @@ struct PigmentData {
 const PIGMENT_TABLE: [PigmentData; 4] = [
     // French Ultramarine (k)
     PigmentData {
-        absorbtion: Vec3::new(0.86, 0.86, 0.06),
+        absorption: Vec3::new(0.86, 0.86, 0.06),
         scattering: Vec3::new(0.005, 0.005, 0.09),
         density: 0.01,
         staining_power: 3.1,
@@ -209,7 +209,7 @@ const PIGMENT_TABLE: [PigmentData; 4] = [
     },
     // Hansa Yellow (i)
     PigmentData {
-        absorbtion: Vec3::new(0.06, 0.21, 1.78),
+        absorption: Vec3::new(0.06, 0.21, 1.78),
         scattering: Vec3::new(0.50, 0.88, 0.009),
         density: 0.06,
         staining_power: 1.0,
@@ -217,7 +217,7 @@ const PIGMENT_TABLE: [PigmentData; 4] = [
     },
     // Quinacridone Rose (a)
     PigmentData {
-        absorbtion: Vec3::new(0.22, 1.47, 0.57),
+        absorption: Vec3::new(0.22, 1.47, 0.57),
         scattering: Vec3::new(0.05, 0.003, 0.03),
         density: 0.02,
         staining_power: 5.5,
@@ -225,7 +225,7 @@ const PIGMENT_TABLE: [PigmentData; 4] = [
     },
     // Hookers Green (d)
     PigmentData {
-        absorbtion: Vec3::new(1.62, 0.61, 1.64),
+        absorption: Vec3::new(1.62, 0.61, 1.64),
         scattering: Vec3::new(0.01, 0.012, 0.003),
         density: 0.09,
         staining_power: 1.0,
@@ -237,9 +237,9 @@ impl Pigment {
     fn km(self) -> paint_display::PigmentKM {
         let d = &PIGMENT_TABLE[self as usize];
         paint_display::PigmentKM {
-            k: d.absorbtion,
+            absorption: d.absorption,
             pad0: 0.0,
-            s: d.scattering,
+            scattering: d.scattering,
             pad1: 0.0,
         }
     }

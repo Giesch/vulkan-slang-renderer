@@ -30,22 +30,22 @@ struct Params {
     PigmentProperties pigment3;
 }
 
-void transferChannel(inout float g, inout float d, float h, PigmentProperties props, float rate) {
+void transferChannel(inout float pigmentInWater, inout float pigmentDeposit, float paperHeight, PigmentProperties props, float rate) {
     // h_eff: granulating pigments prefer valleys (low h)
-    let hEff = lerp(h, 1.0 - h, props.granulation);
+    let effectiveHeight = lerp(paperHeight, 1.0 - paperHeight, props.granulation);
 
     // Adsorption: water → paper
-    let deltaDown = rate * g * pow(max(1.0 - hEff * props.density, 0.0), 2.0);
+    let deltaDown = rate * pigmentInWater * pow(max(1.0 - effectiveHeight * props.density, 0.0), 2.0);
 
     // Desorption: paper → water (harder for staining pigments)
-    let deltaUp = rate * d * pow(max(1.0 + (hEff - 1.0) * props.density, 0.0), 2.0) / max(props.stainingPower, 0.1);
+    let deltaUp = rate * pigmentDeposit * pow(max(1.0 + (effectiveHeight - 1.0) * props.density, 0.0), 2.0) / max(props.stainingPower, 0.1);
 
     // Clamp to available amounts
-    let actualDown = min(deltaDown, g);
-    let actualUp = min(deltaUp, d);
+    let actualDown = min(deltaDown, pigmentInWater);
+    let actualUp = min(deltaUp, pigmentDeposit);
 
-    g = g - actualDown + actualUp;
-    d = d + actualDown - actualUp;
+    pigmentInWater = pigmentInWater - actualDown + actualUp;
+    pigmentDeposit = pigmentDeposit + actualDown - actualUp;
 }
 
 [numthreads(16, 16, 1)]
@@ -56,50 +56,50 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     if (!inBounds(dispatchThreadID.xy, params.gridSize))
         return;
 
-    let gs = int2(params.gridSize);
-    let wet = params.wetMask[pixel];
+    let gridSize = int2(params.gridSize);
+    let wetMask = params.wetMask[pixel];
 
     // --- Advection ---
     float4 advected;
-    if (wet < 0.001) {
+    if (wetMask < 0.001) {
         advected = params.pigmentIn[pixel];
     } else {
         // Cell-center velocity at (i+0.5, j+0.5) by interpolating staggered components
         // u at (i+0.5, j+0.5): average u[i,j] and u[i,j+1]
-        let u0 = params.uIn[pixel];                                        // u at (i+0.5, j)
-        let u1 = params.uIn[clamp(pixel + int2(0, 1), int2(0), gs - 1)];   // u at (i+0.5, j+1)
+        let uBottom = params.uIn[pixel];                                        // u at (i+0.5, j)
+        let uTop = params.uIn[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];   // u at (i+0.5, j+1)
         // v at (i+0.5, j+0.5): average v[i,j] and v[i+1,j]
-        let v0 = params.vIn[pixel];                                        // v at (i, j+0.5)
-        let v1 = params.vIn[clamp(pixel + int2(1, 0), int2(0), gs - 1)];   // v at (i+1, j+0.5)
-        let vel = float2((u0 + u1) * 0.5, (v0 + v1) * 0.5);
+        let vLeft = params.vIn[pixel];                                        // v at (i, j+0.5)
+        let vRight = params.vIn[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];   // v at (i+1, j+0.5)
+        let velocity = float2((uBottom + uTop) * 0.5, (vLeft + vRight) * 0.5);
 
         // Semi-Lagrangian backtrace
-        let pos = float2(pixel) + 0.5;
-        let backtrace = pos - params.dt * vel;
+        let position = float2(pixel) + 0.5;
+        let backtrace = position - params.dt * velocity;
 
         advected = max(bilinearSampleRGBA(params.pigmentIn, backtrace, params.gridSize), float4(0.0));
     }
 
     // --- Transfer pigment ↔ deposit ---
-    if (wet < 0.001) {
+    if (wetMask < 0.001) {
         params.pigmentOut[pixel] = advected;
         return;
     }
 
-    let h = params.paperHeight[pixel];
-    float4 g = advected;
-    float4 d = params.deposit[pixel];
+    let paperHeight = params.paperHeight[pixel];
+    float4 pigmentInWater = advected;
+    float4 pigmentDeposit = params.deposit[pixel];
 
     PigmentProperties props[4] = { params.pigment0, params.pigment1, params.pigment2, params.pigment3 };
 
     for (int i = 0; i < 4; i++) {
-        float gi = g[i];
-        float di = d[i];
-        transferChannel(gi, di, h, props[i], params.transferRate);
-        g[i] = gi;
-        d[i] = di;
+        float pigmentChannel = pigmentInWater[i];
+        float depositChannel = pigmentDeposit[i];
+        transferChannel(pigmentChannel, depositChannel, paperHeight, props[i], params.transferRate);
+        pigmentInWater[i] = pigmentChannel;
+        pigmentDeposit[i] = depositChannel;
     }
 
-    params.pigmentOut[pixel] = max(g, float4(0.0));
-    params.deposit[pixel] = max(d, float4(0.0));
+    params.pigmentOut[pixel] = max(pigmentInWater, float4(0.0));
+    params.deposit[pixel] = max(pigmentDeposit, float4(0.0));
 }

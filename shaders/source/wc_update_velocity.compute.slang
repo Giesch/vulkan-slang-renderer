@@ -48,7 +48,7 @@ float interpolateU(Texture2D<float> uTex, int2 pixel, float2 gridSize) {
 [shader("compute")]
 void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     let pixel = int2(dispatchThreadID.xy);
-    let gs = int2(params.gridSize);
+    let gridSize = int2(params.gridSize);
 
     if (!inBounds(dispatchThreadID.xy, params.gridSize))
         return;
@@ -58,61 +58,61 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
         let uHere = params.uIn[pixel];
 
         // Semi-Lagrangian backtrace
-        let pos = float2(pixel) + float2(0.5, 0.0);
+        let position = float2(pixel) + float2(0.5, 0.0);
         let vHere = interpolateV(params.vIn, pixel, params.gridSize);
-        let backtrace = pos - params.dt * float2(uHere, vHere);
+        let backtrace = position - params.dt * float2(uHere, vHere);
         let uAdvected = bilinearSampleR(params.uIn, backtrace, params.gridSize);
 
         // Laplacian for diffusion
-        let uL = params.uIn[clamp(pixel + int2(-1, 0), int2(0), gs - 1)];
-        let uR = params.uIn[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
-        let uD = params.uIn[clamp(pixel + int2(0, -1), int2(0), gs - 1)];
-        let uU = params.uIn[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
-        let uLap = uL + uR + uD + uU - 4.0 * uHere;
+        let uLeft = params.uIn[clamp(pixel + int2(-1, 0), int2(0), gridSize - 1)];
+        let uRight = params.uIn[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
+        let uDown = params.uIn[clamp(pixel + int2(0, -1), int2(0), gridSize - 1)];
+        let uUp = params.uIn[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
+        let uLaplacian = uLeft + uRight + uDown + uUp - 4.0 * uHere;
 
         // Pressure gradient (dp/dx)
-        let pR = params.pressure[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
-        let pL = params.pressure[pixel];
-        let dpDx = pR - pL;
+        let pressureRight = params.pressure[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
+        let pressureLeft = params.pressure[pixel];
+        let pressureGradientX = pressureRight - pressureLeft;
 
         // Paper slope (dh/dx)
-        let hR = params.paperHeight[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
-        let hL = params.paperHeight[pixel];
-        let dhDx = (hR - hL) * params.slopeStrength;
+        let heightRight = params.paperHeight[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
+        let heightLeft = params.paperHeight[pixel];
+        let heightGradientX = (heightRight - heightLeft) * params.slopeStrength;
 
         // Wet mask at this location
-        let wet = params.wetMask[pixel];
+        let wetMask = params.wetMask[pixel];
 
-        let uNew = (uAdvected + params.dt * (params.mu * uLap - dpDx + dhDx - params.kappa * uHere)) * wet;
-        params.uOut[pixel] = uNew;
+        let updatedU = (uAdvected + params.dt * (params.mu * uLaplacian - pressureGradientX + heightGradientX - params.kappa * uHere)) * wetMask;
+        params.uOut[pixel] = updatedU;
     }
 
     // --- Update v (vertical velocity at i, j+0.5) ---
     {
         let vHere = params.vIn[pixel];
 
-        let pos = float2(pixel) + float2(0.0, 0.5);
+        let position = float2(pixel) + float2(0.0, 0.5);
         let uHere = interpolateU(params.uIn, pixel, params.gridSize);
-        let backtrace = pos - params.dt * float2(uHere, vHere);
+        let backtrace = position - params.dt * float2(uHere, vHere);
         let vAdvected = bilinearSampleR(params.vIn, backtrace, params.gridSize);
 
-        let vL = params.vIn[clamp(pixel + int2(-1, 0), int2(0), gs - 1)];
-        let vR = params.vIn[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
-        let vD = params.vIn[clamp(pixel + int2(0, -1), int2(0), gs - 1)];
-        let vU = params.vIn[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
-        let vLap = vL + vR + vD + vU - 4.0 * vHere;
+        let vLeft = params.vIn[clamp(pixel + int2(-1, 0), int2(0), gridSize - 1)];
+        let vRight = params.vIn[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
+        let vDown = params.vIn[clamp(pixel + int2(0, -1), int2(0), gridSize - 1)];
+        let vUp = params.vIn[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
+        let vLaplacian = vLeft + vRight + vDown + vUp - 4.0 * vHere;
 
-        let pU = params.pressure[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
-        let pD = params.pressure[pixel];
-        let dpDy = pU - pD;
+        let pressureUp = params.pressure[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
+        let pressureDown = params.pressure[pixel];
+        let pressureGradientY = pressureUp - pressureDown;
 
-        let hU = params.paperHeight[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
-        let hD = params.paperHeight[pixel];
-        let dhDy = (hU - hD) * params.slopeStrength;
+        let heightUp = params.paperHeight[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
+        let heightDown = params.paperHeight[pixel];
+        let heightGradientY = (heightUp - heightDown) * params.slopeStrength;
 
-        let wet = params.wetMask[pixel];
+        let wetMask = params.wetMask[pixel];
 
-        let vNew = (vAdvected + params.dt * (params.mu * vLap - dpDy + dhDy - params.kappa * vHere)) * wet;
-        params.vOut[pixel] = vNew;
+        let updatedV = (vAdvected + params.dt * (params.mu * vLaplacian - pressureGradientY + heightGradientY - params.kappa * vHere)) * wetMask;
+        params.vOut[pixel] = updatedV;
     }
 }

@@ -108,7 +108,7 @@
               "fields": [
                 {
                   "kind": "vector",
-                  "fieldName": "K",
+                  "fieldName": "absorption",
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
@@ -132,7 +132,7 @@
                 },
                 {
                   "kind": "vector",
-                  "fieldName": "S",
+                  "fieldName": "scattering",
                   "binding": {
                     "kind": "uniform",
                     "offset": 16,
@@ -170,7 +170,7 @@
               "fields": [
                 {
                   "kind": "vector",
-                  "fieldName": "K",
+                  "fieldName": "absorption",
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
@@ -194,7 +194,7 @@
                 },
                 {
                   "kind": "vector",
-                  "fieldName": "S",
+                  "fieldName": "scattering",
                   "binding": {
                     "kind": "uniform",
                     "offset": 16,
@@ -232,7 +232,7 @@
               "fields": [
                 {
                   "kind": "vector",
-                  "fieldName": "K",
+                  "fieldName": "absorption",
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
@@ -256,7 +256,7 @@
                 },
                 {
                   "kind": "vector",
-                  "fieldName": "S",
+                  "fieldName": "scattering",
                   "binding": {
                     "kind": "uniform",
                     "offset": 16,
@@ -294,7 +294,7 @@
               "fields": [
                 {
                   "kind": "vector",
-                  "fieldName": "K",
+                  "fieldName": "absorption",
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
@@ -318,7 +318,7 @@
                 },
                 {
                   "kind": "vector",
-                  "fieldName": "S",
+                  "fieldName": "scattering",
                   "binding": {
                     "kind": "uniform",
                     "offset": 16,

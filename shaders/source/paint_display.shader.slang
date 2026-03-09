@@ -7,9 +7,9 @@ import fullscreen_triangle;
 ParameterBlock<DisplayParams> displayParams;
 
 struct PigmentKM {
-    float3 K; // absorption
+    float3 absorption;
     float _pad0;
-    float3 S; // scattering
+    float3 scattering;
     float _pad1;
 }
 
@@ -38,35 +38,36 @@ FragInput vertMain(uint id : SV_VertexID) {
 }
 
 struct KMResult {
-    float3 R; // reflectance
-    float3 T; // transmittance
+    float3 reflectance;
+    float3 transmittance;
 }
 
 // Kubelka-Munk single layer reflectance and transmittance per RGB channel
-KMResult kubelkaMunk(float3 K, float3 S, float thickness) {
-    if (thickness < 0.001)
+KMResult kubelkaMunk(float3 absorption, float3 scattering, float thickness) {
+    if (thickness < 0.001) {
         return KMResult(float3(0.0), float3(1.0));
+    }
 
-    float3 a = 1.0 + K / max(S, float3(0.001));
+    float3 a = 1.0 + absorption / max(scattering, float3(0.001));
     float3 b = sqrt(max(a * a - 1.0, float3(0.0)));
-    float3 bSx = b * S * thickness;
+    float3 bScatteringThickness = b * scattering * thickness;
 
     // Clamp to avoid overflow in sinh/cosh
-    bSx = min(bSx, float3(20.0));
+    bScatteringThickness = min(bScatteringThickness, float3(20.0));
 
-    float3 shBSx = sinh(bSx);
-    float3 chBSx = cosh(bSx);
+    float3 sinhBSx = sinh(bScatteringThickness);
+    float3 coshBSx = cosh(bScatteringThickness);
 
-    float3 denom = a * shBSx + b * chBSx;
-    float3 R = shBSx / max(denom, float3(0.0001));
-    float3 T = b / max(denom, float3(0.0001));
+    float3 denom = a * sinhBSx + b * coshBSx;
+    float3 reflectance = sinhBSx / max(denom, float3(0.0001));
+    float3 transmittance = b / max(denom, float3(0.0001));
 
-    return KMResult(R, T);
+    return KMResult(reflectance, transmittance);
 }
 
 // Composite a layer over a substrate reflectance
-float3 compositeLayer(float3 R_layer, float3 T_layer, float3 R_sub) {
-    return R_layer + T_layer * T_layer * R_sub / max(float3(1.0) - R_layer * R_sub, float3(0.0001));
+float3 compositeLayer(float3 layerReflectance, float3 layerTransmittance, float3 substrateReflectance) {
+    return layerReflectance + layerTransmittance * layerTransmittance * substrateReflectance / max(float3(1.0) - layerReflectance * substrateReflectance, float3(0.0001));
 }
 
 static const float BUMP_STRENGTH = 10.0;
@@ -84,25 +85,25 @@ float4 fragMain(FragInput input) : SV_Target {
         return float4(wet, wet, wet, 1.0);
     }
 
-    let ts = displayParams.texelSize;
+    let texelSize = displayParams.texelSize;
 
     // Sample height map neighbors for bump mapping
-    let hL = displayParams.paperHeight.Sample(uv + float2(-ts.x, 0.0)).r;
-    let hR = displayParams.paperHeight.Sample(uv + float2( ts.x, 0.0)).r;
-    let hD = displayParams.paperHeight.Sample(uv + float2(0.0, -ts.y)).r;
-    let hU = displayParams.paperHeight.Sample(uv + float2(0.0,  ts.y)).r;
+    let heightLeft = displayParams.paperHeight.Sample(uv + float2(-texelSize.x, 0.0)).r;
+    let heightRight = displayParams.paperHeight.Sample(uv + float2( texelSize.x, 0.0)).r;
+    let heightDown = displayParams.paperHeight.Sample(uv + float2(0.0, -texelSize.y)).r;
+    let heightUp = displayParams.paperHeight.Sample(uv + float2(0.0,  texelSize.y)).r;
 
     // Bump-mapped normal
-    let dhdx = (hR - hL) * BUMP_STRENGTH;
-    let dhdy = (hU - hD) * BUMP_STRENGTH;
-    let normal = normalize(float3(-dhdx, -dhdy, 1.0));
+    let heightGradientX = (heightRight - heightLeft) * BUMP_STRENGTH;
+    let heightGradientY = (heightUp - heightDown) * BUMP_STRENGTH;
+    let normal = normalize(float3(-heightGradientX, -heightGradientY, 1.0));
 
     // Lambertian lighting
     let diffuse = max(dot(normal, LIGHT_DIR), 0.0);
     let lighting = AMBIENT + (1.0 - AMBIENT) * diffuse;
 
     // Sample deposited pigment (4 channels)
-    let dep = displayParams.deposit.Sample(uv);
+    let deposit = displayParams.deposit.Sample(uv);
 
     // Kubelka-Munk compositing per Curtis et al. Section 5.2:
     // When a layer contains multiple pigments, K and S are weighted
@@ -112,25 +113,25 @@ float4 fragMain(FragInput input) : SV_Target {
         displayParams.pigment2, displayParams.pigment3
     };
 
-    float totalThickness = dep.x + dep.y + dep.z + dep.w;
-    float3 R_total = PAPER_COLOR;
+    float totalThickness = deposit.x + deposit.y + deposit.z + deposit.w;
+    float3 totalReflectance = PAPER_COLOR;
 
     if (totalThickness > 0.001) {
-        float3 K_mix = float3(0.0);
-        float3 S_mix = float3(0.0);
+        float3 mixedAbsorption = float3(0.0);
+        float3 mixedScattering = float3(0.0);
         for (int i = 0; i < 4; i++) {
-            K_mix += dep[i] * pigments[i].K;
-            S_mix += dep[i] * pigments[i].S;
+            mixedAbsorption += deposit[i] * pigments[i].absorption;
+            mixedScattering += deposit[i] * pigments[i].scattering;
         }
-        K_mix /= totalThickness;
-        S_mix /= totalThickness;
+        mixedAbsorption /= totalThickness;
+        mixedScattering /= totalThickness;
 
-        let km = kubelkaMunk(K_mix, S_mix, totalThickness);
-        R_total = compositeLayer(km.R, km.T, R_total);
+        let kubelkaMunkResult = kubelkaMunk(mixedAbsorption, mixedScattering, totalThickness);
+        totalReflectance = compositeLayer(kubelkaMunkResult.reflectance, kubelkaMunkResult.transmittance, totalReflectance);
     }
 
     // Apply lighting
-    let color = R_total * lighting;
+    let color = totalReflectance * lighting;
 
     return float4(color, 1.0);
 }

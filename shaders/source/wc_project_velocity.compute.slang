@@ -22,16 +22,16 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     if (!inBounds(dispatchThreadID.xy, params.gridSize))
         return;
 
-    let gs = int2(params.gridSize);
-    let wet = params.wetMask[pixel];
+    let gridSize = int2(params.gridSize);
+    let wetMask = params.wetMask[pixel];
 
     // Subtract pressure gradient from velocity
     // u at (i+0.5, j): dp/dx = p[i+1,j] - p[i,j]
-    let pR = params.pressure[clamp(pixel + int2(1, 0), int2(0), gs - 1)];
-    let pC = params.pressure[pixel];
-    params.u[pixel] = (params.u[pixel] - (pR - pC)) * wet;
+    let pressureRight = params.pressure[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
+    let pressureCenter = params.pressure[pixel];
+    params.u[pixel] = (params.u[pixel] - (pressureRight - pressureCenter)) * wetMask;
 
     // v at (i, j+0.5): dp/dy = p[i,j+1] - p[i,j]
-    let pU = params.pressure[clamp(pixel + int2(0, 1), int2(0), gs - 1)];
-    params.v[pixel] = (params.v[pixel] - (pU - pC)) * wet;
+    let pressureUp = params.pressure[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
+    params.v[pixel] = (params.v[pixel] - (pressureUp - pressureCenter)) * wetMask;
 }
