@@ -77,23 +77,13 @@
           },
           {
             "kind": "scalar",
-            "fieldName": "showWetMask",
+            "fieldName": "debugView",
             "binding": {
               "kind": "uniform",
               "offset": 8,
               "size": 4
             },
-            "scalarType": "float32"
-          },
-          {
-            "kind": "scalar",
-            "fieldName": "_pad",
-            "binding": {
-              "kind": "uniform",
-              "offset": 12,
-              "size": 4
-            },
-            "scalarType": "float32"
+            "scalarType": "uint32"
           },
           {
             "kind": "struct",
@@ -121,16 +111,6 @@
                   }
                 },
                 {
-                  "kind": "scalar",
-                  "fieldName": "_pad0",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 12,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
-                },
-                {
                   "kind": "vector",
                   "fieldName": "scattering",
                   "binding": {
@@ -143,16 +123,6 @@
                     "kind": "scalar",
                     "scalarType": "float32"
                   }
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "_pad1",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 28,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
                 }
               ]
             }
@@ -183,16 +153,6 @@
                   }
                 },
                 {
-                  "kind": "scalar",
-                  "fieldName": "_pad0",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 12,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
-                },
-                {
                   "kind": "vector",
                   "fieldName": "scattering",
                   "binding": {
@@ -205,16 +165,6 @@
                     "kind": "scalar",
                     "scalarType": "float32"
                   }
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "_pad1",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 28,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
                 }
               ]
             }
@@ -245,16 +195,6 @@
                   }
                 },
                 {
-                  "kind": "scalar",
-                  "fieldName": "_pad0",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 12,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
-                },
-                {
                   "kind": "vector",
                   "fieldName": "scattering",
                   "binding": {
@@ -267,16 +207,6 @@
                     "kind": "scalar",
                     "scalarType": "float32"
                   }
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "_pad1",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 28,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
                 }
               ]
             }
@@ -307,16 +237,6 @@
                   }
                 },
                 {
-                  "kind": "scalar",
-                  "fieldName": "_pad0",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 12,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
-                },
-                {
                   "kind": "vector",
                   "fieldName": "scattering",
                   "binding": {
@@ -329,16 +249,6 @@
                     "kind": "scalar",
                     "scalarType": "float32"
                   }
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "_pad1",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 28,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
                 }
               ]
             }

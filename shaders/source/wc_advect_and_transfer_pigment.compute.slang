@@ -10,7 +10,6 @@ public struct PigmentProperties {
     public float density;         // rho — controls deposition rate
     public float stainingPower;   // omega — resistance to lifting
     public float granulation;     // paper texture interaction
-    public float _pad0;
 }
 
 struct Params {

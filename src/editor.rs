@@ -43,6 +43,46 @@ impl Checkbox {
     }
 }
 
+/// A radio button group for selecting one of several options.
+#[derive(Clone, Debug, Facet)]
+pub struct RadioButton {
+    pub selected: usize,
+    pub labels: Vec<String>,
+}
+
+impl RadioButton {
+    pub fn new(labels: &[&str]) -> Self {
+        Self {
+            selected: 0,
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// Render this radio button group in egui, returning true if the selection changed.
+    pub fn render_ui(&mut self, ui: &mut Ui) -> bool {
+        let mut changed = false;
+        for (i, label) in self.labels.iter().enumerate() {
+            if ui.radio_value(&mut self.selected, i, label).changed() {
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
+/// Convert a PascalCase name to a display string with spaces.
+/// e.g. `WetAreaMask` → `"Wet Area Mask"`
+pub fn pascal_to_display(name: &str) -> String {
+    let mut result = String::with_capacity(name.len() + 4);
+    for (i, ch) in name.chars().enumerate() {
+        if i > 0 && ch.is_uppercase() {
+            result.push(' ');
+        }
+        result.push(ch);
+    }
+    result
+}
+
 /// A read-only text label for displaying values in the editor UI.
 #[derive(Clone, Debug, Facet)]
 pub struct Label {

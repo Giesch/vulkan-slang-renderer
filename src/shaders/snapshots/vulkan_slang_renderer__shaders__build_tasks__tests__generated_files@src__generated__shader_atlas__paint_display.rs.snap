@@ -26,8 +26,8 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 #[repr(C, align(16))]
 pub struct DisplayParams {
     pub texel_size: glam::Vec2,
-    pub show_wet_mask: f32,
-    pub pad: f32,
+    pub debug_view: u32,
+    pub _padding_0: [u8; 4],
     pub pigment0: PigmentKM,
     pub pigment1: PigmentKM,
     pub pigment2: PigmentKM,
@@ -41,12 +41,13 @@ const _: () = assert!(std::mem::size_of::<DisplayParams>() == 144);
 #[repr(C, align(16))]
 pub struct PigmentKM {
     pub absorption: glam::Vec3,
-    pub pad0: f32,
+    pub _padding_0: [u8; 4],
     pub scattering: glam::Vec3,
-    pub pad1: f32,
+    pub _padding_1: [u8; 4],
 }
 
 impl GPUWrite for PigmentKM {}
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
 
 pub struct Resources<'a> {
     pub deposit: &'a TextureHandle,

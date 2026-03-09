@@ -8,7 +8,7 @@ use ash::vk;
 use facet::Facet;
 use glam::{Vec2, Vec3, Vec4};
 
-use vulkan_slang_renderer::editor::{Checkbox, Label, Slider};
+use vulkan_slang_renderer::editor::{Label, Slider};
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer,
@@ -36,7 +36,15 @@ fn main() -> Result<(), anyhow::Error> {
 pub struct EditState {
     fps: Label,
     brush_concentration: Slider,
-    show_wet_mask: Checkbox,
+    debug_view: DebugView,
+}
+
+#[derive(Default, Clone, Copy, Facet)]
+#[repr(u32)]
+enum DebugView {
+    #[default]
+    Pigments = 0,
+    WetAreaMask = 1,
 }
 
 const FRAME_HISTORY_SIZE: usize = 60;
@@ -45,6 +53,8 @@ const CANVAS_WIDTH: u32 = 1024;
 const CANVAS_HEIGHT: u32 = 768;
 const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
 const JACOBI_ITERATIONS: u32 = 10;
+// NOTE this must be even for correctness when reading pressure in later stages
+const _: () = assert!(JACOBI_ITERATIONS % 2 == 0);
 const SIM_STEPS_PER_FRAME: u32 = 1;
 
 const WORKGROUP_SIZE: u32 = 16;
@@ -154,8 +164,9 @@ struct Watercolor {
     brush_radius: f32,
     brush_opacity: f32,
 
-    // FPS tracking
     edit_state: EditState,
+
+    // FPS tracking
     last_frame_time: Instant,
     frame_times: VecDeque<Duration>,
 }
@@ -238,9 +249,9 @@ impl Pigment {
         let d = &PIGMENT_TABLE[self as usize];
         paint_display::PigmentKM {
             absorption: d.absorption,
-            pad0: 0.0,
+            _padding_0: Default::default(),
             scattering: d.scattering,
-            pad1: 0.0,
+            _padding_1: Default::default(),
         }
     }
 
@@ -250,7 +261,7 @@ impl Pigment {
             density: d.density,
             staining_power: d.staining_power,
             granulation: d.granulation,
-            pad0: 0.0,
+            _padding_0: Default::default(),
         }
     }
 
@@ -669,7 +680,7 @@ impl Game for Watercolor {
             edit_state: EditState {
                 fps: Label::new("FPS: --"),
                 brush_concentration: Slider::new(0.3, 0.01, 1.0),
-                show_wet_mask: Checkbox::new(false),
+                debug_view: DebugView::Pigments,
             },
             last_frame_time: Instant::now(),
             frame_times: VecDeque::with_capacity(FRAME_HISTORY_SIZE),
@@ -997,12 +1008,8 @@ impl Game for Watercolor {
                     display_params_buffer,
                     paint_display::DisplayParams {
                         texel_size,
-                        show_wet_mask: if self.edit_state.show_wet_mask.checked {
-                            1.0
-                        } else {
-                            0.0
-                        },
-                        pad: 0.0,
+                        debug_view: self.edit_state.debug_view as u32,
+                        _padding_0: Default::default(),
                         pigment0: Pigment::FrenchUltramarine.km(),
                         pigment1: Pigment::HansaYellow.km(),
                         pigment2: Pigment::QuinacridoneRose.km(),

@@ -34,10 +34,11 @@ pub struct PigmentProperties {
     pub density: f32,
     pub staining_power: f32,
     pub granulation: f32,
-    pub pad0: f32,
+    pub _padding_0: [u8; 4],
 }
 
 impl GPUWrite for PigmentProperties {}
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
 
 pub struct Resources<'a> {
     pub pigment_in: &'a TextureHandle,

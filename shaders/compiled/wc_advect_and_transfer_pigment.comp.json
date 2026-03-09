@@ -191,16 +191,6 @@
                     "size": 4
                   },
                   "scalarType": "float32"
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "_pad0",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 12,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
                 }
               ]
             }
@@ -242,16 +232,6 @@
                   "binding": {
                     "kind": "uniform",
                     "offset": 8,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "_pad0",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 12,
                     "size": 4
                   },
                   "scalarType": "float32"
@@ -299,16 +279,6 @@
                     "size": 4
                   },
                   "scalarType": "float32"
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "_pad0",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 12,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
                 }
               ]
             }
@@ -350,16 +320,6 @@
                   "binding": {
                     "kind": "uniform",
                     "offset": 8,
-                    "size": 4
-                  },
-                  "scalarType": "float32"
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "_pad0",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 12,
                     "size": 4
                   },
                   "scalarType": "float32"

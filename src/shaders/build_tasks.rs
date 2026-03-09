@@ -934,20 +934,41 @@ fn gather_struct_defs(
 
         StructField::Struct(struct_field) => {
             let type_name = struct_field.struct_type.type_name.to_string();
-            let mut generated_sub_fields = vec![];
-            for sub_field in &struct_field.struct_type.fields {
-                if let Some(field_def) = gather_struct_defs(sub_field, struct_defs, alignment) {
-                    generated_sub_fields.push(field_def);
-                };
-            }
 
-            // Calculate alignment from the nested struct's own fields, not from parent
-            let nested_alignment = alignment.map(|a| match a {
-                Alignment::Std140 => Alignment::Std140,
-                Alignment::Std430 { .. } => Alignment::Std430 {
-                    struct_alignment: std430_struct_alignment(&struct_field.struct_type.fields),
-                },
-            });
+            // Use the same offset-based padding logic as top-level structs
+            let (generated_sub_fields, nested_alignment, expected_size) = match alignment {
+                Some(Alignment::Std140) => {
+                    let (fields, _align, size) = generate_std140_struct_fields(
+                        &struct_field.struct_type.fields,
+                        struct_defs,
+                    );
+                    (fields, Some(Alignment::Std140), Some(size))
+                }
+                Some(Alignment::Std430 { .. }) => {
+                    let (fields, align, size) = generate_std430_struct_fields(
+                        &struct_field.struct_type.fields,
+                        struct_defs,
+                    );
+                    (
+                        fields,
+                        Some(Alignment::Std430 {
+                            struct_alignment: align,
+                        }),
+                        Some(size),
+                    )
+                }
+                None => {
+                    let mut fields = vec![];
+                    for sub_field in &struct_field.struct_type.fields {
+                        if let Some(field_def) =
+                            gather_struct_defs(sub_field, struct_defs, alignment)
+                        {
+                            fields.push(field_def);
+                        };
+                    }
+                    (fields, None, None)
+                }
+            };
 
             let sub_struct_def = GeneratedStructDefinition {
                 type_name: type_name.clone(),
@@ -955,7 +976,7 @@ fn gather_struct_defs(
                 fields: generated_sub_fields,
                 trait_derives: vec!["Debug", "Clone", "Serialize"],
                 alignment: nested_alignment,
-                expected_size: None,
+                expected_size,
             };
             try_add_struct_def(struct_defs, sub_struct_def);
 
@@ -1158,35 +1179,6 @@ fn field_alignment(type_name: &str) -> usize {
         "f32" | "u32" | "i32" => 4,
         _ => 16, // assume 16 for unknown/struct types
     }
-}
-
-/// Returns the std430 alignment for a struct field
-fn std430_field_alignment(field: &StructField) -> usize {
-    match field {
-        StructField::Scalar(s) => match s.scalar_type {
-            ScalarType::Float32 | ScalarType::Uint32 => 4,
-        },
-        StructField::Vector(VectorStructField::Bound(v)) => match v.element_count {
-            4 => 16,
-            3 => 16, // vec3 has 16-byte alignment in std430
-            2 => 8,
-            _ => 16,
-        },
-        StructField::Vector(VectorStructField::Semantic(v)) => match v.element_count {
-            4 => 16,
-            3 => 16, // vec3 has 16-byte alignment in std430
-            2 => 8,
-            _ => 16,
-        },
-        StructField::Matrix(_) => 16, // all matrices are 16-byte aligned
-        StructField::Struct(s) => std430_struct_alignment(&s.struct_type.fields),
-        StructField::Resource(_) => 0, // resources don't contribute to alignment
-    }
-}
-
-/// Calculates the std430 alignment for a struct from its fields
-fn std430_struct_alignment(fields: &[StructField]) -> usize {
-    fields.iter().map(std430_field_alignment).max().unwrap_or(4) // minimum alignment is 4 in std430
 }
 
 /// Rounds up to the next multiple of alignment

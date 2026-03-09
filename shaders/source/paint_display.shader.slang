@@ -4,13 +4,16 @@ module paint_display;
 
 import fullscreen_triangle;
 
+enum DebugView : uint {
+    Pigments = 0,
+    WetAreaMask = 1,
+}
+
 ParameterBlock<DisplayParams> displayParams;
 
 struct PigmentKM {
     float3 absorption;
-    float _pad0;
     float3 scattering;
-    float _pad1;
 }
 
 struct DisplayParams {
@@ -18,8 +21,7 @@ struct DisplayParams {
     Sampler2D paperHeight;
     Sampler2D wetMask;
     float2 texelSize;
-    float showWetMask;
-    float _pad;
+    uint debugView;
     PigmentKM pigment0;
     PigmentKM pigment1;
     PigmentKM pigment2;
@@ -80,7 +82,7 @@ float4 fragMain(FragInput input) : SV_Target {
     let uv = input.texCoord;
 
     // Debug: show wet mask as grayscale
-    if (displayParams.showWetMask > 0.5) {
+    if (displayParams.debugView == uint(DebugView.WetAreaMask)) {
         let wet = displayParams.wetMask.Sample(uv).r;
         return float4(wet, wet, wet, 1.0);
     }

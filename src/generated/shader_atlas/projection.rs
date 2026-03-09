@@ -13,3 +13,4 @@ pub struct Projection {
 }
 
 impl GPUWrite for Projection {}
+const _: () = assert!(std::mem::size_of::<Projection>() == 64);

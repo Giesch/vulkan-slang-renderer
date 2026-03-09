@@ -251,6 +251,7 @@ impl RaymarchCameraController {
             inverse_view_proj: Projection {
                 matrix: inverse_view_proj,
             },
+            _padding_0: Default::default(),
         }
     }
 }

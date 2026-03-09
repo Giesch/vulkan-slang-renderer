@@ -143,5 +143,6 @@ fn build_camera(aspect_ratio: f32) -> RayMarchCamera {
             matrix: inverse_view_proj,
         },
         position,
+        _padding_0: Default::default(),
     }
 }

@@ -12,6 +12,8 @@ use crate::renderer::gpu_write::GPUWrite;
 pub struct RayMarchCamera {
     pub inverse_view_proj: Projection,
     pub position: glam::Vec3,
+    pub _padding_0: [u8; 4],
 }
 
 impl GPUWrite for RayMarchCamera {}
+const _: () = assert!(std::mem::size_of::<RayMarchCamera>() == 80);
