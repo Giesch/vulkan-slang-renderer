@@ -3,6 +3,78 @@ use vulkan_slang_renderer::util::manifest_path;
 
 const SIZE: u32 = 2048;
 
+#[allow(dead_code)]
+enum WorleyMode {
+    F1,
+    F2,
+    F2MinusF1,
+}
+
+#[allow(dead_code)]
+enum CombineMode {
+    Additive,
+    Multiplicative,
+}
+
+#[allow(dead_code)]
+struct DomainWarpSettings {
+    freq: f32,
+    amp: f32,
+}
+
+#[allow(dead_code)]
+enum TransferCurve {
+    None,
+    SmoothstepPlateau,
+}
+
+struct PaperParams {
+    scale: f32,
+    stretch_x: f32,
+    stretch_y: f32,
+    // fBm
+    octaves: u32,
+    gain: f32,
+    lacunarity: f32,
+    perlin_amp: f32,
+    // Worley
+    worley_freq: f32,
+    worley_amp: f32,
+    worley_mode: WorleyMode,
+    jitter: f32,
+    #[allow(dead_code)]
+    domain_warp: Option<DomainWarpSettings>,
+    // Micro grain
+    grain_freq: f32,
+    grain_amp: f32,
+    // Combine & transfer
+    combine: CombineMode,
+    transfer: TransferCurve,
+}
+
+impl PaperParams {
+    fn smooth_bond() -> Self {
+        Self {
+            scale: 8.0,
+            stretch_x: 1.0,
+            stretch_y: 1.0,
+            octaves: 6,
+            gain: 0.5,
+            lacunarity: 2.0,
+            perlin_amp: 0.7,
+            worley_freq: 8.0,            // was 6.0
+            worley_amp: 0.15,            // was 0.3
+            worley_mode: WorleyMode::F1, // was F2MinusF1
+            jitter: 1.0,                 // was 0.25
+            domain_warp: None,
+            grain_freq: 40.0, // was 64.0
+            grain_amp: 0.08,  // was 0.05
+            combine: CombineMode::Additive,
+            transfer: TransferCurve::SmoothstepPlateau,
+        }
+    }
+}
+
 fn main() {
     let data = generate_paper_height_map(SIZE, SIZE);
 
@@ -60,16 +132,18 @@ fn perlin(x: f32, y: f32) -> f32 {
     nx0 + uy * (nx1 - nx0)
 }
 
-fn perlin_fbm(x: f32, y: f32) -> f32 {
+fn perlin_fbm(x: f32, y: f32, octaves: u32, gain: f32, lacunarity: f32) -> f32 {
     let mut value = 0.0;
     let mut amplitude = 1.0;
     let mut frequency = 1.0;
-    for _ in 0..3 {
+    let mut max_amplitude = 0.0;
+    for _ in 0..octaves {
         value += amplitude * perlin(x * frequency, y * frequency);
-        amplitude *= 0.5;
-        frequency *= 2.0;
+        max_amplitude += amplitude;
+        amplitude *= gain;
+        frequency *= lacunarity;
     }
-    value
+    value / max_amplitude
 }
 
 fn worley(x: f32, y: f32, jitter: f32) -> (f32, f32) {
@@ -102,33 +176,65 @@ fn worley(x: f32, y: f32, jitter: f32) -> (f32, f32) {
 }
 
 fn generate_paper_height_map(width: u32, height: u32) -> Vec<f32> {
-    let perlin_period = 128.0; // pixels per perlin cycle (was 1024/8)
-    let worley_period = 21.333; // pixels per worley cell (was 1024/48)
-    let jitter = 0.25;
+    let params = PaperParams::smooth_bond();
 
     let mut data = Vec::with_capacity((width * height) as usize);
 
-    for y in 0..height {
-        for x in 0..width {
-            let px = x as f32 / perlin_period;
-            let py = y as f32 / perlin_period;
+    for py in 0..height {
+        for px in 0..width {
+            // World-space coords
+            let x = (px as f32 / width as f32) * params.scale;
+            let y = (py as f32 / height as f32) * params.scale;
 
-            let p = perlin_fbm(px, py);
+            // Apply stretch
+            let sx = x * params.stretch_x;
+            let sy = y * params.stretch_y;
 
-            let (f1a, f2a) = worley(x as f32 / worley_period, y as f32 / worley_period, jitter);
-            let w = (0.5 * (f2a - f1a)).sqrt();
+            // Perlin fBm (normalized to ~[-1,1])
+            let p = perlin_fbm(sx, sy, params.octaves, params.gain, params.lacunarity)
+                * params.perlin_amp;
 
-            let h = 0.7 * p + 0.3 * w;
+            // Worley
+            let wx = sx * params.worley_freq;
+            let wy = sy * params.worley_freq;
+            let (f1, f2) = worley(wx, wy, params.jitter);
+            let w_raw = match params.worley_mode {
+                WorleyMode::F1 => f1,
+                WorleyMode::F2 => f2,
+                WorleyMode::F2MinusF1 => f2 - f1,
+            };
+            let w = w_raw * params.worley_amp;
+
+            // Micro grain
+            let grain = perlin(sx * params.grain_freq, sy * params.grain_freq) * params.grain_amp;
+
+            // Combine
+            let h = match params.combine {
+                CombineMode::Additive => p + w + grain,
+                CombineMode::Multiplicative => p * w + grain,
+            };
+
             data.push(h);
         }
     }
 
+    // Normalize to [0,1]
     let min = data.iter().copied().fold(f32::MAX, f32::min);
     let max = data.iter().copied().fold(f32::MIN, f32::max);
     let range = max - min;
     if range > 0.0 {
         for v in &mut data {
             *v = (*v - min) / range;
+        }
+    }
+
+    // Transfer curve
+    match params.transfer {
+        TransferCurve::None => {}
+        TransferCurve::SmoothstepPlateau => {
+            for v in &mut data {
+                *v = smoothstep(smoothstep(*v));
+            }
         }
     }
 
