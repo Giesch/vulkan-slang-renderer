@@ -14,8 +14,8 @@
       - [ ] usage of `image_memory: vk::DeviceMemory::null()`
         for an alias that doesn't own the image memory
         is there a way to avoid that? is it a problem?
-      - [ ] remove hardcoded parameters
-        - [ ] canvas size (based on this laptop?)
+      - [-] remove hardcoded parameters
+        - [X] canvas size (based on this laptop?)
         - [ ] max stroke points per frame?
       - [X] why is the texture preserved across app runs?
         accidental use of uninitialized gpu memory, that happens to repeat
@@ -26,12 +26,16 @@
   - [X] gradually add simulation layers
 
   - [ ] fix paper texture
-    get noise results more like figure 4
-    avoid the current toilet paper look
+    - [ ] get noise results more like figure 4
+      avoid the current toilet paper look
+    - [ ] fix proportion of background paper noise
 
   - [ ] speed up the simulation
     add even more ticks per frame?
     is this causing lock-up for the mouse somehow?
+
+  - [ ] edge darkening not working?
+
 
 
 * Next
