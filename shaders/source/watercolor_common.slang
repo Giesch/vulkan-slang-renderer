@@ -46,6 +46,8 @@ public bool inBounds(uint2 pixel, float2 gridSize) {
 }
 
 // Gaussian blur constants shared by wc_gaussian_blur and wc_blur_v_and_flow_outward
+public static const float WET_MASK_THRESHOLD = 0.001;
+
 public static const int BLUR_RADIUS = 10;
 
 // Precomputed weights for exp(-float(i * i) / (2.0 * SIGMA * SIGMA)) where SIGMA = 3.333

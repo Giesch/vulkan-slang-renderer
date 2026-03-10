@@ -167,6 +167,9 @@ struct Watercolor {
         UniformBufferHandle<wc_advect_and_transfer_pigment_compute::Params>,
     capillary_flow_params_buffer: UniformBufferHandle<wc_capillary_flow_compute::Params>,
 
+    // Frame counter for temporal effects
+    frame_counter: u32,
+
     // Parity tracking
     pressure_parity: bool, // flips 20x per frame (net 0), used in Jacobi loop
     sim_parity: bool,      // pigment + wet_mask + saturation (all flip 1x per frame)
@@ -695,6 +698,8 @@ impl Game for Watercolor {
             advect_and_transfer_params_buffer,
             capillary_flow_params_buffer,
 
+            frame_counter: 0,
+
             pressure_parity: false,
             sim_parity: false,
 
@@ -717,6 +722,8 @@ impl Game for Watercolor {
     }
 
     fn update(&mut self) {
+        self.frame_counter = self.frame_counter.wrapping_add(1);
+
         let now = Instant::now();
         let delta = now.duration_since(self.last_frame_time);
         self.last_frame_time = now;
@@ -1030,6 +1037,7 @@ impl Game for Watercolor {
                         capacity: CAPILLARY_CAPACITY,
                         sigma: CAPILLARY_SIGMA,
                         dry_threshold: DRY_THRESHOLD,
+                        frame_index: self.frame_counter,
                         _padding_0: Default::default(),
                     },
                 );

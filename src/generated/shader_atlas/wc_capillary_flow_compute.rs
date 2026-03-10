@@ -21,7 +21,8 @@ pub struct Params {
     pub capacity: f32,
     pub sigma: f32,
     pub dry_threshold: f32,
-    pub _padding_0: [u8; 8],
+    pub frame_index: u32,
+    pub _padding_0: [u8; 4],
 }
 
 impl GPUWrite for Params {}

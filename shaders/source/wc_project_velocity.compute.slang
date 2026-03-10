@@ -32,11 +32,11 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     // u at (i+0.5, j): dp/dx = p[i+1,j] - p[i,j]
     let pressureRight = params.pressure[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
     let pressureCenter = params.pressure[pixel];
-    params.u[pixel] = (params.u[pixel] - (pressureRight - pressureCenter)) * wetMask;
+    params.u[pixel] = (params.u[pixel] - (pressureRight - pressureCenter)) * smoothstep(0.0, 0.1, wetMask);
 
     // v at (i, j+0.5): dp/dy = p[i,j+1] - p[i,j]
     let pressureUp = params.pressure[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
-    params.v[pixel] = (params.v[pixel] - (pressureUp - pressureCenter)) * wetMask;
+    params.v[pixel] = (params.v[pixel] - (pressureUp - pressureCenter)) * smoothstep(0.0, 0.1, wetMask);
 
     // Inject outward velocity at wet/dry edges after projection.
     // blurredMask gradient points interior→edge (high→low);
@@ -44,8 +44,8 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     // This divergent flow is corrected next frame, but pigment advection already happened.
     let blurredHere = params.blurredMask[pixel];
     let blurredRight = params.blurredMask[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
-    params.u[pixel] += params.outwardStrength * (blurredHere - blurredRight) * wetMask;
+    params.u[pixel] += params.outwardStrength * (blurredHere - blurredRight) * smoothstep(0.0, 0.1, wetMask);
 
     let blurredUp = params.blurredMask[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
-    params.v[pixel] += params.outwardStrength * (blurredHere - blurredUp) * wetMask;
+    params.v[pixel] += params.outwardStrength * (blurredHere - blurredUp) * smoothstep(0.0, 0.1, wetMask);
 }

@@ -17,6 +17,7 @@ struct Params {
     float capacity;
     float sigma;    // wet mask expansion threshold
     float dryThreshold;    // saturation below which cell becomes dry
+    uint frameIndex;
 }
 
 [numthreads(16, 16, 1)]
@@ -52,12 +53,28 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
 
     params.saturationOut[pixel] = saturation;
 
-    // (c) Expand wet mask where saturation exceeds threshold
-    float newWet = wetMask;
-    if (saturation > params.sigma) {
-        newWet = 1.0;
-    } else if (saturation < params.dryThreshold) {
-        newWet = 0.0;
+    // (c) Expand wet mask: MSAA + noise approach for smooth edges
+    // MSAA base: 4-tap supersampled threshold
+    float subpixelWet = 0.0;
+    float2 offsets[4] = { float2(-0.25, -0.25), float2(0.25, -0.25),
+                          float2(-0.25, 0.25),  float2(0.25, 0.25) };
+    for (int s = 0; s < 4; s++) {
+        float subSat = bilinearSampleR(params.saturationIn, float2(pixel) + 0.5 + offsets[s], params.gridSize);
+        if (subSat > params.sigma) {
+            subpixelWet += 1.0;
+        } else if (subSat < params.dryThreshold) {
+            // contributes 0.0
+        } else {
+            subpixelWet += wetMask;
+        }
     }
-    params.wetMaskOut[pixel] = newWet;
+    float msaaMask = subpixelWet * 0.25;
+
+    // Paper noise overlay: perturb the smooth MSAA result with paper texture
+    let paperNoise = params.paperHeight[pixel];
+    let noiseOffset = (paperNoise - 0.5) * 0.15;  // subtle ±7.5% perturbation
+    float noisyMask = clamp(msaaMask + noiseOffset, 0.0, 1.0);
+
+    // Temporal blend for stability
+    params.wetMaskOut[pixel] = lerp(wetMask, noisyMask, 0.3);
 }
