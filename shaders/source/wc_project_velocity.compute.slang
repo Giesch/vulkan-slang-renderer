@@ -44,8 +44,8 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     // This divergent flow is corrected next frame, but pigment advection already happened.
     let blurredHere = params.blurredMask[pixel];
     let blurredRight = params.blurredMask[clamp(pixel + int2(1, 0), int2(0), gridSize - 1)];
-    params.u[pixel] += params.outwardStrength * (blurredHere - blurredRight) * wetMask;
+    params.u[pixel] += params.outwardStrength * (blurredHere - blurredRight) * smoothstep(0.0, 0.1, wetMask);
 
     let blurredUp = params.blurredMask[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
-    params.v[pixel] += params.outwardStrength * (blurredHere - blurredUp) * wetMask;
+    params.v[pixel] += params.outwardStrength * (blurredHere - blurredUp) * smoothstep(0.0, 0.1, wetMask);
 }

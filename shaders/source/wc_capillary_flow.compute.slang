@@ -45,19 +45,13 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     let wetUp = params.wetMaskIn[clamp(pixel + int2(0, 1), int2(0), gridSize - 1)];
 
     let diffusion = params.diffuseRate * (
-        max(saturationLeft - saturation, 0.0) * step(0.001, wetLeft) + max(saturationRight - saturation, 0.0) * step(0.001, wetRight) +
-        max(saturationDown - saturation, 0.0) * step(0.001, wetDown) + max(saturationUp - saturation, 0.0) * step(0.001, wetUp)
+        max(saturationLeft - saturation, 0.0) * step(WET_MASK_THRESHOLD, wetLeft) + max(saturationRight - saturation, 0.0) * step(WET_MASK_THRESHOLD, wetRight) +
+        max(saturationDown - saturation, 0.0) * step(WET_MASK_THRESHOLD, wetDown) + max(saturationUp - saturation, 0.0) * step(WET_MASK_THRESHOLD, wetUp)
     );
     saturation = min(saturation + diffusion, params.capacity);
 
     params.saturationOut[pixel] = saturation;
 
-    // (c) Expand wet mask where saturation exceeds threshold
-    float newWet = wetMask;
-    if (saturation > params.sigma) {
-        newWet = 1.0;
-    } else if (saturation < params.dryThreshold) {
-        newWet = 0.0;
-    }
-    params.wetMaskOut[pixel] = newWet;
+    // (c) Continuous wet mask via smoothstep (avoids pixelated edges from binary threshold)
+    params.wetMaskOut[pixel] = smoothstep(params.dryThreshold, params.sigma, saturation);
 }

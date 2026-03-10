@@ -62,7 +62,7 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
 
     // --- Advection ---
     float4 advected;
-    if (wetMask < 0.001) {
+    if (wetMask < WET_MASK_THRESHOLD) {
         advected = params.pigmentIn[pixel];
     } else {
         // Cell-center velocity at (i+0.5, j+0.5) by interpolating staggered components
@@ -85,7 +85,7 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     // When a cell dries, all remaining pigment in water deposits onto the paper.
     // This is critical for edge darkening: flow concentrates pigment at edges,
     // then drying locks it in place.
-    if (wetMask < 0.001) {
+    if (wetMask < WET_MASK_THRESHOLD) {
         params.deposit[pixel] = params.deposit[pixel] + advected;
         params.pigmentOut[pixel] = float4(0.0);
         return;
