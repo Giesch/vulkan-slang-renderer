@@ -46,7 +46,7 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     // Flow outward only reads blurred_mask at the same texel (no neighbor access),
     // so we compute the vertical blur inline and use the result directly.
     let wetMask = params.wetMask[pixel];
-    let flowTerm = params.eta * (1.0 - blurred) * wetMask;
+    let flowTerm = params.eta * (1.0 - blurred) * smoothstep(0.0, 0.1, wetMask);
     params.pressure[pixel] -= flowTerm;
 
     // Drain saturation at wet edges (fluid removal per Curtis et al.)

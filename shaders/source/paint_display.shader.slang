@@ -3,6 +3,7 @@
 module paint_display;
 
 import fullscreen_triangle;
+import watercolor_common;
 
 enum DebugView : uint {
     Pigments = 0,
@@ -83,7 +84,7 @@ float4 fragMain(FragInput input) : SV_Target {
 
     // Debug: show wet mask as grayscale
     if (displayParams.debugView == uint(DebugView.WetAreaMask)) {
-        let wet = displayParams.wetMask.Sample(uv).r;
+        let wet = step(WET_MASK_THRESHOLD, displayParams.wetMask.Sample(uv).r);
         return float4(wet, wet, wet, 1.0);
     }
 

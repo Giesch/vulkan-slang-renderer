@@ -52,12 +52,19 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
 
     params.saturationOut[pixel] = saturation;
 
-    // (c) Expand wet mask where saturation exceeds threshold
-    float newWet = wetMask;
-    if (saturation > params.sigma) {
-        newWet = 1.0;
-    } else if (saturation < params.dryThreshold) {
-        newWet = 0.0;
+    // Multi-sample anti-aliased wet mask: evaluate threshold at 4 sub-pixel offsets
+    float subpixelWet = 0.0;
+    float2 offsets[4] = { float2(-0.25, -0.25), float2(0.25, -0.25),
+                          float2(-0.25, 0.25),  float2(0.25, 0.25) };
+    for (int s = 0; s < 4; s++) {
+        float subSat = bilinearSampleR(params.saturationIn, float2(pixel) + 0.5 + offsets[s], params.gridSize);
+        if (subSat > params.sigma) {
+            subpixelWet += 1.0;
+        } else if (subSat < params.dryThreshold) {
+            // contributes 0.0
+        } else {
+            subpixelWet += wetMask;  // keep prior state for this sub-sample
+        }
     }
-    params.wetMaskOut[pixel] = newWet;
+    params.wetMaskOut[pixel] = subpixelWet * 0.25;
 }

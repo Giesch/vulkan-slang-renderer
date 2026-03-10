@@ -45,6 +45,8 @@ public bool inBounds(uint2 pixel, float2 gridSize) {
     return pixel.x < uint(gridSize.x) && pixel.y < uint(gridSize.y);
 }
 
+public static const float WET_MASK_THRESHOLD = 0.001;
+
 // Gaussian blur constants shared by wc_gaussian_blur and wc_blur_v_and_flow_outward
 public static const int BLUR_RADIUS = 10;
 
