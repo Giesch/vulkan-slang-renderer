@@ -29,14 +29,14 @@
     - [X] fix weird celled look
     - [ ] try to get gridlike results from figure 4
 
-  - [ ] speed up the simulation
-    add even more ticks per frame?
-    is this causing lock-up for the mouse somehow?
+  - [ ] try to hit 60 frames per second
+    does this require async compute?
 
   - [ ] edge darkening not working?
     the current problem may be that we have no divergence at the edges of the wet mask
         while in Curtis they deliberately allow/add some
     the stashed leak factor fix didn't seem to work
+        this is in the git stash
 
 
 
