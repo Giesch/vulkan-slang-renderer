@@ -135,6 +135,16 @@ info:
               "size": 4
             },
             "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "frameIndex",
+            "binding": {
+              "kind": "uniform",
+              "offset": 24,
+              "size": 4
+            },
+            "scalarType": "uint32"
           }
         ]
       }

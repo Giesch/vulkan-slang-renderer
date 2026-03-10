@@ -183,6 +183,9 @@ struct Watercolor {
 
     edit_state: EditState,
 
+    // Frame counter for temporal effects
+    frame_counter: u32,
+
     // FPS tracking
     last_frame_time: Instant,
     frame_times: VecDeque<Duration>,
@@ -711,12 +714,15 @@ impl Game for Watercolor {
                 brush_concentration: Slider::new(0.3, 0.01, 1.0),
                 debug_view: DebugView::Pigments,
             },
+            frame_counter: 0,
             last_frame_time: Instant::now(),
             frame_times: VecDeque::with_capacity(FRAME_HISTORY_SIZE),
         })
     }
 
     fn update(&mut self) {
+        self.frame_counter = self.frame_counter.wrapping_add(1);
+
         let now = Instant::now();
         let delta = now.duration_since(self.last_frame_time);
         self.last_frame_time = now;
@@ -1030,6 +1036,7 @@ impl Game for Watercolor {
                         capacity: CAPILLARY_CAPACITY,
                         sigma: CAPILLARY_SIGMA,
                         dry_threshold: DRY_THRESHOLD,
+                        frame_index: self.frame_counter,
                         _padding_0: Default::default(),
                     },
                 );

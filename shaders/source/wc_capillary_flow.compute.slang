@@ -17,6 +17,7 @@ struct Params {
     float capacity;
     float sigma;    // wet mask expansion threshold
     float dryThreshold;    // saturation below which cell becomes dry
+    uint frameIndex;
 }
 
 [numthreads(16, 16, 1)]
@@ -52,12 +53,19 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
 
     params.saturationOut[pixel] = saturation;
 
-    // (c) Expand wet mask where saturation exceeds threshold
-    float newWet = wetMask;
-    if (saturation > params.sigma) {
+    // (c) Paper-texture dithered threshold: edge shape follows paper grain
+    let paperNoise = params.paperHeight[pixel];
+    let jitterRange = 0.3 * (params.sigma - params.dryThreshold);
+    let jitter = (paperNoise - 0.5) * jitterRange;
+
+    float newWet;
+    if (saturation > params.sigma + jitter) {
         newWet = 1.0;
-    } else if (saturation < params.dryThreshold) {
+    } else if (saturation < params.dryThreshold + jitter) {
         newWet = 0.0;
+    } else {
+        newWet = wetMask;  // hysteresis: keep current state in transition zone
     }
-    params.wetMaskOut[pixel] = newWet;
+    // Temporal blend to smooth over frames
+    params.wetMaskOut[pixel] = lerp(wetMask, newWet, 0.3);
 }

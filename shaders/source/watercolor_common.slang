@@ -41,6 +41,8 @@ public float4 bilinearSampleRGBA(Texture2D<float4> tex, float2 position, float2 
     return lerp(lerp(val00, val10, fracPosition.x), lerp(val01, val11, fracPosition.x), fracPosition.y);
 }
 
+public static const float WET_MASK_THRESHOLD = 0.001;
+
 public bool inBounds(uint2 pixel, float2 gridSize) {
     return pixel.x < uint(gridSize.x) && pixel.y < uint(gridSize.y);
 }
