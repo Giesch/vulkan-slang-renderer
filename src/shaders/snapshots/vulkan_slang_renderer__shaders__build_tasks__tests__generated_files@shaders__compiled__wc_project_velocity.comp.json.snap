@@ -69,6 +69,20 @@ info:
             }
           },
           {
+            "kind": "resource",
+            "fieldName": "blurredMask",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 5,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
@@ -81,6 +95,16 @@ info:
               "kind": "scalar",
               "scalarType": "float32"
             }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "outwardStrength",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 4
+            },
+            "scalarType": "float32"
           }
         ]
       }
@@ -130,6 +154,13 @@ info:
           },
           {
             "binding": 4,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          },
+          {
+            "binding": 5,
             "descriptorType": "texture",
             "descriptorCount": 1,
             "stageFlags": "all",

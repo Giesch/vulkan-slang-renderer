@@ -22,10 +22,18 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     p.position += p.velocity * simParams.deltaTime;
 
     // Wrap at boundaries [-1, 1]
-    if (p.position.x > 1.0) p.position.x -= 2.0;
-    if (p.position.x < -1.0) p.position.x += 2.0;
-    if (p.position.y > 1.0) p.position.y -= 2.0;
-    if (p.position.y < -1.0) p.position.y += 2.0;
+    if (p.position.x > 1.0) {
+        p.position.x -= 2.0;
+    }
+    if (p.position.x < -1.0) {
+        p.position.x += 2.0;
+    }
+    if (p.position.y > 1.0) {
+        p.position.y -= 2.0;
+    }
+    if (p.position.y < -1.0) {
+        p.position.y += 2.0;
+    }
 
     simParams.particlesOut[index] = p;
 }

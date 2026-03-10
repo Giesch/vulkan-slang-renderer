@@ -28,11 +28,13 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     let pixel: uint2 = dispatchThreadID.xy;
 
     let outOfBounds = pixel.x >= uint(brushParams.canvasSize.x) || pixel.y >= uint(brushParams.canvasSize.y);
-    if (outOfBounds)
+    if (outOfBounds) {
         return;
+    }
 
-    if (brushParams.pointCount == 0)
+    if (brushParams.pointCount == 0) {
         return;
+    }
 
     let pixelCenter = float2(pixel) + 0.5;
 
@@ -40,8 +42,9 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
         let brushPos = brushParams.strokePoints[i].position;
         let distance = distance(pixelCenter, brushPos);
 
-        if (distance > brushParams.brushRadius)
+        if (distance > brushParams.brushRadius) {
             continue;
+        }
 
         // Smooth falloff using smoothstep
         let normalizedDistance = distance / brushParams.brushRadius;

@@ -18,6 +18,7 @@ struct Params {
     Texture2D<float> vIn;
     Texture2D<float> wetMask;
     Texture2D<float> paperHeight;
+    Texture2D<float> saturation;
     RWTexture2D<float4> pigmentOut;
     RWTexture2D<float4> deposit;
     float2 gridSize;
@@ -52,8 +53,9 @@ void transferChannel(inout float pigmentInWater, inout float pigmentDeposit, flo
 void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     let pixel = int2(dispatchThreadID.xy);
 
-    if (!inBounds(dispatchThreadID.xy, params.gridSize))
+    if (!inBounds(dispatchThreadID.xy, params.gridSize)) {
         return;
+    }
 
     let gridSize = int2(params.gridSize);
     let wetMask = params.wetMask[pixel];
@@ -80,8 +82,12 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     }
 
     // --- Transfer pigment ↔ deposit ---
+    // When a cell dries, all remaining pigment in water deposits onto the paper.
+    // This is critical for edge darkening: flow concentrates pigment at edges,
+    // then drying locks it in place.
     if (wetMask < 0.001) {
-        params.pigmentOut[pixel] = advected;
+        params.deposit[pixel] = params.deposit[pixel] + advected;
+        params.pigmentOut[pixel] = float4(0.0);
         return;
     }
 
@@ -89,12 +95,18 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     float4 pigmentInWater = advected;
     float4 pigmentDeposit = params.deposit[pixel];
 
+    // Scale transfer rate by inverse saturation: as water evaporates,
+    // pigment concentration increases, accelerating deposition.
+    let saturation = params.saturation[pixel];
+    let concentrationFactor = 1.0 / max(saturation, 0.1);
+    let effectiveRate = params.transferRate * concentrationFactor;
+
     PigmentProperties props[4] = { params.pigment0, params.pigment1, params.pigment2, params.pigment3 };
 
     for (int i = 0; i < 4; i++) {
         float pigmentChannel = pigmentInWater[i];
         float depositChannel = pigmentDeposit[i];
-        transferChannel(pigmentChannel, depositChannel, paperHeight, props[i], params.transferRate);
+        transferChannel(pigmentChannel, depositChannel, paperHeight, props[i], effectiveRate);
         pigmentInWater[i] = pigmentChannel;
         pigmentDeposit[i] = depositChannel;
     }

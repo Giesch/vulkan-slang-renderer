@@ -29,6 +29,7 @@ pub struct Resources<'a> {
     pub wet_mask: &'a TextureHandle,
     pub pressure: &'a StorageTextureHandle,
     pub saturation: &'a StorageTextureHandle,
+    pub blurred_mask_out: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -72,6 +73,7 @@ impl Shader {
         let storage_texture_handles = vec![
             resources.pressure,
             resources.saturation,
+            resources.blurred_mask_out,
         ];
 
         ComputePipelineConfig {

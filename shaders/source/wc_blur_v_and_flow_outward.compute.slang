@@ -13,6 +13,7 @@ struct Params {
     Texture2D<float> wetMask;
     RWTexture2D<float> pressure;
     RWTexture2D<float> saturation;
+    RWTexture2D<float> blurredMaskOut;
     float2 gridSize;
     float eta;
 }
@@ -22,8 +23,9 @@ struct Params {
 void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     let pixel = int2(dispatchThreadID.xy);
 
-    if (!inBounds(dispatchThreadID.xy, params.gridSize))
+    if (!inBounds(dispatchThreadID.xy, params.gridSize)) {
         return;
+    }
 
     let gridSize = int2(params.gridSize);
 
@@ -39,10 +41,10 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     }
 
     let blurred = valueSum / weightSum;
+    params.blurredMaskOut[pixel] = blurred;
 
     // Flow outward only reads blurred_mask at the same texel (no neighbor access),
-    // so we compute the vertical blur inline and use the result directly —
-    // eliminating the blurred_mask intermediate texture, 1 dispatch, and 1 barrier.
+    // so we compute the vertical blur inline and use the result directly.
     let wetMask = params.wetMask[pixel];
     let flowTerm = params.eta * (1.0 - blurred) * wetMask;
     params.pressure[pixel] -= flowTerm;

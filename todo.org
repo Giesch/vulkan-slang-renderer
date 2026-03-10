@@ -38,6 +38,7 @@
     the stashed leak factor fix didn't seem to work
         this is in the git stash
 
+  - [ ] hot reload is broken for compute shaders
 
 
 * Next

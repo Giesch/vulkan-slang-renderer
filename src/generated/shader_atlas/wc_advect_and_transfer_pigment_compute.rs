@@ -46,6 +46,7 @@ pub struct Resources<'a> {
     pub v_in: &'a TextureHandle,
     pub wet_mask: &'a TextureHandle,
     pub paper_height: &'a TextureHandle,
+    pub saturation: &'a TextureHandle,
     pub pigment_out: &'a StorageTextureHandle,
     pub deposit: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
@@ -79,6 +80,7 @@ impl Shader {
             resources.v_in,
             resources.wet_mask,
             resources.paper_height,
+            resources.saturation,
         ];
 
         #[rustfmt::skip]

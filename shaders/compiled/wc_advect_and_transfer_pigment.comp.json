@@ -83,10 +83,24 @@
           },
           {
             "kind": "resource",
-            "fieldName": "pigmentOut",
+            "fieldName": "saturation",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 6,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "pigmentOut",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 7,
               "count": 1
             },
             "resourceShape": "rWTexture2D",
@@ -104,7 +118,7 @@
             "fieldName": "deposit",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 7,
+              "index": 8,
               "count": 1
             },
             "resourceShape": "rWTexture2D",
@@ -389,13 +403,20 @@
           },
           {
             "binding": 6,
-            "descriptorType": "storageImage",
+            "descriptorType": "texture",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 80
           },
           {
             "binding": 7,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 8,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",

@@ -69,6 +69,20 @@ info:
             }
           },
           {
+            "kind": "resource",
+            "fieldName": "blurredMaskOut",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 5,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
@@ -140,6 +154,13 @@ info:
           },
           {
             "binding": 4,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          },
+          {
+            "binding": 5,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
