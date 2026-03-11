@@ -15,7 +15,7 @@ gpu_picking_id.vert.spv: 0
 koch_curve.frag.spv: 7
 koch_curve.vert.spv: 0
 paint_brush.comp.spv: 6
-paint_display.frag.spv: 5
+paint_display.frag.spv: 7
 paint_display.vert.spv: 0
 particle_render.frag.spv: 0
 particle_render.vert.spv: 0
@@ -30,7 +30,7 @@ space_invaders.frag.spv: 2
 space_invaders.vert.spv: 0
 sprite_batch.frag.spv: 0
 sprite_batch.vert.spv: 0
-wc_advect_and_transfer_pigment.comp.spv: 6
+wc_advect_and_transfer_pigment.comp.spv: 15
 wc_blur_v_and_flow_outward.comp.spv: 4
 wc_capillary_flow.comp.spv: 4
 wc_divergence.comp.spv: 2

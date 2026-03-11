@@ -32,10 +32,18 @@ pub struct DisplayParams {
     pub pigment1: PigmentKM,
     pub pigment2: PigmentKM,
     pub pigment3: PigmentKM,
+    pub pigment4: PigmentKM,
+    pub pigment5: PigmentKM,
+    pub pigment6: PigmentKM,
+    pub pigment7: PigmentKM,
+    pub pigment8: PigmentKM,
+    pub pigment9: PigmentKM,
+    pub pigment10: PigmentKM,
+    pub pigment11: PigmentKM,
 }
 
 impl GPUWrite for DisplayParams {}
-const _: () = assert!(std::mem::size_of::<DisplayParams>() == 144);
+const _: () = assert!(std::mem::size_of::<DisplayParams>() == 400);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -50,7 +58,9 @@ impl GPUWrite for PigmentKM {}
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
 
 pub struct Resources<'a> {
-    pub deposit: &'a TextureHandle,
+    pub deposit_0_3: &'a TextureHandle,
+    pub deposit_4_7: &'a TextureHandle,
+    pub deposit_8_11: &'a TextureHandle,
     pub paper_height: &'a TextureHandle,
     pub wet_mask: &'a TextureHandle,
     pub display_params_buffer: &'a UniformBufferHandle<DisplayParams>,
@@ -82,7 +92,9 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.deposit,
+            resources.deposit_0_3,
+            resources.deposit_4_7,
+            resources.deposit_8_11,
             resources.paper_height,
             resources.wet_mask,
         ];

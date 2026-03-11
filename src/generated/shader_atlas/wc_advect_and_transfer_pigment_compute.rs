@@ -23,10 +23,18 @@ pub struct Params {
     pub pigment1: PigmentProperties,
     pub pigment2: PigmentProperties,
     pub pigment3: PigmentProperties,
+    pub pigment4: PigmentProperties,
+    pub pigment5: PigmentProperties,
+    pub pigment6: PigmentProperties,
+    pub pigment7: PigmentProperties,
+    pub pigment8: PigmentProperties,
+    pub pigment9: PigmentProperties,
+    pub pigment10: PigmentProperties,
+    pub pigment11: PigmentProperties,
 }
 
 impl GPUWrite for Params {}
-const _: () = assert!(std::mem::size_of::<Params>() == 80);
+const _: () = assert!(std::mem::size_of::<Params>() == 208);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -41,13 +49,19 @@ impl GPUWrite for PigmentProperties {}
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
 
 pub struct Resources<'a> {
-    pub pigment_in: &'a TextureHandle,
+    pub pigment_in_0_3: &'a TextureHandle,
+    pub pigment_in_4_7: &'a TextureHandle,
+    pub pigment_in_8_11: &'a TextureHandle,
     pub u_in: &'a TextureHandle,
     pub v_in: &'a TextureHandle,
     pub wet_mask: &'a TextureHandle,
     pub paper_height: &'a TextureHandle,
-    pub pigment_out: &'a StorageTextureHandle,
-    pub deposit: &'a StorageTextureHandle,
+    pub pigment_out_0_3: &'a StorageTextureHandle,
+    pub pigment_out_4_7: &'a StorageTextureHandle,
+    pub pigment_out_8_11: &'a StorageTextureHandle,
+    pub deposit_0_3: &'a StorageTextureHandle,
+    pub deposit_4_7: &'a StorageTextureHandle,
+    pub deposit_8_11: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -74,7 +88,9 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.pigment_in,
+            resources.pigment_in_0_3,
+            resources.pigment_in_4_7,
+            resources.pigment_in_8_11,
             resources.u_in,
             resources.v_in,
             resources.wet_mask,
@@ -92,8 +108,12 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_texture_handles = vec![
-            resources.pigment_out,
-            resources.deposit,
+            resources.pigment_out_0_3,
+            resources.pigment_out_4_7,
+            resources.pigment_out_8_11,
+            resources.deposit_0_3,
+            resources.deposit_4_7,
+            resources.deposit_8_11,
         ];
 
         ComputePipelineConfig {

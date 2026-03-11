@@ -42,7 +42,7 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "pigment",
+            "fieldName": "pigment_0_3",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 3,
@@ -60,10 +60,46 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "saturation",
+            "fieldName": "pigment_4_7",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 4,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "pigment_8_11",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 5,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "saturation",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 6,
               "count": 1
             },
             "resourceShape": "rWTexture2D",
@@ -77,7 +113,7 @@ info:
             "fieldName": "strokePoints",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 5,
+              "index": 7,
               "count": 1
             },
             "resourceShape": "structuredBuffer",
@@ -144,7 +180,7 @@ info:
           },
           {
             "kind": "vector",
-            "fieldName": "pigmentColor",
+            "fieldName": "pigmentColor_0_3",
             "binding": {
               "kind": "uniform",
               "offset": 16,
@@ -158,10 +194,38 @@ info:
           },
           {
             "kind": "vector",
-            "fieldName": "canvasSize",
+            "fieldName": "pigmentColor_4_7",
             "binding": {
               "kind": "uniform",
               "offset": 32,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "pigmentColor_8_11",
+            "binding": {
+              "kind": "uniform",
+              "offset": 48,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "canvasSize",
+            "binding": {
+              "kind": "uniform",
+              "offset": 64,
               "size": 8
             },
             "elementCount": 2,
@@ -193,42 +257,56 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 48
+            "size": 80
           },
           {
             "binding": 1,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 48
+            "size": 80
           },
           {
             "binding": 2,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 48
+            "size": 80
           },
           {
             "binding": 3,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 48
+            "size": 80
           },
           {
             "binding": 4,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 48
+            "size": 80
           },
           {
             "binding": 5,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 6,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 80
+          },
+          {
+            "binding": 7,
             "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 48
+            "size": 80
           }
         ]
       }

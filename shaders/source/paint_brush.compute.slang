@@ -11,14 +11,18 @@ public struct StrokePoint {
 struct BrushParams {
     RWTexture2D<float> wetMask;
     RWTexture2D<float> pressure;
-    RWTexture2D<float4> pigment;
+    RWTexture2D<float4> pigment_0_3;
+    RWTexture2D<float4> pigment_4_7;
+    RWTexture2D<float4> pigment_8_11;
     RWTexture2D<float> saturation;
     StructuredBuffer<StrokePoint> strokePoints;
     uint pointCount;
     float brushRadius;
     float brushOpacity;
     float brushPressure;
-    float4 pigmentColor; // concentration per channel (RGBA = 4 pigment species)
+    float4 pigmentColor_0_3;
+    float4 pigmentColor_4_7;
+    float4 pigmentColor_8_11;
     float2 canvasSize;
 }
 
@@ -57,6 +61,8 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
         brushParams.saturation[pixel] = 1.0;
 
         // Add pigment concentration
-        brushParams.pigment[pixel] += brushParams.pigmentColor * alpha;
+        brushParams.pigment_0_3[pixel] += brushParams.pigmentColor_0_3 * alpha;
+        brushParams.pigment_4_7[pixel] += brushParams.pigmentColor_4_7 * alpha;
+        brushParams.pigment_8_11[pixel] += brushParams.pigmentColor_8_11 * alpha;
     }
 }

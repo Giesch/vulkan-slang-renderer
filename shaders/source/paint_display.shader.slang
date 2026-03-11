@@ -17,7 +17,9 @@ struct PigmentKM {
 }
 
 struct DisplayParams {
-    Sampler2D deposit;
+    Sampler2D deposit_0_3;
+    Sampler2D deposit_4_7;
+    Sampler2D deposit_8_11;
     Sampler2D paperHeight;
     Sampler2D wetMask;
     float2 texelSize;
@@ -26,6 +28,14 @@ struct DisplayParams {
     PigmentKM pigment1;
     PigmentKM pigment2;
     PigmentKM pigment3;
+    PigmentKM pigment4;
+    PigmentKM pigment5;
+    PigmentKM pigment6;
+    PigmentKM pigment7;
+    PigmentKM pigment8;
+    PigmentKM pigment9;
+    PigmentKM pigment10;
+    PigmentKM pigment11;
 }
 
 struct FragInput {
@@ -104,26 +114,44 @@ float4 fragMain(FragInput input) : SV_Target {
     let diffuse = max(dot(normal, LIGHT_DIR), 0.0);
     let lighting = AMBIENT + (1.0 - AMBIENT) * diffuse;
 
-    // Sample deposited pigment (4 channels)
-    let deposit = displayParams.deposit.Sample(uv);
+    // Sample deposited pigment (3 groups of 4 channels = 12 pigments)
+    let deposit_0_3 = displayParams.deposit_0_3.Sample(uv);
+    let deposit_4_7 = displayParams.deposit_4_7.Sample(uv);
+    let deposit_8_11 = displayParams.deposit_8_11.Sample(uv);
 
     // Kubelka-Munk compositing per Curtis et al. Section 5.2:
     // When a layer contains multiple pigments, K and S are weighted
     // in proportion to each pigment's relative thickness.
-    PigmentKM pigments[4] = {
+    PigmentKM pigments[12] = {
         displayParams.pigment0, displayParams.pigment1,
-        displayParams.pigment2, displayParams.pigment3
+        displayParams.pigment2, displayParams.pigment3,
+        displayParams.pigment4, displayParams.pigment5,
+        displayParams.pigment6, displayParams.pigment7,
+        displayParams.pigment8, displayParams.pigment9,
+        displayParams.pigment10, displayParams.pigment11
     };
 
-    float totalThickness = deposit.x + deposit.y + deposit.z + deposit.w;
+    // Gather all 12 deposit thicknesses into an array
+    float deposits[12];
+    deposits[0] = deposit_0_3.x; deposits[1] = deposit_0_3.y;
+    deposits[2] = deposit_0_3.z; deposits[3] = deposit_0_3.w;
+    deposits[4] = deposit_4_7.x; deposits[5] = deposit_4_7.y;
+    deposits[6] = deposit_4_7.z; deposits[7] = deposit_4_7.w;
+    deposits[8] = deposit_8_11.x; deposits[9] = deposit_8_11.y;
+    deposits[10] = deposit_8_11.z; deposits[11] = deposit_8_11.w;
+
+    float totalThickness = 0.0;
+    for (int i = 0; i < 12; i++)
+        totalThickness += deposits[i];
+
     float3 totalReflectance = PAPER_COLOR;
 
     if (totalThickness > 0.001) {
         float3 mixedAbsorption = float3(0.0);
         float3 mixedScattering = float3(0.0);
-        for (int i = 0; i < 4; i++) {
-            mixedAbsorption += deposit[i] * pigments[i].absorption;
-            mixedScattering += deposit[i] * pigments[i].scattering;
+        for (int i = 0; i < 12; i++) {
+            mixedAbsorption += deposits[i] * pigments[i].absorption;
+            mixedScattering += deposits[i] * pigments[i].scattering;
         }
         mixedAbsorption /= totalThickness;
         mixedScattering /= totalThickness;

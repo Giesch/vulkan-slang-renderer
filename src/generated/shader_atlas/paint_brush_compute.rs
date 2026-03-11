@@ -20,13 +20,15 @@ pub struct BrushParams {
     pub brush_radius: f32,
     pub brush_opacity: f32,
     pub brush_pressure: f32,
-    pub pigment_color: glam::Vec4,
+    pub pigment_color_0_3: glam::Vec4,
+    pub pigment_color_4_7: glam::Vec4,
+    pub pigment_color_8_11: glam::Vec4,
     pub canvas_size: glam::Vec2,
     pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for BrushParams {}
-const _: () = assert!(std::mem::size_of::<BrushParams>() == 48);
+const _: () = assert!(std::mem::size_of::<BrushParams>() == 80);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(8))]
@@ -40,7 +42,9 @@ const _: () = assert!(std::mem::size_of::<StrokePoint>() == 8);
 pub struct Resources<'a> {
     pub wet_mask: &'a StorageTextureHandle,
     pub pressure: &'a StorageTextureHandle,
-    pub pigment: &'a StorageTextureHandle,
+    pub pigment_0_3: &'a StorageTextureHandle,
+    pub pigment_4_7: &'a StorageTextureHandle,
+    pub pigment_8_11: &'a StorageTextureHandle,
     pub saturation: &'a StorageTextureHandle,
     pub stroke_points: &'a StorageBufferHandle<StrokePoint>,
     pub brush_params_buffer: &'a UniformBufferHandle<BrushParams>,
@@ -85,7 +89,9 @@ impl Shader {
         let storage_texture_handles = vec![
             resources.wet_mask,
             resources.pressure,
-            resources.pigment,
+            resources.pigment_0_3,
+            resources.pigment_4_7,
+            resources.pigment_8_11,
             resources.saturation,
         ];
 

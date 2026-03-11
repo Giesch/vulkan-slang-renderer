@@ -14,7 +14,7 @@ info:
         "fields": [
           {
             "kind": "resource",
-            "fieldName": "deposit",
+            "fieldName": "deposit_0_3",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 1,
@@ -32,7 +32,7 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "paperHeight",
+            "fieldName": "deposit_4_7",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 2,
@@ -50,10 +50,46 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "wetMask",
+            "fieldName": "deposit_8_11",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 3,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "paperHeight",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 4,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "wetMask",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 5,
               "count": 1
             },
             "resourceShape": "texture2D",
@@ -257,6 +293,342 @@ info:
                 }
               ]
             }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment4",
+            "binding": {
+              "kind": "uniform",
+              "offset": 144,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "absorption",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "scattering",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment5",
+            "binding": {
+              "kind": "uniform",
+              "offset": 176,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "absorption",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "scattering",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment6",
+            "binding": {
+              "kind": "uniform",
+              "offset": 208,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "absorption",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "scattering",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment7",
+            "binding": {
+              "kind": "uniform",
+              "offset": 240,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "absorption",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "scattering",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment8",
+            "binding": {
+              "kind": "uniform",
+              "offset": 272,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "absorption",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "scattering",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment9",
+            "binding": {
+              "kind": "uniform",
+              "offset": 304,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "absorption",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "scattering",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment10",
+            "binding": {
+              "kind": "uniform",
+              "offset": 336,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "absorption",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "scattering",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment11",
+            "binding": {
+              "kind": "uniform",
+              "offset": 368,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "absorption",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "scattering",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
           }
         ]
       }
@@ -325,28 +697,42 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 144
+            "size": 400
           },
           {
             "binding": 1,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 144
+            "size": 400
           },
           {
             "binding": 2,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 144
+            "size": 400
           },
           {
             "binding": 3,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 144
+            "size": 400
+          },
+          {
+            "binding": 4,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 400
+          },
+          {
+            "binding": 5,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 400
           }
         ]
       }

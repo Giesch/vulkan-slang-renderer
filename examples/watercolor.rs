@@ -103,6 +103,19 @@ fn create_ping_pong(renderer: &mut Renderer, format: vk::Format) -> anyhow::Resu
     })
 }
 
+fn create_deposit_texture(
+    renderer: &mut Renderer,
+) -> anyhow::Result<(StorageTextureHandle, TextureHandle)> {
+    let storage = renderer.create_storage_texture(
+        CANVAS_WIDTH,
+        CANVAS_HEIGHT,
+        vk::Format::R32G32B32A32_SFLOAT,
+    )?;
+    renderer.clear_storage_texture(&storage, [0.0, 0.0, 0.0, 0.0])?;
+    let sampled = renderer.storage_texture_as_sampled(&storage)?;
+    Ok((storage, sampled))
+}
+
 struct Watercolor {
     // Simulation textures (kept alive for GPU; not read on CPU)
     #[expect(unused)]
@@ -112,13 +125,21 @@ struct Watercolor {
     #[expect(unused)]
     pressure: PingPong,
     #[expect(unused)]
-    pigment: PingPong,
+    pigment_0_3: PingPong,
+    #[expect(unused)]
+    pigment_4_7: PingPong,
+    #[expect(unused)]
+    pigment_8_11: PingPong,
     #[expect(unused)]
     saturation: PingPong,
     #[expect(unused)]
     wet_mask: PingPong,
     #[expect(unused)]
-    deposit: StorageTextureHandle,
+    deposit_0_3: StorageTextureHandle,
+    #[expect(unused)]
+    deposit_4_7: StorageTextureHandle,
+    #[expect(unused)]
+    deposit_8_11: StorageTextureHandle,
     #[expect(unused)]
     divergence: StorageTextureHandle,
     #[expect(unused)]
@@ -189,14 +210,22 @@ fn compute_to_frag_barrier(renderer: &mut FrameRenderer) {
     );
 }
 
-// Pigment data from Curtis et al. "Computer-Generated Watercolor" Figure 5
+// Pigment data from Curtis et al. "Computer-Generated Watercolor" Figure 5 (a-l)
 #[derive(Clone, Copy)]
 #[repr(u32)]
 enum Pigment {
-    FrenchUltramarine = 0,
-    HansaYellow = 1,
-    QuinacridoneRose = 2,
-    HookersGreen = 3,
+    QuinacridoneRose = 0,   // a
+    IndianRed = 1,          // b
+    CadmiumYellow = 2,      // c
+    HookersGreen = 3,       // d
+    CeruleanBlue = 4,       // e
+    BurntUmber = 5,         // f
+    CadmiumRed = 6,         // g
+    BrilliantOrange = 7,    // h
+    HansaYellow = 8,        // i
+    PhthaloGreen = 9,       // j
+    FrenchUltramarine = 10, // k
+    InterferenceLilac = 11, // l
 }
 
 struct PigmentData {
@@ -209,24 +238,8 @@ struct PigmentData {
     granulation: f32,
 }
 
-const PIGMENT_TABLE: [PigmentData; 4] = [
-    // French Ultramarine (k)
-    PigmentData {
-        absorption: Vec3::new(0.86, 0.86, 0.06),
-        scattering: Vec3::new(0.005, 0.005, 0.09),
-        density: 0.01,
-        staining_power: 3.1,
-        granulation: 0.91,
-    },
-    // Hansa Yellow (i)
-    PigmentData {
-        absorption: Vec3::new(0.06, 0.21, 1.78),
-        scattering: Vec3::new(0.50, 0.88, 0.009),
-        density: 0.06,
-        staining_power: 1.0,
-        granulation: 0.08,
-    },
-    // Quinacridone Rose (a)
+const PIGMENT_TABLE: [PigmentData; 12] = [
+    // a: Quinacridone Rose
     PigmentData {
         absorption: Vec3::new(0.22, 1.47, 0.57),
         scattering: Vec3::new(0.05, 0.003, 0.03),
@@ -234,13 +247,93 @@ const PIGMENT_TABLE: [PigmentData; 4] = [
         staining_power: 5.5,
         granulation: 0.81,
     },
-    // Hookers Green (d)
+    // b: Indian Red
+    PigmentData {
+        absorption: Vec3::new(0.46, 1.07, 1.50),
+        scattering: Vec3::new(1.28, 0.38, 0.21),
+        density: 0.05,
+        staining_power: 7.0,
+        granulation: 0.40,
+    },
+    // c: Cadmium Yellow
+    PigmentData {
+        absorption: Vec3::new(0.10, 0.36, 3.45),
+        scattering: Vec3::new(0.97, 0.65, 0.007),
+        density: 0.05,
+        staining_power: 3.4,
+        granulation: 0.81,
+    },
+    // d: Hookers Green
     PigmentData {
         absorption: Vec3::new(1.62, 0.61, 1.64),
         scattering: Vec3::new(0.01, 0.012, 0.003),
         density: 0.09,
         staining_power: 1.0,
         granulation: 0.41,
+    },
+    // e: Cerulean Blue
+    PigmentData {
+        absorption: Vec3::new(1.52, 0.32, 0.25),
+        scattering: Vec3::new(0.06, 0.26, 0.40),
+        density: 0.01,
+        staining_power: 1.0,
+        granulation: 0.31,
+    },
+    // f: Burnt Umber
+    PigmentData {
+        absorption: Vec3::new(0.74, 1.54, 2.10),
+        scattering: Vec3::new(0.09, 0.09, 0.004),
+        density: 0.09,
+        staining_power: 9.3,
+        granulation: 0.90,
+    },
+    // g: Cadmium Red
+    PigmentData {
+        absorption: Vec3::new(0.14, 1.08, 1.68),
+        scattering: Vec3::new(0.77, 0.015, 0.018),
+        density: 0.02,
+        staining_power: 1.0,
+        granulation: 0.63,
+    },
+    // h: Brilliant Orange
+    PigmentData {
+        absorption: Vec3::new(0.13, 0.81, 3.45),
+        scattering: Vec3::new(0.005, 0.009, 0.007),
+        density: 0.01,
+        staining_power: 1.0,
+        granulation: 0.14,
+    },
+    // i: Hansa Yellow
+    PigmentData {
+        absorption: Vec3::new(0.06, 0.21, 1.78),
+        scattering: Vec3::new(0.50, 0.88, 0.009),
+        density: 0.06,
+        staining_power: 1.0,
+        granulation: 0.08,
+    },
+    // j: Phthalo Green
+    PigmentData {
+        absorption: Vec3::new(1.55, 0.47, 0.63),
+        scattering: Vec3::new(0.01, 0.05, 0.035),
+        density: 0.02,
+        staining_power: 1.0,
+        granulation: 0.12,
+    },
+    // k: French Ultramarine
+    PigmentData {
+        absorption: Vec3::new(0.86, 0.86, 0.06),
+        scattering: Vec3::new(0.005, 0.005, 0.09),
+        density: 0.01,
+        staining_power: 3.1,
+        granulation: 0.91,
+    },
+    // l: Interference Lilac
+    PigmentData {
+        absorption: Vec3::new(0.08, 0.11, 0.07),
+        scattering: Vec3::new(1.25, 0.42, 1.43),
+        density: 0.06,
+        staining_power: 1.0,
+        granulation: 0.08,
     },
 ];
 
@@ -265,8 +358,12 @@ impl Pigment {
         }
     }
 
+    fn group_index(self) -> usize {
+        self as usize / 4
+    }
+
     fn channel_index(self) -> usize {
-        self as usize
+        self as usize % 4
     }
 }
 
@@ -290,18 +387,16 @@ impl Game for Watercolor {
         let velocity_u = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
         let velocity_v = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
         let pressure = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
-        let pigment = create_ping_pong(renderer, vk::Format::R32G32B32A32_SFLOAT)?;
+        let pigment_0_3 = create_ping_pong(renderer, vk::Format::R32G32B32A32_SFLOAT)?;
+        let pigment_4_7 = create_ping_pong(renderer, vk::Format::R32G32B32A32_SFLOAT)?;
+        let pigment_8_11 = create_ping_pong(renderer, vk::Format::R32G32B32A32_SFLOAT)?;
         let saturation = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
         let wet_mask = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
 
-        // Single textures
-        let deposit = renderer.create_storage_texture(
-            CANVAS_WIDTH,
-            CANVAS_HEIGHT,
-            vk::Format::R32G32B32A32_SFLOAT,
-        )?;
-        renderer.clear_storage_texture(&deposit, [0.0, 0.0, 0.0, 0.0])?;
-        let deposit_sampled = renderer.storage_texture_as_sampled(&deposit)?;
+        // Deposit textures (3 groups)
+        let (deposit_0_3, deposit_0_3_sampled) = create_deposit_texture(renderer)?;
+        let (deposit_4_7, deposit_4_7_sampled) = create_deposit_texture(renderer)?;
+        let (deposit_8_11, deposit_8_11_sampled) = create_deposit_texture(renderer)?;
 
         let divergence =
             renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
@@ -357,7 +452,9 @@ impl Game for Watercolor {
                     paint_brush_compute::Resources {
                         wet_mask: wet_mask.read_storage(false),
                         pressure: pressure.read_storage(false),
-                        pigment: pigment.read_storage(false),
+                        pigment_0_3: pigment_0_3.read_storage(false),
+                        pigment_4_7: pigment_4_7.read_storage(false),
+                        pigment_8_11: pigment_8_11.read_storage(false),
                         saturation: saturation.read_storage(false),
                         stroke_points: &stroke_points_buffer,
                         brush_params_buffer: &brush_params_buffer,
@@ -367,7 +464,9 @@ impl Game for Watercolor {
                     paint_brush_compute::Resources {
                         wet_mask: wet_mask.read_storage(true),
                         pressure: pressure.read_storage(false), // pressure always at 0
-                        pigment: pigment.read_storage(true),
+                        pigment_0_3: pigment_0_3.read_storage(true),
+                        pigment_4_7: pigment_4_7.read_storage(true),
+                        pigment_8_11: pigment_8_11.read_storage(true),
                         saturation: saturation.read_storage(true),
                         stroke_points: &stroke_points_buffer,
                         brush_params_buffer: &brush_params_buffer,
@@ -552,13 +651,19 @@ impl Game for Watercolor {
                 renderer.create_compute_pipeline(
                     s0.wc_advect_and_transfer_pigment_compute.pipeline_config(
                         wc_advect_and_transfer_pigment_compute::Resources {
-                            pigment_in: pigment.read(false),
+                            pigment_in_0_3: pigment_0_3.read(false),
+                            pigment_in_4_7: pigment_4_7.read(false),
+                            pigment_in_8_11: pigment_8_11.read(false),
                             u_in: velocity_u.read(false),
                             v_in: velocity_v.read(false),
                             wet_mask: wet_mask.read(false),
                             paper_height: &paper_height_sampled,
-                            pigment_out: pigment.write(false),
-                            deposit: &deposit,
+                            pigment_out_0_3: pigment_0_3.write(false),
+                            pigment_out_4_7: pigment_4_7.write(false),
+                            pigment_out_8_11: pigment_8_11.write(false),
+                            deposit_0_3: &deposit_0_3,
+                            deposit_4_7: &deposit_4_7,
+                            deposit_8_11: &deposit_8_11,
                             params_buffer: &advect_and_transfer_params_buffer,
                         },
                     ),
@@ -566,13 +671,19 @@ impl Game for Watercolor {
                 renderer.create_compute_pipeline(
                     s1.wc_advect_and_transfer_pigment_compute.pipeline_config(
                         wc_advect_and_transfer_pigment_compute::Resources {
-                            pigment_in: pigment.read(true),
+                            pigment_in_0_3: pigment_0_3.read(true),
+                            pigment_in_4_7: pigment_4_7.read(true),
+                            pigment_in_8_11: pigment_8_11.read(true),
                             u_in: velocity_u.read(true),
                             v_in: velocity_v.read(true),
                             wet_mask: wet_mask.read(true),
                             paper_height: &paper_height_sampled,
-                            pigment_out: pigment.write(true),
-                            deposit: &deposit,
+                            pigment_out_0_3: pigment_0_3.write(true),
+                            pigment_out_4_7: pigment_4_7.write(true),
+                            pigment_out_8_11: pigment_8_11.write(true),
+                            deposit_0_3: &deposit_0_3,
+                            deposit_4_7: &deposit_4_7,
+                            deposit_8_11: &deposit_8_11,
                             params_buffer: &advect_and_transfer_params_buffer,
                         },
                     ),
@@ -615,7 +726,9 @@ impl Game for Watercolor {
             [
                 renderer.create_pipeline(s0.paint_display.pipeline_config(
                     paint_display::Resources {
-                        deposit: &deposit_sampled,
+                        deposit_0_3: &deposit_0_3_sampled,
+                        deposit_4_7: &deposit_4_7_sampled,
+                        deposit_8_11: &deposit_8_11_sampled,
                         paper_height: &paper_height_sampled,
                         wet_mask: wet_mask.read(false),
                         display_params_buffer: &display_params_buffer,
@@ -623,7 +736,9 @@ impl Game for Watercolor {
                 ))?,
                 renderer.create_pipeline(s1.paint_display.pipeline_config(
                     paint_display::Resources {
-                        deposit: &deposit_sampled,
+                        deposit_0_3: &deposit_0_3_sampled,
+                        deposit_4_7: &deposit_4_7_sampled,
+                        deposit_8_11: &deposit_8_11_sampled,
                         paper_height: &paper_height_sampled,
                         wet_mask: wet_mask.read(true),
                         display_params_buffer: &display_params_buffer,
@@ -636,10 +751,14 @@ impl Game for Watercolor {
             velocity_u,
             velocity_v,
             pressure,
-            pigment,
+            pigment_0_3,
+            pigment_4_7,
+            pigment_8_11,
             saturation,
             wet_mask,
-            deposit,
+            deposit_0_3,
+            deposit_4_7,
+            deposit_8_11,
             divergence,
             blur_temp,
 
@@ -673,7 +792,7 @@ impl Game for Watercolor {
             stroke_points: Vec::new(),
             prev_mouse_pos: None,
 
-            active_pigment: Pigment::FrenchUltramarine,
+            active_pigment: Pigment::QuinacridoneRose,
             brush_radius: 20.0,
             brush_opacity: 0.5,
 
@@ -748,10 +867,21 @@ impl Game for Watercolor {
             }
 
             Input::KeyDown(key) => match key {
-                Key::Num1 => self.active_pigment = Pigment::FrenchUltramarine,
-                Key::Num2 => self.active_pigment = Pigment::HansaYellow,
-                Key::Num3 => self.active_pigment = Pigment::QuinacridoneRose,
+                // Row 1: 1-4 = pigments a-d
+                Key::Num1 => self.active_pigment = Pigment::QuinacridoneRose,
+                Key::Num2 => self.active_pigment = Pigment::IndianRed,
+                Key::Num3 => self.active_pigment = Pigment::CadmiumYellow,
                 Key::Num4 => self.active_pigment = Pigment::HookersGreen,
+                // Row 2: QWER = pigments e-h
+                Key::Q => self.active_pigment = Pigment::CeruleanBlue,
+                Key::W => self.active_pigment = Pigment::BurntUmber,
+                Key::E => self.active_pigment = Pigment::CadmiumRed,
+                Key::R => self.active_pigment = Pigment::BrilliantOrange,
+                // Row 3: ASDF = pigments i-l
+                Key::A => self.active_pigment = Pigment::HansaYellow,
+                Key::S => self.active_pigment = Pigment::PhthaloGreen,
+                Key::D => self.active_pigment = Pigment::FrenchUltramarine,
+                Key::F => self.active_pigment = Pigment::InterferenceLilac,
                 _ => {}
             },
 
@@ -908,10 +1038,17 @@ impl Game for Watercolor {
                     gpu.write_storage(stroke_points_buffer, &gpu_points);
                 }
 
-                // Pigment color: concentration in the active channel
-                let mut pigment_color = Vec4::ZERO;
+                // Pigment color: concentration in the active group/channel
+                let mut pigment_color_0_3 = Vec4::ZERO;
+                let mut pigment_color_4_7 = Vec4::ZERO;
+                let mut pigment_color_8_11 = Vec4::ZERO;
                 let c = self.edit_state.brush_concentration.value;
-                pigment_color[active_pigment.channel_index()] = c;
+                let group_colors = [
+                    &mut pigment_color_0_3,
+                    &mut pigment_color_4_7,
+                    &mut pigment_color_8_11,
+                ];
+                group_colors[active_pigment.group_index()][active_pigment.channel_index()] = c;
 
                 gpu.write_uniform(
                     brush_params_buffer,
@@ -920,7 +1057,9 @@ impl Game for Watercolor {
                         brush_radius,
                         brush_opacity,
                         brush_pressure: BRUSH_PRESSURE,
-                        pigment_color,
+                        pigment_color_0_3,
+                        pigment_color_4_7,
+                        pigment_color_8_11,
                         canvas_size: grid_size,
                         _padding_0: Default::default(),
                     },
@@ -985,10 +1124,18 @@ impl Game for Watercolor {
                         grid_size,
                         dt: DT,
                         transfer_rate: TRANSFER_RATE,
-                        pigment0: Pigment::FrenchUltramarine.properties(),
-                        pigment1: Pigment::HansaYellow.properties(),
-                        pigment2: Pigment::QuinacridoneRose.properties(),
+                        pigment0: Pigment::QuinacridoneRose.properties(),
+                        pigment1: Pigment::IndianRed.properties(),
+                        pigment2: Pigment::CadmiumYellow.properties(),
                         pigment3: Pigment::HookersGreen.properties(),
+                        pigment4: Pigment::CeruleanBlue.properties(),
+                        pigment5: Pigment::BurntUmber.properties(),
+                        pigment6: Pigment::CadmiumRed.properties(),
+                        pigment7: Pigment::BrilliantOrange.properties(),
+                        pigment8: Pigment::HansaYellow.properties(),
+                        pigment9: Pigment::PhthaloGreen.properties(),
+                        pigment10: Pigment::FrenchUltramarine.properties(),
+                        pigment11: Pigment::InterferenceLilac.properties(),
                     },
                 );
 
@@ -1010,10 +1157,18 @@ impl Game for Watercolor {
                         texel_size,
                         debug_view: self.edit_state.debug_view as u32,
                         _padding_0: Default::default(),
-                        pigment0: Pigment::FrenchUltramarine.km(),
-                        pigment1: Pigment::HansaYellow.km(),
-                        pigment2: Pigment::QuinacridoneRose.km(),
+                        pigment0: Pigment::QuinacridoneRose.km(),
+                        pigment1: Pigment::IndianRed.km(),
+                        pigment2: Pigment::CadmiumYellow.km(),
                         pigment3: Pigment::HookersGreen.km(),
+                        pigment4: Pigment::CeruleanBlue.km(),
+                        pigment5: Pigment::BurntUmber.km(),
+                        pigment6: Pigment::CadmiumRed.km(),
+                        pigment7: Pigment::BrilliantOrange.km(),
+                        pigment8: Pigment::HansaYellow.km(),
+                        pigment9: Pigment::PhthaloGreen.km(),
+                        pigment10: Pigment::FrenchUltramarine.km(),
+                        pigment11: Pigment::InterferenceLilac.km(),
                     },
                 );
             },
