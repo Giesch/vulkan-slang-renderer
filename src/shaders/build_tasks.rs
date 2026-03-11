@@ -1512,4 +1512,39 @@ mod tests {
             });
         });
     }
+
+    fn count_branch_instructions(spv_bytes: &[u8]) -> usize {
+        let module = rspirv::dr::load_bytes(spv_bytes).expect("Failed to parse SPIR-V module");
+        module
+            .all_inst_iter()
+            .filter(|inst| {
+                matches!(
+                    inst.class.opcode,
+                    rspirv::spirv::Op::BranchConditional | rspirv::spirv::Op::Switch
+                )
+            })
+            .count()
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn shader_branching_snapshots() {
+        let compiled_dir = manifest_path(["shaders", "compiled"]);
+        let mut entries: Vec<_> = std::fs::read_dir(&compiled_dir)
+            .expect("Failed to read compiled shaders directory")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "spv"))
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        let mut summary = String::new();
+        for entry in &entries {
+            let bytes = std::fs::read(entry.path()).expect("Failed to read .spv file");
+            let count = count_branch_instructions(&bytes);
+            let name = entry.file_name();
+            summary.push_str(&format!("{}: {}\n", name.to_string_lossy(), count));
+        }
+
+        insta::assert_snapshot!(summary);
+    }
 }

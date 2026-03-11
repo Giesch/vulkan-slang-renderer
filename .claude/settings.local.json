@@ -39,7 +39,8 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:scrtwpns.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(just paper-texture:*)"
+      "Bash(just paper-texture:*)",
+      "Bash(cargo search:*)"
     ]
   },
   "statusLine": {

@@ -37,6 +37,7 @@ features = ["static"]
 
 [dev-dependencies]
 insta = { version = "1.43.2", features = ["json", "glob"] }
+rspirv = "0.12.0"
 uuid = { version = "1.18.1", features = ["v4"] }
 
 [profile.dev.package."*"]
