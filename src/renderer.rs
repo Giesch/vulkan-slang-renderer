@@ -1681,13 +1681,15 @@ impl Renderer {
         self.total_frames += 1;
         #[cfg(debug_assertions)]
         {
-            let compute_indices: Vec<usize> = pending_compute
+            let mut compute_indices: Vec<usize> = pending_compute
                 .iter()
                 .filter_map(|cmd| match cmd {
                     PendingComputeCommand::Dispatch { pipeline_index, .. } => Some(*pipeline_index),
                     _ => None,
                 })
                 .collect();
+            compute_indices.sort_unstable();
+            compute_indices.dedup();
             self.check_for_shader_recompile(pipeline_handle, &compute_indices)?;
         }
 
@@ -2009,11 +2011,8 @@ impl Renderer {
 
             to_remove.push(i);
         }
-        for i in to_remove {
-            // FIXME this can panic
-            // and a panic here does not free GPU resources correctly
-            // or at least in the correct order
-            // it seems like it's wrong specifically for compute shaders
+        to_remove.sort_unstable();
+        for i in to_remove.into_iter().rev() {
             self.old_pipelines.swap_remove(i);
         }
 
@@ -2148,7 +2147,8 @@ impl Renderer {
             self.device.destroy_shader_module(shader_module, None);
         }
 
-        info!("finished recompiling compute shader");
+        let name = compute_pipeline_mut.shader.source_file_name();
+        info!("finished recompiling compute shader: {name}");
 
         Ok(())
     }
@@ -2188,6 +2188,9 @@ impl Renderer {
 
 impl Drop for Renderer {
     fn drop(&mut self) {
+        // this is necessary to avoid validation errors after a panic
+        let _ = unsafe { self.device.device_wait_idle() };
+
         unsafe {
             for fence in &self.frames_in_flight {
                 self.device.destroy_fence(*fence, None);
