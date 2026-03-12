@@ -50,8 +50,9 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     let pixel = int2(dispatchThreadID.xy);
     let gridSize = int2(params.gridSize);
 
-    if (!inBounds(dispatchThreadID.xy, params.gridSize))
+    if (!inBounds(dispatchThreadID.xy, params.gridSize)) {
         return;
+    }
 
     // --- Update u (horizontal velocity at i+0.5, j) ---
     {
