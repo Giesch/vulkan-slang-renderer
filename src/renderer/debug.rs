@@ -67,6 +67,12 @@ pub fn maybe_create_debug_messager_extension(
     (loader, extension)
 }
 
+pub fn clean_shader_name(name: &str) -> &str {
+    name.strip_suffix(".compute.slang")
+        .or_else(|| name.strip_suffix(".shader.slang"))
+        .unwrap_or(name)
+}
+
 pub fn build_messenger_create_info() -> vk::DebugUtilsMessengerCreateInfoEXT<'static> {
     vk::DebugUtilsMessengerCreateInfoEXT {
         s_type: vk::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,

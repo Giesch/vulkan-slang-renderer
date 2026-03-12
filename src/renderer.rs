@@ -89,6 +89,7 @@ pub struct Renderer {
     physical_device_properties: vk::PhysicalDeviceProperties,
     queue_family_indices: QueueFamilyIndices,
     device: ash::Device,
+    debug_utils_device: ash::ext::debug_utils::Device,
     graphics_queue: vk::Queue,
     presentation_queue: vk::Queue,
     swapchain_device_ext: ash::khr::swapchain::Device,
@@ -230,9 +231,7 @@ impl Renderer {
         for name in &window_required_extensions {
             enabled_extension_names.push(name.as_ptr())
         }
-        if ENABLE_VALIDATION {
-            enabled_extension_names.push(ash::ext::debug_utils::NAME.as_ptr());
-        }
+        enabled_extension_names.push(ash::ext::debug_utils::NAME.as_ptr());
 
         for platform_instance_ext in platform::ADDITIONAL_INSTANCE_EXTENSIONS {
             enabled_extension_names.push(platform_instance_ext.as_ptr());
@@ -266,6 +265,7 @@ impl Renderer {
         let (physical_device, queue_family_indices, physical_device_properties) =
             choose_physical_device(&instance, &surface_ext, surface)?;
         let device = create_logical_device(&instance, physical_device, &queue_family_indices)?;
+        let debug_utils_device = ash::ext::debug_utils::Device::new(&instance, &device);
 
         let msaa_samples =
             get_max_usable_sample_count(physical_device_properties, max_msaa_samples);
@@ -384,6 +384,7 @@ impl Renderer {
             physical_device_properties,
             queue_family_indices,
             device,
+            debug_utils_device,
             graphics_queue,
             presentation_queue,
             swapchain_device_ext,
@@ -434,6 +435,18 @@ impl Renderer {
 
     fn renderer_pipeline<D>(&self, handle: &PipelineHandle<D>) -> &RendererPipeline {
         self.pipelines.get(handle)
+    }
+
+    fn set_debug_name<T: vk::Handle>(&self, object: T, name: &str) {
+        let c_name = CString::new(name).unwrap();
+        let name_info = vk::DebugUtilsObjectNameInfoEXT::default()
+            .object_handle(object)
+            .object_name(&c_name);
+        unsafe {
+            self.debug_utils_device
+                .set_debug_utils_object_name(&name_info)
+                .ok();
+        }
     }
 
     pub fn create_texture(
@@ -976,6 +989,11 @@ impl Renderer {
         }
         .map_err(|(_pipelines, err)| err)?[0];
 
+        self.set_debug_name(
+            pipeline,
+            debug::clean_shader_name(config.shader.source_file_name()),
+        );
+
         unsafe {
             self.device.destroy_shader_module(shader_module, None);
         }
@@ -1078,6 +1096,11 @@ impl Renderer {
             !config.disable_depth_test,
             true,
         )?;
+
+        self.set_debug_name(
+            pipeline,
+            debug::clean_shader_name(config.shader.source_file_name()),
+        );
 
         let vertex_pipeline_config = match &config.vertex_config {
             VertexConfig::VertexAndIndexBuffers(vertices, indices) => {
@@ -1200,6 +1223,19 @@ impl Renderer {
                     group_count,
                 } => {
                     let compute_pipeline = self.compute_pipelines.get_by_index(*pipeline_index);
+
+                    let label_name = CString::new(debug::clean_shader_name(
+                        compute_pipeline.shader.source_file_name(),
+                    ))
+                    .unwrap();
+                    let label = vk::DebugUtilsLabelEXT::default()
+                        .label_name(&label_name)
+                        .color([0.4, 0.8, 0.4, 1.0]);
+                    unsafe {
+                        self.debug_utils_device
+                            .cmd_begin_debug_utils_label(command_buffer, &label);
+                    }
+
                     let descriptor_sets_per_frame =
                         compute_pipeline.layout.descriptor_set_layouts.len();
                     let compute_descriptor_sets = compute_pipeline
@@ -1231,6 +1267,11 @@ impl Renderer {
                             group_count[2],
                         );
                     }
+
+                    unsafe {
+                        self.debug_utils_device
+                            .cmd_end_debug_utils_label(command_buffer);
+                    }
                 }
 
                 PendingComputeCommand::Barrier {
@@ -1261,6 +1302,14 @@ impl Renderer {
 
         // PICKING RENDER PASS (before main pass)
         if let (Some(picking_config), Some(picking)) = (picking_config, self.picking.as_ref()) {
+            let label_name = c"Picking";
+            let label = vk::DebugUtilsLabelEXT::default()
+                .label_name(label_name)
+                .color([0.8, 0.4, 0.4, 1.0]);
+            unsafe {
+                self.debug_utils_device
+                    .cmd_begin_debug_utils_label(command_buffer, &label);
+            }
             let picking_pipeline = self.pipelines.get_picking(&picking_config.picking_handle);
             let picking_framebuffer = picking.framebuffers[self.current_frame];
             let picking_render_area = vk::Rect2D::default()
@@ -1360,6 +1409,28 @@ impl Renderer {
                     picking.readback_buffers[self.current_frame],
                     &[region],
                 );
+            }
+
+            unsafe {
+                self.debug_utils_device
+                    .cmd_end_debug_utils_label(command_buffer);
+            }
+        }
+
+        // MAIN RENDER PASS
+        {
+            let shader_name = debug::clean_shader_name(
+                self.renderer_pipeline(pipeline_handle)
+                    .shader
+                    .source_file_name(),
+            );
+            let label_name = CString::new(shader_name).unwrap();
+            let label = vk::DebugUtilsLabelEXT::default()
+                .label_name(&label_name)
+                .color([1.0, 1.0, 1.0, 1.0]);
+            unsafe {
+                self.debug_utils_device
+                    .cmd_begin_debug_utils_label(command_buffer, &label);
             }
         }
 
@@ -1471,8 +1542,21 @@ impl Renderer {
 
         // END MAIN RENDER PASS
         unsafe { self.device.cmd_end_render_pass(command_buffer) };
+        unsafe {
+            self.debug_utils_device
+                .cmd_end_debug_utils_label(command_buffer);
+        }
 
         // BLIT FROM RESOLVE IMAGE TO SWAPCHAIN (upscale step)
+        {
+            let label = vk::DebugUtilsLabelEXT::default()
+                .label_name(c"Blit")
+                .color([0.4, 0.4, 0.8, 1.0]);
+            unsafe {
+                self.debug_utils_device
+                    .cmd_begin_debug_utils_label(command_buffer, &label);
+            }
+        }
         let swapchain_image = self.swapchain_images[image_index as usize];
         {
             // Transition swapchain image from UNDEFINED to TRANSFER_DST
@@ -1575,12 +1659,25 @@ impl Renderer {
             }
         }
 
+        unsafe {
+            self.debug_utils_device
+                .cmd_end_debug_utils_label(command_buffer);
+        }
+
         // EGUI RENDER PASS (separate 1-sample pass for egui overlay)
         if let (Some(egui), Some(egui_render_pass), Some(egui_framebuffers)) = (
             &mut self.egui,
             self.egui_render_pass,
             &self.egui_framebuffers,
         ) {
+            let label = vk::DebugUtilsLabelEXT::default()
+                .label_name(c"Egui")
+                .color([0.8, 0.8, 0.4, 1.0]);
+            unsafe {
+                self.debug_utils_device
+                    .cmd_begin_debug_utils_label(command_buffer, &label);
+            }
+
             let egui_framebuffer = egui_framebuffers[image_index as usize];
             let render_area = vk::Rect2D::default()
                 .offset(vk::Offset2D::default())
@@ -1619,6 +1716,11 @@ impl Renderer {
             }
 
             unsafe { self.device.cmd_end_render_pass(command_buffer) };
+
+            unsafe {
+                self.debug_utils_device
+                    .cmd_end_debug_utils_label(command_buffer);
+            }
         }
 
         unsafe { self.device.end_command_buffer(command_buffer)? };
@@ -2334,9 +2436,7 @@ fn check_required_layers(entry: &ash::Entry) -> Result<(), anyhow::Error> {
 fn check_required_extensions(entry: &ash::Entry) -> Result<(), anyhow::Error> {
     let mut required_extensions = vec![ash::khr::surface::NAME, platform::OS_SURFACE_EXT];
 
-    if ENABLE_VALIDATION {
-        required_extensions.push(ash::ext::debug_utils::NAME);
-    }
+    required_extensions.push(ash::ext::debug_utils::NAME);
 
     let available_extensions = unsafe { entry.enumerate_instance_extension_properties(None)? };
 

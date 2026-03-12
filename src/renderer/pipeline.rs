@@ -105,7 +105,6 @@ pub(super) struct RendererPipeline {
     pub descriptor_pool: vk::DescriptorPool,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
 
-    #[cfg_attr(not(debug_assertions), expect(unused))] // used only during hot reload
     pub shader: Box<dyn ShaderAtlasEntry>,
 
     #[cfg_attr(not(debug_assertions), expect(unused))] // used only during hot reload
@@ -196,7 +195,6 @@ pub(super) struct ComputeRendererPipeline {
     pub pipeline: vk::Pipeline,
     pub descriptor_pool: vk::DescriptorPool,
     pub descriptor_sets: Vec<vk::DescriptorSet>,
-    #[cfg_attr(not(debug_assertions), expect(unused))]
     pub shader: Box<dyn ComputeShaderAtlasEntry>,
 }
 
