@@ -134,6 +134,17 @@ pub struct Renderer {
     compute_finished: [vk::Semaphore; BUFFER_FRAME_COUNT],
     has_compute_pipelines: bool,
 
+    /// Dedicated compute queue for async compute (None = single-queue fallback)
+    compute_queue: Option<vk::Queue>,
+    /// Command buffers for pipelined compute dispatches
+    compute_command_buffers: [vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT],
+    /// Fences for compute command buffer reuse
+    compute_fences: [vk::Fence; MAX_FRAMES_IN_FLIGHT],
+    /// Semaphores signaled by compute, waited by graphics (one frame behind)
+    compute_to_graphics_sem: [vk::Semaphore; BUFFER_FRAME_COUNT],
+    /// Per-frame flag: use pipelined compute submission
+    pipelined_compute: bool,
+
     pipelines: PipelineStorage,
     compute_pipelines: ComputePipelineStorage,
     textures: TextureStorage,
@@ -273,6 +284,11 @@ impl Renderer {
         let graphics_queue = unsafe { device.get_device_queue(queue_family_indices.graphics, 0) };
         let presentation_queue =
             unsafe { device.get_device_queue(queue_family_indices.presentation, 0) };
+        let compute_queue = if queue_family_indices.graphics_queue_count >= 2 {
+            Some(unsafe { device.get_device_queue(queue_family_indices.graphics, 1) })
+        } else {
+            None
+        };
 
         let swapchain_device_ext = ash::khr::swapchain::Device::new(&instance, &device);
         let CreatedSwapchain {
@@ -315,6 +331,29 @@ impl Renderer {
 
         let command_pool = create_command_pool(&device, &queue_family_indices)?;
         let command_buffers = create_command_buffers(&device, command_pool)?;
+        let compute_command_buffers = create_command_buffers(&device, command_pool)?;
+
+        // Create compute-specific sync objects
+        let compute_fences = {
+            let mut fences: [Option<vk::Fence>; MAX_FRAMES_IN_FLIGHT] =
+                [const { None }; MAX_FRAMES_IN_FLIGHT];
+            #[expect(clippy::needless_range_loop)]
+            for i in 0..MAX_FRAMES_IN_FLIGHT {
+                let fence_create_info =
+                    vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+                fences[i] = Some(unsafe { device.create_fence(&fence_create_info, None)? });
+            }
+            fences.map(Option::unwrap)
+        };
+        let compute_to_graphics_sem = {
+            let mut sems: [Option<vk::Semaphore>; BUFFER_FRAME_COUNT] =
+                [const { None }; BUFFER_FRAME_COUNT];
+            #[expect(clippy::needless_range_loop)]
+            for i in 0..BUFFER_FRAME_COUNT {
+                sems[i] = Some(unsafe { device.create_semaphore(&Default::default(), None)? });
+            }
+            sems.map(Option::unwrap)
+        };
 
         // Calculate scaled render extent
         let render_extent = calculate_render_extent(image_extent, render_scale);
@@ -417,6 +456,11 @@ impl Renderer {
 
             compute_finished,
             has_compute_pipelines: false,
+            compute_queue,
+            compute_command_buffers,
+            compute_fences,
+            compute_to_graphics_sem,
+            pipelined_compute: false,
 
             pipelines,
             compute_pipelines,
@@ -1199,23 +1243,11 @@ impl Renderer {
         })
     }
 
-    fn record_command_buffer<D>(
-        &mut self,
-        pipeline_handle: &PipelineHandle<D>,
-        image_index: u32,
-        draw_call: DrawCallConfig,
-        picking_config: Option<&PickingDrawConfig>,
+    fn record_compute_commands(
+        &self,
+        command_buffer: vk::CommandBuffer,
         pending_compute: &[PendingComputeCommand],
-    ) -> Result<(), anyhow::Error> {
-        let command_buffer = self.command_buffers[self.current_frame];
-
-        let begin_info = vk::CommandBufferBeginInfo::default();
-        unsafe {
-            self.device
-                .begin_command_buffer(command_buffer, &begin_info)?;
-        }
-
-        // COMPUTE DISPATCHES (before any render passes)
+    ) {
         for cmd in pending_compute {
             match cmd {
                 PendingComputeCommand::Dispatch {
@@ -1298,6 +1330,49 @@ impl Renderer {
                     }
                 }
             }
+        }
+    }
+
+    /// Record a standalone compute command buffer for pipelined async compute submission
+    fn record_compute_command_buffer(
+        &self,
+        pending_compute: &[PendingComputeCommand],
+    ) -> Result<(), anyhow::Error> {
+        let command_buffer = self.compute_command_buffers[self.current_frame];
+
+        let begin_info = vk::CommandBufferBeginInfo::default();
+        unsafe {
+            self.device
+                .begin_command_buffer(command_buffer, &begin_info)?;
+        }
+
+        self.record_compute_commands(command_buffer, pending_compute);
+
+        unsafe { self.device.end_command_buffer(command_buffer)? };
+        Ok(())
+    }
+
+    fn record_command_buffer<D>(
+        &mut self,
+        pipeline_handle: &PipelineHandle<D>,
+        image_index: u32,
+        draw_call: DrawCallConfig,
+        picking_config: Option<&PickingDrawConfig>,
+        pending_compute: &[PendingComputeCommand],
+        skip_compute: bool,
+    ) -> Result<(), anyhow::Error> {
+        let command_buffer = self.command_buffers[self.current_frame];
+
+        let begin_info = vk::CommandBufferBeginInfo::default();
+        unsafe {
+            self.device
+                .begin_command_buffer(command_buffer, &begin_info)?;
+        }
+
+        // COMPUTE DISPATCHES (before any render passes)
+        // Skip when compute is recorded in a separate command buffer for pipelined submission
+        if !skip_compute {
+            self.record_compute_commands(command_buffer, pending_compute);
         }
 
         // PICKING RENDER PASS (before main pass)
@@ -1840,68 +1915,163 @@ impl Renderer {
             egui.free_pending_textures(self.current_frame);
         }
 
-        // 5. Reset fence and continue with submit
+        // 5. Reset fences and continue with submit
         unsafe { self.device.reset_fences(&fences)? };
 
-        unsafe {
-            self.device
-                .reset_command_buffer(command_buffer, Default::default())?;
-        }
-        self.record_command_buffer(
-            pipeline_handle,
-            image_index,
-            draw_call,
-            picking_config.as_ref(),
-            &pending_compute,
-        )?;
+        // Determine if we should use pipelined async compute this frame
+        let use_pipelined = self.pipelined_compute
+            && self.compute_queue.is_some()
+            && self.has_compute_pipelines
+            && self.total_frames > 1;
 
-        let submit_command_buffers = [command_buffer];
+        if use_pipelined {
+            // --- PIPELINED: compute on dedicated queue, graphics on graphics queue ---
+            let compute_queue = self.compute_queue.unwrap();
+            let compute_cb = self.compute_command_buffers[self.current_frame];
 
-        // When compute pipelines exist, add cross-frame synchronization:
-        // - Wait on the previous frame's compute_finished semaphore (so reads see prior writes)
-        // - Signal this frame's compute_finished semaphore (for the next frame to wait on)
-        let (wait_semaphores, wait_dst_stage_mask, signal_semaphores);
-        if self.has_compute_pipelines && self.total_frames > 1 {
+            // Wait for previous compute fence (compute CB reuse)
+            let compute_fences = [self.compute_fences[self.current_frame]];
+            unsafe {
+                self.device
+                    .wait_for_fences(&compute_fences, true, u64::MAX)?
+            };
+            unsafe { self.device.reset_fences(&compute_fences)? };
+
+            // Record compute command buffer
+            unsafe {
+                self.device
+                    .reset_command_buffer(compute_cb, Default::default())?;
+            }
+            self.record_compute_command_buffer(&pending_compute)?;
+
+            // Record graphics command buffer (skip compute section)
+            unsafe {
+                self.device
+                    .reset_command_buffer(command_buffer, Default::default())?;
+            }
+            self.record_command_buffer(
+                pipeline_handle,
+                image_index,
+                draw_call,
+                picking_config.as_ref(),
+                &pending_compute,
+                true, // skip_compute
+            )?;
+
+            // Submit compute: wait on previous compute_finished, signal current + compute_to_graphics
             let prev_buffer_frame =
                 (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
-            wait_semaphores = vec![
+            let compute_wait = [self.compute_finished[prev_buffer_frame]];
+            let compute_wait_stages = [vk::PipelineStageFlags::COMPUTE_SHADER];
+            let compute_signal = [
+                self.compute_finished[self.buffer_frame],
+                self.compute_to_graphics_sem[self.buffer_frame],
+            ];
+            let compute_cbs = [compute_cb];
+            let compute_submit = vk::SubmitInfo::default()
+                .wait_semaphores(&compute_wait)
+                .wait_dst_stage_mask(&compute_wait_stages)
+                .command_buffers(&compute_cbs)
+                .signal_semaphores(&compute_signal);
+            unsafe {
+                self.device.queue_submit(
+                    compute_queue,
+                    &[compute_submit],
+                    self.compute_fences[self.current_frame],
+                )?;
+            }
+
+            // Submit graphics: wait on image_available + previous compute_to_graphics, signal render_finished
+            let gfx_wait = [
                 self.image_available[self.buffer_frame],
-                self.compute_finished[prev_buffer_frame],
+                self.compute_to_graphics_sem[prev_buffer_frame],
             ];
-            wait_dst_stage_mask = vec![
+            let gfx_wait_stages = [
                 vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
             ];
-            signal_semaphores = vec![
-                self.render_finished[image_index as usize],
-                self.compute_finished[self.buffer_frame],
-            ];
-        } else if self.has_compute_pipelines {
-            // First frame: no previous compute to wait on, but still signal
-            wait_semaphores = vec![self.image_available[self.buffer_frame]];
-            wait_dst_stage_mask = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            signal_semaphores = vec![
-                self.render_finished[image_index as usize],
-                self.compute_finished[self.buffer_frame],
-            ];
+            let gfx_signal = [self.render_finished[image_index as usize]];
+            let gfx_cbs = [command_buffer];
+            let gfx_submit = vk::SubmitInfo::default()
+                .wait_semaphores(&gfx_wait)
+                .wait_dst_stage_mask(&gfx_wait_stages)
+                .command_buffers(&gfx_cbs)
+                .signal_semaphores(&gfx_signal);
+            unsafe {
+                self.device.queue_submit(
+                    self.graphics_queue,
+                    &[gfx_submit],
+                    self.frames_in_flight[self.current_frame],
+                )?;
+            }
         } else {
-            wait_semaphores = vec![self.image_available[self.buffer_frame]];
-            wait_dst_stage_mask = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            signal_semaphores = vec![self.render_finished[image_index as usize]];
+            // --- SINGLE QUEUE: compute + graphics in one command buffer ---
+            unsafe {
+                self.device
+                    .reset_command_buffer(command_buffer, Default::default())?;
+            }
+            self.record_command_buffer(
+                pipeline_handle,
+                image_index,
+                draw_call,
+                picking_config.as_ref(),
+                &pending_compute,
+                false, // include compute
+            )?;
+
+            let submit_command_buffers = [command_buffer];
+
+            // When compute pipelines exist, add cross-frame synchronization:
+            // - Wait on the previous frame's compute_finished semaphore (so reads see prior writes)
+            // - Signal this frame's compute_finished semaphore (for the next frame to wait on)
+            let (wait_semaphores, wait_dst_stage_mask, signal_semaphores);
+            if self.has_compute_pipelines && self.total_frames > 1 {
+                let prev_buffer_frame =
+                    (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
+                wait_semaphores = vec![
+                    self.image_available[self.buffer_frame],
+                    self.compute_finished[prev_buffer_frame],
+                ];
+                wait_dst_stage_mask = vec![
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                ];
+                signal_semaphores = vec![
+                    self.render_finished[image_index as usize],
+                    self.compute_finished[self.buffer_frame],
+                ];
+            } else if self.has_compute_pipelines {
+                // First frame: no previous compute to wait on, but still signal
+                // Also signal compute_to_graphics for the pipelined path to bootstrap from
+                wait_semaphores = vec![self.image_available[self.buffer_frame]];
+                wait_dst_stage_mask = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+                signal_semaphores = vec![
+                    self.render_finished[image_index as usize],
+                    self.compute_finished[self.buffer_frame],
+                    self.compute_to_graphics_sem[self.buffer_frame],
+                ];
+            } else {
+                wait_semaphores = vec![self.image_available[self.buffer_frame]];
+                wait_dst_stage_mask = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+                signal_semaphores = vec![self.render_finished[image_index as usize]];
+            }
+
+            let submit_info = vk::SubmitInfo::default()
+                .wait_semaphores(&wait_semaphores)
+                .wait_dst_stage_mask(&wait_dst_stage_mask)
+                .command_buffers(&submit_command_buffers)
+                .signal_semaphores(&signal_semaphores);
+            unsafe {
+                self.device.queue_submit(
+                    self.graphics_queue,
+                    &[submit_info],
+                    self.frames_in_flight[self.current_frame],
+                )?;
+            }
         }
 
-        let submit_info = vk::SubmitInfo::default()
-            .wait_semaphores(&wait_semaphores)
-            .wait_dst_stage_mask(&wait_dst_stage_mask)
-            .command_buffers(&submit_command_buffers)
-            .signal_semaphores(&signal_semaphores);
-        unsafe {
-            self.device.queue_submit(
-                self.graphics_queue,
-                &[submit_info],
-                self.frames_in_flight[self.current_frame],
-            )?;
-        }
+        // Reset pipelined flag for next frame
+        self.pipelined_compute = false;
 
         let swapchains = [self.swapchain];
         let image_indices = [image_index];
@@ -2306,6 +2476,12 @@ impl Drop for Renderer {
             for semaphore in &self.compute_finished {
                 self.device.destroy_semaphore(*semaphore, None);
             }
+            for fence in &self.compute_fences {
+                self.device.destroy_fence(*fence, None);
+            }
+            for semaphore in &self.compute_to_graphics_sem {
+                self.device.destroy_semaphore(*semaphore, None);
+            }
 
             self.device.destroy_command_pool(self.command_pool, None);
 
@@ -2472,6 +2648,7 @@ fn vk_str_bytes(vk_str: &[c_char]) -> Vec<u8> {
 struct QueueFamilyIndices {
     graphics: u32,
     presentation: u32,
+    graphics_queue_count: u32,
 }
 
 impl QueueFamilyIndices {
@@ -2510,10 +2687,14 @@ impl QueueFamilyIndices {
         }
 
         let indices = match (graphics, presentation) {
-            (Some(graphics), Some(presentation)) => Some(Self {
-                graphics,
-                presentation,
-            }),
+            (Some(graphics), Some(presentation)) => {
+                let graphics_queue_count = queue_families[graphics as usize].queue_count;
+                Some(Self {
+                    graphics,
+                    presentation,
+                    graphics_queue_count,
+                })
+            }
             _ => None,
         };
 
@@ -2759,11 +2940,18 @@ fn create_logical_device(
     let unique_queue_families = BTreeSet::from([indices.graphics, indices.presentation]);
 
     let mut queue_create_infos = vec![];
-    let queue_priorities = [1.0];
+    let queue_priorities_single = [1.0];
+    let queue_priorities_dual = [1.0, 1.0];
     for index in unique_queue_families {
+        // Request 2 queues from the graphics family when available (for async compute)
+        let priorities = if index == indices.graphics && indices.graphics_queue_count >= 2 {
+            &queue_priorities_dual[..]
+        } else {
+            &queue_priorities_single[..]
+        };
         let queue_create_info = vk::DeviceQueueCreateInfo::default()
             .queue_family_index(index)
-            .queue_priorities(&queue_priorities);
+            .queue_priorities(priorities);
 
         queue_create_infos.push(queue_create_info);
     }
@@ -4828,6 +5016,13 @@ impl<'f> FrameRenderer<'f> {
     /// Returns the current render scale (0.25 to 1.0)
     pub fn render_scale(&self) -> f32 {
         self.renderer.render_scale
+    }
+
+    /// Enable pipelined async compute for this frame.
+    /// Compute dispatches run on a dedicated queue concurrently with the previous frame's display.
+    /// Falls back to single-queue when only 1 queue is available.
+    pub fn enable_pipelined_compute(&mut self) {
+        self.renderer.pipelined_compute = true;
     }
 
     pub fn dispatch(&mut self, pipeline: &PipelineHandle<Compute>, x: u32, y: u32, z: u32) {

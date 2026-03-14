@@ -135,11 +135,11 @@ struct Watercolor {
     #[expect(unused)]
     wet_mask: PingPong,
     #[expect(unused)]
-    deposit_0_3: StorageTextureHandle,
+    deposit_0_3: [StorageTextureHandle; 2],
     #[expect(unused)]
-    deposit_4_7: StorageTextureHandle,
+    deposit_4_7: [StorageTextureHandle; 2],
     #[expect(unused)]
-    deposit_8_11: StorageTextureHandle,
+    deposit_8_11: [StorageTextureHandle; 2],
     #[expect(unused)]
     divergence: StorageTextureHandle,
     #[expect(unused)]
@@ -153,9 +153,9 @@ struct Watercolor {
     project_velocity_pipelines: [PipelineHandle<Compute>; 2],
     blur_h_pipelines: [PipelineHandle<Compute>; 2],
     blur_v_and_flow_pipelines: [PipelineHandle<Compute>; 2],
-    advect_and_transfer_pipelines: [PipelineHandle<Compute>; 2],
+    advect_and_transfer_pipelines: [PipelineHandle<Compute>; 4], // [sim_parity * 2 + deposit_parity]
     capillary_flow_pipelines: [PipelineHandle<Compute>; 2],
-    display_pipelines: [PipelineHandle<DrawVertexCount>; 2],
+    display_pipelines: [PipelineHandle<DrawVertexCount>; 4], // [wet_mask_parity * 2 + deposit_parity]
 
     // Buffers
     stroke_points_buffer: StorageBufferHandle<paint_brush_compute::StrokePoint>,
@@ -174,6 +174,7 @@ struct Watercolor {
     // Parity tracking
     pressure_parity: bool, // flips 20x per frame (net 0), used in Jacobi loop
     sim_parity: bool,      // pigment + wet_mask + saturation (all flip 1x per frame)
+    deposit_parity: bool,  // deposit double-buffer parity (flips 1x per frame)
 
     // Input state
     painting: bool,
@@ -393,10 +394,19 @@ impl Game for Watercolor {
         let saturation = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
         let wet_mask = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
 
-        // Deposit textures (3 groups)
-        let (deposit_0_3, deposit_0_3_sampled) = create_deposit_texture(renderer)?;
-        let (deposit_4_7, deposit_4_7_sampled) = create_deposit_texture(renderer)?;
-        let (deposit_8_11, deposit_8_11_sampled) = create_deposit_texture(renderer)?;
+        // Deposit textures (3 groups × 2 for double-buffering)
+        let (deposit_0_3_a, deposit_0_3_a_sampled) = create_deposit_texture(renderer)?;
+        let (deposit_0_3_b, deposit_0_3_b_sampled) = create_deposit_texture(renderer)?;
+        let (deposit_4_7_a, deposit_4_7_a_sampled) = create_deposit_texture(renderer)?;
+        let (deposit_4_7_b, deposit_4_7_b_sampled) = create_deposit_texture(renderer)?;
+        let (deposit_8_11_a, deposit_8_11_a_sampled) = create_deposit_texture(renderer)?;
+        let (deposit_8_11_b, deposit_8_11_b_sampled) = create_deposit_texture(renderer)?;
+        let deposit_0_3_storage = [deposit_0_3_a, deposit_0_3_b];
+        let deposit_0_3_sampled = [deposit_0_3_a_sampled, deposit_0_3_b_sampled];
+        let deposit_4_7_storage = [deposit_4_7_a, deposit_4_7_b];
+        let deposit_4_7_sampled = [deposit_4_7_a_sampled, deposit_4_7_b_sampled];
+        let deposit_8_11_storage = [deposit_8_11_a, deposit_8_11_b];
+        let deposit_8_11_sampled = [deposit_8_11_a_sampled, deposit_8_11_b_sampled];
 
         let divergence =
             renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
@@ -642,52 +652,46 @@ impl Game for Watercolor {
             ]
         };
 
-        // Advect + transfer pigment: 2 pipelines for pigment parity
-        // Reads pigment at sim parity, writes to !sim parity, plus deposit RW
+        // Advect + transfer pigment: 4 pipelines for (sim_parity × deposit_parity)
+        // Index: sim_parity * 2 + deposit_parity
+        // Reads deposit[!deposit_parity], writes deposit[deposit_parity]
         let advect_and_transfer_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
+            let mut pipelines = Vec::with_capacity(4);
+            for sim in [false, true] {
+                for dep in [false, true] {
+                    let s = ShaderAtlas::init();
+                    let dep_read = !dep as usize; // read from previous
+                    let dep_write = dep as usize; // write to current
+                    pipelines.push(renderer.create_compute_pipeline(
+                        s.wc_advect_and_transfer_pigment_compute.pipeline_config(
+                            wc_advect_and_transfer_pigment_compute::Resources {
+                                pigment_in_0_3: pigment_0_3.read(sim),
+                                pigment_in_4_7: pigment_4_7.read(sim),
+                                pigment_in_8_11: pigment_8_11.read(sim),
+                                u_in: velocity_u.read(sim),
+                                v_in: velocity_v.read(sim),
+                                wet_mask: wet_mask.read(sim),
+                                paper_height: &paper_height_sampled,
+                                pigment_out_0_3: pigment_0_3.write(sim),
+                                pigment_out_4_7: pigment_4_7.write(sim),
+                                pigment_out_8_11: pigment_8_11.write(sim),
+                                deposit_in_0_3: &deposit_0_3_sampled[dep_read],
+                                deposit_in_4_7: &deposit_4_7_sampled[dep_read],
+                                deposit_in_8_11: &deposit_8_11_sampled[dep_read],
+                                deposit_out_0_3: &deposit_0_3_storage[dep_write],
+                                deposit_out_4_7: &deposit_4_7_storage[dep_write],
+                                deposit_out_8_11: &deposit_8_11_storage[dep_write],
+                                params_buffer: &advect_and_transfer_params_buffer,
+                            },
+                        ),
+                    )?);
+                }
+            }
             [
-                renderer.create_compute_pipeline(
-                    s0.wc_advect_and_transfer_pigment_compute.pipeline_config(
-                        wc_advect_and_transfer_pigment_compute::Resources {
-                            pigment_in_0_3: pigment_0_3.read(false),
-                            pigment_in_4_7: pigment_4_7.read(false),
-                            pigment_in_8_11: pigment_8_11.read(false),
-                            u_in: velocity_u.read(false),
-                            v_in: velocity_v.read(false),
-                            wet_mask: wet_mask.read(false),
-                            paper_height: &paper_height_sampled,
-                            pigment_out_0_3: pigment_0_3.write(false),
-                            pigment_out_4_7: pigment_4_7.write(false),
-                            pigment_out_8_11: pigment_8_11.write(false),
-                            deposit_0_3: &deposit_0_3,
-                            deposit_4_7: &deposit_4_7,
-                            deposit_8_11: &deposit_8_11,
-                            params_buffer: &advect_and_transfer_params_buffer,
-                        },
-                    ),
-                )?,
-                renderer.create_compute_pipeline(
-                    s1.wc_advect_and_transfer_pigment_compute.pipeline_config(
-                        wc_advect_and_transfer_pigment_compute::Resources {
-                            pigment_in_0_3: pigment_0_3.read(true),
-                            pigment_in_4_7: pigment_4_7.read(true),
-                            pigment_in_8_11: pigment_8_11.read(true),
-                            u_in: velocity_u.read(true),
-                            v_in: velocity_v.read(true),
-                            wet_mask: wet_mask.read(true),
-                            paper_height: &paper_height_sampled,
-                            pigment_out_0_3: pigment_0_3.write(true),
-                            pigment_out_4_7: pigment_4_7.write(true),
-                            pigment_out_8_11: pigment_8_11.write(true),
-                            deposit_0_3: &deposit_0_3,
-                            deposit_4_7: &deposit_4_7,
-                            deposit_8_11: &deposit_8_11,
-                            params_buffer: &advect_and_transfer_params_buffer,
-                        },
-                    ),
-                )?,
+                pipelines.remove(0),
+                pipelines.remove(0),
+                pipelines.remove(0),
+                pipelines.remove(0),
             ]
         };
 
@@ -719,31 +723,32 @@ impl Game for Watercolor {
             ]
         };
 
-        // Display pipeline: 2 variants for wet_mask parity
+        // Display pipeline: 4 variants for (wet_mask_parity × deposit_parity)
+        // Index: wet_mask_parity * 2 + deposit_parity
+        // Display reads deposit[!deposit_parity] (previous frame's output)
         let display_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
+            let mut pipelines = Vec::with_capacity(4);
+            for wm in [false, true] {
+                for dep in [false, true] {
+                    let s = ShaderAtlas::init();
+                    let dep_read = !dep as usize; // display reads previous frame's output
+                    pipelines.push(renderer.create_pipeline(s.paint_display.pipeline_config(
+                        paint_display::Resources {
+                            deposit_0_3: &deposit_0_3_sampled[dep_read],
+                            deposit_4_7: &deposit_4_7_sampled[dep_read],
+                            deposit_8_11: &deposit_8_11_sampled[dep_read],
+                            paper_height: &paper_height_sampled,
+                            wet_mask: wet_mask.read(wm),
+                            display_params_buffer: &display_params_buffer,
+                        },
+                    ))?);
+                }
+            }
             [
-                renderer.create_pipeline(s0.paint_display.pipeline_config(
-                    paint_display::Resources {
-                        deposit_0_3: &deposit_0_3_sampled,
-                        deposit_4_7: &deposit_4_7_sampled,
-                        deposit_8_11: &deposit_8_11_sampled,
-                        paper_height: &paper_height_sampled,
-                        wet_mask: wet_mask.read(false),
-                        display_params_buffer: &display_params_buffer,
-                    },
-                ))?,
-                renderer.create_pipeline(s1.paint_display.pipeline_config(
-                    paint_display::Resources {
-                        deposit_0_3: &deposit_0_3_sampled,
-                        deposit_4_7: &deposit_4_7_sampled,
-                        deposit_8_11: &deposit_8_11_sampled,
-                        paper_height: &paper_height_sampled,
-                        wet_mask: wet_mask.read(true),
-                        display_params_buffer: &display_params_buffer,
-                    },
-                ))?,
+                pipelines.remove(0),
+                pipelines.remove(0),
+                pipelines.remove(0),
+                pipelines.remove(0),
             ]
         };
 
@@ -756,9 +761,9 @@ impl Game for Watercolor {
             pigment_8_11,
             saturation,
             wet_mask,
-            deposit_0_3,
-            deposit_4_7,
-            deposit_8_11,
+            deposit_0_3: deposit_0_3_storage,
+            deposit_4_7: deposit_4_7_storage,
+            deposit_8_11: deposit_8_11_storage,
             divergence,
             blur_temp,
 
@@ -787,6 +792,7 @@ impl Game for Watercolor {
 
             pressure_parity: false,
             sim_parity: false,
+            deposit_parity: false,
 
             painting: false,
             stroke_points: Vec::new(),
@@ -890,6 +896,7 @@ impl Game for Watercolor {
     }
 
     fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
+        renderer.enable_pipelined_compute();
         let workgroup_x = (CANVAS_WIDTH + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
         let workgroup_y = (CANVAS_HEIGHT + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
 
@@ -971,8 +978,9 @@ impl Game for Watercolor {
             compute_barrier(&mut renderer);
 
             // 9. Advect + transfer pigment (combined)
+            let advect_idx = sim as usize * 2 + self.deposit_parity as usize;
             renderer.dispatch(
-                &self.advect_and_transfer_pipelines[sim as usize],
+                &self.advect_and_transfer_pipelines[advect_idx],
                 workgroup_x,
                 workgroup_y,
                 1,
@@ -989,6 +997,7 @@ impl Game for Watercolor {
 
             // Flip simulation parity
             self.sim_parity = !self.sim_parity;
+            self.deposit_parity = !self.deposit_parity;
 
             // Use compute→frag barrier only after the last step; compute barrier otherwise
             if step == SIM_STEPS_PER_FRAME - 1 {
@@ -1019,160 +1028,157 @@ impl Game for Watercolor {
         let advect_and_transfer_params_buffer = &mut self.advect_and_transfer_params_buffer;
         let capillary_flow_params_buffer = &mut self.capillary_flow_params_buffer;
 
-        renderer.draw_vertex_count(
-            &self.display_pipelines[self.sim_parity as usize],
-            3,
-            |gpu| {
-                // Upload stroke points
-                if point_count > 0 {
-                    let gpu_points: Vec<paint_brush_compute::StrokePoint> = stroke_points
-                        [..point_count as usize]
-                        .iter()
-                        .map(|&position| {
-                            let canvas_pos = position * grid_size / window_size;
-                            paint_brush_compute::StrokePoint {
-                                position: canvas_pos,
-                            }
-                        })
-                        .collect();
-                    gpu.write_storage(stroke_points_buffer, &gpu_points);
-                }
+        let display_idx = self.sim_parity as usize * 2 + self.deposit_parity as usize;
+        renderer.draw_vertex_count(&self.display_pipelines[display_idx], 3, |gpu| {
+            // Upload stroke points
+            if point_count > 0 {
+                let gpu_points: Vec<paint_brush_compute::StrokePoint> = stroke_points
+                    [..point_count as usize]
+                    .iter()
+                    .map(|&position| {
+                        let canvas_pos = position * grid_size / window_size;
+                        paint_brush_compute::StrokePoint {
+                            position: canvas_pos,
+                        }
+                    })
+                    .collect();
+                gpu.write_storage(stroke_points_buffer, &gpu_points);
+            }
 
-                // Pigment color: concentration in the active group/channel
-                let mut pigment_color_0_3 = Vec4::ZERO;
-                let mut pigment_color_4_7 = Vec4::ZERO;
-                let mut pigment_color_8_11 = Vec4::ZERO;
-                let c = self.edit_state.brush_concentration.value;
-                let group_colors = [
-                    &mut pigment_color_0_3,
-                    &mut pigment_color_4_7,
-                    &mut pigment_color_8_11,
-                ];
-                group_colors[active_pigment.group_index()][active_pigment.channel_index()] = c;
+            // Pigment color: concentration in the active group/channel
+            let mut pigment_color_0_3 = Vec4::ZERO;
+            let mut pigment_color_4_7 = Vec4::ZERO;
+            let mut pigment_color_8_11 = Vec4::ZERO;
+            let c = self.edit_state.brush_concentration.value;
+            let group_colors = [
+                &mut pigment_color_0_3,
+                &mut pigment_color_4_7,
+                &mut pigment_color_8_11,
+            ];
+            group_colors[active_pigment.group_index()][active_pigment.channel_index()] = c;
 
-                gpu.write_uniform(
-                    brush_params_buffer,
-                    paint_brush_compute::BrushParams {
-                        point_count,
-                        brush_radius,
-                        brush_opacity,
-                        brush_pressure: BRUSH_PRESSURE,
-                        pigment_color_0_3,
-                        pigment_color_4_7,
-                        pigment_color_8_11,
-                        canvas_size: grid_size,
-                        _padding_0: Default::default(),
-                    },
-                );
+            gpu.write_uniform(
+                brush_params_buffer,
+                paint_brush_compute::BrushParams {
+                    point_count,
+                    brush_radius,
+                    brush_opacity,
+                    brush_pressure: BRUSH_PRESSURE,
+                    pigment_color_0_3,
+                    pigment_color_4_7,
+                    pigment_color_8_11,
+                    canvas_size: grid_size,
+                    _padding_0: Default::default(),
+                },
+            );
 
-                gpu.write_uniform(
-                    update_vel_params_buffer,
-                    wc_update_velocity_compute::Params {
-                        grid_size,
-                        texel_size,
-                        dt: DT,
-                        mu: MU,
-                        kappa: KAPPA,
-                        slope_strength: SLOPE_STRENGTH,
-                    },
-                );
+            gpu.write_uniform(
+                update_vel_params_buffer,
+                wc_update_velocity_compute::Params {
+                    grid_size,
+                    texel_size,
+                    dt: DT,
+                    mu: MU,
+                    kappa: KAPPA,
+                    slope_strength: SLOPE_STRENGTH,
+                },
+            );
 
-                gpu.write_uniform(
-                    divergence_params_buffer,
-                    wc_divergence_compute::Params {
-                        grid_size,
-                        _padding_0: Default::default(),
-                    },
-                );
+            gpu.write_uniform(
+                divergence_params_buffer,
+                wc_divergence_compute::Params {
+                    grid_size,
+                    _padding_0: Default::default(),
+                },
+            );
 
-                gpu.write_uniform(
-                    pressure_jacobi_params_buffer,
-                    wc_pressure_jacobi_compute::Params {
-                        grid_size,
-                        _padding_0: Default::default(),
-                    },
-                );
+            gpu.write_uniform(
+                pressure_jacobi_params_buffer,
+                wc_pressure_jacobi_compute::Params {
+                    grid_size,
+                    _padding_0: Default::default(),
+                },
+            );
 
-                gpu.write_uniform(
-                    project_vel_params_buffer,
-                    wc_project_velocity_compute::Params {
-                        grid_size,
-                        _padding_0: Default::default(),
-                    },
-                );
+            gpu.write_uniform(
+                project_vel_params_buffer,
+                wc_project_velocity_compute::Params {
+                    grid_size,
+                    _padding_0: Default::default(),
+                },
+            );
 
-                gpu.write_uniform(
-                    blur_h_params_buffer,
-                    wc_gaussian_blur_compute::Params {
-                        grid_size,
-                        direction: Vec2::new(1.0, 0.0),
-                    },
-                );
+            gpu.write_uniform(
+                blur_h_params_buffer,
+                wc_gaussian_blur_compute::Params {
+                    grid_size,
+                    direction: Vec2::new(1.0, 0.0),
+                },
+            );
 
-                gpu.write_uniform(
-                    blur_v_and_flow_params_buffer,
-                    wc_blur_v_and_flow_outward_compute::Params {
-                        grid_size,
-                        eta: ETA,
-                        _padding_0: Default::default(),
-                    },
-                );
+            gpu.write_uniform(
+                blur_v_and_flow_params_buffer,
+                wc_blur_v_and_flow_outward_compute::Params {
+                    grid_size,
+                    eta: ETA,
+                    _padding_0: Default::default(),
+                },
+            );
 
-                gpu.write_uniform(
-                    advect_and_transfer_params_buffer,
-                    wc_advect_and_transfer_pigment_compute::Params {
-                        grid_size,
-                        dt: DT,
-                        transfer_rate: TRANSFER_RATE,
-                        pigment0: Pigment::QuinacridoneRose.properties(),
-                        pigment1: Pigment::IndianRed.properties(),
-                        pigment2: Pigment::CadmiumYellow.properties(),
-                        pigment3: Pigment::HookersGreen.properties(),
-                        pigment4: Pigment::CeruleanBlue.properties(),
-                        pigment5: Pigment::BurntUmber.properties(),
-                        pigment6: Pigment::CadmiumRed.properties(),
-                        pigment7: Pigment::BrilliantOrange.properties(),
-                        pigment8: Pigment::HansaYellow.properties(),
-                        pigment9: Pigment::PhthaloGreen.properties(),
-                        pigment10: Pigment::FrenchUltramarine.properties(),
-                        pigment11: Pigment::InterferenceLilac.properties(),
-                    },
-                );
+            gpu.write_uniform(
+                advect_and_transfer_params_buffer,
+                wc_advect_and_transfer_pigment_compute::Params {
+                    grid_size,
+                    dt: DT,
+                    transfer_rate: TRANSFER_RATE,
+                    pigment0: Pigment::QuinacridoneRose.properties(),
+                    pigment1: Pigment::IndianRed.properties(),
+                    pigment2: Pigment::CadmiumYellow.properties(),
+                    pigment3: Pigment::HookersGreen.properties(),
+                    pigment4: Pigment::CeruleanBlue.properties(),
+                    pigment5: Pigment::BurntUmber.properties(),
+                    pigment6: Pigment::CadmiumRed.properties(),
+                    pigment7: Pigment::BrilliantOrange.properties(),
+                    pigment8: Pigment::HansaYellow.properties(),
+                    pigment9: Pigment::PhthaloGreen.properties(),
+                    pigment10: Pigment::FrenchUltramarine.properties(),
+                    pigment11: Pigment::InterferenceLilac.properties(),
+                },
+            );
 
-                gpu.write_uniform(
-                    capillary_flow_params_buffer,
-                    wc_capillary_flow_compute::Params {
-                        grid_size,
-                        diffuse_rate: DIFFUSE_RATE,
-                        capacity: CAPILLARY_CAPACITY,
-                        sigma: CAPILLARY_SIGMA,
-                        dry_threshold: DRY_THRESHOLD,
-                        _padding_0: Default::default(),
-                    },
-                );
+            gpu.write_uniform(
+                capillary_flow_params_buffer,
+                wc_capillary_flow_compute::Params {
+                    grid_size,
+                    diffuse_rate: DIFFUSE_RATE,
+                    capacity: CAPILLARY_CAPACITY,
+                    sigma: CAPILLARY_SIGMA,
+                    dry_threshold: DRY_THRESHOLD,
+                    _padding_0: Default::default(),
+                },
+            );
 
-                gpu.write_uniform(
-                    display_params_buffer,
-                    paint_display::DisplayParams {
-                        texel_size,
-                        debug_view: self.edit_state.debug_view as u32,
-                        _padding_0: Default::default(),
-                        pigment0: Pigment::QuinacridoneRose.km(),
-                        pigment1: Pigment::IndianRed.km(),
-                        pigment2: Pigment::CadmiumYellow.km(),
-                        pigment3: Pigment::HookersGreen.km(),
-                        pigment4: Pigment::CeruleanBlue.km(),
-                        pigment5: Pigment::BurntUmber.km(),
-                        pigment6: Pigment::CadmiumRed.km(),
-                        pigment7: Pigment::BrilliantOrange.km(),
-                        pigment8: Pigment::HansaYellow.km(),
-                        pigment9: Pigment::PhthaloGreen.km(),
-                        pigment10: Pigment::FrenchUltramarine.km(),
-                        pigment11: Pigment::InterferenceLilac.km(),
-                    },
-                );
-            },
-        )?;
+            gpu.write_uniform(
+                display_params_buffer,
+                paint_display::DisplayParams {
+                    texel_size,
+                    debug_view: self.edit_state.debug_view as u32,
+                    _padding_0: Default::default(),
+                    pigment0: Pigment::QuinacridoneRose.km(),
+                    pigment1: Pigment::IndianRed.km(),
+                    pigment2: Pigment::CadmiumYellow.km(),
+                    pigment3: Pigment::HookersGreen.km(),
+                    pigment4: Pigment::CeruleanBlue.km(),
+                    pigment5: Pigment::BurntUmber.km(),
+                    pigment6: Pigment::CadmiumRed.km(),
+                    pigment7: Pigment::BrilliantOrange.km(),
+                    pigment8: Pigment::HansaYellow.km(),
+                    pigment9: Pigment::PhthaloGreen.km(),
+                    pigment10: Pigment::FrenchUltramarine.km(),
+                    pigment11: Pigment::InterferenceLilac.km(),
+                },
+            );
+        })?;
 
         Ok(())
     }

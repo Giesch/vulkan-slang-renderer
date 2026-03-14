@@ -59,9 +59,12 @@ pub struct Resources<'a> {
     pub pigment_out_0_3: &'a StorageTextureHandle,
     pub pigment_out_4_7: &'a StorageTextureHandle,
     pub pigment_out_8_11: &'a StorageTextureHandle,
-    pub deposit_0_3: &'a StorageTextureHandle,
-    pub deposit_4_7: &'a StorageTextureHandle,
-    pub deposit_8_11: &'a StorageTextureHandle,
+    pub deposit_in_0_3: &'a TextureHandle,
+    pub deposit_in_4_7: &'a TextureHandle,
+    pub deposit_in_8_11: &'a TextureHandle,
+    pub deposit_out_0_3: &'a StorageTextureHandle,
+    pub deposit_out_4_7: &'a StorageTextureHandle,
+    pub deposit_out_8_11: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -95,6 +98,9 @@ impl Shader {
             resources.v_in,
             resources.wet_mask,
             resources.paper_height,
+            resources.deposit_in_0_3,
+            resources.deposit_in_4_7,
+            resources.deposit_in_8_11,
         ];
 
         #[rustfmt::skip]
@@ -111,9 +117,9 @@ impl Shader {
             resources.pigment_out_0_3,
             resources.pigment_out_4_7,
             resources.pigment_out_8_11,
-            resources.deposit_0_3,
-            resources.deposit_4_7,
-            resources.deposit_8_11,
+            resources.deposit_out_0_3,
+            resources.deposit_out_4_7,
+            resources.deposit_out_8_11,
         ];
 
         ComputePipelineConfig {

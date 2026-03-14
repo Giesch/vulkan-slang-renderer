@@ -178,13 +178,13 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "deposit_0_3",
+            "fieldName": "depositIn_0_3",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 11,
               "count": 1
             },
-            "resourceShape": "rWTexture2D",
+            "resourceShape": "texture2D",
             "resultType": {
               "kind": "vector",
               "elementCount": 4,
@@ -196,10 +196,46 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "deposit_4_7",
+            "fieldName": "depositIn_4_7",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 12,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "depositIn_8_11",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 13,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "depositOut_0_3",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 14,
               "count": 1
             },
             "resourceShape": "rWTexture2D",
@@ -214,10 +250,28 @@ info:
           },
           {
             "kind": "resource",
-            "fieldName": "deposit_8_11",
+            "fieldName": "depositOut_4_7",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 13,
+              "index": 15,
+              "count": 1
+            },
+            "resourceShape": "rWTexture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "depositOut_8_11",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 16,
               "count": 1
             },
             "resourceShape": "rWTexture2D",
@@ -819,21 +873,21 @@ info:
           },
           {
             "binding": 1,
-            "descriptorType": "texture",
+            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 208
           },
           {
             "binding": 2,
-            "descriptorType": "texture",
+            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 208
           },
           {
             "binding": 3,
-            "descriptorType": "texture",
+            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 208
@@ -889,20 +943,41 @@ info:
           },
           {
             "binding": 11,
-            "descriptorType": "storageImage",
+            "descriptorType": "texture",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 208
           },
           {
             "binding": 12,
-            "descriptorType": "storageImage",
+            "descriptorType": "texture",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 208
           },
           {
             "binding": 13,
+            "descriptorType": "texture",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 208
+          },
+          {
+            "binding": 14,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 208
+          },
+          {
+            "binding": 15,
+            "descriptorType": "storageImage",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 208
+          },
+          {
+            "binding": 16,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
