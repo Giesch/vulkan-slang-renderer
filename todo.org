@@ -23,15 +23,19 @@
       - [X] are width and height needed/used on StorageTexture?
       - [ ] review all of the watercolor example
 
+  - [ ] resizing is broken
+    maybe because of the background texture?
+
+  - [ ] why does adding/removing jacobi iterations make no difference?
+    in either perf or noticable quality?
+
   - [X] gradually add simulation layers
 
   - [-] fix paper texture
     - [X] fix weird celled look
     - [ ] try to get gridlike results from figure 4
 
-  - [ ] speed up the simulation
-    add even more ticks per frame?
-    is this causing lock-up for the mouse somehow?
+  - [X] speed up the simulation
 
   - [ ] edge darkening not working?
     the current problem may be that we have no divergence at the edges of the wet mask

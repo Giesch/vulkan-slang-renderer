@@ -52,7 +52,7 @@ const FRAME_HISTORY_SIZE: usize = 60;
 const CANVAS_WIDTH: u32 = 1024;
 const CANVAS_HEIGHT: u32 = 768;
 const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
-const JACOBI_ITERATIONS: u32 = 10;
+const JACOBI_ITERATIONS: u32 = 2;
 // NOTE this must be even for correctness when reading pressure in later stages
 const _: () = assert!(JACOBI_ITERATIONS % 2 == 0);
 const SIM_STEPS_PER_FRAME: u32 = 1;
@@ -197,15 +197,6 @@ fn compute_barrier(renderer: &mut FrameRenderer) {
     renderer.memory_barrier(
         vk::PipelineStageFlags::COMPUTE_SHADER,
         vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::AccessFlags::SHADER_WRITE,
-        vk::AccessFlags::SHADER_READ,
-    );
-}
-
-fn compute_to_frag_barrier(renderer: &mut FrameRenderer) {
-    renderer.memory_barrier(
-        vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::PipelineStageFlags::FRAGMENT_SHADER,
         vk::AccessFlags::SHADER_WRITE,
         vk::AccessFlags::SHADER_READ,
     );
@@ -916,7 +907,7 @@ impl Game for Watercolor {
             compute_barrier(&mut renderer);
         }
 
-        for step in 0..SIM_STEPS_PER_FRAME {
+        for _step in 0..SIM_STEPS_PER_FRAME {
             let sim = self.sim_parity;
 
             // 2. Update velocity (advection + forces)
@@ -999,12 +990,9 @@ impl Game for Watercolor {
             self.sim_parity = !self.sim_parity;
             self.deposit_parity = !self.deposit_parity;
 
-            // Use compute→frag barrier only after the last step; compute barrier otherwise
-            if step == SIM_STEPS_PER_FRAME - 1 {
-                compute_to_frag_barrier(&mut renderer);
-            } else {
-                compute_barrier(&mut renderer);
-            }
+            // Pipelined: graphics reads previous frame's results, so no compute→frag
+            // barrier needed. A compute→compute barrier suffices for next frame's reads.
+            compute_barrier(&mut renderer);
         }
 
         // 12. Display

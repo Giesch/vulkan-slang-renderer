@@ -144,6 +144,8 @@ pub struct Renderer {
     compute_to_graphics_sem: [vk::Semaphore; BUFFER_FRAME_COUNT],
     /// Per-frame flag: use pipelined compute submission
     pipelined_compute: bool,
+    /// True after the first non-pipelined compute submit has signaled bootstrap semaphores
+    compute_bootstrapped: bool,
 
     pipelines: PipelineStorage,
     compute_pipelines: ComputePipelineStorage,
@@ -461,6 +463,7 @@ impl Renderer {
             compute_fences,
             compute_to_graphics_sem,
             pipelined_compute: false,
+            compute_bootstrapped: false,
 
             pipelines,
             compute_pipelines,
@@ -1359,7 +1362,7 @@ impl Renderer {
         draw_call: DrawCallConfig,
         picking_config: Option<&PickingDrawConfig>,
         pending_compute: &[PendingComputeCommand],
-        skip_compute: bool,
+        compute_placement: ComputePlacement,
     ) -> Result<(), anyhow::Error> {
         let command_buffer = self.command_buffers[self.current_frame];
 
@@ -1369,9 +1372,7 @@ impl Renderer {
                 .begin_command_buffer(command_buffer, &begin_info)?;
         }
 
-        // COMPUTE DISPATCHES (before any render passes)
-        // Skip when compute is recorded in a separate command buffer for pipelined submission
-        if !skip_compute {
+        if compute_placement == ComputePlacement::BeforeGraphics {
             self.record_compute_commands(command_buffer, pending_compute);
         }
 
@@ -1617,6 +1618,7 @@ impl Renderer {
 
         // END MAIN RENDER PASS
         unsafe { self.device.cmd_end_render_pass(command_buffer) };
+
         unsafe {
             self.debug_utils_device
                 .cmd_end_debug_utils_label(command_buffer);
@@ -1855,7 +1857,6 @@ impl Renderer {
         pending_compute: Vec<PendingComputeCommand>,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), anyhow::Error> {
-        self.total_frames += 1;
         #[cfg(debug_assertions)]
         {
             let mut compute_indices: Vec<usize> = pending_compute
@@ -1890,6 +1891,8 @@ impl Renderer {
             }
         };
 
+        self.total_frames += 1;
+
         // 2. CPU buffer writes BEFORE fence wait
         //    Safe because buffer[buffer_frame] was last used by frame (total - BUFFER_FRAME_COUNT)
         //    and that frame's fence was waited for during frame (total - 1)
@@ -1904,7 +1907,7 @@ impl Renderer {
         let fences = [self.frames_in_flight[self.current_frame]];
         unsafe { self.device.wait_for_fences(&fences, true, u64::MAX)? };
 
-        // 3b. Read picking result from staging buffer (written 2 frames ago, now safe to read)
+        // 3a. Read picking result from staging buffer (written 2 frames ago, now safe to read)
         if let Some(picking) = &self.picking {
             let id = unsafe { *picking.readback_mapped[self.current_frame] };
             self.last_picked_object_id = id;
@@ -1919,14 +1922,14 @@ impl Renderer {
         unsafe { self.device.reset_fences(&fences)? };
 
         // Determine if we should use pipelined async compute this frame
-        let use_pipelined = self.pipelined_compute
-            && self.compute_queue.is_some()
-            && self.has_compute_pipelines
-            && self.total_frames > 1;
+        let use_pipelined =
+            self.pipelined_compute && self.has_compute_pipelines && self.compute_bootstrapped;
 
         if use_pipelined {
-            // --- PIPELINED: compute on dedicated queue, graphics on graphics queue ---
-            let compute_queue = self.compute_queue.unwrap();
+            // --- PIPELINED: separate compute and graphics submissions ---
+            // Uses dedicated compute queue when available, otherwise same graphics queue.
+            // Two separate vkQueueSubmit calls give the driver freedom to overlap execution.
+            let compute_queue = self.compute_queue.unwrap_or(self.graphics_queue);
             let compute_cb = self.compute_command_buffers[self.current_frame];
 
             // Wait for previous compute fence (compute CB reuse)
@@ -1955,7 +1958,7 @@ impl Renderer {
                 draw_call,
                 picking_config.as_ref(),
                 &pending_compute,
-                true, // skip_compute
+                ComputePlacement::SeparateCommandBuffer,
             )?;
 
             // Submit compute: wait on previous compute_finished, signal current + compute_to_graphics
@@ -2005,7 +2008,8 @@ impl Renderer {
                 )?;
             }
         } else {
-            // --- SINGLE QUEUE: compute + graphics in one command buffer ---
+            // --- NON-PIPELINED: compute + graphics in one command buffer ---
+            // Compute runs first with barriers, then graphics reads results in same frame.
             unsafe {
                 self.device
                     .reset_command_buffer(command_buffer, Default::default())?;
@@ -2016,7 +2020,7 @@ impl Renderer {
                 draw_call,
                 picking_config.as_ref(),
                 &pending_compute,
-                false, // include compute
+                ComputePlacement::BeforeGraphics,
             )?;
 
             let submit_command_buffers = [command_buffer];
@@ -2025,7 +2029,7 @@ impl Renderer {
             // - Wait on the previous frame's compute_finished semaphore (so reads see prior writes)
             // - Signal this frame's compute_finished semaphore (for the next frame to wait on)
             let (wait_semaphores, wait_dst_stage_mask, signal_semaphores);
-            if self.has_compute_pipelines && self.total_frames > 1 {
+            if self.has_compute_pipelines && self.compute_bootstrapped {
                 let prev_buffer_frame =
                     (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
                 wait_semaphores = vec![
@@ -2068,10 +2072,21 @@ impl Renderer {
                     self.frames_in_flight[self.current_frame],
                 )?;
             }
+
+            if self.has_compute_pipelines {
+                self.compute_bootstrapped = true;
+            }
         }
 
         // Reset pipelined flag for next frame
         self.pipelined_compute = false;
+
+        // 6. Advance both frame counters BEFORE present
+        //    This ensures that if present triggers swapchain recreation (early return),
+        //    the next frame won't reuse the same buffer_frame slot whose semaphores
+        //    are still signaled from this frame's submit.
+        self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        self.buffer_frame = (self.buffer_frame + 1) % BUFFER_FRAME_COUNT;
 
         let swapchains = [self.swapchain];
         let image_indices = [image_index];
@@ -2098,10 +2113,6 @@ impl Renderer {
             }
         }
 
-        // 6. Advance both frame counters
-        self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
-        self.buffer_frame = (self.buffer_frame + 1) % BUFFER_FRAME_COUNT;
-
         if swapchain_was_suboptimal_on_image_acquire {
             return self.recreate_swapchain();
         }
@@ -2117,6 +2128,23 @@ impl Renderer {
     // to be called on window resize
     pub fn recreate_swapchain(&mut self) -> Result<(), anyhow::Error> {
         unsafe { self.device.device_wait_idle()? }
+
+        // Destroy and recreate compute semaphores to reset them to unsignaled state.
+        // After device_wait_idle, some may be left in signaled state from the last submit,
+        // and binary semaphores cannot be reset — they must be destroyed and recreated.
+        unsafe {
+            for i in 0..BUFFER_FRAME_COUNT {
+                self.device
+                    .destroy_semaphore(self.compute_finished[i], None);
+                self.compute_finished[i] =
+                    self.device.create_semaphore(&Default::default(), None)?;
+                self.device
+                    .destroy_semaphore(self.compute_to_graphics_sem[i], None);
+                self.compute_to_graphics_sem[i] =
+                    self.device.create_semaphore(&Default::default(), None)?;
+            }
+        }
+        self.compute_bootstrapped = false;
 
         self.cleanup_swapchain();
         unsafe {
@@ -3145,9 +3173,25 @@ fn create_render_pass(
                 | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
         );
 
+    // Explicit exit dependency: narrow stage masks so the implicit ALL_COMMANDS drain
+    // doesn't prevent the driver from overlapping subsequent compute work.
+    let exit_dep = vk::SubpassDependency::default()
+        .src_subpass(0)
+        .dst_subpass(vk::SUBPASS_EXTERNAL)
+        .src_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+        )
+        .src_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        )
+        .dst_stage_mask(vk::PipelineStageFlags::TRANSFER)
+        .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
+
     let attachments = [color_attachment, depth_attachment, color_attachment_resolve];
     let subpasses = [subpass];
-    let dependencies = [subpass_dep];
+    let dependencies = [subpass_dep, exit_dep];
     let render_pass_create_info = vk::RenderPassCreateInfo::default()
         .attachments(&attachments)
         .subpasses(&subpasses)
@@ -3191,9 +3235,18 @@ fn create_egui_render_pass(
         .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
         .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
 
+    // Explicit exit dependency: narrow stage masks to avoid implicit ALL_COMMANDS drain.
+    let exit_dep = vk::SubpassDependency::default()
+        .src_subpass(0)
+        .dst_subpass(vk::SUBPASS_EXTERNAL)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags::BOTTOM_OF_PIPE)
+        .dst_access_mask(vk::AccessFlags::empty());
+
     let attachments = [color_attachment];
     let subpasses = [subpass];
-    let dependencies = [subpass_dep];
+    let dependencies = [subpass_dep, exit_dep];
     let render_pass_create_info = vk::RenderPassCreateInfo::default()
         .attachments(&attachments)
         .subpasses(&subpasses)
@@ -4961,6 +5014,14 @@ impl<'f> Gpu<'f> {
 
         items.sort_by(compare);
     }
+}
+
+#[derive(PartialEq, Eq)]
+enum ComputePlacement {
+    /// Compute before graphics in the same command buffer
+    BeforeGraphics,
+    /// Compute in a separate command buffer (pipelined multi-queue)
+    SeparateCommandBuffer,
 }
 
 enum PendingComputeCommand {

@@ -85,23 +85,6 @@ impl EguiIntegration {
         self.ctx.begin_pass(self.raw_input.take());
     }
 
-    /// Draw the debug overlay (time display)
-    pub fn draw_debug_overlay(&self) {
-        egui::Window::new("Debug").show(&self.ctx, |ui| {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap();
-            let secs = now.as_secs();
-            let hours = (secs / 3600) % 24;
-            let mins = (secs / 60) % 60;
-            let secs_display = secs % 60;
-            ui.label(format!(
-                "Time: {:02}:{:02}:{:02} UTC",
-                hours, mins, secs_display
-            ));
-        });
-    }
-
     /// End egui frame and record draw commands into the command buffer.
     /// Must be called while render pass is active.
     /// Returns true if egui wants keyboard input (a text field has focus).

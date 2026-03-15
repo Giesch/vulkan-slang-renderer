@@ -11,6 +11,8 @@
       "Bash(just shaders)",
       "Bash(just test:*)",
       "Bash(just lint:*)",
+      "Bash(timeout 3 just dev:*)",
+      "Bash(just paper-texture:*)",
       "Bash(cargo test:*)",
       "Bash(cargo insta:*)",
       "Bash(git log:*)",
@@ -20,7 +22,6 @@
       "Bash(cargo check:*)",
       "Bash(cargo tree:*)",
       "Bash(cargo metadata:*)",
-      "Bash(timeout 3 just dev:*)",
       "Bash(jq:*)",
       "Bash(INSTA_UPDATE=no cargo test:*)",
       "Bash(INSTA_UPDATE=always cargo test:*)",
@@ -39,8 +40,8 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:scrtwpns.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(just paper-texture:*)",
-      "Bash(cargo search:*)"
+      "Bash(cargo search:*)",
+      "Bash(vulkaninfo:*)"
     ]
   },
   "statusLine": {
