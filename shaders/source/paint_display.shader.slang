@@ -24,6 +24,8 @@ struct DisplayParams {
     Sampler2D wetMask;
     float2 texelSize;
     uint debugView;
+    float canvasAspect;
+    float windowAspect;
     PigmentKM pigment0;
     PigmentKM pigment1;
     PigmentKM pigment2;
@@ -89,7 +91,23 @@ static const float3 PAPER_COLOR = float3(0.95);
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
-    let uv = input.texCoord;
+    let rawUV = input.texCoord;
+
+    // Crop: remap UVs so canvas fills the window, cropping overflow
+    float2 uv;
+    let canvasAspect = displayParams.canvasAspect;
+    let windowAspect = displayParams.windowAspect;
+    if (windowAspect > canvasAspect) {
+        // Window wider than canvas: crop top/bottom
+        let scale = canvasAspect / windowAspect;
+        uv.x = rawUV.x;
+        uv.y = (rawUV.y - 0.5) * scale + 0.5;
+    } else {
+        // Window taller than canvas: crop left/right
+        let scale = windowAspect / canvasAspect;
+        uv.x = (rawUV.x - 0.5) * scale + 0.5;
+        uv.y = rawUV.y;
+    }
 
     // Debug: show wet mask as grayscale
     if (displayParams.debugView == uint(DebugView.WetAreaMask)) {

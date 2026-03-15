@@ -49,8 +49,8 @@ enum DebugView {
 
 const FRAME_HISTORY_SIZE: usize = 60;
 
-const CANVAS_WIDTH: u32 = 1024;
-const CANVAS_HEIGHT: u32 = 768;
+const CANVAS_WIDTH: u32 = 2048;
+const CANVAS_HEIGHT: u32 = 1536;
 const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
 const JACOBI_ITERATIONS: u32 = 2;
 // NOTE this must be even for correctness when reading pressure in later stages
@@ -367,7 +367,7 @@ impl Game for Watercolor {
     }
 
     fn initial_window_size() -> (u32, u32) {
-        (CANVAS_WIDTH, CANVAS_HEIGHT)
+        (1024, 768)
     }
 
     fn render_scale() -> Option<f32> {
@@ -1024,7 +1024,26 @@ impl Game for Watercolor {
                     [..point_count as usize]
                     .iter()
                     .map(|&position| {
-                        let canvas_pos = position * grid_size / window_size;
+                        // Map mouse position to canvas coordinates (crop mode)
+                        let canvas_aspect = grid_size.x / grid_size.y;
+                        let window_aspect = window_size.x / window_size.y;
+                        let canvas_pos = if window_aspect > canvas_aspect {
+                            // Window wider: top/bottom cropped
+                            let scale = canvas_aspect / window_aspect;
+                            Vec2::new(
+                                (position.x / window_size.x * grid_size.x).clamp(0.0, grid_size.x),
+                                (((position.y / window_size.y - 0.5) * scale + 0.5) * grid_size.y)
+                                    .clamp(0.0, grid_size.y),
+                            )
+                        } else {
+                            // Window taller: left/right cropped
+                            let scale = window_aspect / canvas_aspect;
+                            Vec2::new(
+                                (((position.x / window_size.x - 0.5) * scale + 0.5) * grid_size.x)
+                                    .clamp(0.0, grid_size.x),
+                                (position.y / window_size.y * grid_size.y).clamp(0.0, grid_size.y),
+                            )
+                        };
                         paint_brush_compute::StrokePoint {
                             position: canvas_pos,
                         }
@@ -1151,6 +1170,8 @@ impl Game for Watercolor {
                 paint_display::DisplayParams {
                     texel_size,
                     debug_view: self.edit_state.debug_view as u32,
+                    canvas_aspect: grid_size.x / grid_size.y,
+                    window_aspect: window_size.x / window_size.y,
                     _padding_0: Default::default(),
                     pigment0: Pigment::QuinacridoneRose.km(),
                     pigment1: Pigment::IndianRed.km(),
