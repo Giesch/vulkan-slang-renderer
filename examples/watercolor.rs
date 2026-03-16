@@ -1027,6 +1027,7 @@ impl Game for Watercolor {
                         // Map mouse position to canvas coordinates (crop mode)
                         let canvas_aspect = grid_size.x / grid_size.y;
                         let window_aspect = window_size.x / window_size.y;
+
                         let canvas_pos = if window_aspect > canvas_aspect {
                             // Window wider: top/bottom cropped
                             let scale = canvas_aspect / window_aspect;
@@ -1049,6 +1050,7 @@ impl Game for Watercolor {
                         }
                     })
                     .collect();
+
                 gpu.write_storage(stroke_points_buffer, &gpu_points);
             }
 

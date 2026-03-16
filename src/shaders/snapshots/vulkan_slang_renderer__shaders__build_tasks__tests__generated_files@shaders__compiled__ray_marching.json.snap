@@ -104,6 +104,20 @@ info:
             "scalarType": "uint32"
           },
           {
+            "kind": "vector",
+            "fieldName": "resolution",
+            "binding": {
+              "kind": "uniform",
+              "offset": 104,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
             "kind": "resource",
             "fieldName": "spheres",
             "binding": {

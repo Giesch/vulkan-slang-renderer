@@ -36,7 +36,7 @@ public float3 rayMarch<W>(
     float3 lightPosition,
     float3 lightColor,
 ) where W : IRayMarchWorld {
-    const int MAX_STEPS = 32;
+    const int MAX_STEPS = 64;
     const float MAX_DISTANCE = 1000.0;
 
     var distanceTraveled: float = 0.0;

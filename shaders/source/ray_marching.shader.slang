@@ -19,6 +19,8 @@ struct RayMarchingParams {
 
     uint boxCount;
 
+    float2 resolution;
+
     StructuredBuffer<Sphere> spheres;
     StructuredBuffer<BoxRect> boxes;
 }
@@ -43,16 +45,30 @@ float4 fragMain(FragInput input) : SV_Target {
         params.boxCount
     );
 
-    let rayDirection = params.camera.rayDirection(input.centeredCoords);
-    let color = rayMarch(
-        world,
-        params.camera.position,
-        rayDirection,
-        params.lightPosition,
-        lightColor
-    );
+    // super-sampling
+    let rootSamples = 3; // 9 samples per pixel
+    let pixelSize = 1.0 / params.resolution;
+    var sum = float3(0.0);
 
-    return float4(color, 1.0);
+    [ForceUnroll]
+    for (int m = 0; m < rootSamples; m++) {
+        [ForceUnroll]
+        for (int n = 0; n < rootSamples; n++) {
+            let offset = ((float2(m, n) + 0.5) / float(rootSamples) - 0.5) * pixelSize;
+            let coords = input.centeredCoords + offset;
+            let rayDirection = params.camera.rayDirection(coords);
+            sum += rayMarch(
+                world,
+                params.camera.position,
+                rayDirection,
+                params.lightPosition,
+                lightColor
+            );
+        }
+    }
+
+    let sampleCount = rootSamples * rootSamples;
+    return float4(sum / float(sampleCount), 1.0);
 }
 
 struct RayMarchWorld : IRayMarchWorld {
