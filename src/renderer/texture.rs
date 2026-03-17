@@ -46,7 +46,7 @@ pub(super) struct Texture {
     #[cfg_attr(not(debug_assertions), expect(unused))]
     pub(super) source_file_name: String,
     pub(super) image: vk::Image,
-    pub(super) image_memory: vk::DeviceMemory,
+    pub(super) image_memory: Option<vk::DeviceMemory>,
     pub(super) image_view: vk::ImageView,
     pub(super) sampler: vk::Sampler,
     #[expect(unused)] // currently unused after init

@@ -194,17 +194,21 @@ fn create_resolve_images(
         msaa_samples: vk::SampleCountFlags::TYPE_1,
     };
 
-    let mut images = [vk::Image::null(); MAX_FRAMES_IN_FLIGHT];
-    let mut memories = [vk::DeviceMemory::null(); MAX_FRAMES_IN_FLIGHT];
-    let mut views = [vk::ImageView::null(); MAX_FRAMES_IN_FLIGHT];
+    let results: [_; MAX_FRAMES_IN_FLIGHT] = (0..MAX_FRAMES_IN_FLIGHT)
+        .map(|_| -> anyhow::Result<_> {
+            let (image, memory) =
+                create_vk_image(instance, device, physical_device, image_options)?;
+            let view =
+                create_image_view(device, image, color_format, vk::ImageAspectFlags::COLOR, 1)?;
+            Ok((image, memory, view))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .unwrap();
 
-    for i in 0..MAX_FRAMES_IN_FLIGHT {
-        let (image, memory) = create_vk_image(instance, device, physical_device, image_options)?;
-        let view = create_image_view(device, image, color_format, vk::ImageAspectFlags::COLOR, 1)?;
-        images[i] = image;
-        memories[i] = memory;
-        views[i] = view;
-    }
+    let images = results.map(|(image, _, _)| image);
+    let memories = results.map(|(_, memory, _)| memory);
+    let views = results.map(|(_, _, view)| view);
 
     Ok((images, memories, views))
 }
@@ -528,9 +532,9 @@ impl Renderer {
         unsafe {
             self.device.destroy_sampler(texture.sampler, None);
             self.device.destroy_image_view(texture.image_view, None);
-            if texture.image_memory != vk::DeviceMemory::null() {
+            if let Some(memory) = texture.image_memory {
                 self.device.destroy_image(texture.image, None);
-                self.device.free_memory(texture.image_memory, None);
+                self.device.free_memory(memory, None);
             }
         }
     }
@@ -611,7 +615,7 @@ impl Renderer {
         let texture = texture::Texture {
             source_file_name: "storage_texture_sampled_alias".to_string(),
             image: st.image,
-            image_memory: vk::DeviceMemory::null(), // owned by storage texture, not this alias
+            image_memory: None, // owned by storage texture, not this alias
             image_view,
             sampler,
             mip_levels: 1,
@@ -3997,7 +4001,7 @@ fn create_texture(
     Ok(Texture {
         source_file_name,
         image: texture_image,
-        image_memory: texture_image_memory,
+        image_memory: Some(texture_image_memory),
         mip_levels,
         image_view: texture_image_view,
         sampler: texture_sampler,

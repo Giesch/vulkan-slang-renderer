@@ -152,23 +152,26 @@ fn create_picking_images(
         msaa_samples: vk::SampleCountFlags::TYPE_1,
     };
 
-    let mut images = [vk::Image::null(); MAX_FRAMES_IN_FLIGHT];
-    let mut memories = [vk::DeviceMemory::null(); MAX_FRAMES_IN_FLIGHT];
-    let mut views = [vk::ImageView::null(); MAX_FRAMES_IN_FLIGHT];
+    let results: [_; MAX_FRAMES_IN_FLIGHT] = (0..MAX_FRAMES_IN_FLIGHT)
+        .map(|_| -> anyhow::Result<_> {
+            let (image, memory) =
+                create_vk_image(instance, device, physical_device, image_options)?;
+            let view = create_image_view(
+                device,
+                image,
+                PICKING_FORMAT,
+                vk::ImageAspectFlags::COLOR,
+                1,
+            )?;
+            Ok((image, memory, view))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .unwrap();
 
-    for i in 0..MAX_FRAMES_IN_FLIGHT {
-        let (image, memory) = create_vk_image(instance, device, physical_device, image_options)?;
-        let view = create_image_view(
-            device,
-            image,
-            PICKING_FORMAT,
-            vk::ImageAspectFlags::COLOR,
-            1,
-        )?;
-        images[i] = image;
-        memories[i] = memory;
-        views[i] = view;
-    }
+    let images = results.map(|(image, _, _)| image);
+    let memories = results.map(|(_, memory, _)| memory);
+    let views = results.map(|(_, _, view)| view);
 
     Ok((images, memories, views))
 }
@@ -209,26 +212,28 @@ fn create_picking_readback_buffers(
     ),
     anyhow::Error,
 > {
-    let mut buffers = [vk::Buffer::null(); MAX_FRAMES_IN_FLIGHT];
-    let mut memories = [vk::DeviceMemory::null(); MAX_FRAMES_IN_FLIGHT];
-    let mut mapped = [std::ptr::null_mut::<u32>(); MAX_FRAMES_IN_FLIGHT];
+    let results: [_; MAX_FRAMES_IN_FLIGHT] = (0..MAX_FRAMES_IN_FLIGHT)
+        .map(|_| -> anyhow::Result<_> {
+            let (buffer, memory) = create_memory_buffer(
+                instance,
+                device,
+                physical_device,
+                4, // sizeof(u32)
+                vk::BufferUsageFlags::TRANSFER_DST,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            )?;
 
-    for i in 0..MAX_FRAMES_IN_FLIGHT {
-        let (buffer, memory) = create_memory_buffer(
-            instance,
-            device,
-            physical_device,
-            4, // sizeof(u32)
-            vk::BufferUsageFlags::TRANSFER_DST,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        )?;
+            let ptr = unsafe { device.map_memory(memory, 0, 4, Default::default())? };
 
-        let ptr = unsafe { device.map_memory(memory, 0, 4, Default::default())? };
+            Ok((buffer, memory, ptr as *mut u32))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .unwrap();
 
-        buffers[i] = buffer;
-        memories[i] = memory;
-        mapped[i] = ptr as *mut u32;
-    }
+    let buffers = results.map(|(buffer, _, _)| buffer);
+    let memories = results.map(|(_, memory, _)| memory);
+    let mapped = results.map(|(_, _, ptr)| ptr);
 
     Ok((buffers, memories, mapped))
 }
