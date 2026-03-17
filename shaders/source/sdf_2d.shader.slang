@@ -3,6 +3,7 @@
 module sdf_2d;
 
 import fullscreen_triangle;
+import super_sample;
 
 // A partial Slang implementation of this blog post:
 // https://danielchasehooper.com/posts/code-animated-rick
@@ -27,26 +28,22 @@ FragInput vertMain(uint id : SV_VertexID) {
     return FragInput(fp.svPosition, pixel);
 }
 
+struct SDF2DSampler : ISuperSampler {
+    float2 pixel;
+    float2 res;
+    float time;
+
+    float3 sampleAtOffset(float2 subPixelOffset) {
+        let sampleCenter = ((2.0 * pixel + subPixelOffset) - res) / res.y;
+        return colorForPixel(sampleCenter, time);
+    }
+}
+
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
-    // based on the super-sampling at the end of this post
-    // https://danielchasehooper.com/posts/code-animated-rick
-    let res = params.resolution;
-
-    let rootSamples = 3; // 9 samples per pixel
-    var sum = float3(0.0);
-    for (int m = 0; m < rootSamples; m++) {
-        for (int n = 0; n < rootSamples; n++) {
-            let offset = (float2(m, n) + 0.5) / float(rootSamples);
-            let sampleCenter = ((2.0 * input.pixel + offset) - res) / res.y;
-            sum += colorForPixel(sampleCenter, params.time);
-        }
-    }
-
-    let sampleCount = rootSamples * rootSamples;
-    let averageColor = sum / float(sampleCount);
-
-    return float4(averageColor, 1.0);
+    let sampler = SDF2DSampler(input.pixel, params.resolution, params.time);
+    let color = superSample<SDF2DSampler, 3>(sampler);
+    return float4(color, 1.0);
 }
 
 func colorForPixel(pixel: float2, time: float) -> float3 {

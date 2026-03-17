@@ -6,6 +6,7 @@ import ray_march;
 import fullscreen_triangle;
 import ray_march_camera;
 import projection;
+import super_sample;
 
 ParameterBlock<RayMarchingParams> params;
 
@@ -36,6 +37,27 @@ FragInput vertMain(uint id : SV_VertexID) {
     return FragInput(fp.svPosition, fp.centeredCoords);
 }
 
+struct RayMarchSampler : ISuperSampler {
+    float2 centeredCoords;
+    float2 pixelSize;
+    RayMarchWorld world;
+    RayMarchCamera camera;
+    float3 lightPosition;
+
+    float3 sampleAtOffset(float2 subPixelOffset) {
+        let offset = (subPixelOffset - 0.5) * pixelSize;
+        let coords = centeredCoords + offset;
+        let rayDirection = camera.rayDirection(coords);
+        return rayMarch(
+            world,
+            camera.position,
+            rayDirection,
+            lightPosition,
+            lightColor
+        );
+    }
+}
+
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
     let world = RayMarchWorld(
@@ -45,30 +67,15 @@ float4 fragMain(FragInput input) : SV_Target {
         params.boxCount
     );
 
-    // super-sampling
-    let rootSamples = 3; // 9 samples per pixel
-    let pixelSize = 1.0 / params.resolution;
-    var sum = float3(0.0);
-
-    [ForceUnroll]
-    for (int m = 0; m < rootSamples; m++) {
-        [ForceUnroll]
-        for (int n = 0; n < rootSamples; n++) {
-            let offset = ((float2(m, n) + 0.5) / float(rootSamples) - 0.5) * pixelSize;
-            let coords = input.centeredCoords + offset;
-            let rayDirection = params.camera.rayDirection(coords);
-            sum += rayMarch(
-                world,
-                params.camera.position,
-                rayDirection,
-                params.lightPosition,
-                lightColor
-            );
-        }
-    }
-
-    let sampleCount = rootSamples * rootSamples;
-    return float4(sum / float(sampleCount), 1.0);
+    let sampler = RayMarchSampler(
+        input.centeredCoords,
+        1.0 / params.resolution,
+        world,
+        params.camera,
+        params.lightPosition
+    );
+    let color = superSample<RayMarchSampler, 3>(sampler);
+    return float4(color, 1.0);
 }
 
 struct RayMarchWorld : IRayMarchWorld {
