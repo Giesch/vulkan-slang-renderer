@@ -42,11 +42,21 @@ impl TextureStorage {
     }
 }
 
+/// Describes whether a texture owns its underlying image and device memory,
+/// or is a non-owning alias of an image owned by another resource (e.g. a StorageTexture).
+pub(super) enum ImageOwnership {
+    /// This texture owns the image and memory, and must free them on destroy.
+    Owned(vk::DeviceMemory),
+    /// This texture aliases an image owned by another resource. Only the view
+    /// and sampler should be destroyed.
+    Aliased,
+}
+
 pub(super) struct Texture {
     #[cfg_attr(not(debug_assertions), expect(unused))]
     pub(super) source_file_name: String,
     pub(super) image: vk::Image,
-    pub(super) image_memory: Option<vk::DeviceMemory>,
+    pub(super) image_ownership: ImageOwnership,
     pub(super) image_view: vk::ImageView,
     pub(super) sampler: vk::Sampler,
     #[expect(unused)] // currently unused after init

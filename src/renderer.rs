@@ -532,7 +532,7 @@ impl Renderer {
         unsafe {
             self.device.destroy_sampler(texture.sampler, None);
             self.device.destroy_image_view(texture.image_view, None);
-            if let Some(memory) = texture.image_memory {
+            if let texture::ImageOwnership::Owned(memory) = texture.image_ownership {
                 self.device.destroy_image(texture.image, None);
                 self.device.free_memory(memory, None);
             }
@@ -615,7 +615,7 @@ impl Renderer {
         let texture = texture::Texture {
             source_file_name: "storage_texture_sampled_alias".to_string(),
             image: st.image,
-            image_memory: None, // owned by storage texture, not this alias
+            image_ownership: texture::ImageOwnership::Aliased,
             image_view,
             sampler,
             mip_levels: 1,
@@ -4001,7 +4001,7 @@ fn create_texture(
     Ok(Texture {
         source_file_name,
         image: texture_image,
-        image_memory: Some(texture_image_memory),
+        image_ownership: texture::ImageOwnership::Owned(texture_image_memory),
         mip_levels,
         image_view: texture_image_view,
         sampler: texture_sampler,
