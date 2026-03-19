@@ -1,7 +1,7 @@
 #+title: Todo
 
 * Now
-- [ ] implement watercolor paper
+- [-] implement watercolor paper
   - bug fixes / additions
     - [ ] edge darkening
       the current problem seems to be that we have no divergence at the edges of the wet mask
@@ -9,9 +9,9 @@
     - [ ] try out other paper textures
       particularly the gridlike ones from figure 4
 
-  - [ ] implement a basic painting program
-    - [ ] understand and refactor
-      - [ ] usage of `image_memory: vk::DeviceMemory::null()`
+  - [-] implement a basic painting program
+    - [-] understand and refactor
+      - [X] usage of `image_memory: vk::DeviceMemory::null()`
         for an alias that doesn't own the image memory
         is there a way to avoid that? is it a problem?
       - [ ] review all of the watercolor example

@@ -42,8 +42,10 @@ pub struct EditState {
 #[derive(Default, Clone, Copy, Facet)]
 #[repr(u32)]
 enum DebugView {
+    /// The view of the actual painting
     #[default]
     Pigments = 0,
+    /// The debug view of wet areas as white and dry areas as black
     WetAreaMask = 1,
 }
 
@@ -52,12 +54,11 @@ const FRAME_HISTORY_SIZE: usize = 60;
 const CANVAS_WIDTH: u32 = 2048;
 const CANVAS_HEIGHT: u32 = 1536;
 const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
+/// The number of times to dispatch the water pressure compute shader
+/// higher = less divergence & more accurate water pressure
 const JACOBI_ITERATIONS: u32 = 2;
 // NOTE this must be even for correctness when reading pressure in later stages
 const _: () = assert!(JACOBI_ITERATIONS % 2 == 0);
-const SIM_STEPS_PER_FRAME: u32 = 1;
-
-const WORKGROUP_SIZE: u32 = 16;
 
 // Simulation parameters
 const DT: f32 = 0.5;
@@ -79,40 +80,45 @@ struct PingPong {
 }
 
 impl PingPong {
-    fn read(&self, parity: bool) -> &TextureHandle {
+    fn read_sampled(&self, parity: bool) -> &TextureHandle {
         &self.sampled[parity as usize]
     }
-    fn write(&self, parity: bool) -> &StorageTextureHandle {
+
+    fn write_storage(&self, parity: bool) -> &StorageTextureHandle {
         &self.storage[!parity as usize]
     }
+
     fn read_storage(&self, parity: bool) -> &StorageTextureHandle {
         &self.storage[parity as usize]
     }
 }
 
 fn create_ping_pong(renderer: &mut Renderer, format: vk::Format) -> anyhow::Result<PingPong> {
-    let s0 = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, format)?;
-    let s1 = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, format)?;
-    renderer.clear_storage_texture(&s0, [0.0, 0.0, 0.0, 0.0])?;
-    renderer.clear_storage_texture(&s1, [0.0, 0.0, 0.0, 0.0])?;
-    let t0 = renderer.storage_texture_as_sampled(&s0)?;
-    let t1 = renderer.storage_texture_as_sampled(&s1)?;
+    let storage_0 = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, format)?;
+    let storage_1 = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, format)?;
+
+    renderer.clear_storage_texture(&storage_0, [0.0, 0.0, 0.0, 0.0])?;
+    renderer.clear_storage_texture(&storage_1, [0.0, 0.0, 0.0, 0.0])?;
+
+    let sampled_0 = renderer.storage_texture_as_sampled(&storage_0)?;
+    let sampled_1 = renderer.storage_texture_as_sampled(&storage_1)?;
+
     Ok(PingPong {
-        storage: [s0, s1],
-        sampled: [t0, t1],
+        storage: [storage_0, storage_1],
+        sampled: [sampled_0, sampled_1],
     })
 }
 
 fn create_deposit_texture(
     renderer: &mut Renderer,
 ) -> anyhow::Result<(StorageTextureHandle, TextureHandle)> {
-    let storage = renderer.create_storage_texture(
-        CANVAS_WIDTH,
-        CANVAS_HEIGHT,
-        vk::Format::R32G32B32A32_SFLOAT,
-    )?;
+    let signed_rgba = vk::Format::R32G32B32A32_SFLOAT;
+    let storage = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, signed_rgba)?;
+
     renderer.clear_storage_texture(&storage, [0.0, 0.0, 0.0, 0.0])?;
+
     let sampled = renderer.storage_texture_as_sampled(&storage)?;
+
     Ok((storage, sampled))
 }
 
@@ -193,6 +199,29 @@ struct Watercolor {
     frame_times: VecDeque<Duration>,
 }
 
+/// Compute the number of workgroups needed to cover the canvas for a given shader's workgroup size.
+fn workgroups(wg_size: [u32; 3]) -> (u32, u32) {
+    (
+        (CANVAS_WIDTH + wg_size[0] - 1) / wg_size[0],
+        (CANVAS_HEIGHT + wg_size[1] - 1) / wg_size[1],
+    )
+}
+
+/// Map a mouse position (in window coordinates) to canvas coordinates using crop-to-fill scaling.
+///
+/// Each axis is transformed by scaling its normalized coordinate around the center (0.5):
+///   canvas_coord = ((mouse / window - 0.5) * scale + 0.5) * canvas_size
+///
+/// The axis that fills the window maps 1:1 (scale = 1.0), while the cropped axis is
+/// compressed toward center (scale < 1.0). Clamping keeps the result within canvas bounds
+/// when the mouse is in the cropped region.
+fn window_to_canvas(position: Vec2, window_size: Vec2, canvas_size: Vec2) -> Vec2 {
+    let ratio = (window_size.x * canvas_size.y) / (window_size.y * canvas_size.x);
+    let scale = Vec2::new(ratio.min(1.0), (1.0 / ratio).min(1.0));
+    let normalized = position / window_size;
+    (((normalized - 0.5) * scale + 0.5) * canvas_size).clamp(Vec2::ZERO, canvas_size)
+}
+
 fn compute_barrier(renderer: &mut FrameRenderer) {
     renderer.memory_barrier(
         vk::PipelineStageFlags::COMPUTE_SHADER,
@@ -224,12 +253,14 @@ struct PigmentData {
     // Kubelka-Munk K/S values (absorption/scattering, Section 5.1)
     absorption: Vec3,
     scattering: Vec3,
+
     // Physical properties (ρ, ω, γ)
     density: f32,
     staining_power: f32,
     granulation: f32,
 }
 
+// Pigment data from Curtis et al. "Computer-Generated Watercolor" Figure 5 (a-l)
 const PIGMENT_TABLE: [PigmentData; 12] = [
     // a: Quinacridone Rose
     PigmentData {
@@ -332,6 +363,7 @@ const PIGMENT_TABLE: [PigmentData; 12] = [
 impl Pigment {
     fn km(self) -> paint_display::PigmentKM {
         let d = &PIGMENT_TABLE[self as usize];
+
         paint_display::PigmentKM {
             absorption: d.absorption,
             _padding_0: Default::default(),
@@ -481,13 +513,13 @@ impl Game for Watercolor {
             renderer.create_compute_pipeline(
                 shaders.wc_update_velocity_compute.pipeline_config(
                     wc_update_velocity_compute::Resources {
-                        u_in: velocity_u.read(false),
-                        v_in: velocity_v.read(false),
-                        pressure: pressure.read(false),
+                        u_in: velocity_u.read_sampled(false),
+                        v_in: velocity_v.read_sampled(false),
+                        pressure: pressure.read_sampled(false),
                         paper_height: &paper_height_sampled,
-                        wet_mask: wet_mask.read(false),
-                        u_out: velocity_u.write(false),
-                        v_out: velocity_v.write(false),
+                        wet_mask: wet_mask.read_sampled(false),
+                        u_out: velocity_u.write_storage(false),
+                        v_out: velocity_v.write_storage(false),
                         params_buffer: &update_vel_params_buffer,
                     },
                 ),
@@ -498,13 +530,13 @@ impl Game for Watercolor {
                 renderer.create_compute_pipeline(
                     shaders2.wc_update_velocity_compute.pipeline_config(
                         wc_update_velocity_compute::Resources {
-                            u_in: velocity_u.read(true),
-                            v_in: velocity_v.read(true),
-                            pressure: pressure.read(false), // pressure always at index 0
+                            u_in: velocity_u.read_sampled(true),
+                            v_in: velocity_v.read_sampled(true),
+                            pressure: pressure.read_sampled(false), // pressure always at index 0
                             paper_height: &paper_height_sampled,
-                            wet_mask: wet_mask.read(true),
-                            u_out: velocity_u.write(true),
-                            v_out: velocity_v.write(true),
+                            wet_mask: wet_mask.read_sampled(true),
+                            u_out: velocity_u.write_storage(true),
+                            v_out: velocity_v.write_storage(true),
                             params_buffer: &update_vel_params_buffer,
                         },
                     ),
@@ -519,16 +551,16 @@ impl Game for Watercolor {
             [
                 renderer.create_compute_pipeline(s0.wc_divergence_compute.pipeline_config(
                     wc_divergence_compute::Resources {
-                        u_in: velocity_u.read(true), // after vel flip
-                        v_in: velocity_v.read(true),
+                        u_in: velocity_u.read_sampled(true), // after vel flip
+                        v_in: velocity_v.read_sampled(true),
                         divergence: &divergence,
                         params_buffer: &divergence_params_buffer,
                     },
                 ))?,
                 renderer.create_compute_pipeline(s1.wc_divergence_compute.pipeline_config(
                     wc_divergence_compute::Resources {
-                        u_in: velocity_u.read(false),
-                        v_in: velocity_v.read(false),
+                        u_in: velocity_u.read_sampled(false),
+                        v_in: velocity_v.read_sampled(false),
                         divergence: &divergence,
                         params_buffer: &divergence_params_buffer,
                     },
@@ -543,17 +575,17 @@ impl Game for Watercolor {
             [
                 renderer.create_compute_pipeline(s0.wc_pressure_jacobi_compute.pipeline_config(
                     wc_pressure_jacobi_compute::Resources {
-                        pressure_in: pressure.read(false),
+                        pressure_in: pressure.read_sampled(false),
                         divergence: &divergence_sampled,
-                        pressure_out: pressure.write(false),
+                        pressure_out: pressure.write_storage(false),
                         params_buffer: &pressure_jacobi_params_buffer,
                     },
                 ))?,
                 renderer.create_compute_pipeline(s1.wc_pressure_jacobi_compute.pipeline_config(
                     wc_pressure_jacobi_compute::Resources {
-                        pressure_in: pressure.read(true),
+                        pressure_in: pressure.read_sampled(true),
                         divergence: &divergence_sampled,
-                        pressure_out: pressure.write(true),
+                        pressure_out: pressure.write_storage(true),
                         params_buffer: &pressure_jacobi_params_buffer,
                     },
                 ))?,
@@ -570,8 +602,8 @@ impl Game for Watercolor {
                         wc_project_velocity_compute::Resources {
                             u: velocity_u.read_storage(true),
                             v: velocity_v.read_storage(true),
-                            pressure: pressure.read(false),
-                            wet_mask: wet_mask.read(false),
+                            pressure: pressure.read_sampled(false),
+                            wet_mask: wet_mask.read_sampled(false),
                             params_buffer: &project_vel_params_buffer,
                         },
                     ),
@@ -581,8 +613,8 @@ impl Game for Watercolor {
                         wc_project_velocity_compute::Resources {
                             u: velocity_u.read_storage(false),
                             v: velocity_v.read_storage(false),
-                            pressure: pressure.read(false),
-                            wet_mask: wet_mask.read(true),
+                            pressure: pressure.read_sampled(false),
+                            wet_mask: wet_mask.read_sampled(true),
                             params_buffer: &project_vel_params_buffer,
                         },
                     ),
@@ -597,14 +629,14 @@ impl Game for Watercolor {
             [
                 renderer.create_compute_pipeline(s0.wc_gaussian_blur_compute.pipeline_config(
                     wc_gaussian_blur_compute::Resources {
-                        input_tex: wet_mask.read(false),
+                        input_tex: wet_mask.read_sampled(false),
                         output_tex: &blur_temp,
                         params_buffer: &blur_h_params_buffer,
                     },
                 ))?,
                 renderer.create_compute_pipeline(s1.wc_gaussian_blur_compute.pipeline_config(
                     wc_gaussian_blur_compute::Resources {
-                        input_tex: wet_mask.read(true),
+                        input_tex: wet_mask.read_sampled(true),
                         output_tex: &blur_temp,
                         params_buffer: &blur_h_params_buffer,
                     },
@@ -622,7 +654,7 @@ impl Game for Watercolor {
                     s0.wc_blur_v_and_flow_outward_compute.pipeline_config(
                         wc_blur_v_and_flow_outward_compute::Resources {
                             input_tex: &blur_temp_sampled,
-                            wet_mask: wet_mask.read(false),
+                            wet_mask: wet_mask.read_sampled(false),
                             pressure: pressure.read_storage(false),
                             saturation: saturation.read_storage(false),
                             params_buffer: &blur_v_and_flow_params_buffer,
@@ -633,7 +665,7 @@ impl Game for Watercolor {
                     s1.wc_blur_v_and_flow_outward_compute.pipeline_config(
                         wc_blur_v_and_flow_outward_compute::Resources {
                             input_tex: &blur_temp_sampled,
-                            wet_mask: wet_mask.read(true),
+                            wet_mask: wet_mask.read_sampled(true),
                             pressure: pressure.read_storage(false),
                             saturation: saturation.read_storage(true),
                             params_buffer: &blur_v_and_flow_params_buffer,
@@ -656,16 +688,16 @@ impl Game for Watercolor {
                     pipelines.push(renderer.create_compute_pipeline(
                         s.wc_advect_and_transfer_pigment_compute.pipeline_config(
                             wc_advect_and_transfer_pigment_compute::Resources {
-                                pigment_in_0_3: pigment_0_3.read(sim),
-                                pigment_in_4_7: pigment_4_7.read(sim),
-                                pigment_in_8_11: pigment_8_11.read(sim),
-                                u_in: velocity_u.read(sim),
-                                v_in: velocity_v.read(sim),
-                                wet_mask: wet_mask.read(sim),
+                                pigment_in_0_3: pigment_0_3.read_sampled(sim),
+                                pigment_in_4_7: pigment_4_7.read_sampled(sim),
+                                pigment_in_8_11: pigment_8_11.read_sampled(sim),
+                                u_in: velocity_u.read_sampled(sim),
+                                v_in: velocity_v.read_sampled(sim),
+                                wet_mask: wet_mask.read_sampled(sim),
                                 paper_height: &paper_height_sampled,
-                                pigment_out_0_3: pigment_0_3.write(sim),
-                                pigment_out_4_7: pigment_4_7.write(sim),
-                                pigment_out_8_11: pigment_8_11.write(sim),
+                                pigment_out_0_3: pigment_0_3.write_storage(sim),
+                                pigment_out_4_7: pigment_4_7.write_storage(sim),
+                                pigment_out_8_11: pigment_8_11.write_storage(sim),
                                 deposit_in_0_3: &deposit_0_3_sampled[dep_read],
                                 deposit_in_4_7: &deposit_4_7_sampled[dep_read],
                                 deposit_in_8_11: &deposit_8_11_sampled[dep_read],
@@ -693,21 +725,21 @@ impl Game for Watercolor {
             [
                 renderer.create_compute_pipeline(s0.wc_capillary_flow_compute.pipeline_config(
                     wc_capillary_flow_compute::Resources {
-                        saturation_in: saturation.read(false),
-                        wet_mask_in: wet_mask.read(false),
+                        saturation_in: saturation.read_sampled(false),
+                        wet_mask_in: wet_mask.read_sampled(false),
                         paper_height: &paper_height_sampled,
-                        saturation_out: saturation.write(false),
-                        wet_mask_out: wet_mask.write(false),
+                        saturation_out: saturation.write_storage(false),
+                        wet_mask_out: wet_mask.write_storage(false),
                         params_buffer: &capillary_flow_params_buffer,
                     },
                 ))?,
                 renderer.create_compute_pipeline(s1.wc_capillary_flow_compute.pipeline_config(
                     wc_capillary_flow_compute::Resources {
-                        saturation_in: saturation.read(true),
-                        wet_mask_in: wet_mask.read(true),
+                        saturation_in: saturation.read_sampled(true),
+                        wet_mask_in: wet_mask.read_sampled(true),
                         paper_height: &paper_height_sampled,
-                        saturation_out: saturation.write(true),
-                        wet_mask_out: wet_mask.write(true),
+                        saturation_out: saturation.write_storage(true),
+                        wet_mask_out: wet_mask.write_storage(true),
                         params_buffer: &capillary_flow_params_buffer,
                     },
                 ))?,
@@ -729,7 +761,7 @@ impl Game for Watercolor {
                             deposit_4_7: &deposit_4_7_sampled[dep_read],
                             deposit_8_11: &deposit_8_11_sampled[dep_read],
                             paper_height: &paper_height_sampled,
-                            wet_mask: wet_mask.read(wm),
+                            wet_mask: wet_mask.read_sampled(wm),
                             display_params_buffer: &display_params_buffer,
                         },
                     ))?);
@@ -888,8 +920,6 @@ impl Game for Watercolor {
 
     fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
         renderer.enable_pipelined_compute();
-        let workgroup_x = (CANVAS_WIDTH + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
-        let workgroup_y = (CANVAS_HEIGHT + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
 
         let stroke_points = std::mem::take(&mut self.stroke_points);
         let point_count = stroke_points
@@ -898,102 +928,80 @@ impl Game for Watercolor {
 
         // 1. Brush input
         if point_count > 0 {
-            renderer.dispatch(
-                &self.brush_pipelines[self.sim_parity as usize],
-                workgroup_x,
-                workgroup_y,
-                1,
-            );
+            let (wx, wy) = workgroups(paint_brush_compute::WORKGROUP_SIZE);
+            renderer.dispatch(&self.brush_pipelines[self.sim_parity as usize], wx, wy, 1);
             compute_barrier(&mut renderer);
         }
 
-        for _step in 0..SIM_STEPS_PER_FRAME {
-            let sim = self.sim_parity;
+        let sim = self.sim_parity;
 
-            // 2. Update velocity (advection + forces)
-            renderer.dispatch(
-                &self.update_velocity_pipelines[sim as usize],
-                workgroup_x,
-                workgroup_y,
-                1,
-            );
+        // 2. Update velocity (advection + forces)
+        {
+            let (wx, wy) = workgroups(wc_update_velocity_compute::WORKGROUP_SIZE);
+            renderer.dispatch(&self.update_velocity_pipelines[sim as usize], wx, wy, 1);
             compute_barrier(&mut renderer);
+        }
 
-            // 3. Divergence (reads velocity after update)
-            renderer.dispatch(
-                &self.divergence_pipelines[sim as usize],
-                workgroup_x,
-                workgroup_y,
-                1,
-            );
+        // 3. Divergence (reads velocity after update)
+        {
+            let (wx, wy) = workgroups(wc_divergence_compute::WORKGROUP_SIZE);
+            renderer.dispatch(&self.divergence_pipelines[sim as usize], wx, wy, 1);
             compute_barrier(&mut renderer);
+        }
 
-            // 4. Pressure Jacobi iterations (ping-pong pressure)
+        // 4. Pressure Jacobi iterations (ping-pong pressure)
+        {
+            let (wx, wy) = workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE);
             for _ in 0..JACOBI_ITERATIONS {
                 let p_idx = self.pressure_parity as usize;
-                renderer.dispatch(
-                    &self.pressure_jacobi_pipelines[p_idx],
-                    workgroup_x,
-                    workgroup_y,
-                    1,
-                );
+                renderer.dispatch(&self.pressure_jacobi_pipelines[p_idx], wx, wy, 1);
                 self.pressure_parity = !self.pressure_parity;
                 compute_barrier(&mut renderer);
             }
+        }
 
-            // 5. Project velocity
-            renderer.dispatch(
-                &self.project_velocity_pipelines[sim as usize],
-                workgroup_x,
-                workgroup_y,
-                1,
-            );
+        // 5. Project velocity
+        {
+            let (wx, wy) = workgroups(wc_project_velocity_compute::WORKGROUP_SIZE);
+            renderer.dispatch(&self.project_velocity_pipelines[sim as usize], wx, wy, 1);
             // No barrier needed: project velocity writes u/v, blur H reads wet_mask — no hazard
+        }
 
-            // 6. Gaussian blur H (wet_mask → blur_temp)
-            renderer.dispatch(
-                &self.blur_h_pipelines[sim as usize],
-                workgroup_x,
-                workgroup_y,
-                1,
-            );
-            compute_barrier(&mut renderer);
-
-            // 7. Blur V + Flow outward (fused: vertical blur of blur_temp → flow formula into pressure)
-            renderer.dispatch(
-                &self.blur_v_and_flow_pipelines[sim as usize],
-                workgroup_x,
-                workgroup_y,
-                1,
-            );
-            compute_barrier(&mut renderer);
-
-            // 9. Advect + transfer pigment (combined)
-            let advect_idx = sim as usize * 2 + self.deposit_parity as usize;
-            renderer.dispatch(
-                &self.advect_and_transfer_pipelines[advect_idx],
-                workgroup_x,
-                workgroup_y,
-                1,
-            );
-            compute_barrier(&mut renderer);
-
-            // 10. Capillary flow (saturation + wet_mask at sim → writes to !sim)
-            renderer.dispatch(
-                &self.capillary_flow_pipelines[sim as usize],
-                workgroup_x,
-                workgroup_y,
-                1,
-            );
-
-            // Flip simulation parity
-            self.sim_parity = !self.sim_parity;
-            self.deposit_parity = !self.deposit_parity;
-
-            // Pipelined: graphics reads previous frame's results, so no compute→frag
-            // barrier needed. A compute→compute barrier suffices for next frame's reads.
+        // 6. Gaussian blur H (wet_mask → blur_temp)
+        {
+            let (wx, wy) = workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE);
+            renderer.dispatch(&self.blur_h_pipelines[sim as usize], wx, wy, 1);
             compute_barrier(&mut renderer);
         }
+
+        // 7. Blur V + Flow outward (fused: vertical blur of blur_temp → flow formula into pressure)
+        {
+            let (wx, wy) = workgroups(wc_blur_v_and_flow_outward_compute::WORKGROUP_SIZE);
+            renderer.dispatch(&self.blur_v_and_flow_pipelines[sim as usize], wx, wy, 1);
+            compute_barrier(&mut renderer);
+        }
+
+        // 9. Advect + transfer pigment (combined)
+        {
+            let (wx, wy) = workgroups(wc_advect_and_transfer_pigment_compute::WORKGROUP_SIZE);
+            let advect_idx = sim as usize * 2 + self.deposit_parity as usize;
+            renderer.dispatch(&self.advect_and_transfer_pipelines[advect_idx], wx, wy, 1);
+            compute_barrier(&mut renderer);
+        }
+
+        // 10. Capillary flow (saturation + wet_mask at sim → writes to !sim)
+        {
+            let (wx, wy) = workgroups(wc_capillary_flow_compute::WORKGROUP_SIZE);
+            renderer.dispatch(&self.capillary_flow_pipelines[sim as usize], wx, wy, 1);
+        }
+
+        // Flip simulation parity
+        self.sim_parity = !self.sim_parity;
+        self.deposit_parity = !self.deposit_parity;
+
+        // Pipelined: graphics reads previous frame's results, so no compute→frag
+        // barrier needed. A compute→compute barrier suffices for next frame's reads.
+        compute_barrier(&mut renderer);
 
         // 12. Display
         let grid_size = Vec2::new(CANVAS_WIDTH as f32, CANVAS_HEIGHT as f32);
@@ -1023,31 +1031,8 @@ impl Game for Watercolor {
                 let gpu_points: Vec<paint_brush_compute::StrokePoint> = stroke_points
                     [..point_count as usize]
                     .iter()
-                    .map(|&position| {
-                        // Map mouse position to canvas coordinates (crop mode)
-                        let canvas_aspect = grid_size.x / grid_size.y;
-                        let window_aspect = window_size.x / window_size.y;
-
-                        let canvas_pos = if window_aspect > canvas_aspect {
-                            // Window wider: top/bottom cropped
-                            let scale = canvas_aspect / window_aspect;
-                            Vec2::new(
-                                (position.x / window_size.x * grid_size.x).clamp(0.0, grid_size.x),
-                                (((position.y / window_size.y - 0.5) * scale + 0.5) * grid_size.y)
-                                    .clamp(0.0, grid_size.y),
-                            )
-                        } else {
-                            // Window taller: left/right cropped
-                            let scale = window_aspect / canvas_aspect;
-                            Vec2::new(
-                                (((position.x / window_size.x - 0.5) * scale + 0.5) * grid_size.x)
-                                    .clamp(0.0, grid_size.x),
-                                (position.y / window_size.y * grid_size.y).clamp(0.0, grid_size.y),
-                            )
-                        };
-                        paint_brush_compute::StrokePoint {
-                            position: canvas_pos,
-                        }
+                    .map(|&position| paint_brush_compute::StrokePoint {
+                        position: window_to_canvas(position, window_size, grid_size),
                     })
                     .collect();
 
