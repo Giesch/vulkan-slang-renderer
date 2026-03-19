@@ -27,7 +27,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 pub struct SDF2DParams {
     pub resolution: glam::Vec2,
     pub time: f32,
-    pub _padding_0: [u8; 4],
+    pub beat_proximity: f32,
 }
 
 impl GPUWrite for SDF2DParams {}

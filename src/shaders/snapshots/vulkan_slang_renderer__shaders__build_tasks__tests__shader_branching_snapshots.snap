@@ -22,7 +22,7 @@ particle_render.vert.spv: 0
 particles.comp.spv: 4
 ray_marching.frag.spv: 32
 ray_marching.vert.spv: 0
-sdf_2d.frag.spv: 2
+sdf_2d.frag.spv: 4
 sdf_2d.vert.spv: 0
 serenity_crt.frag.spv: 9
 serenity_crt.vert.spv: 0

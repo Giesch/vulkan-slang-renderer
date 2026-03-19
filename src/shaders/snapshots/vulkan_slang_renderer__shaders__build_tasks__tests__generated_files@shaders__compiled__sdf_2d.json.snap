@@ -35,6 +35,16 @@ info:
               "size": 4
             },
             "scalarType": "float32"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "beat_proximity",
+            "binding": {
+              "kind": "uniform",
+              "offset": 12,
+              "size": 4
+            },
+            "scalarType": "float32"
           }
         ]
       }
