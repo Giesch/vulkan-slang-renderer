@@ -135,3 +135,9 @@ clean-slang:
       . ./scripts/load-env.ps1; \
       Remove-Item -Recurse -Force slang/build; \
     }
+
+
+# write *.beats.json assets based on automatically extracted timestamps
+[unix]
+beats:
+    ./scripts/extract_beats.py './audio/'

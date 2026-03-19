@@ -47,9 +47,9 @@ float4 fragMain(FragInput input) : SV_Target {
 }
 
 func colorForPixel(pixel: float2, time: float) -> float3 {
-    // return pastelCircles(pixel, time);
+    return pastelCircles(pixel + float2(0.7, 1.0), time);
 
-    // return somePrimitives(pixel, time);
+    return somePrimitives((pixel + float2(1.0)) * 1.75, time);
 
     return panningCircles(pixel, time);
 }
@@ -107,7 +107,7 @@ func panningCircles(pixel: float2, time: float) -> float3 {
     let tiledPixel = fmod(pixel + time + screenWidth, tileWidth);
     let radius = tileWidth / 2.0 - tileWidth / 10.0;
 
-    let warpingAnimation = true;
+    let warpingAnimation = false;
     if (warpingAnimation) {
         let warpStrength = lerp(0.0, 0.25, sin(time * 20.0) - 1.0);
         let warpedTiledPixel = warp(tiledPixel, 4.0, warpStrength);
