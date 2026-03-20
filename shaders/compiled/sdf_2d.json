@@ -33,7 +33,7 @@
           },
           {
             "kind": "scalar",
-            "fieldName": "beat_proximity",
+            "fieldName": "beatProximity",
             "binding": {
               "kind": "uniform",
               "offset": 12,

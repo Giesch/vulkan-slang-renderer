@@ -13,7 +13,7 @@ ParameterBlock<SDF2DParams> params;
 struct SDF2DParams {
     float2 resolution;
     float time;
-    float beat_proximity;
+    float beatProximity;
 }
 
 struct FragInput {
@@ -111,7 +111,7 @@ func panningCircles(pixel: float2, time: float) -> float3 {
     let warpingAnimation = true;
     if (warpingAnimation) {
         // let warpStrength = lerp(0.0, 0.25, sin(time * 20.0) - 1.0);
-        let warpStrength = lerp(0.0, 0.25, params.beat_proximity);
+        let warpStrength = lerp(0.0, 0.25, params.beatProximity);
         let warpedTiledPixel = warp(tiledPixel, 4.0, warpStrength);
         if (circle(warpedTiledPixel - tileWidth / 2.0, radius) < 0) {
             return foreground;
