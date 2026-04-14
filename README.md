@@ -5,9 +5,9 @@ It's become an experiment in integrating [Slang](https://shader-slang.org/) and 
 
 The idea is to provide generated type-safe CPU bindings for an arbitrary slang shader, so you could have a workflow where both languages are hot reloaded and typechecked against each other. For now, I'm generating Rust (without hot reload), and many resource types aren't supported. In the future I'm hoping to target other languages as well. The renderer also has some other quality-of-life features like hot reloading shaders, and in-shader printf debugging.
 
-![Ray-marched Spheres](./screenshots/raymarch-spheres.png)
-![2D SDFs](./screenshots/2d-sdfs.png)
+![2D SDFs](./screenshots/sdf_demo.gif)
 ![Vulkan Tutorial Viking Room](./screenshots/viking-room.png)
+![Ray-marched Spheres](./screenshots/raymarch-spheres.png)
 
 ## setup
 

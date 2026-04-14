@@ -1,21 +1,10 @@
 #+title: Todo
 
 * Now
-- [-] implement watercolor paper
-  - bug fixes / additions
-    - [ ] edge darkening
-      the current problem seems to be that we have no divergence at the edges of the wet mask
-          while in Curtis they deliberately allow/add some
-    - [ ] try out other paper textures
-      particularly the gridlike ones from figure 4
+- [ ] review all of the watercolor example
 
-  - [-] implement a basic painting program
-    - [-] understand and refactor
-      - [X] usage of `image_memory: vk::DeviceMemory::null()`
-        for an alias that doesn't own the image memory
-        is there a way to avoid that? is it a problem?
-      - [ ] review all of the watercolor example
-      - [ ] review renderer changes for compute shaders
+- [ ] review renderer changes for compute shaders
+  expecially the set of 3 resources
 
 - [ ] FLAME GPU-based render graph
   strucutured solution for pipelined compute shader simulations
@@ -30,6 +19,13 @@
   - [ ] StructuredBuffer<float4> generated as StorageBufferHandle<Vec<f32>>
     want to push towards using structs anyways
     but generating Vec for float 1-4 is still just wrong
+
+- [ ] watercolor fixes / additions
+  - [ ] edge darkening
+    the current problem seems to be that we have no divergence at the edges of the wet mask
+        while in Curtis they deliberately allow/add some
+  - [ ] try out other paper textures
+    particularly the gridlike ones from figure 4
 
 - [ ] text support with MSDF fonts
   - read all the red blob games stuff
