@@ -56,8 +56,8 @@ const CANVAS_HEIGHT: u32 = 1536;
 const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
 /// The number of times to dispatch the water pressure compute shader
 /// higher = less divergence & more accurate water pressure
+/// must be even for correctness when reading pressure in later stages
 const JACOBI_ITERATIONS: u32 = 2;
-// NOTE this must be even for correctness when reading pressure in later stages
 const _: () = assert!(JACOBI_ITERATIONS % 2 == 0);
 
 // Simulation parameters
@@ -97,8 +97,8 @@ fn create_ping_pong(renderer: &mut Renderer, format: vk::Format) -> anyhow::Resu
     let storage_0 = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, format)?;
     let storage_1 = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, format)?;
 
-    renderer.clear_storage_texture(&storage_0, [0.0, 0.0, 0.0, 0.0])?;
-    renderer.clear_storage_texture(&storage_1, [0.0, 0.0, 0.0, 0.0])?;
+    renderer.clear_storage_texture(&storage_0)?;
+    renderer.clear_storage_texture(&storage_1)?;
 
     let sampled_0 = renderer.storage_texture_as_sampled(&storage_0)?;
     let sampled_1 = renderer.storage_texture_as_sampled(&storage_1)?;
@@ -115,7 +115,7 @@ fn create_deposit_texture(
     let signed_rgba = vk::Format::R32G32B32A32_SFLOAT;
     let storage = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, signed_rgba)?;
 
-    renderer.clear_storage_texture(&storage, [0.0, 0.0, 0.0, 0.0])?;
+    renderer.clear_storage_texture(&storage)?;
 
     let sampled = renderer.storage_texture_as_sampled(&storage)?;
 
@@ -433,12 +433,12 @@ impl Game for Watercolor {
 
         let divergence =
             renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
-        renderer.clear_storage_texture(&divergence, [0.0, 0.0, 0.0, 0.0])?;
+        renderer.clear_storage_texture(&divergence)?;
         let divergence_sampled = renderer.storage_texture_as_sampled(&divergence)?;
 
         let blur_temp =
             renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
-        renderer.clear_storage_texture(&blur_temp, [0.0, 0.0, 0.0, 0.0])?;
+        renderer.clear_storage_texture(&blur_temp)?;
         let blur_temp_sampled = renderer.storage_texture_as_sampled(&blur_temp)?;
 
         // Paper height map

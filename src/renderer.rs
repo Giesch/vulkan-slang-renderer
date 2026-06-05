@@ -627,11 +627,7 @@ impl Renderer {
         Ok(handle)
     }
 
-    pub fn clear_storage_texture(
-        &self,
-        handle: &StorageTextureHandle,
-        clear_color: [f32; 4],
-    ) -> anyhow::Result<()> {
+    pub fn clear_storage_texture(&self, handle: &StorageTextureHandle) -> anyhow::Result<()> {
         let st = self.storage_textures.get(handle);
 
         let command_buffer = begin_single_time_commands(&self.device, self.command_pool)?;
@@ -647,7 +643,7 @@ impl Renderer {
                 st.image,
                 vk::ImageLayout::GENERAL,
                 &vk::ClearColorValue {
-                    float32: clear_color,
+                    float32: Default::default(),
                 },
                 &[subresource_range],
             );

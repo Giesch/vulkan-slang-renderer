@@ -2,6 +2,11 @@
 
 * Now
 - [ ] review all of the watercolor example
+  - [ ] document canvas size literals
+    ie, this is deliberately oversized and hardcoded
+  - [ ] document simualtion parameters (ie, DT, MU, etc)
+  - [ ] factor out a module to handle ping-pong behavior?
+    or build it in as a renderer feature ala FLAME?
 
 - [ ] review renderer changes for compute shaders
   expecially the set of 3 resources
