@@ -141,3 +141,9 @@ clean-slang:
 [unix]
 beats:
     ./scripts/extract_beats.py './audio/'
+
+
+# extract Link assets from the tww disc image (needs ../tww; override with TWW_DIR)
+[unix]
+extract-link:
+    ./scripts/extract_link.sh
