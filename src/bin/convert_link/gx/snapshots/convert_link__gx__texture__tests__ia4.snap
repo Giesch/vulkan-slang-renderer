@@ -1,0 +1,8 @@
+---
+source: src/bin/convert_link/gx/texture.rs
+expression: "decode_ok(ImageFormat::Ia4, &[0x2F; 32], &[], 8, 4)"
+---
+ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22
+ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22
+ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22
+ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22 ffffff22

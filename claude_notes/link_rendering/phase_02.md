@@ -349,39 +349,86 @@ typed `GxEnum` error naming the field; truncate mid-image-data →
 
 ## Verification (exit checklist)
 
-- [ ] `just link-verify-textures`: 44/44 `OK`, zero pixels different
-- [ ] `just link-verify-mat3`: zero-line diff vs the gclib oracle
-- [ ] `just link-verify-p2` green end-to-end (includes real-file tests)
-- [ ] `mat3_dump.txt` subset summary reviewed; **frozen TEV subset** pasted
+- [x] `just link-verify-textures`: 44/44 `OK`, zero pixels different
+- [x] `just link-verify-mat3`: zero-line diff vs the gclib oracle
+- [x] `just link-verify-p2` green end-to-end (includes real-file tests;
+      48 tests total)
+- [x] `mat3_dump.txt` subset summary reviewed; **frozen TEV subset** pasted
       into Recorded facts; SRTG channel + tex-matrix questions (risk #5)
       answered from it
-- [ ] Ramp names confirmed and recorded (`ZBtoonEX` only; no `ZA*`)
-- [ ] `ear(2)`-style material naming explained and recorded
-- [ ] Both oracle scripts pinned to the recorded gclib commit; P1 gate still
-      green after pinning
-- [ ] Golden hashes of `assets/link/converted/tex/*` committed
-      (`scripts/link_converted.sha256`)
-- [ ] Tamper tests pass (typed errors, no panics)
-- [ ] `just test` green without extracted assets; `just lint` clean; no
-      `Cargo.toml` diff; `git status` clean, nothing under `assets/` staged
-- [ ] Recorded facts filled in
+- [x] Ramp names confirmed and recorded (`ZBtoonEX` only; no `ZA*`)
+- [x] `ear(2)`-style material naming explained and recorded (literal names
+      in the table; 11 distinct records via remap)
+- [x] All three oracle scripts pinned to the recorded gclib commit; P1 gate
+      re-verified after pinning
+- [x] Golden hashes committed (`scripts/link_converted.sha256`, includes
+      `mat3_dump.txt`)
+- [x] Tamper tests pass (typed errors, no panics): flipped TEX1 format byte
+      → `invalid ImageFormat value 0x7` naming the texture; flipped MAT3
+      pe_mode → `material ear: pixelEngineMode: invalid ... 0x3`; truncation
+      → P1's `SizeMismatch` (fires before any interior parse)
+- [x] `just test` green without extracted assets (real-file tests are
+      `#[ignore]` + skip-if-missing); `just lint` clean; no `Cargo.toml`
+      diff; nothing under `assets/` staged
+- [x] Recorded facts filled in
 
-## Recorded facts (fill in after gates pass)
+## Recorded facts
 
 ```
-texture inventory (verbatim from our parser, cross-checked vs gclib):
-...
+texture inventory (asserted in real_tex1_inventory; pixel gate 44/44 OK):
+41 TEX1 entries: CMPR ×14, I4 ×11, IA8 ×8, IA4 ×7, C8+RGB565 ×1 (hitomi, 64
+colors). All mipmapCount==1 (raw byte 1, not 0), all wrap Clamp/Clamp, all
+filters Linear/Linear. Duplicate names (two entries each): eyeh.1,
+linktexS3TC, mouthS3TC.1, podAS3TC, mayuh.1. Z-prefixed ramp slots: only
+ZBtoonEX (8×8 I4, entry 35) — no ZA* entry, so toon.bti is unused by cl.bdl.
+Standalone: toon.bti I4 256×8, toonex.bti CMPR 256×256, linktexbci4.bti
+C4+RGB565 160×96. Full per-entry table: sha-pinned PNGs/BTIs in
+scripts/link_converted.sha256.
 
 frozen TEV subset (verbatim subset summary from mat3_dump.txt):
-...
+== TEV subset summary (active slots only) ==
+pe_modes: Opaque, Translucent
+cull_modes: Cull_Back, Cull_None
+stage_counts: {1, 2, 3}
+color_inputs: C0, CPREV, KONST, RASC, TEXC, ZERO
+alpha_inputs: APREV, KONST, RASA, TEXA, ZERO
+color_ops: ADD
+alpha_ops: ADD
+biases: ZERO
+scales: SCALE_1
+dest_regs: PREV
+stages_with_clamp_off: 2
+konst_color_sels: K0, K1
+konst_alpha_sels: K0_A, K3_A
+ras_channels: COLOR0A0, COLOR_NULL
+texgens: (MTX2x4, TEX0, IDENTITY), (MTX2x4, TEX0, TEXMTX1), (SRTG, COLOR0, IDENTITY)
+non_identity_tex_matrices: 2
+channel_controls: (enable=false, mat=Register, amb=Register, diffuse=Clamp, attn=Spot, mask=0x02), (enable=false, mat=Register, amb=Register, diffuse=None_, attn=None_, mask=0x00), (enable=true, mat=Register, amb=Register, diffuse=Clamp, attn=Spot, mask=0x03), (enable=true, mat=Register, amb=Register, diffuse=Signed, attn=Specular, mask=0x00)
+z_modes: (test=false, func=Less_Equal, write=false), (test=true, func=Less_Equal, write=false), (test=true, func=Less_Equal, write=true)
+z_compare_loc: true
+blend_modes: (Blend, Destination_Alpha, Inverse_Destination_Alpha, COPY), (Blend, Source_Alpha, Inverse_Source_Alpha, COPY), (None_, One, Zero, COPY), (None_, Source_Alpha, Inverse_Source_Alpha, COPY)
+alpha_compares: (Always 0, OR, Always 0), (Greater 0, OR, Greater 0)
+fog_types: LINEAR (enabled on 0 materials)
+swap_modes_non_default: 24
+indirect_enabled: 0
 
-SRTG texgen answer (channel source, matrix): ...
-non-identity tex matrices present: yes/no (details): ...
-fog-enabled materials: ...
-material remap / duplicate-name explanation: ...
-intensity-format alpha semantics adjudication (if needed): ...
-gclib pin used by both oracles: ...
-golden-hash file commit: ...
+SRTG texgen answer (risk #5): SRTG from COLOR0 via IDENTITY — no texture
+matrix on the ramp path. One MTX2x4 texgen uses TEXMTX1 (2 non-identity
+tex matrices exist); inspect mat3_dump.txt when that material is wired.
+swap-table usage (in-subset): ras_sel always 0; tex_sel ∈ {0,1,2} selecting
+tables (0,1,2,3) identity, (0,0,0,3) RRR+A, (1,1,1,3) GGG+A — channel
+broadcasts for reading intensity-texture channels; 12 materials use them.
+fog-enabled materials: none (types declared LINEAR, all disabled).
+material remap / duplicate-name explanation: the MAT3 name table literally
+contains ear(2)..ear(8); the remap table is
+[0,1,2,3,1,4,3,0,5,6,7,5,6,7,8,9,10,0,0,0,0,0,0,0] — only 11 distinct
+0x14C records; face and all ear(N) slots share record 0, R-side eye/brow
+slots share the L-side records (J3D material instancing).
+intensity-format alpha semantics adjudication: none needed — A=I matched
+gclib on all 26 I4/IA4/IA8 textures (44/44 pixel gate).
+gclib pin used by all three oracle scripts (P1's too):
+1.0.0 @ 64127742467acb633d51685b9b1798ab45bb4034
+golden hashes: scripts/link_converted.sha256 (86 files: 85 tex/* + mat3_dump.txt)
 ```
 
 ## Out of scope for P2

@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Read(//home/danknutson/Projects/tww/**)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(grep:*)",
@@ -25,6 +26,8 @@
       "Bash(jq:*)",
       "Bash(INSTA_UPDATE=no cargo test:*)",
       "Bash(INSTA_UPDATE=always cargo test:*)",
+      "Bash(INSTA_UPDATE=new cargo test:*)",
+      "Bash(cargo run *)",
       "WebSearch",
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:crates.io)",
@@ -36,16 +39,13 @@
       "WebFetch(domain:danielchasehooper.com)",
       "WebFetch(domain:vulkan-tutorial.com)",
       "WebFetch(domain:grail.cs.washington.edu)",
-      "Bash(INSTA_UPDATE=new cargo test:*)",
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:scrtwpns.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(cargo search:*)",
-      "Bash(cargo run *)",
-      "Bash(./scripts/link_chunk_table.py *)",
+      "Bash(vulkaninfo:*)",
       "Bash(just convert-link *)",
       "Bash(just link-verify-p1 *)",
-      "Bash(vulkaninfo:*)"
+      "Bash(just link-verify-p2 *)"
     ]
   },
   "statusLine": {

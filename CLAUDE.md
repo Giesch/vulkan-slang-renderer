@@ -22,6 +22,7 @@ cat shaders/compiled/EXAMPLE.json | jq '.' # inspect shader reflection json
 - Always run `just shaders` after modifying any `.slang` files to regenerate Rust bindings.
 - Always use `cargo check --all` when changing rust files as a first pass
 - Always use `just test` when making changes to shaders/build_tasks.rs
+- Run `cargo fmt` after a set of rust file changes are complete
 
 ## Architecture
 

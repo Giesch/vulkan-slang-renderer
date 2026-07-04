@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["gclib @ git+https://github.com/LagoLunatic/gclib"]
+# dependencies = ["gclib @ git+https://github.com/LagoLunatic/gclib@64127742467acb633d51685b9b1798ab45bb4034"]
 # ///
 
 # Independent oracle for `just link-verify-p1`: prints the canonical chunk

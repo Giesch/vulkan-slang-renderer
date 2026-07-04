@@ -161,3 +161,25 @@ link-verify-p1:
     diff <(just convert-link --info) <(./scripts/link_chunk_table.py assets/link/raw/cl.bdl)
     cargo test --bin convert_link -- --include-ignored
     echo "P1 VERIFIED"
+
+# P2 texture gate: pixel-diff every decoded texture against gclib
+[unix]
+link-verify-textures:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just convert-link >/dev/null
+    ./scripts/link_texture_diff.py assets/link/raw assets/link/converted/tex
+
+# P2 MAT3 gate: diff our canonical --dump-mat3 against the gclib oracle
+[unix]
+link-verify-mat3:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    diff <(just convert-link --dump-mat3) <(./scripts/link_mat3_table.py assets/link/raw/cl.bdl)
+    echo "MAT3 table matches oracle"
+
+# P2 gate: textures + MAT3 + ignored real-file tests
+[unix]
+link-verify-p2: link-verify-textures link-verify-mat3
+    cargo test --bin convert_link -- --include-ignored
+    echo "P2 VERIFIED"

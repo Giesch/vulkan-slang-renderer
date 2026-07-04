@@ -124,6 +124,23 @@ impl<'a> BeReader<'a> {
         let bytes = self.bytes(n)?;
         std::str::from_utf8(bytes).map_err(|_| BeError::NotUtf8 { offset })
     }
+
+    /// Reads a NUL-terminated string; a missing terminator is out-of-bounds.
+    pub fn cstr(&mut self) -> BeResult<&'a str> {
+        let offset = self.pos;
+        let rest = &self.data[self.pos.min(self.data.len())..];
+        let len = rest
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or(BeError::OutOfBounds {
+                offset,
+                wanted: rest.len() + 1,
+                len: self.data.len(),
+            })?;
+        let s = std::str::from_utf8(&rest[..len]).map_err(|_| BeError::NotUtf8 { offset })?;
+        self.pos += len + 1;
+        Ok(s)
+    }
 }
 
 #[cfg(test)]
@@ -210,6 +227,19 @@ mod tests {
                 len: 0
             })
         );
+    }
+
+    #[test]
+    fn cstr_reads_until_nul() {
+        let mut r = BeReader::new(b"abc\0def\0");
+        assert_eq!(r.cstr(), Ok("abc"));
+        assert_eq!(r.cstr(), Ok("def"));
+        assert_eq!(r.pos(), 8);
+        // no terminator before end of buffer
+        assert!(matches!(
+            BeReader::new(b"abc").cstr(),
+            Err(BeError::OutOfBounds { .. })
+        ));
     }
 
     #[test]

@@ -1,9 +1,14 @@
 //! J3D2/bdl4 container: header validation and chunk-table walk.
-//! Chunk-interior parsers (P2/P3) hang off the dispatch in `walk_chunks`.
+//! Chunk-interior parsers (P2/P3) hang off the dispatch in `parse_model`.
+
+pub mod mat3;
+pub mod mat3_dump;
+pub mod tex1;
 
 use std::fmt;
 
 use crate::be::{BeError, BeReader};
+use crate::gx::types::GxEnumError;
 
 pub const FILE_HEADER_SIZE: usize = 0x20;
 
@@ -82,6 +87,20 @@ pub enum BmdError {
     BadJointCount {
         found: Option<u16>,
     },
+    /// An enum byte outside its known GX values; context names the chunk,
+    /// entry, and field.
+    Gx {
+        context: String,
+        source: GxEnumError,
+    },
+    /// Texture-specific structural problems (bad data size, mip count,
+    /// palette range).
+    Texture {
+        name: String,
+        what: String,
+    },
+    /// Structural invariant violations without a more specific variant.
+    Invariant(String),
     Read(BeError),
 }
 
@@ -122,6 +141,9 @@ impl fmt::Display for BmdError {
                 write!(f, "JNT1 reports {n} joints, expected 42")
             }
             BmdError::BadJointCount { found: None } => write!(f, "no JNT1 chunk found"),
+            BmdError::Gx { context, source } => write!(f, "{context}: {source}"),
+            BmdError::Texture { name, what } => write!(f, "texture {name}: {what}"),
+            BmdError::Invariant(what) => f.write_str(what),
             BmdError::Read(e) => write!(f, "{e}"),
         }
     }
@@ -237,17 +259,56 @@ fn four(r: &mut BeReader) -> Result<[u8; 4], BeError> {
     Ok([b[0], b[1], b[2], b[3]])
 }
 
+/// The fully parsed model (chunks accumulate here as P2/P3 land).
+pub struct Model<'a> {
+    pub table: ChunkTable,
+    pub tex1: tex1::Tex1<'a>,
+    pub mat3: mat3::Mat3,
+}
+
 /// P2/P3 growth point: each chunk parser lands in `bmd/<chunk>.rs` and gets
 /// a match arm here; nothing else in this module should need to change.
-pub fn walk_chunks(table: &ChunkTable) {
+pub fn parse_model(data: &[u8]) -> Result<Model<'_>, BmdError> {
+    let table = parse_chunk_table(data)?;
+    let mut tex1_slice = None;
+    let mut mat3_slice = None;
     for chunk in &table.chunks {
+        let slice = &data[chunk.offset..chunk.offset + chunk.size];
         match &chunk.fourcc.0 {
-            b"MDL3" => {}           // skipped by design: MAT3 is authoritative
-            b"TEX1" | b"MAT3" => {} // P2
+            b"MDL3" => {} // skipped by design: MAT3 is authoritative
+            b"TEX1" => tex1_slice = Some(slice),
+            b"MAT3" => mat3_slice = Some(slice),
             b"INF1" | b"VTX1" | b"EVP1" | b"DRW1" | b"JNT1" | b"SHP1" => {} // P3
             _ => unreachable!("validated by parse_chunk_table"),
         }
     }
+    // MAT3 precedes TEX1 in the file, but its texture indices are validated
+    // against TEX1's count, so parse TEX1 first.
+    let tex1 = tex1::parse(tex1_slice.ok_or_else(|| missing("TEX1"))?)?;
+    let mat3 = mat3::parse(
+        mat3_slice.ok_or_else(|| missing("MAT3"))?,
+        tex1.entries.len() as u16,
+    )?;
+    Ok(Model { table, tex1, mat3 })
+}
+
+fn missing(fourcc: &str) -> BmdError {
+    BmdError::Invariant(format!("no {fourcc} chunk found"))
+}
+
+/// JUTNameTab (JSystem string table): u16 count, u16 pad, then per entry a
+/// u16 hash + u16 offset from the table start; strings are NUL-terminated.
+pub fn read_name_table(r: &BeReader, pos: usize) -> Result<Vec<String>, BmdError> {
+    let mut header = r.at(pos);
+    let count = header.u16()?;
+    let mut names = Vec::with_capacity(count as usize);
+    for i in 0..count as usize {
+        let mut entry = r.at(pos + 4 + i * 4);
+        let _hash = entry.u16()?;
+        let str_offset = entry.u16()? as usize;
+        names.push(r.at(pos + str_offset).cstr()?.to_string());
+    }
+    Ok(names)
 }
 
 /// The canonical `--info` format. `scripts/link_chunk_table.py` prints the

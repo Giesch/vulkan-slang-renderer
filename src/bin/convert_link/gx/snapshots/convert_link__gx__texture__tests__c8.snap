@@ -1,0 +1,8 @@
+---
+source: src/bin/convert_link/gx/texture.rs
+expression: "decode_ok(ImageFormat::C8, &c8, &pal, 8, 4)"
+---
+00001eff 001400ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff
+0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff
+0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff
+0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff 0a0000ff

@@ -1,0 +1,8 @@
+---
+source: src/bin/convert_link/gx/texture.rs
+expression: "decode_ok(ImageFormat::Rgb565, &bytes, &[], 4, 4)"
+---
+ffffffff 080808ff 000000ff 000000ff
+000000ff 000000ff 000000ff 000000ff
+000000ff 000000ff 000000ff 000000ff
+000000ff 000000ff 000000ff 000000ff
