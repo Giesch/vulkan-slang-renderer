@@ -147,3 +147,17 @@ beats:
 [unix]
 extract-link:
     ./scripts/extract_link.sh
+
+# parse Link's BDL and emit converted assets (P1: chunk walk only)
+[unix]
+convert-link *args:
+    cargo run --bin convert_link -- assets/link/raw assets/link/converted {{args}}
+
+# P1 gate: diff our --info chunk table against the gclib oracle, then run ignored tests
+[unix]
+link-verify-p1:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    diff <(just convert-link --info) <(./scripts/link_chunk_table.py assets/link/raw/cl.bdl)
+    cargo test --bin convert_link -- --include-ignored
+    echo "P1 VERIFIED"

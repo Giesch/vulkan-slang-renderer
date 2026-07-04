@@ -41,6 +41,10 @@
       "WebFetch(domain:scrtwpns.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(cargo search:*)",
+      "Bash(cargo run *)",
+      "Bash(./scripts/link_chunk_table.py *)",
+      "Bash(just convert-link *)",
+      "Bash(just link-verify-p1 *)",
       "Bash(vulkaninfo:*)"
     ]
   },
