@@ -513,6 +513,112 @@ gx_enum! {
     }
 }
 
+gx_enum! {
+    /// GXAttr (GXEnum.h:199–226): vertex attribute id, in a VTX1 format entry
+    /// or a SHP1 vertex-descriptor entry. cl.bdl uses only PNMTXIDX/POS/NRM/TEX0,
+    /// but the full set is recognized so off-spec attrs fail loudly.
+    Attr {
+        Pnmtxidx = 0x00 => "PNMTXIDX",
+        Tex0Mtxidx = 0x01 => "TEX0MTXIDX",
+        Tex1Mtxidx = 0x02 => "TEX1MTXIDX",
+        Tex2Mtxidx = 0x03 => "TEX2MTXIDX",
+        Tex3Mtxidx = 0x04 => "TEX3MTXIDX",
+        Tex4Mtxidx = 0x05 => "TEX4MTXIDX",
+        Tex5Mtxidx = 0x06 => "TEX5MTXIDX",
+        Tex6Mtxidx = 0x07 => "TEX6MTXIDX",
+        Tex7Mtxidx = 0x08 => "TEX7MTXIDX",
+        Pos = 0x09 => "POS",
+        Nrm = 0x0A => "NRM",
+        Clr0 = 0x0B => "CLR0",
+        Clr1 = 0x0C => "CLR1",
+        Tex0 = 0x0D => "TEX0",
+        Tex1 = 0x0E => "TEX1",
+        Tex2 = 0x0F => "TEX2",
+        Tex3 = 0x10 => "TEX3",
+        Tex4 = 0x11 => "TEX4",
+        Tex5 = 0x12 => "TEX5",
+        Tex6 = 0x13 => "TEX6",
+        Tex7 = 0x14 => "TEX7",
+        Nbt = 0x19 => "NBT",
+        Null = 0xFF => "NULL",
+    }
+}
+
+gx_enum! {
+    /// GXAttrType (GXEnum.h:265–268): how a SHP1 display-list attribute is
+    /// encoded on the wire. cl.bdl reads every array attr as INDEX16.
+    AttrInputType {
+        None = 0x0 => "NONE",
+        Direct = 0x1 => "DIRECT",
+        Index8 = 0x2 => "INDEX8",
+        Index16 = 0x3 => "INDEX16",
+    }
+}
+
+gx_enum! {
+    /// GXCompType (GXEnum.h): component storage type for POS/NRM/TEX arrays.
+    /// (The color variants share these byte values but cl.bdl has no color
+    /// arrays.) Fixed-point integer components divide by 2^shift.
+    ComponentType {
+        U8 = 0x0 => "U8",
+        S8 = 0x1 => "S8",
+        U16 = 0x2 => "U16",
+        S16 = 0x3 => "S16",
+        F32 = 0x4 => "F32",
+    }
+}
+
+gx_enum! {
+    /// GXPrimitive (GXEnum.h:7–13): the top 5 bits of a display-list opcode
+    /// (low 3 bits are the VAT index, 0 in cl.bdl). 0x00 is a NOP/pad byte,
+    /// handled separately. cl.bdl is triangle strips only.
+    PrimitiveType {
+        Quads = 0x80 => "QUADS",
+        Triangles = 0x90 => "TRIANGLES",
+        TriangleStrip = 0x98 => "TRIANGLESTRIP",
+        TriangleFan = 0xA0 => "TRIANGLEFAN",
+        Lines = 0xA8 => "LINES",
+        LineStrip = 0xB0 => "LINESTRIP",
+        Points = 0xB8 => "POINTS",
+    }
+}
+
+gx_enum! {
+    /// SHP1 J3DShapeInitData.mShapeMtxType (J3DShapeFactory.h): how a shape's
+    /// vertices reference draw matrices. cl.bdl uses Single (rigid overlays)
+    /// and Multi (weighted body parts); billboards are hard-errored downstream.
+    ShapeMatrixType {
+        Single = 0x0 => "Single",
+        Billboard = 0x1 => "Billboard",
+        BillboardY = 0x2 => "BillboardY",
+        Multi = 0x3 => "Multi",
+    }
+}
+
+gx_enum! {
+    /// INF1 hierarchy node type (J3DModelLoader / J3DModelData.cpp
+    /// makeHierarchy): the scene-graph stream defining joint parentage and
+    /// draw order.
+    InfNodeType {
+        Finish = 0x00 => "FINISH",
+        OpenChild = 0x01 => "OPEN",
+        CloseChild = 0x02 => "CLOSE",
+        Joint = 0x10 => "JOINT",
+        Material = 0x11 => "MATERIAL",
+        Shape = 0x12 => "SHAPE",
+    }
+}
+
+gx_enum! {
+    /// INF1 load-flags low nibble (J3DModelLoader::readInformation): the joint
+    /// matrix-calc / rotation-composition rule. cl.bdl is MAYA.
+    MatrixScalingRule {
+        Basic = 0x0 => "BASIC",
+        Softimage = 0x1 => "SOFTIMAGE",
+        Maya = 0x2 => "MAYA",
+    }
+}
+
 /// Reads a bool byte, rejecting anything but 0/1 (junk would otherwise
 /// silently become `true`).
 pub fn gx_bool(value: u8, kind: &'static str) -> Result<bool, GxEnumError> {
@@ -586,6 +692,51 @@ mod tests {
         assert_eq!(KonstAlphaSel::K0A.to_string(), "K0_A");
         assert_eq!(TevScale::Scale1.to_string(), "SCALE_1");
         assert_eq!(DiffuseFunction::None.to_string(), "None_");
+    }
+
+    #[test]
+    fn geometry_enums() {
+        assert_eq!(Attr::try_from(0x09), Ok(Attr::Pos));
+        assert_eq!(Attr::try_from(0xFF), Ok(Attr::Null));
+        assert_eq!(AttrInputType::try_from(3), Ok(AttrInputType::Index16));
+        assert_eq!(ComponentType::try_from(4), Ok(ComponentType::F32));
+        assert_eq!(
+            PrimitiveType::try_from(0x98),
+            Ok(PrimitiveType::TriangleStrip)
+        );
+        assert_eq!(ShapeMatrixType::try_from(3), Ok(ShapeMatrixType::Multi));
+        assert_eq!(InfNodeType::try_from(0x12), Ok(InfNodeType::Shape));
+        assert_eq!(MatrixScalingRule::try_from(2), Ok(MatrixScalingRule::Maya));
+        // canonical spellings (shared with the geometry oracle)
+        assert_eq!(PrimitiveType::TriangleStrip.to_string(), "TRIANGLESTRIP");
+        assert_eq!(ShapeMatrixType::Multi.to_string(), "Multi");
+        assert_eq!(InfNodeType::OpenChild.to_string(), "OPEN");
+    }
+
+    #[test]
+    fn geometry_enum_gaps() {
+        // 0x0F..0x18 (between TEX3=0x10? no) — pick a genuine gap: Attr 0x15
+        assert_eq!(
+            Attr::try_from(0x15),
+            Err(GxEnumError {
+                kind: "Attr",
+                value: 0x15
+            })
+        );
+        assert_eq!(
+            PrimitiveType::try_from(0x00),
+            Err(GxEnumError {
+                kind: "PrimitiveType",
+                value: 0x00
+            })
+        );
+        assert_eq!(
+            InfNodeType::try_from(0x03),
+            Err(GxEnumError {
+                kind: "InfNodeType",
+                value: 0x03
+            })
+        );
     }
 
     #[test]

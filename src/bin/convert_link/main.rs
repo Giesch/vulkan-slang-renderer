@@ -8,12 +8,15 @@ mod be;
 mod bmd;
 mod bti;
 mod gx;
+mod output;
+mod pose;
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-const USAGE: &str = "usage: convert_link <raw-dir> <out-dir> [--info | --dump-mat3]";
+const USAGE: &str =
+    "usage: convert_link <raw-dir> <out-dir> [--info | --dump-mat3 | --dump-geometry] [--obj]";
 
 /// The three textures extracted as standalone .bti files (P0): the two
 /// runtime-injected toon ramps and the casual-clothes body texture.
@@ -22,17 +25,26 @@ const STANDALONE_BTIS: [&str; 3] = ["toon.bti", "toonex.bti", "linktexbci4.bti"]
 fn main() -> Result<()> {
     let mut info = false;
     let mut dump_mat3 = false;
+    let mut dump_geometry = false;
+    let mut obj = false;
     let mut positional = Vec::new();
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--info" => info = true,
             "--dump-mat3" => dump_mat3 = true,
+            "--dump-geometry" => dump_geometry = true,
+            "--obj" => obj = true,
             flag if flag.starts_with('-') => usage_exit(&format!("unknown flag: {flag}")),
             _ => positional.push(PathBuf::from(arg)),
         }
     }
-    if info && dump_mat3 {
-        usage_exit("--info and --dump-mat3 are mutually exclusive");
+    if [info, dump_mat3, dump_geometry]
+        .iter()
+        .filter(|&&f| f)
+        .count()
+        > 1
+    {
+        usage_exit("--info, --dump-mat3 and --dump-geometry are mutually exclusive");
     }
     let [raw_dir, out_dir]: [PathBuf; 2] = positional
         .try_into()
@@ -60,6 +72,10 @@ fn main() -> Result<()> {
         print!("{}", bmd::mat3_dump::canonical(&model.mat3));
         return Ok(());
     }
+    if dump_geometry {
+        print!("{}", bmd::geometry_dump::canonical(&model));
+        return Ok(());
+    }
 
     let tex_dir = out_dir.join("tex");
     bmd::tex1::emit(&model.tex1, &tex_dir)
@@ -68,11 +84,29 @@ fn main() -> Result<()> {
     let report_path = out_dir.join("mat3_dump.txt");
     std::fs::write(&report_path, bmd::mat3_dump::human_report(&model.mat3))
         .with_context(|| format!("writing {}", report_path.display()))?;
+
+    let baked = pose::bake(&model).with_context(|| "baking geometry")?;
+    let converted = output::build(&model, &baked);
+    output::write_files(&converted, &baked, &out_dir).with_context(|| "writing manifest")?;
+    if obj {
+        output::write_obj(&model, &baked, &converted, &out_dir).with_context(|| "writing OBJ")?;
+    }
+
+    let tris = converted.indices.len() / 3;
     eprintln!(
-        "convert_link: {} TEX1 textures + {} standalone, {} materials -> {}",
+        "convert_link: {} TEX1 textures + {} standalone, {} materials",
         model.tex1.entries.len(),
         STANDALONE_BTIS.len(),
         model.mat3.materials.len(),
+    );
+    eprintln!(
+        "convert_link: baked {} vertices, {} triangles, {} batches \
+         (invBind residual {:.2e}, weighted dist {:.2e}) -> {}",
+        baked.vertices.len(),
+        tris,
+        converted.manifest.batches.len(),
+        baked.invbind_max_residual,
+        baked.weighted_max_distance,
         out_dir.display(),
     );
     Ok(())

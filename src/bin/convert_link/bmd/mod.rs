@@ -1,9 +1,16 @@
 //! J3D2/bdl4 container: header validation and chunk-table walk.
 //! Chunk-interior parsers (P2/P3) hang off the dispatch in `parse_model`.
 
+pub mod drw1;
+pub mod evp1;
+pub mod geometry_dump;
+pub mod inf1;
+pub mod jnt1;
 pub mod mat3;
 pub mod mat3_dump;
+pub mod shp1;
 pub mod tex1;
+pub mod vtx1;
 
 use std::fmt;
 
@@ -264,32 +271,63 @@ pub struct Model<'a> {
     pub table: ChunkTable,
     pub tex1: tex1::Tex1<'a>,
     pub mat3: mat3::Mat3,
+    pub inf1: inf1::Inf1,
+    pub vtx1: vtx1::Vtx1,
+    pub evp1: evp1::Evp1,
+    pub drw1: drw1::Drw1,
+    pub jnt1: jnt1::Jnt1,
+    pub shp1: shp1::Shp1,
 }
 
 /// P2/P3 growth point: each chunk parser lands in `bmd/<chunk>.rs` and gets
 /// a match arm here; nothing else in this module should need to change.
 pub fn parse_model(data: &[u8]) -> Result<Model<'_>, BmdError> {
     let table = parse_chunk_table(data)?;
-    let mut tex1_slice = None;
-    let mut mat3_slice = None;
+    let mut slices: std::collections::HashMap<[u8; 4], &[u8]> = std::collections::HashMap::new();
     for chunk in &table.chunks {
         let slice = &data[chunk.offset..chunk.offset + chunk.size];
         match &chunk.fourcc.0 {
             b"MDL3" => {} // skipped by design: MAT3 is authoritative
-            b"TEX1" => tex1_slice = Some(slice),
-            b"MAT3" => mat3_slice = Some(slice),
-            b"INF1" | b"VTX1" | b"EVP1" | b"DRW1" | b"JNT1" | b"SHP1" => {} // P3
+            b"INF1" | b"VTX1" | b"EVP1" | b"DRW1" | b"JNT1" | b"SHP1" | b"MAT3" | b"TEX1" => {
+                slices.insert(chunk.fourcc.0, slice);
+            }
             _ => unreachable!("validated by parse_chunk_table"),
         }
     }
-    // MAT3 precedes TEX1 in the file, but its texture indices are validated
-    // against TEX1's count, so parse TEX1 first.
-    let tex1 = tex1::parse(tex1_slice.ok_or_else(|| missing("TEX1"))?)?;
-    let mat3 = mat3::parse(
-        mat3_slice.ok_or_else(|| missing("MAT3"))?,
-        tex1.entries.len() as u16,
+    let need = |fourcc: &[u8; 4]| -> Result<&[u8], BmdError> {
+        slices
+            .get(fourcc)
+            .copied()
+            .ok_or_else(|| missing(std::str::from_utf8(fourcc).unwrap_or("?")))
+    };
+
+    // Parse in dependency order (mirrors the existing TEX1-before-MAT3 rule):
+    // leaves first, then chunks that cross-check counts against them.
+    let tex1 = tex1::parse(need(b"TEX1")?)?;
+    let mat3 = mat3::parse(need(b"MAT3")?, tex1.entries.len() as u16)?;
+    let vtx1 = vtx1::parse(need(b"VTX1")?)?;
+    let jnt1 = jnt1::parse(need(b"JNT1")?)?;
+    let joint_count = jnt1.joints.len();
+    let inf1 = inf1::parse(need(b"INF1")?, joint_count)?;
+    let evp1 = evp1::parse(need(b"EVP1")?, joint_count as u16)?;
+    let drw1 = drw1::parse(
+        need(b"DRW1")?,
+        joint_count as u16,
+        evp1.envelopes.len() as u16,
     )?;
-    Ok(Model { table, tex1, mat3 })
+    let shp1 = shp1::parse(need(b"SHP1")?, &vtx1, drw1.slots.len() as u16)?;
+
+    Ok(Model {
+        table,
+        tex1,
+        mat3,
+        inf1,
+        vtx1,
+        evp1,
+        drw1,
+        jnt1,
+        shp1,
+    })
 }
 
 fn missing(fourcc: &str) -> BmdError {

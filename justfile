@@ -183,3 +183,19 @@ link-verify-mat3:
 link-verify-p2: link-verify-textures link-verify-mat3
     cargo test --bin convert_link -- --include-ignored
     echo "P2 VERIFIED"
+
+# P3 geometry gate: diff our canonical --dump-geometry against the oracle,
+# then run the full conversion (which runs the baking invariants)
+[unix]
+link-verify-geometry:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    diff <(just convert-link --dump-geometry) <(./scripts/link_geometry_table.py assets/link/raw/cl.bdl)
+    just convert-link >/dev/null
+    echo "geometry table matches oracle"
+
+# P3 gate: geometry diff + ignored real-file tests
+[unix]
+link-verify-p3: link-verify-geometry
+    cargo test --bin convert_link -- --include-ignored
+    echo "P3 VERIFIED"

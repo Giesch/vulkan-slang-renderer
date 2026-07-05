@@ -169,12 +169,13 @@ found the file carries its own answer key:
   EVP1/DRW1/SHP1, including its own display-list decoder — prototype already
   ran clean against the real file).
 - **Mesh metrics**: total triangle count must equal **exactly 2,874**
-  (probed; strip expansion is deterministic: Σ(len−2), 573 strips);
-  per-batch counts recorded; baked per-shape AABBs cross-checked against the
-  bounds stored in SHP1/JNT1 (space semantics for rigid shapes to be
-  confirmed — warning until understood, then hard error); overall AABB
-  (Link ≈ 100 units tall). Vertex counts are dedup-dependent — compare
-  geometry-derived metrics, not arrays.
+  (deterministic: Σ(len−2), 573 strips) — *confirmed*. *As implemented*, the
+  baked-vs-stored AABB cross-check was **dropped as redundant**: the canonical
+  oracle diff already verifies every stored SHP1 min/max byte-for-byte, and
+  invBind + weighted identity verify the pose, so a baked-AABB comparison adds
+  nothing. The overall model AABB (X 125, Y 124 tall, Z 89) is a sanity anchor.
+  Vertex counts are dedup-dependent (1754 after dedup) — compare geometry-derived
+  metrics, not arrays.
 - **Property checks in the converter**: all indices in range, PNMTXIDX %3==0
   and slot-set, no degenerate triangles, normals unit length (where present
   — two eye shapes have none), every batch's material index valid.

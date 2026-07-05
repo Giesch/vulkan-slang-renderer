@@ -70,15 +70,17 @@ testing: external oracles + our own tests).
   `../tww/tools/converters/matDL_dis.py` (GX register meanings),
   noclip.website's J3D renderer (TypeScript; the proven J3D→modern-GPU port).
 
-**Converter side** (established by P1/P2 implementation and P3 probing;
-authoritative detail in the phase docs and their Recorded facts):
+**Converter side** (established by P1/P2/P3 implementation; authoritative
+detail in the phase docs and their Recorded facts):
 
-- P0–P2 are **done** (`a76d0cb`, `6431f0a`, `8a0a4af`), each behind a
-  byte-exact gate against an independent gclib-based oracle
-  (`just link-verify-p1/p2`): P1 chunk table, P2 44/44 pixel-identical
-  textures + a zero-diff canonical MAT3 table. Oracle scripts are pinned to
-  gclib 1.0.0 @ `6412774`; golden output hashes live in
-  `scripts/link_converted.sha256`.
+- P0–P2 are **done and committed** (`a76d0cb`, `6431f0a`, `8a0a4af`); **P3 is
+  implemented and verified** (`just link-verify-p3` green, pending commit).
+  Each phase is behind a byte-exact gate against an independent gclib-based
+  oracle (`just link-verify-p1/p2/geometry`): P1 chunk table, P2 44/44
+  pixel-identical textures + a zero-diff canonical MAT3 table, P3 zero-diff
+  canonical geometry table + the file's own invBind/weighted-identity checks.
+  Oracle scripts are pinned to gclib 1.0.0 @ `6412774`; golden output hashes
+  live in `scripts/link_converted.sha256`.
 - Texture inventory: CMPR ×14, I4 ×11, IA8 ×8, IA4 ×7, C8+RGB565 ×1
   (`hitomi`). **Every** texture (TEX1 and standalone) is Clamp/Clamp,
   Linear/Linear, mipmap-free — §4.4's options apply to all of them, not just
@@ -90,12 +92,15 @@ authoritative detail in the phase docs and their Recorded facts):
   literally contains `ear(2)`..`ear(8)`; `face` shares record 0 with `ear`,
   R-side eye/brow slots share L-side records). The frozen TEV subset is in
   phase_02.md's Recorded facts; headline in §3 below.
-- Geometry (P3 probe): positions/normals f32, UVs s16 shift-8 — the only
+- Geometry (P3, implemented): positions/normals f32, UVs s16 shift-8 — the only
   fixed-point attribute; **no vertex colors, no second UV**; 573 primitives,
   all triangle strips → exactly 2,874 triangles; no billboard shapes; every
   joint scale is exactly 1.0 (scaling-rule semantics moot); EVP1 stores all
-  42 inverse bind matrices, so the file is its own FK oracle
-  (`world(j)·invBind(j) = I` at bind pose).
+  42 inverse bind matrices, so the file is its own FK oracle — invBind identity
+  passed (max residual 0.0145, f32 precision) and weighted identity passed (max
+  0.0077 model units). Baked output: **1754 deduped vertices, 8622 indices,
+  2874 triangles, 24 batches** (INF1 draw order). Rotation composition confirmed
+  Z·Y·X. `INF1.vertexCount` (1591) = the position-array count.
 - Oracle re-weighting vs tests.md: gclib (scriptable, pinnable) is the
   automated gate everywhere; SuperBMD is a manual second opinion only
   (Blender DAE overlay), never load-bearing.
@@ -526,7 +531,7 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P0** ✅ `a76d0cb` | `scripts/extract_link.sh`, `just extract-link`, `.gitignore` entry — detailed plan: [`link_rendering/phase_00.md`](link_rendering/phase_00.md) | sizes + SHA256s match `dtk vfs ls` (golden hashes, permanently stable); `J3D2bdl4` magic; idempotent; `git status` clean | ½ day |
 | **P1** ✅ `6431f0a` | converter skeleton: `be.rs`, chunk walk, `--info` chunk table — detailed plan: [`link_rendering/phase_01.md`](link_rendering/phase_01.md) | internal invariants (chunk sizes sum to file size, 42 joints, cross-chunk counts agree); `--info` diffed against a gclib oracle (`just link-verify-p1`, zero-line diff); `BeReader` unit tests on synthetic buffers | 1 day |
 | **P2** ✅ `8a0a4af` | TEX1+BTI decode → PNGs (+ standalone `.bti` re-emit per entry); full MAT3 parse + `--dump-mat3` — detailed plan: [`link_rendering/phase_02.md`](link_rendering/phase_02.md) | **as run** (`just link-verify-p2`): gclib pixel-diff 44/44 zero differences; canonical MAT3 table zero-line diff vs a gclib oracle (SuperBMD demoted to manual backup); synthetic per-format tile snapshots (insta); ramp names confirmed; **TEV subset frozen** (see §3) | 2–3 days |
-| **P3** | geometry: baked bind pose, strip→list, manifest v1, `--obj`+`.mtl` export — detailed plan: [`link_rendering/phase_03.md`](link_rendering/phase_03.md) | **`just link-verify-p3`**: invBind identity (the file's own FK oracle) + weighted-identity check (hard errors); canonical geometry table zero-diff vs a gclib+struct-walk oracle; exactly 2,874 triangles; stored-AABB cross-check; 10-step Blender procedure (textured OBJ, per-batch isolation, face orientation, DAE/noclip overlay) | 3–4 days |
+| **P3** ✅ (pending commit) | geometry: baked bind pose, strip→list, manifest v1 (full TEV materials), `--obj`+`.mtl` export — detailed plan: [`link_rendering/phase_03.md`](link_rendering/phase_03.md) | **`just link-verify-p3` green**: invBind identity (residual 0.0145) + weighted-identity (0.0077) hard checks; canonical geometry table **zero-diff** vs a gclib+struct-walk oracle; exactly 2,874 triangles; Blender pass partial (face orientation uniform red, rigid attachment + per-batch isolation OK). Stored-AABB cross-check dropped as redundant; full Blender pass outstanding | 3–4 days |
 | **P4** | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) | `just test` green (snapshots byte-identical); validation-clean sweep of **all** examples (`timeout 3 just dev <name>` loop); multi_mesh renders its sub-ranges with no gaps/overlaps | 2 days |
 | **P5** | renderer 4.3 + 4.4 (raster state, texture options); extend multi_mesh with per-state test objects | multi_mesh: cull-front object inside-out, opaque-vs-alpha blend, depth-write-off artifact on demand; wrap/filter quad (clamp/repeat × linear/nearest); sRGB-vs-UNORM gray-quad brightness check; same validation sweep | 1–2 days |
 | **P6** | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches | **uniform-array smoke test first** (`uint4[8]`, known pattern as colors); `just shaders`; `timeout 3 just dev toon_link`: correctly shaped Link, smooth normal gradients, silhouette vs noclip; culling off → then on (winding check), no validation errors | 1–2 days |
@@ -549,20 +554,22 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
 
 1. **SHP1 matrix groups** — per-packet matrix tables with `0xFFFF` "inherit from
    previous packet" entries and the per-vertex `PNMTXIDX` attribute (value/3 =
-   table slot). Getting this wrong = exploded vertices. *Probing confirmed the
-   mechanism is real for cl.bdl: 77 inherit-entries, 240 of 270 DRW1 slots
-   weighted.* Mitigation upgraded in phase_03.md: the file's own inverse bind
-   matrices give a numeric FK oracle (`world·invBind = I`), plus the
-   weighted-identity check and a canonical diff of the raw tables;
-   `J3DShapeFactory.cpp` + noclip remain the semantic references.
+   table slot). Getting this wrong = exploded vertices. *Real for cl.bdl: 77
+   inherit-entries, 240 of 270 DRW1 slots weighted.* **Resolved in P3 (green):**
+   the file's own inverse bind matrices gave a numeric FK oracle
+   (`world·invBind = I`, residual 0.0145), the weighted-identity check passed
+   (0.0077), and the canonical `--dump-geometry` diff pinned the raw tables — no
+   exploded mesh. (Note: `mUseMtxIndex` is *not* the matrix-table head; the
+   useMtx table drives everything.)
 2. ~~**GX fixed-point vertex formats**~~ — *resolved by the P3 probe*:
    positions/normals are f32; only UVs are fixed-point (s16, shift 8). The
    format table is still implemented generally and diffed via
    `--dump-geometry`.
 3. **Winding after Y-flip** — clip-space Y reflection flips winding vs GX's
    convention. Mitigation: P6 runs with `cull: None`; once geometry is right,
-   enable Back and flip triangle order in the converter if inside-out. The P3
-   Blender face-orientation check gives an early read.
+   enable Back and flip triangle order in the converter if inside-out. *P3
+   Blender read: uniform red = winding is consistent (not a patchwork bug), just
+   GX-native — the flip decision stays with P6.*
 4. **Uniform array codegen** — unverified that the shader atlas codegen handles
    `uint4 foo[8]` uniform arrays. Mitigation: flat arrays only; smoke-test with
    a throwaway shader early in P6; fallback to `StructuredBuffer`

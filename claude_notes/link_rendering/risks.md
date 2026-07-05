@@ -5,11 +5,12 @@ Expanded explanations of the risks listed in
 mechanism, why it's uncertain, how it would fail visibly, and why the planned
 mitigation works.
 
-**Status update (post-P2, P3 planned)**: #2, #5 and #7 are resolved by
-measurement — per-risk notes below, headline resolutions in the master doc
-§7. #4 (uniform-array codegen) is now the top open risk; #1 remains the most
-substantive but its mitigation got a major upgrade (the file's own inverse
-bind matrices as an FK oracle, [`phase_03.md`](phase_03.md)).
+**Status update (post-P3)**: #2, #5 and #7 are resolved by measurement — per-risk
+notes below, headline resolutions in the master doc §7. #1 is now **verified
+green** — P3's three-way gate (parse diff / invBind FK oracle / weighted
+identity) ran on the real file and passed (residuals recorded in
+[`phase_03.md`](phase_03.md)). #4 (uniform-array codegen) is the top *open* risk,
+first thing P6 tests.
 
 ## 1. SHP1 matrix groups (the exploded-vertex risk)
 
@@ -40,15 +41,17 @@ rigid parts (hair, scabbard, belt) are detached, the bug is isolated to the
 JNT1 world-matrix walk instead. It converts "something is wrong somewhere in
 four layers of indirection" into a bisecting test.
 
-*Update (P3 probing)*: the mechanism is confirmed real for cl.bdl — 77
-`0xFFFF` inherit-entries, 240 of 270 DRW1 slots weighted, 7 Multi_Matrix
-shapes — and the mitigation stack grew two layers
-([`phase_03.md`](phase_03.md)): the **invBind identity check**
-(`world(j)·invBind(j) = I` for all 42 joints; the file stores its own FK
-answer key) isolates the world-matrix walk *before* any vertex is baked, and
-the canonical `--dump-geometry` diff pins the raw matrix tables against an
-independent decoder. Bisection is now three-way: parse layer (diff), FK
-layer (invBind), bake layer (weighted identity).
+*Resolved (P3, implemented and green)*: the mechanism is real for cl.bdl — 77
+`0xFFFF` inherit-entries, 240 of 270 DRW1 slots weighted, 7 Multi shapes — and
+all three bisection layers now run on the real file and pass: the parse layer
+(canonical `--dump-geometry` **zero-line diff** vs an independent decoder), the
+FK layer (**invBind identity** `world(j)·invBind(j) = I`, max residual 0.0145
+across all 42 joints — f32 precision, not a bug: the *wrong* rotation order
+fails by ~10^2), and the bake layer (**weighted identity**, max baked-vs-stored
+distance 0.0077 model units). One planning assumption fell out: `mUseMtxIndex`
+is **not** the head of the matrix table (0 vs 67 on shape 0) — the useMtx table
+drives everything and `mUseMtxIndex` is ignored. No exploded mesh; the mitigation
+stack did its job.
 
 ## 2. GX fixed-point vertex formats
 
@@ -95,12 +98,13 @@ verified independently of winding. Then culling is switched on, and if the
 model is inside-out, the converter flips index order per triangle — a
 one-line, one-time fix.
 
-*Update (P3)*: the Blender procedure's Face Orientation overlay
-([`phase_03.md`](phase_03.md) step 9) gives an early read one phase sooner —
-uniform blue/red is fine (recorded), a patchwork means inconsistent
-strip-expansion winding and gets fixed before P6 ever enables culling. Also
-note cl.bdl's MAT3 uses both `Cull_Back` and `Cull_None`, so the mapping
-through the Y-flip must be per-material, not global.
+*Update (P3, observed)*: the Blender Face Orientation overlay
+([`phase_03.md`](phase_03.md) step 9) gave its early read — **uniform red**
+(recorded): winding is *consistent* (no patchwork → strip expansion is correct),
+just wound opposite to Blender's CCW-outward convention, exactly as expected for
+GX-native winding. So the flip is still a P6 decision (culling off first), now
+with a known starting point. Note cl.bdl's MAT3 uses both `Cull_Back` and
+`Cull_None`, so the mapping through the Y-flip must be per-material, not global.
 
 ## 4. Uniform array codegen (the one repo-local risk)
 
@@ -242,9 +246,10 @@ bite early** but has a proven escape hatch, **#2 and #3 are near-certain to
 occur but trivial once anticipated**, and **#6–8 are
 noted-so-they-don't-surprise-us tier**.
 
-Post-P2 ranking: **#4 (uniform-array codegen) is now the top open risk** —
-first thing P6 tests. **#1 remains substantive but is triple-gated** (parse
-diff / invBind FK oracle / weighted identity). #3 gets its early read in
-P3's Blender pass. #5's residue is two small in-scope features (TEXMTX1,
-swap tables) rather than an unknown. #2 and #7 are closed; #6 is nearly
-moot (ADD-only stages); #8 is unchanged and deferred to P8 tuning.
+Post-P3 ranking: **#4 (uniform-array codegen) is now the top open risk** —
+first thing P6 tests. **#1 is closed for cl.bdl** — its triple gate (parse diff
+/ invBind FK oracle / weighted identity) ran on the real file and passed. #3 got
+its early read (uniform red — consistent winding); the actual flip is still a P6
+call. #5's residue is two small in-scope features (TEXMTX1, swap tables) rather
+than an unknown. #2 and #7 are closed; #6 is nearly moot (ADD-only stages); #8
+is unchanged and deferred to P8 tuning.

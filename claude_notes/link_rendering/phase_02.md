@@ -66,7 +66,7 @@ model at all; only `toonex.bti` is. (Both still get decoded/verified in P2.)
 **Actual texture inventory** (probed via gclib; our parser must reproduce it —
 verbatim table becomes a Recorded fact):
 
-- 41 TEX1 entries. Formats: CMPR ×14 (mouth/body/pouch S3TC sets), I4 ×11
+- 41 TEX1 entries. Formats: CMPR ×14 (mouth/body/scabbard S3TC sets), I4 ×11
   (8×8 eye/brow "closed" frames + the ZBtoonEX placeholder), IA8 ×8 (96×96
   `eyeh.*`), IA4 ×7 (64×64 `mayuh.*` brows), C8+RGB565 ×1 (`hitomi`, 96×96
   pupils, 64-color palette).
