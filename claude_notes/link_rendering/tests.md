@@ -13,19 +13,25 @@ Recurring external references, in rough order of automation strength:
   pip-installable from GitHub) — battle-tested BTI→PNG conversion, RARC, Yaz0,
   and J3D chunk parsing (it powers Wind Waker Randomizer's custom-player-model
   support, which reads and rewrites BDLs). Scriptable, so we can do *exact*
-  diffs rather than eyeballing. The GUI also opens BMD/BDL directly with MAT3
-  material property editing and a **real-time 3D preview** — i.e. it contains
-  its own working J3D renderer, giving us a locally-runnable material
-  inspector and a third visual reference besides noclip/Dolphin. Dev-only
-  dependency, invoked from `just` recipes.
+  diffs rather than eyeballing. *As implemented (P1/P2): gclib is the
+  automated oracle for every gate so far — chunk table, 44/44 pixel-exact
+  textures, canonical MAT3 diff — via uv PEP-723 scripts pinned to
+  1.0.0 @ `6412774`. Its parse depth varies by chunk (deep for
+  INF1/VTX1/JNT1/MAT3/TEX1; headers-only for SHP1, nothing for EVP1/DRW1),
+  so geometry oracles supplement it with independent struct walks from the
+  tww headers.* The GUI also opens BMD/BDL directly with MAT3 material
+  property editing and a **real-time 3D preview** — a locally-runnable
+  material inspector and a third visual reference besides noclip/Dolphin.
+  Dev-only dependency, invoked from `just` recipes.
 - **SuperBMD** (C#, runs under mono) — the modding community's standard
-  BDL→COLLADA converter, both directions (modders inject custom models into
-  real games with it, a harder correctness bar than exporting). Gives us
-  bind-pose geometry, a skeleton, *and* a materials JSON dump — an independent
-  implementation of almost exactly our converter's job. **Use RenolY2's fork**
-  (github.com/RenolY2/SuperBMD): it's the one with the materials-as-JSON
-  dump/insert feature (format documented on the MKDD wiki, "SuperBMD JSON
-  Files"). Dev-only dependency.
+  BDL→COLLADA converter, both directions. Gives bind-pose geometry, a
+  skeleton, and a materials JSON dump (**RenolY2's fork**,
+  github.com/RenolY2/SuperBMD, has the JSON feature). *Demoted from
+  automated oracle to manual second opinion (P2/P3 planning): gclib covers
+  the MAT3 diff, and P3's skeleton verification uses the file's own inverse
+  bind matrices, which is stronger than a cross-tool armature comparison.
+  SuperBMD remains the Blender DAE-overlay tool and the tiebreaker if an
+  intrinsic check fails ambiguously.* Dev-only, optional.
 - **noclip.website** — final visual ground truth in the browser (it renders
   Link's `cl.bdl` with full TEV), and its source (`gx_material.ts`,
   `J3DLoader.ts`) is the semantic spec when dumps disagree.
@@ -88,7 +94,7 @@ Not available: Dolphin has no per-TEV-stage intermediate dump in mainline
 (checked `VideoConfig.h`) — stage-level debugging stays with our optional CPU
 reference evaluator (P8).
 
-## P0 — extraction
+## P0 — extraction ✅ (done as planned; `a76d0cb`)
 
 Fully automatable in the script itself:
 
@@ -98,67 +104,84 @@ Fully automatable in the script itself:
   (the one place golden hashes are *permanently* stable).
 - Re-running must be idempotent.
 
-## P1 — chunk walk
+## P1 — chunk walk ✅ (done as planned; `6431f0a`)
 
 - **Internal invariants** (run on every convert): chunk magics ∈ {INF1, VTX1,
   EVP1, DRW1, JNT1, SHP1, MAT3, MDL3, TEX1}; chunk sizes sum to file size;
   JNT1 count == 42; INF1's joint/material/shape counts consistent with the
   other chunks.
-- **Oracle**: a five-line gclib script printing its chunk table and counts for
-  `cl.bdl`; diff against our `--info` output.
+- **Oracle**: `scripts/link_chunk_table.py` (gclib) printing the canonical
+  chunk table; `just link-verify-p1` diffs it against `--info` — zero-line
+  diff.
 - **Unit tests**: `BeReader` on tiny synthetic buffers — endianness, string
   tables, seek behavior.
 
-## P2 — texture decode + MAT3 dump *(biggest early-oracle win)*
+## P2 — texture decode + MAT3 dump ✅ *(biggest early-oracle win; `8a0a4af`)*
+
+As run (details + recorded facts in [`phase_02.md`](phase_02.md)):
 
 - **Pixel-exact texture gate** (`just link-verify-textures`): the converter
-  also emits each TEX1 entry as a standalone `.bti` (header + data — they
-  share the format); the recipe runs GCFT on every `.bti` and pixel-diffs
-  GCFT's PNG against ours. **Zero pixels different, per format, across all of
-  Link's textures.** This turns "eyeball the PNGs" into a hard pass/fail and
-  pins down the tile-layout code (the classic bug source, risk #2's cousin)
-  completely. If GCFT and we disagree, Dolphin's texture dump from the Link
-  `.dff` replay is the third vote, and GCFT's built-in J3D preview a quick
-  visual sanity check.
-- **Per-format unit tests**: synthetic hand-computed tiles (one 8×8 CMPR tile,
-  one I4 tile, …) as insta snapshots — committable, catch regressions with no
-  extracted assets present.
-- **MAT3 field-exact gate**: run SuperBMD (RenolY2 fork) on `cl.bdl` and diff
-  its materials JSON against our `--dump-mat3` output field by field for
-  every material —
-  stage counts, selectors, konst colors, blend/Z modes, texgen types. A small
-  comparison script, not manual reading; disagreements adjudicated against
-  `J3DMaterialFactory.cpp` and noclip's loader. The TEV subset is frozen from
-  this dump, so independently confirming the *parse* here de-risks everything
-  downstream — a wrong shader is debuggable, a wrong parse poisons all later
-  phases.
-- **Parse-don't-validate as a test**: the typed-enum IR means every selector
-  byte in the real file must map to a known variant or conversion errors —
-  running the converter *is* a fuzz-by-real-data test of the parser.
+  emits each TEX1 entry as a standalone `.bti` with the GX bytes copied
+  verbatim; `scripts/link_texture_diff.py` decodes every `.bti` with gclib
+  (not the GCFT GUI — same decode code, scriptable) and pixel-diffs against
+  our PNG. **Result: 44/44 zero pixels different** (41 TEX1 + 3 standalone).
+  Because the `.bti` bytes are verbatim, the gate compares two independent
+  decoders over identical data. Dolphin's texture dump remains the unused
+  third vote; GCFT's J3D preview the visual sanity check.
+- **Per-format unit tests**: synthetic hand-computed tiles as insta
+  snapshots — committed, catch regressions with no extracted assets present.
+- **MAT3 field-exact gate** (`just link-verify-mat3`) — *oracle swapped from
+  the original plan*: probing showed gclib parses MAT3 completely
+  (`asdict()` covers every field), so the gate became a **canonical-table
+  byte diff** (P1 discipline: both sides implement a written spec, enum
+  spellings shared) against `scripts/link_mat3_table.py`, instead of a
+  SuperBMD-JSON field mapper under mono. **Result: zero-line diff** over all
+  24 materials. Disagreements would be adjudicated against
+  `J3DMaterialFactory.cpp` and noclip's loader; none arose. The TEV subset
+  is frozen from this dump (phase_02.md Recorded facts) — notable catches
+  vs the guessed subset: swap-table channel broadcasts and two non-identity
+  texture matrices.
+- **Parse-don't-validate as a test**: every selector byte in the real file
+  maps to a typed enum variant or conversion errors — running the converter
+  *is* a fuzz-by-real-data test. (It passed first try on the real file, and
+  tamper tests produce typed errors naming the field.)
 
 ## P3 — geometry + pose baking *(second-biggest win)*
 
-Gate recipe: `just link-verify-geometry`.
+Gate recipes: `just link-verify-geometry` / `link-verify-p3`. Planned in
+detail in [`phase_03.md`](phase_03.md); strategy re-weighted after probing
+found the file carries its own answer key:
 
+- **invBind identity (the skeleton oracle, upgraded)**: EVP1 stores every
+  joint's inverse bind matrix, so at bind pose `world(j) · invBind(j) = I`
+  must hold for all 42 joints — verifying our FK (composition order, INF1
+  parent wiring, rotation conversion) against Nintendo's own exporter output
+  with **no third-party tool in the loop**. Hard error with a max-residual
+  report. This replaces the SuperBMD-armature comparison as the automated
+  skeleton check.
 - **Weighted-identity check**: EVP1-weighted verts must bake to ≈ their stored
   positions at bind pose. A hard converter error with a distance report, not a
-  warning.
-- **Skeleton oracle**: compare all 42 joint *world-space positions* against
-  SuperBMD's exported armature (or a gclib script evaluating JNT1); exact
-  match within float epsilon. This isolates the JNT1 walk from everything
-  else — per risk #1, a verified skeleton plus the identity check leaves the
-  SHP1 matrix-table logic as the only remaining suspect for geometry
-  weirdness.
-- **Mesh metrics vs SuperBMD's DAE**: total triangle count (must match
-  *exactly* — strip expansion is deterministic: Σ(len−2) per strip),
-  per-material triangle counts, per-material bounding boxes within epsilon,
-  overall AABB (Link ≈ 100 units tall). Raw vertex counts may legitimately
-  differ (different dedup strategies) — compare geometry-derived metrics, not
-  arrays.
-- **Property checks in the converter**: all indices in range, no degenerate
-  triangles, normals unit length, every batch's material index valid.
-- **Manual**: `--obj` export overlaid on SuperBMD's DAE in Blender — they
-  should coincide visually vertex-for-vertex.
+  warning. Per risk #1, identity + verified skeleton leaves the SHP1
+  matrix-table logic as the only remaining suspect for geometry weirdness.
+- **Canonical geometry diff**: `--dump-geometry` (raw file data only — no
+  computed floats) byte-diffed against `scripts/link_geometry_table.py`
+  (gclib for INF1/VTX1/JNT1 + independent tww-struct walks for
+  EVP1/DRW1/SHP1, including its own display-list decoder — prototype already
+  ran clean against the real file).
+- **Mesh metrics**: total triangle count must equal **exactly 2,874**
+  (probed; strip expansion is deterministic: Σ(len−2), 573 strips);
+  per-batch counts recorded; baked per-shape AABBs cross-checked against the
+  bounds stored in SHP1/JNT1 (space semantics for rigid shapes to be
+  confirmed — warning until understood, then hard error); overall AABB
+  (Link ≈ 100 units tall). Vertex counts are dedup-dependent — compare
+  geometry-derived metrics, not arrays.
+- **Property checks in the converter**: all indices in range, PNMTXIDX %3==0
+  and slot-set, no degenerate triangles, normals unit length (where present
+  — two eye shapes have none), every batch's material index valid.
+- **Manual**: the 10-step Blender procedure in phase_03.md — textured
+  `--obj`+`.mtl` import, scale/pose, rigid attachment, weighted regions,
+  per-batch isolation, triangle count, UV placement, face orientation
+  (early winding read), and the SuperBMD-DAE (or noclip) overlay.
 
 ## P4 — multi-draw + shared mesh (renderer; no Link assets needed)
 

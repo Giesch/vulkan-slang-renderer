@@ -15,10 +15,12 @@ testing: external oracles + our own tests).
 ## Settled decisions
 
 1. **TEV translation — hybrid "subset compiler."** Dump `cl.bdl`'s MAT3 chunk,
-   then mechanically implement exactly the TEV feature subset Link's ~20 materials
+   then mechanically implement exactly the TEV feature subset Link's materials
    use (correct stage equations, texgens, register semantics), structured for later
    extension. Not a full generic GX→shader translator (noclip.website-scale
    project), not hand-eyeballed shaders (subtly wrong colors, Link-only).
+   *(P2 measured the actual surface: 24 material slots sharing 11 distinct
+   configs, and the frozen subset is small — see §3.)*
 2. **Asset storage — gitignored + extraction script.** Assets are pulled from the
    user's disc image in `../tww` via `dtk` and converted locally. Nothing
    Nintendo-copyrighted is ever committed; anyone with the disc image can
@@ -52,9 +54,10 @@ testing: external oracles + our own tests).
   synthesize our own state/shaders from it.
 - Chunks in `cl.bdl`: INF1 (scene graph/draw order), VTX1 (vertex attribute
   arrays), EVP1 (multi-weight skinning envelopes + inverse bind matrices), DRW1
-  (rigid-vs-skinned matrix slots), JNT1 (42 joints, `LINK_ROOT`..`CL_BACK`), SHP1
-  (shapes; GX triangle strips/fans + per-packet matrix tables), MAT3 (TEV stages,
-  texgens, konst/register colors, blend/Z/cull, texture indices), TEX1 (embedded
+  (rigid-vs-skinned matrix slots), JNT1 (42 joints, `link_root`..`cl_back` —
+  lowercase), SHP1 (shapes; GX triangle strips + per-packet matrix tables —
+  probing found strips only, no fans), MAT3 (TEV stages, texgens,
+  konst/register colors, blend/Z/cull, texture indices), TEX1 (41 embedded
   textures in GX formats).
 - Toon shading: materials sample the toon ramps via a texgen derived from
   normal·light; the ramps are injected **by texture name** at runtime
@@ -66,6 +69,36 @@ testing: external oracles + our own tests).
   `J3DShapeFactory.cpp` / `J3DMaterialFactory.cpp` (chunk offsets/semantics),
   `../tww/tools/converters/matDL_dis.py` (GX register meanings),
   noclip.website's J3D renderer (TypeScript; the proven J3D→modern-GPU port).
+
+**Converter side** (established by P1/P2 implementation and P3 probing;
+authoritative detail in the phase docs and their Recorded facts):
+
+- P0–P2 are **done** (`a76d0cb`, `6431f0a`, `8a0a4af`), each behind a
+  byte-exact gate against an independent gclib-based oracle
+  (`just link-verify-p1/p2`): P1 chunk table, P2 44/44 pixel-identical
+  textures + a zero-diff canonical MAT3 table. Oracle scripts are pinned to
+  gclib 1.0.0 @ `6412774`; golden output hashes live in
+  `scripts/link_converted.sha256`.
+- Texture inventory: CMPR ×14, I4 ×11, IA8 ×8, IA4 ×7, C8+RGB565 ×1
+  (`hitomi`). **Every** texture (TEX1 and standalone) is Clamp/Clamp,
+  Linear/Linear, mipmap-free — §4.4's options apply to all of them, not just
+  ramps. Names repeat; converted files are index-prefixed.
+- Ramp injection rule confirmed (`d_resorce.cpp:70–82`): name prefix `ZA*` →
+  toon, `ZB*` → toonEX. `cl.bdl` contains only `ZBtoonEX` — **`toon.bti` is
+  unused by Link's body model.**
+- MAT3: 24 slots → 11 distinct records via the remap table (the name table
+  literally contains `ear(2)`..`ear(8)`; `face` shares record 0 with `ear`,
+  R-side eye/brow slots share L-side records). The frozen TEV subset is in
+  phase_02.md's Recorded facts; headline in §3 below.
+- Geometry (P3 probe): positions/normals f32, UVs s16 shift-8 — the only
+  fixed-point attribute; **no vertex colors, no second UV**; 573 primitives,
+  all triangle strips → exactly 2,874 triangles; no billboard shapes; every
+  joint scale is exactly 1.0 (scaling-rule semantics moot); EVP1 stores all
+  42 inverse bind matrices, so the file is its own FK oracle
+  (`world(j)·invBind(j) = I` at bind pose).
+- Oracle re-weighting vs tests.md: gclib (scriptable, pinnable) is the
+  automated gate everywhere; SuperBMD is a manual second opinion only
+  (Blender DAE overlay), never load-bearing.
 
 **Renderer side** (line numbers as of `bef946e`):
 
@@ -135,7 +168,10 @@ mkdir -p assets/link/raw
 
 A directory binary in the existing crate (precedent:
 `src/bin/generate_paper_texture.rs`), invoked as
-`just convert-link` → `cargo run --bin convert_link -- assets/link/raw assets/link/converted [--dump-mat3] [--obj out.obj] [--casual]`.
+`just convert-link` → `cargo run --bin convert_link -- assets/link/raw assets/link/converted [FLAG]`.
+Flags as implemented/planned: `--info` (P1 chunk table), `--dump-mat3` (P2),
+`--dump-geometry` and `--obj` (P3), `--casual` (P9) — the `--dump-*` modes
+print canonical tables to stdout for the oracle diff gates and emit nothing.
 
 Serde types for the manifest go in a new lib module **`src/model_manifest.rs`**
 (registered in `src/lib.rs`) so the converter and the example share them. Parser
@@ -148,11 +184,12 @@ src/bin/convert_link/
   bmd/mod.rs     header walk ("J3D2bdl4" magic, chunk table), dispatch; skip MDL3
   bmd/inf1.rs    scene graph tag stream → joint hierarchy + material/shape draw order
   bmd/vtx1.rs    attribute format table (comp count/type, fixed-point frac shift) + arrays
-  bmd/evp1.rs    envelopes: joint indices, weights, inverse bind matrices (4x3 f32)
+  bmd/evp1.rs    envelopes: joint indices, weights, inverse bind matrices (3×4 f32)
   bmd/drw1.rs    matrix slots: isWeighted flags + joint-or-envelope indices
   bmd/jnt1.rs    joints: scale f32x3, rotation s16x3 (0x8000 = π), translation f32x3, names
   bmd/shp1.rs    shapes: attr sets, per-packet matrix tables, GX display-list primitive decode
   bmd/mat3.rs    materials: TEV/blend/zmode/channels/texgens/konst via MAT3's index tables
+  bmd/mat3_dump.rs canonical --dump-mat3 table + mat3_dump.txt human report
   bmd/tex1.rs    embedded BTI headers + image data
   bti.rs         standalone .bti (same header layout as TEX1 entries)
   gx/types.rs    typed enums for every GX field we read (u8 → enum, validated)
@@ -165,22 +202,29 @@ src/bin/convert_link/
 **GX texture decode.** GX stores textures in tiles (CMPR: 8×8 tiles of four 4×4
 DXT1-like sub-blocks with big-endian u16 colors; I4/I8/etc. have their own tile
 dims) — the tiling is the classic bug source. Decode everything to RGBA8
-`image::RgbaImage` → PNG. Likely set for Link: CMPR (clothes/body), C8/RGB5A3
-(face/eyes), I4/I8 (ramps), IA8; implement the full list anyway, each is small.
+`image::RgbaImage` → PNG. *(P2 shipped all 11 formats; the actual Link set is
+CMPR/I4/IA8/IA4/C8 plus C4 for the casual texture, verified pixel-identical
+against gclib — 44/44.)*
 
 **Toon-ramp injection** happens in the converter: TEX1 entries whose *name*
-matches the runtime-injected ramps (expected `ZAtoon`/`ZBtoonEX` — confirm exact
-strings from the dump) get their image replaced by decoded
-`toon.bti`/`toonex.bti`. `--casual` swaps the body texture for `linktexbci4` the
-same way.
+matches the runtime-injected ramps get their image replaced. Confirmed
+(`d_resorce.cpp:70–82`): the game matches name *prefixes* — `ZA*` → toon
+image, `ZB*` → toonEX image; `cl.bdl` has exactly one such entry,
+`ZBtoonEX` (an 8×8 I4 placeholder), which receives decoded `toonex.bti`
+(CMPR 256×256). No `ZA*` entry exists, so `toon.bti` is decoded/verified but
+unused. `--casual` swaps the body texture for `linktexbci4` the same way
+(P9). The substitution is wired when the manifest is assembled (P3);
+P2 verified both sides of it decode correctly.
 
 **Pose baking.** `world(j) = world(parent(j)) · T·R·S` from JNT1 (s16 angle →
-radians via `a / 32768.0 * π`). For each SHP1 packet, resolve its matrix table
-through DRW1: rigid slot → joint world matrix; weighted slot →
-`Σ wᵢ · (worldᵢ · invBindᵢ)`. Transform positions (normals via
+radians via `a / 32768.0 * π`); every scale in cl.bdl is exactly 1.0, so the
+Maya scaling-rule/no-inherit-scale subtleties drop out. For each SHP1 packet,
+resolve its matrix table through DRW1: rigid slot → joint world matrix;
+weighted slot → `Σ wᵢ · (worldᵢ · invBindᵢ)`. Transform positions (normals via
 inverse-transpose, renormalize). Strips → lists (odd triangles swap first two
-indices), fans → `(0, i, i+1)`. Keep Y-up right-handed as-is — same convention
-as the viking_room OBJ; the shader's projection handles Vulkan clip space.
+indices), fans → `(0, i, i+1)` (cl.bdl is strips-only; fans implemented for
+completeness). Keep Y-up right-handed as-is — same convention as the
+viking_room OBJ; the shader's projection handles Vulkan clip space.
 
 *Sanity anchor:* in J3D, EVP1-weighted vertices are stored in **model space**
 (at bind pose `Σw·(world·invBind) = I`, so baking ≈ identity), while rigid
@@ -205,10 +249,13 @@ pretty-printed `mat3_dump.txt` (stage equations rendered as
 {
   "version": 1,
   "buffers": { "vertices": "link.vtx.bin", "indices": "link.idx.bin",
-               "skinning": "link.skin.bin", "vertex_count": 0, "index_count": 0 },
+               "skinning": "link.skin.bin",
+               "vertex_layout": ["position3f", "normal3f", "uv02f"],
+               "vertex_count": 0, "index_count": 0 },
   "textures": [
-    { "name": "linktexS3TC", "file": "tex/03_linktexS3TC.png",
-      "wrap_u": "Repeat", "wrap_v": "Repeat", "filter": "Linear", "mipmaps": true }
+    { "name": "linktexS3TC", "file": "tex/12_linktexS3TC.png",
+      "wrap_u": "ClampToEdge", "wrap_v": "ClampToEdge",
+      "filter": "Linear", "mipmaps": false }
   ],
   "materials": [
     { "name": "eyeLdamA",
@@ -225,16 +272,19 @@ pretty-printed `mat3_dump.txt` (stage equations rendered as
       "texmaps": [3, 0, null, null] /* indices into textures[]; ≤4 used per material */ }
   ],
   "batches": [ { "material": 5, "first_index": 0, "index_count": 4200 } ],
-  "skeleton": { "joints": [ { "name": "LINK_ROOT", "parent": -1,
-                              "t": [0,0,0], "r": [0,0,0], "s": [1,1,1] } ] }
+  "skeleton": { "joints": [ { "name": "link_root", "parent": -1,
+                              "t": [0,0,0], "r_s16": [0,0,0], "s": [1,1,1] } ] }
 }
 ```
 
-- `link.vtx.bin`: little-endian interleaved f32 — pos[3], nrm[3], color0[4],
-  uv0[2], uv1[2] (14 floats/vertex).
-- `link.idx.bin`: u32 triangle list.
-- `batches` are already in J3D draw order (opaque pass then translucent pass),
-  so the example just draws them in sequence.
+- `link.vtx.bin`: little-endian interleaved f32 — pos[3], nrm[3], uv0[2]
+  (8 floats/vertex). *(Revised from the original 14-float sketch: cl.bdl has
+  no color arrays and one UV channel, and every MAT3 channel sources color
+  from registers — see phase_03.md.)*
+- `link.idx.bin`: u32 triangle list (2,874 triangles).
+- `batches` are in INF1 draw order, each carrying its material slot; the
+  example orders opaque before translucent by the material's pixel-engine
+  mode (J3D's two-pass rule).
 
 ## 3. TEV subset shader
 
@@ -248,9 +298,10 @@ Two committed, hand-written files:
   this is how the ramp is indexed), alpha-compare → `discard`, and a final
   inverse-sRGB output helper (see color space note).
 - **`shaders/source/toon_link.shader.slang`** — vertex struct
-  `{ float3 position; float3 normal; float4 color0; float2 uv0; float2 uv1; }`,
-  `ParameterBlock` with one `ToonLinkParams` uniform + 4 × `Sampler2D`
-  (tex0..tex3; unused slots bound to a 1×1 white dummy).
+  `{ float3 position; float3 normal; float2 uv0; }` (cl.bdl has no vertex
+  colors or second UV — rasterized color comes from the register-sourced
+  lighting channel), `ParameterBlock` with one `ToonLinkParams` uniform +
+  4 × `Sampler2D` (tex0..tex3; unused slots bound to a 1×1 white dummy).
 
 The shader is a **data-driven interpreter**: per-material TEV configuration
 arrives as uniform data built from the manifest. Uniform layout uses **flat
@@ -280,12 +331,28 @@ struct ToonLinkParams {
 every selector/op/texgen value Link's materials may use is an enum variant, and
 anything outside the implemented set is a hard error
 (`material {name}: unsupported {feature} — extend tev.slang + tev_ir.rs`).
-Expected subset (frozen from the P2 dump): ≤4 stages/material; color inputs
-CPREV/C0/KONST/TEXC/RASC/ZERO/ONE/HALF; ADD/SUB with bias/scale; SRTG +
-identity-MTX2x4 texgens; blend opaque/alpha; Z LEQUAL; alpha-compare on eye
-materials. Explicitly out of scope (error if encountered): indirect stages,
-non-identity texture matrices. Fog: if enabled in MAT3, warn and hardcode off
-(we bake a no-fog daytime context).
+**The subset is now frozen** (P2 dump; verbatim summary in phase_02.md's
+Recorded facts) and is smaller and slightly different than the original
+guess:
+
+- 1–3 stages/material; **every op is ADD**, bias ZERO, scale 1, dest PREV
+  (no SUB, no ONE/HALF inputs, no COMP ops)
+- color inputs C0/CPREV/KONST/RASC/TEXC/ZERO; alpha
+  APREV/KONST/RASA/TEXA/ZERO; konst selects K0/K1 and K0_A/K3_A; 2 stages
+  with the clamp bit off
+- texgens: MTX2x4·TEX0 (identity), **MTX2x4·TEX0 via TEXMTX1** (2
+  non-identity texture matrices exist — originally declared out of scope,
+  now in scope for the one material using them), SRTG·COLOR0 (identity —
+  the ramp path, risk #5 resolved)
+- **TEV swap tables** — not in the original guess: 12 materials use
+  channel-broadcast tables (identity, RRR+A, GGG+A; ras_sel always 0,
+  tex_sel ∈ {0,1,2}) to splat one channel of intensity textures; the
+  interpreter and `ToonLinkParams` need a swap-select field
+- blends: None, src-alpha, and one **destination-alpha** variant; Z always
+  LESS_EQUAL (test/write vary); alpha-compare configs (Always OR Always)
+  and (Greater 0 OR Greater 0)
+- confirmed absent: indirect stages, fog (declared LINEAR but disabled on
+  all 24 materials — the warn-and-force-off path never fires)
 
 **Color space.** GX has no sRGB anywhere — TEV math operates on raw 8-bit
 values, and the ramps' banding is authored in those raw values. So: decode and
@@ -411,7 +478,9 @@ impl Renderer {
   `generate_mipmaps` when off, sampler address modes from wraps, anisotropy off
   when mipmaps are off. Existing `create_texture` becomes a wrapper with
   today's defaults.
-- Ramp textures use: `Unorm`, `ClampToEdge`, `mipmaps: false`, `Linear` filter.
+- P2's inventory showed **every** Link texture wants the same non-default
+  options: `Unorm`, `ClampToEdge`, `mipmaps: false`, `Linear` filter — the
+  ramps aren't special; §4.4 is load-bearing for all 44 textures.
 
 ### 4.5 Explicitly deferred
 
@@ -454,10 +523,10 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 
 | Phase | Deliverable | Verify | Est. |
 |---|---|---|---|
-| **P0** | `scripts/extract_link.sh`, `just extract-link`, `.gitignore` entry — detailed plan: [`link_rendering/phase_00.md`](link_rendering/phase_00.md) | sizes + SHA256s match `dtk vfs ls` (golden hashes, permanently stable); `J3D2bdl4` magic; idempotent; `git status` clean | ½ day |
-| **P1** | converter skeleton: `be.rs`, chunk walk, `--info` chunk table — detailed plan: [`link_rendering/phase_01.md`](link_rendering/phase_01.md) | internal invariants (chunk sizes sum to file size, 42 joints, cross-chunk counts agree); `--info` diffed against a gclib script; `BeReader` unit tests on synthetic buffers | 1 day |
-| **P2** | TEX1+BTI decode → PNGs (+ standalone `.bti` re-emit per entry); `--dump-mat3` report — detailed plan: [`link_rendering/phase_02.md`](link_rendering/phase_02.md) | **`just link-verify-textures`**: GCFT pixel-diff over every texture = zero differences; SuperBMD materials-JSON field diff vs `--dump-mat3`; synthetic per-format tile snapshots (insta); ramp texture names confirmed; **freeze the TEV subset from this dump** | 2–3 days |
-| **P3** | geometry: baked bind pose, strip→list, manifest v1, `--obj` export | **`just link-verify-geometry`**: weighted-identity check (hard error); 42 joint world positions vs SuperBMD armature; exact triangle counts + per-material AABBs vs SuperBMD DAE; `--obj` overlaid on the DAE in Blender | 3–4 days |
+| **P0** ✅ `a76d0cb` | `scripts/extract_link.sh`, `just extract-link`, `.gitignore` entry — detailed plan: [`link_rendering/phase_00.md`](link_rendering/phase_00.md) | sizes + SHA256s match `dtk vfs ls` (golden hashes, permanently stable); `J3D2bdl4` magic; idempotent; `git status` clean | ½ day |
+| **P1** ✅ `6431f0a` | converter skeleton: `be.rs`, chunk walk, `--info` chunk table — detailed plan: [`link_rendering/phase_01.md`](link_rendering/phase_01.md) | internal invariants (chunk sizes sum to file size, 42 joints, cross-chunk counts agree); `--info` diffed against a gclib oracle (`just link-verify-p1`, zero-line diff); `BeReader` unit tests on synthetic buffers | 1 day |
+| **P2** ✅ `8a0a4af` | TEX1+BTI decode → PNGs (+ standalone `.bti` re-emit per entry); full MAT3 parse + `--dump-mat3` — detailed plan: [`link_rendering/phase_02.md`](link_rendering/phase_02.md) | **as run** (`just link-verify-p2`): gclib pixel-diff 44/44 zero differences; canonical MAT3 table zero-line diff vs a gclib oracle (SuperBMD demoted to manual backup); synthetic per-format tile snapshots (insta); ramp names confirmed; **TEV subset frozen** (see §3) | 2–3 days |
+| **P3** | geometry: baked bind pose, strip→list, manifest v1, `--obj`+`.mtl` export — detailed plan: [`link_rendering/phase_03.md`](link_rendering/phase_03.md) | **`just link-verify-p3`**: invBind identity (the file's own FK oracle) + weighted-identity check (hard errors); canonical geometry table zero-diff vs a gclib+struct-walk oracle; exactly 2,874 triangles; stored-AABB cross-check; 10-step Blender procedure (textured OBJ, per-batch isolation, face orientation, DAE/noclip overlay) | 3–4 days |
 | **P4** | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) | `just test` green (snapshots byte-identical); validation-clean sweep of **all** examples (`timeout 3 just dev <name>` loop); multi_mesh renders its sub-ranges with no gaps/overlaps | 2 days |
 | **P5** | renderer 4.3 + 4.4 (raster state, texture options); extend multi_mesh with per-state test objects | multi_mesh: cull-front object inside-out, opaque-vs-alpha blend, depth-write-off artifact on demand; wrap/filter quad (clamp/repeat × linear/nearest); sRGB-vs-UNORM gray-quad brightness check; same validation sweep | 1–2 days |
 | **P6** | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches | **uniform-array smoke test first** (`uint4[8]`, known pattern as colors); `just shaders`; `timeout 3 just dev toon_link`: correctly shaped Link, smooth normal gradients, silhouette vs noclip; culling off → then on (winding check), no validation errors | 1–2 days |
@@ -468,8 +537,10 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 Rough total: ~3 weeks of focused work. Once a converter phase's output is
 verified, commit SHA256 golden hashes of `assets/link/converted/` outputs
 (hashes of derived data, not the data) so later refactors get free regression
-detection. Dev-only oracle dependencies, not needed to build or run: GCFT/gclib
-(Python) and SuperBMD (mono).
+detection — in place since P2 (`scripts/link_converted.sha256`). Dev-only
+oracle dependency, not needed to build or run: gclib (Python, uv PEP-723
+scripts, pinned to 1.0.0 @ `6412774`); SuperBMD (mono) is optional/manual
+only.
 
 ## 7. Risks & unknowns
 
@@ -478,26 +549,37 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
 
 1. **SHP1 matrix groups** — per-packet matrix tables with `0xFFFF` "inherit from
    previous packet" entries and the per-vertex `PNMTXIDX` attribute (value/3 =
-   table slot). Getting this wrong = exploded vertices. Mitigation:
-   `J3DShapeFactory.cpp` + noclip as dual references; the weighted-identity
-   check.
-2. **GX fixed-point vertex formats** — s16/u8 components with per-attribute
-   fraction shifts from VTX1's format table; don't assume f32 positions.
-   Mitigation: implement the format table generally; log formats in `--info`.
+   table slot). Getting this wrong = exploded vertices. *Probing confirmed the
+   mechanism is real for cl.bdl: 77 inherit-entries, 240 of 270 DRW1 slots
+   weighted.* Mitigation upgraded in phase_03.md: the file's own inverse bind
+   matrices give a numeric FK oracle (`world·invBind = I`), plus the
+   weighted-identity check and a canonical diff of the raw tables;
+   `J3DShapeFactory.cpp` + noclip remain the semantic references.
+2. ~~**GX fixed-point vertex formats**~~ — *resolved by the P3 probe*:
+   positions/normals are f32; only UVs are fixed-point (s16, shift 8). The
+   format table is still implemented generally and diffed via
+   `--dump-geometry`.
 3. **Winding after Y-flip** — clip-space Y reflection flips winding vs GX's
    convention. Mitigation: P6 runs with `cull: None`; once geometry is right,
-   enable Back and flip triangle order in the converter if inside-out.
+   enable Back and flip triangle order in the converter if inside-out. The P3
+   Blender face-orientation check gives an early read.
 4. **Uniform array codegen** — unverified that the shader atlas codegen handles
    `uint4 foo[8]` uniform arrays. Mitigation: flat arrays only; smoke-test with
    a throwaway shader early in P6; fallback to `StructuredBuffer`
-   (sprite_batch-proven).
-5. **SRTG texgen details** — exact semantics and which channel feeds it; whether
-   Link uses non-identity texture matrices anywhere. The P2 dump decides;
-   noclip's `gx_material.ts` as reference.
+   (sprite_batch-proven). *(Still the top open repo-local risk.)*
+5. ~~**SRTG texgen details**~~ — *resolved by the P2 dump*: SRTG sources
+   COLOR0 with the identity matrix; no texture matrix on the ramp path. Two
+   findings replace it: (a) 2 **non-identity texture matrices** exist
+   (TEXMTX1 on one MTX2x4 texgen) — small, but in scope now; (b) **swap
+   tables** are used by 12 materials (channel broadcasts) and must be in the
+   interpreter — see §3.
 6. **S10 register semantics** — TEV intermediates are signed 10-bit, clamped
-   per-stage only when the clamp bit is set. Respect the clamp bit always; add
-   explicit range clamps only if banding artifacts appear.
-7. **Fog** — if MAT3 enables it on Link, warn and hardcode off.
+   per-stage only when the clamp bit is set. Respect the clamp bit always
+   (*2 real stages run with it off*); add explicit range clamps only if
+   banding artifacts appear. Low risk: all ops are ADD/scale-1, so values
+   stay near range.
+7. ~~**Fog**~~ — *resolved*: declared LINEAR but disabled on all 24
+   materials; the warn-and-force-off path never fires.
 8. **Lighting values** — exact daytime `dKy_tevstr_c` values are buried in
    kankyo tables; v1 starts from hand-tuned seeds, then upgrades to ground
    truth by reading the live values from emulated RAM (dolphin-memory-engine

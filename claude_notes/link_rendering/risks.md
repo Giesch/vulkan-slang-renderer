@@ -5,6 +5,12 @@ Expanded explanations of the risks listed in
 mechanism, why it's uncertain, how it would fail visibly, and why the planned
 mitigation works.
 
+**Status update (post-P2, P3 planned)**: #2, #5 and #7 are resolved by
+measurement — per-risk notes below, headline resolutions in the master doc
+§7. #4 (uniform-array codegen) is now the top open risk; #1 remains the most
+substantive but its mitigation got a major upgrade (the file's own inverse
+bind matrices as an FK oracle, [`phase_03.md`](phase_03.md)).
+
 ## 1. SHP1 matrix groups (the exploded-vertex risk)
 
 The GameCube's GPU had space for only **10 position/normal matrices** loaded at
@@ -34,6 +40,16 @@ rigid parts (hair, scabbard, belt) are detached, the bug is isolated to the
 JNT1 world-matrix walk instead. It converts "something is wrong somewhere in
 four layers of indirection" into a bisecting test.
 
+*Update (P3 probing)*: the mechanism is confirmed real for cl.bdl — 77
+`0xFFFF` inherit-entries, 240 of 270 DRW1 slots weighted, 7 Multi_Matrix
+shapes — and the mitigation stack grew two layers
+([`phase_03.md`](phase_03.md)): the **invBind identity check**
+(`world(j)·invBind(j) = I` for all 42 joints; the file stores its own FK
+answer key) isolates the world-matrix walk *before* any vertex is baked, and
+the canonical `--dump-geometry` diff pins the raw matrix tables against an
+independent decoder. Bisection is now three-way: parse layer (diff), FK
+layer (invBind), bake layer (weighted identity).
+
 ## 2. GX fixed-point vertex formats
 
 VTX1 doesn't store a fixed vertex layout. Each attribute (position, normal,
@@ -47,9 +63,15 @@ and UVs are f32. If Link's model uses s16 positions and you read them as f32,
 you get garbage; if you read s16 but ignore the shift, the model renders at
 256× scale or UVs tile wildly. It's not conceptually hard — just an easy place
 to cut a corner that costs a confusing debugging session later. Mitigation is
-simply to implement the format table generically from day one and have
-`--info` print each attribute's declared format, so when something looks wrong
-you can see at a glance what the data claims to be.
+simply to implement the format table generically from day one and have the
+geometry dump print each attribute's declared format, so when something looks
+wrong you can see at a glance what the data claims to be.
+
+*Resolved (P3 probe)*: cl.bdl's positions and normals are plain f32; the
+**only** fixed-point attribute is the UV array (s16, shift 8 → ÷256). The
+format table is still parsed generically and byte-diffed via
+`--dump-geometry`, so the resolution is continuously re-verified rather than
+assumed.
 
 ## 3. Winding after the Y-flip
 
@@ -72,6 +94,13 @@ plan sidesteps it: **P6 renders with culling off** (which is why
 verified independently of winding. Then culling is switched on, and if the
 model is inside-out, the converter flips index order per triangle — a
 one-line, one-time fix.
+
+*Update (P3)*: the Blender procedure's Face Orientation overlay
+([`phase_03.md`](phase_03.md) step 9) gives an early read one phase sooner —
+uniform blue/red is fine (recorded), a patchwork means inconsistent
+strip-expansion winding and gets fixed before P6 ever enables culling. Also
+note cl.bdl's MAT3 uses both `Cull_Back` and `Cull_None`, so the mapping
+through the Y-flip must be per-material, not global.
 
 ## 4. Uniform array codegen (the one repo-local risk)
 
@@ -123,6 +152,19 @@ pixel-verified SRTG implementation to check semantics against. The P8
 verification step ("rotate the light, watch the terminator bands move") is
 designed to exercise exactly this path.
 
+*Resolved (P2 dump, phase_02.md Recorded facts)*: SRTG sources **COLOR0 via
+the IDENTITY matrix** — no texture matrix on the ramp path, so the
+terminator placement depends only on the lighting channel and the ramp
+pixels. Two successor findings carry forward into the P6/P8 scope instead:
+(a) one material's MTX2x4 texgen uses **TEXMTX1** and 2 non-identity texture
+matrices exist — originally declared out of scope, now a small in-scope
+feature; (b) 12 materials use **TEV swap tables** as channel broadcasts
+(identity / RRR+A / GGG+A, tex_sel ∈ {0,1,2}) to splat single channels of
+intensity textures — absent from the original subset guess entirely, and the
+`tev.slang` interpreter and its uniform layout must carry a swap-select
+path. Which of `toon`/`toonEX` each material samples also settled: only
+`ZBtoonEX` exists in cl.bdl.
+
 ## 6. S10 register semantics
 
 TEV's intermediate registers aren't normalized floats — they're **signed
@@ -142,6 +184,11 @@ wrong colors, and clamping when it isn't set breaks the multi-stage patterns
 above), but only add explicit ±4 saturation if a visual artifact actually
 shows up. Don't pre-emulate hardware quirks nothing exercises.
 
+*Update (P2 dump)*: even lower risk than assumed — every active stage is ADD
+with bias ZERO and scale 1, so intermediates can barely leave [0, 2); exactly
+**2 stages run with the clamp bit off**, and honoring that bit is the whole
+remaining obligation.
+
 ## 7. Fog
 
 Every GX material carries a fog block, and in-game, Link's materials get fog
@@ -153,6 +200,10 @@ fog stage for part of its look (very unlikely — fog in Wind Waker is
 atmosphere/distance haze). So the converter treats fog-enabled as a **warning,
 not an error**: note it in the dump, force it off, move on. Listed as a risk
 mostly so a "why does the dump warn about fog?" moment isn't a surprise.
+
+*Resolved (P2 dump)*: all 24 materials declare fog type LINEAR with
+**enable = false** — the warning path never fires and the shader needs no
+fog handling at all.
 
 ## 8. Lighting values
 
@@ -185,8 +236,15 @@ frame. See [`tests.md`](tests.md) §"Dolphin as an automated oracle".
 
 ---
 
-Rough severity ranking: **#1 and #5 are the substantive ones** (structural
+Original severity ranking: **#1 and #5 are the substantive ones** (structural
 correctness of geometry and of the toon look), **#4 is the one most likely to
 bite early** but has a proven escape hatch, **#2 and #3 are near-certain to
 occur but trivial once anticipated**, and **#6–8 are
 noted-so-they-don't-surprise-us tier**.
+
+Post-P2 ranking: **#4 (uniform-array codegen) is now the top open risk** —
+first thing P6 tests. **#1 remains substantive but is triple-gated** (parse
+diff / invBind FK oracle / weighted identity). #3 gets its early read in
+P3's Blender pass. #5's residue is two small in-scope features (TEXMTX1,
+swap tables) rather than an unknown. #2 and #7 are closed; #6 is nearly
+moot (ADD-only stages); #8 is unchanged and deferred to P8 tuning.
