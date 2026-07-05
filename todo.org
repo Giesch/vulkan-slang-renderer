@@ -16,6 +16,9 @@
 
 
 * Next
+- [ ] investigate whether static slang build includes spirv-opt or not
+  ie, does a build of this renderer still depend on dynamic linking glslang?
+
 - [ ] profile startup
   find the source of the black screen (and duration)
   maybe do more work before opening the window
