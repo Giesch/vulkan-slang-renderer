@@ -49,7 +49,7 @@ public float3 rayMarch<W>(
             closestDistance = hit.distance;
 
             if (closestDistance < world.minHitDistance) { // hit
-                let blp = BasicLightingParams<W>(
+                return basicLighting(
                     world,
                     currentPosition,
                     rayDirection,
@@ -57,8 +57,6 @@ public float3 rayMarch<W>(
                     lightColor,
                     lightPosition
                 );
-
-                return basicLighting(blp);
             }
         }
 
@@ -86,36 +84,33 @@ func calculateNormal<W>(world: W, p: float3) -> float3 where W : IRayMarchWorld 
     );
 }
 
-// TODO just pass the arguments
-struct BasicLightingParams<W> where W : IRayMarchWorld {
-    W world;
-    float3 currentPosition;
-    float3 rayDirection;
-    float3 objectColor;
-    float3 lightColor;
-    float3 lightPosition;
-}
-
 // https://learnopengl.com/Lighting/Basic-Lighting
-func basicLighting<W>(blp: BasicLightingParams<W>) -> float3 where W : IRayMarchWorld {
-    let normal = calculateNormal(blp.world, blp.currentPosition);
-    let lightDirection = normalize(blp.lightPosition - blp.currentPosition);
+func basicLighting<W>(
+    W world,
+    float3 currentPosition,
+    float3 rayDirection,
+    float3 objectColor,
+    float3 lightColor,
+    float3 lightPosition
+) -> float3 where W : IRayMarchWorld {
+    let normal = calculateNormal(world, currentPosition);
+    let lightDirection = normalize(lightPosition - currentPosition);
 
     // naive ambient light
     let ambientStrength = 0.005;
-    let ambient = ambientStrength * blp.lightColor;
+    let ambient = ambientStrength * lightColor;
 
     // lambertian diffuse
-    let diffuse = blp.lightColor * max(0.0, dot(normal, lightDirection));
+    let diffuse = lightColor * max(0.0, dot(normal, lightDirection));
 
     // blinn-phong specular reflection
     let specularStrength = 0.25;
     let shininess = 16.0;
-    float3 halfwayDirection = normalize(lightDirection + blp.rayDirection);
+    float3 halfwayDirection = normalize(lightDirection + rayDirection);
     let specularIntensity = pow(max(dot(normal, halfwayDirection), 0.0), shininess);
-    let specular = specularStrength * blp.lightColor * specularIntensity;
+    let specular = specularStrength * lightColor * specularIntensity;
 
-    return (ambient + diffuse + specular) * blp.objectColor;
+    return (ambient + diffuse + specular) * objectColor;
 }
 
 

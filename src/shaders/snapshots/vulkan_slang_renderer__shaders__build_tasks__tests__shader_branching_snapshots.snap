@@ -20,7 +20,7 @@ paint_display.vert.spv: 0
 particle_render.frag.spv: 0
 particle_render.vert.spv: 0
 particles.comp.spv: 4
-ray_marching.frag.spv: 32
+ray_marching.frag.spv: 19
 ray_marching.vert.spv: 0
 sdf_2d.frag.spv: 4
 sdf_2d.vert.spv: 0
