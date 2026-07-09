@@ -106,6 +106,7 @@ func basicLighting<W>(
     // blinn-phong specular reflection
     let specularStrength = 0.25;
     let shininess = 16.0;
+
     float3 halfwayDirection = normalize(lightDirection + rayDirection);
     let specularIntensity = pow(max(dot(normal, halfwayDirection), 0.0), shininess);
     let specular = specularStrength * lightColor * specularIntensity;

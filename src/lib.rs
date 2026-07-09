@@ -2,6 +2,7 @@ pub mod app;
 pub mod editor;
 pub mod game;
 pub mod generated;
+pub mod ktx;
 pub mod model_manifest;
 pub mod renderer;
 pub mod shaders;

@@ -18,6 +18,7 @@ pub mod sdf_2d;
 pub mod serenity_crt;
 pub mod space_invaders;
 pub mod sprite_batch;
+pub mod suzanne;
 pub mod wc_advect_and_transfer_pigment_compute;
 pub mod wc_blur_v_and_flow_outward_compute;
 pub mod wc_capillary_flow_compute;
@@ -36,6 +37,7 @@ pub struct ShaderAtlas {
     pub sdf_2d: sdf_2d::Shader,
     pub basic_triangle: basic_triangle::Shader,
     pub gpu_picking: gpu_picking::Shader,
+    pub suzanne: suzanne::Shader,
     pub ray_marching: ray_marching::Shader,
     pub depth_texture: depth_texture::Shader,
     pub sprite_batch: sprite_batch::Shader,
@@ -64,6 +66,7 @@ impl ShaderAtlas {
             sdf_2d: sdf_2d::Shader::init(),
             basic_triangle: basic_triangle::Shader::init(),
             gpu_picking: gpu_picking::Shader::init(),
+            suzanne: suzanne::Shader::init(),
             ray_marching: ray_marching::Shader::init(),
             depth_texture: depth_texture::Shader::init(),
             sprite_batch: sprite_batch::Shader::init(),

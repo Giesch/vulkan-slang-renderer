@@ -523,6 +523,39 @@ impl Renderer {
         Ok(handle)
     }
 
+    /// Create a texture from pre-baked mip level data, such as from a KTX2 file.
+    /// Unlike [`Self::create_texture`], this uploads all provided mip levels
+    /// directly instead of generating them at runtime.
+    ///
+    /// `mip_data` must contain one entry per mip level, level 0 (largest) first;
+    /// the extent of level `i` is derived as `(extent >> i).max(1)`.
+    pub fn create_texture_with_mips(
+        &mut self,
+        source_file_name: impl Into<String>,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        mip_data: &[&[u8]],
+        texture_filter: TextureFilter,
+    ) -> anyhow::Result<TextureHandle> {
+        let texture = create_texture_from_mips(
+            source_file_name.into(),
+            format,
+            extent,
+            mip_data,
+            &self.instance,
+            &self.device,
+            self.physical_device,
+            self.physical_device_properties,
+            self.command_pool,
+            self.graphics_queue,
+            texture_filter,
+        )?;
+
+        let handle = self.textures.add(texture);
+
+        Ok(handle)
+    }
+
     pub fn drop_texture(&mut self, texture_handle: TextureHandle) {
         let texture = self.textures.take(texture_handle);
         self.destroy_texture(texture);
@@ -2601,6 +2634,7 @@ impl Drop for Renderer {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureFilter {
     Linear,
     Nearest,
@@ -3963,6 +3997,32 @@ fn create_descriptor_sets(
 
 const TEXTURE_IMAGE_FORMAT: ash::vk::Format = ash::vk::Format::R8G8B8A8_SRGB;
 
+/// The memory layout of a texture format,
+/// in terms of the block unit used for size and alignment calculations.
+/// For uncompressed formats, a 'block' is a single texel.
+#[derive(Debug, Clone, Copy)]
+pub struct FormatBlockInfo {
+    pub block_bytes: u32,
+    /// texels per block horizontally; 1 for uncompressed formats
+    pub block_width: u32,
+    /// texels per block vertically; 1 for uncompressed formats
+    pub block_height: u32,
+}
+
+/// The whitelist of texture formats supported for pre-baked mip uploads.
+/// Block-compressed formats (eg. BC7) can be added here as needed.
+pub fn format_block_info(format: vk::Format) -> Option<FormatBlockInfo> {
+    match format {
+        vk::Format::R8G8B8A8_SRGB | vk::Format::R8G8B8A8_UNORM => Some(FormatBlockInfo {
+            block_bytes: 4,
+            block_width: 1,
+            block_height: 1,
+        }),
+
+        _ => None,
+    }
+}
+
 fn create_texture(
     source_file_name: String,
     input_image: &image::DynamicImage,
@@ -4061,13 +4121,26 @@ fn create_texture_image(
         mip_levels,
     )?;
 
+    let image_subresource = vk::ImageSubresourceLayers::default()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .mip_level(0)
+        .base_array_layer(0)
+        .layer_count(1);
+    let region = vk::BufferImageCopy::default()
+        .buffer_offset(0)
+        .buffer_row_length(0)
+        .buffer_image_height(0)
+        .image_subresource(image_subresource)
+        .image_offset(vk::Offset3D::default())
+        .image_extent(extent.into());
+
     copy_buffer_to_image(
         device,
         command_pool,
         graphics_queue,
         staging_buffer,
         vk_image,
-        extent,
+        &[region],
     )?;
 
     generate_mipmaps(
@@ -4088,6 +4161,200 @@ fn create_texture_image(
     }
 
     Ok((vk_image, image_memory, mip_levels))
+}
+
+fn create_texture_from_mips(
+    source_file_name: String,
+    format: vk::Format,
+    extent: vk::Extent2D,
+    mip_data: &[&[u8]],
+    instance: &ash::Instance,
+    device: &ash::Device,
+    physical_device: vk::PhysicalDevice,
+    physical_device_properties: vk::PhysicalDeviceProperties,
+    command_pool: vk::CommandPool,
+    graphics_queue: vk::Queue,
+    texture_filter: TextureFilter,
+) -> anyhow::Result<Texture> {
+    let format_properties =
+        unsafe { instance.get_physical_device_format_properties(physical_device, format) };
+    let mut required_features =
+        vk::FormatFeatureFlags::SAMPLED_IMAGE | vk::FormatFeatureFlags::TRANSFER_DST;
+    if texture_filter == TextureFilter::Linear {
+        required_features |= vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR;
+    }
+    if !format_properties
+        .optimal_tiling_features
+        .contains(required_features)
+    {
+        anyhow::bail!("format {format:?} does not support sampling on this device");
+    }
+
+    let (texture_image, texture_image_memory) = create_texture_image_from_mips(
+        format,
+        extent,
+        mip_data,
+        instance,
+        device,
+        physical_device,
+        command_pool,
+        graphics_queue,
+    )?;
+
+    let mip_levels = mip_data.len() as u32;
+    let texture_image_view = create_image_view(
+        device,
+        texture_image,
+        format,
+        vk::ImageAspectFlags::COLOR,
+        mip_levels,
+    )?;
+
+    let texture_sampler =
+        create_texture_sampler(device, physical_device_properties, texture_filter)?;
+
+    Ok(Texture {
+        source_file_name,
+        image: texture_image,
+        image_ownership: texture::ImageOwnership::Owned(texture_image_memory),
+        mip_levels,
+        image_view: texture_image_view,
+        sampler: texture_sampler,
+        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+    })
+}
+
+#[expect(clippy::too_many_arguments)]
+fn create_texture_image_from_mips(
+    format: vk::Format,
+    extent: vk::Extent2D,
+    mip_data: &[&[u8]],
+    instance: &ash::Instance,
+    device: &ash::Device,
+    physical_device: vk::PhysicalDevice,
+    command_pool: vk::CommandPool,
+    graphics_queue: vk::Queue,
+) -> Result<(vk::Image, vk::DeviceMemory), anyhow::Error> {
+    anyhow::ensure!(!mip_data.is_empty(), "expected at least one mip level");
+    let mip_levels = mip_data.len() as u32;
+    anyhow::ensure!(
+        mip_levels <= extent.width.max(extent.height).ilog2() + 1,
+        "too many mip levels for extent"
+    );
+
+    let block = format_block_info(format)
+        .ok_or_else(|| anyhow::anyhow!("unsupported texture format: {format:?}"))?;
+
+    // vkCmdCopyBufferToImage requires each region's bufferOffset to be
+    // a multiple of the texel block size and of 4
+    let offset_alignment = (block.block_bytes as u64).max(4);
+    let mut level_offsets = Vec::with_capacity(mip_data.len());
+    let mut buffer_size: u64 = 0;
+    for level in mip_data {
+        let offset = buffer_size.next_multiple_of(offset_alignment);
+        level_offsets.push(offset);
+        buffer_size = offset + level.len() as u64;
+    }
+
+    let (staging_buffer, staging_buffer_memory) = create_memory_buffer(
+        instance,
+        device,
+        physical_device,
+        buffer_size,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    unsafe {
+        let mapped_dst =
+            device.map_memory(staging_buffer_memory, 0, buffer_size, Default::default())?
+                as *mut u8;
+        for (level, &offset) in mip_data.iter().zip(&level_offsets) {
+            std::ptr::copy_nonoverlapping(
+                level.as_ptr(),
+                mapped_dst.add(offset as usize),
+                level.len(),
+            );
+        }
+        device.unmap_memory(staging_buffer_memory);
+    }
+
+    let image_options = ImageOptions {
+        extent,
+        format,
+        tiling: vk::ImageTiling::OPTIMAL,
+        // no TRANSFER_SRC: the mip levels are uploaded directly, not blitted
+        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+        memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        mip_levels,
+        msaa_samples: vk::SampleCountFlags::TYPE_1,
+    };
+    let (vk_image, image_memory) =
+        create_vk_image(instance, device, physical_device, image_options)?;
+
+    transition_image_layout(
+        device,
+        command_pool,
+        graphics_queue,
+        vk_image,
+        format,
+        vk::ImageLayout::UNDEFINED,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        mip_levels,
+    )?;
+
+    let regions: Vec<vk::BufferImageCopy> = level_offsets
+        .iter()
+        .enumerate()
+        .map(|(i, &offset)| {
+            let image_subresource = vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .mip_level(i as u32)
+                .base_array_layer(0)
+                .layer_count(1);
+
+            let mip_extent = vk::Extent3D {
+                width: (extent.width >> i).max(1),
+                height: (extent.height >> i).max(1),
+                depth: 1,
+            };
+
+            vk::BufferImageCopy::default()
+                .buffer_offset(offset)
+                .buffer_row_length(0)
+                .buffer_image_height(0)
+                .image_subresource(image_subresource)
+                .image_offset(vk::Offset3D::default())
+                .image_extent(mip_extent)
+        })
+        .collect();
+
+    copy_buffer_to_image(
+        device,
+        command_pool,
+        graphics_queue,
+        staging_buffer,
+        vk_image,
+        &regions,
+    )?;
+
+    transition_image_layout(
+        device,
+        command_pool,
+        graphics_queue,
+        vk_image,
+        format,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        mip_levels,
+    )?;
+
+    unsafe {
+        device.destroy_buffer(staging_buffer, None);
+        device.free_memory(staging_buffer_memory, None);
+    }
+
+    Ok((vk_image, image_memory))
 }
 
 #[derive(Clone, Copy)]
@@ -4276,32 +4543,17 @@ fn copy_buffer_to_image(
     graphics_queue: vk::Queue,
     buffer: vk::Buffer,
     image: vk::Image,
-    extent: vk::Extent2D,
+    regions: &[vk::BufferImageCopy],
 ) -> Result<(), anyhow::Error> {
     let command_buffer = begin_single_time_commands(device, command_pool)?;
 
-    let image_subresource = vk::ImageSubresourceLayers::default()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .mip_level(0)
-        .base_array_layer(0)
-        .layer_count(1);
-
-    let region = vk::BufferImageCopy::default()
-        .buffer_offset(0)
-        .buffer_row_length(0)
-        .buffer_image_height(0)
-        .image_subresource(image_subresource)
-        .image_offset(vk::Offset3D::default())
-        .image_extent(extent.into());
-
     unsafe {
-        let regions = [region];
         device.cmd_copy_buffer_to_image(
             command_buffer,
             buffer,
             image,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &regions,
+            regions,
         )
     };
 
