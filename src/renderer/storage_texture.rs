@@ -32,7 +32,7 @@ impl StorageTextureStorage {
 
 pub(super) struct StorageTexture {
     pub(super) image: vk::Image,
-    pub(super) image_memory: vk::DeviceMemory,
+    pub(super) image_memory: vk_mem::Allocation,
     pub(super) image_view: vk::ImageView,
     pub(super) format: vk::Format,
     pub(super) width: u32,

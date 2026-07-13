@@ -46,7 +46,7 @@ impl TextureStorage {
 /// or is a non-owning alias of an image owned by another resource (e.g. a StorageTexture).
 pub(super) enum ImageOwnership {
     /// This texture owns the image and memory, and must free them on destroy.
-    Owned(vk::DeviceMemory),
+    Owned(vk_mem::Allocation),
     /// This texture aliases an image owned by another resource. Only the view
     /// and sampler should be destroyed.
     Aliased,

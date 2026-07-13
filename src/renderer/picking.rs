@@ -1,7 +1,8 @@
 use ash::vk;
 
 use super::{
-    ImageOptions, MAX_FRAMES_IN_FLIGHT, create_image_view, create_memory_buffer, create_vk_image,
+    BufferMemory, ImageOptions, MAX_FRAMES_IN_FLIGHT, create_image_view, create_memory_buffer,
+    create_vk_image,
 };
 
 const PICKING_FORMAT: vk::Format = vk::Format::R32_UINT;
@@ -9,28 +10,27 @@ const PICKING_FORMAT: vk::Format = vk::Format::R32_UINT;
 pub(super) struct PickingResources {
     pub render_pass: vk::RenderPass,
     pub images: [vk::Image; MAX_FRAMES_IN_FLIGHT],
-    pub image_memories: [vk::DeviceMemory; MAX_FRAMES_IN_FLIGHT],
+    pub image_memories: [vk_mem::Allocation; MAX_FRAMES_IN_FLIGHT],
     pub image_views: [vk::ImageView; MAX_FRAMES_IN_FLIGHT],
     pub framebuffers: [vk::Framebuffer; MAX_FRAMES_IN_FLIGHT],
     pub readback_buffers: [vk::Buffer; MAX_FRAMES_IN_FLIGHT],
-    pub readback_memories: [vk::DeviceMemory; MAX_FRAMES_IN_FLIGHT],
+    pub readback_memories: [vk_mem::Allocation; MAX_FRAMES_IN_FLIGHT],
     pub readback_mapped: [*mut u32; MAX_FRAMES_IN_FLIGHT],
 }
 
 impl PickingResources {
     pub fn init(
-        instance: &ash::Instance,
+        allocator: &vk_mem::Allocator,
         device: &ash::Device,
-        physical_device: vk::PhysicalDevice,
         render_extent: vk::Extent2D,
     ) -> Result<Self, anyhow::Error> {
         let render_pass = create_picking_render_pass(device)?;
         let (images, image_memories, image_views) =
-            create_picking_images(instance, device, physical_device, render_extent)?;
+            create_picking_images(allocator, device, render_extent)?;
         let framebuffers =
             create_picking_framebuffers(device, render_pass, &image_views, render_extent)?;
         let (readback_buffers, readback_memories, readback_mapped) =
-            create_picking_readback_buffers(instance, device, physical_device)?;
+            create_picking_readback_buffers(allocator)?;
 
         Ok(Self {
             render_pass,
@@ -46,22 +46,20 @@ impl PickingResources {
 
     pub fn recreate_images(
         &mut self,
-        instance: &ash::Instance,
+        allocator: &vk_mem::Allocator,
         device: &ash::Device,
-        physical_device: vk::PhysicalDevice,
         render_extent: vk::Extent2D,
     ) -> Result<(), anyhow::Error> {
         unsafe {
             for i in 0..MAX_FRAMES_IN_FLIGHT {
                 device.destroy_framebuffer(self.framebuffers[i], None);
                 device.destroy_image_view(self.image_views[i], None);
-                device.destroy_image(self.images[i], None);
-                device.free_memory(self.image_memories[i], None);
+                allocator.destroy_image(self.images[i], &mut self.image_memories[i]);
             }
         }
 
         let (images, image_memories, image_views) =
-            create_picking_images(instance, device, physical_device, render_extent)?;
+            create_picking_images(allocator, device, render_extent)?;
         let framebuffers =
             create_picking_framebuffers(device, self.render_pass, &image_views, render_extent)?;
 
@@ -73,15 +71,13 @@ impl PickingResources {
         Ok(())
     }
 
-    pub fn destroy(&self, device: &ash::Device) {
+    pub fn destroy(mut self, allocator: &vk_mem::Allocator, device: &ash::Device) {
         unsafe {
             for i in 0..MAX_FRAMES_IN_FLIGHT {
                 device.destroy_framebuffer(self.framebuffers[i], None);
                 device.destroy_image_view(self.image_views[i], None);
-                device.destroy_image(self.images[i], None);
-                device.free_memory(self.image_memories[i], None);
-                device.destroy_buffer(self.readback_buffers[i], None);
-                device.free_memory(self.readback_memories[i], None);
+                allocator.destroy_image(self.images[i], &mut self.image_memories[i]);
+                allocator.destroy_buffer(self.readback_buffers[i], &mut self.readback_memories[i]);
             }
             device.destroy_render_pass(self.render_pass, None);
         }
@@ -130,14 +126,13 @@ fn create_picking_render_pass(device: &ash::Device) -> Result<vk::RenderPass, an
 }
 
 fn create_picking_images(
-    instance: &ash::Instance,
+    allocator: &vk_mem::Allocator,
     device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
     render_extent: vk::Extent2D,
 ) -> Result<
     (
         [vk::Image; MAX_FRAMES_IN_FLIGHT],
-        [vk::DeviceMemory; MAX_FRAMES_IN_FLIGHT],
+        [vk_mem::Allocation; MAX_FRAMES_IN_FLIGHT],
         [vk::ImageView; MAX_FRAMES_IN_FLIGHT],
     ),
     anyhow::Error,
@@ -147,15 +142,13 @@ fn create_picking_images(
         format: PICKING_FORMAT,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
-        memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
         mip_levels: 1,
         msaa_samples: vk::SampleCountFlags::TYPE_1,
     };
 
     let results: [_; MAX_FRAMES_IN_FLIGHT] = (0..MAX_FRAMES_IN_FLIGHT)
         .map(|_| -> anyhow::Result<_> {
-            let (image, memory) =
-                create_vk_image(instance, device, physical_device, image_options)?;
+            let (image, memory) = create_vk_image(allocator, image_options)?;
             let view = create_image_view(
                 device,
                 image,
@@ -201,13 +194,11 @@ fn create_picking_framebuffers(
 }
 
 fn create_picking_readback_buffers(
-    instance: &ash::Instance,
-    device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
+    allocator: &vk_mem::Allocator,
 ) -> Result<
     (
         [vk::Buffer; MAX_FRAMES_IN_FLIGHT],
-        [vk::DeviceMemory; MAX_FRAMES_IN_FLIGHT],
+        [vk_mem::Allocation; MAX_FRAMES_IN_FLIGHT],
         [*mut u32; MAX_FRAMES_IN_FLIGHT],
     ),
     anyhow::Error,
@@ -215,15 +206,13 @@ fn create_picking_readback_buffers(
     let results: [_; MAX_FRAMES_IN_FLIGHT] = (0..MAX_FRAMES_IN_FLIGHT)
         .map(|_| -> anyhow::Result<_> {
             let (buffer, memory) = create_memory_buffer(
-                instance,
-                device,
-                physical_device,
+                allocator,
                 4, // sizeof(u32)
                 vk::BufferUsageFlags::TRANSFER_DST,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                BufferMemory::Readback,
             )?;
 
-            let ptr = unsafe { device.map_memory(memory, 0, 4, Default::default())? };
+            let ptr = allocator.get_allocation_info(&memory).mapped_data;
 
             Ok((buffer, memory, ptr as *mut u32))
         })

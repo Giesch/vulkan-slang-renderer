@@ -11,6 +11,7 @@ use ash::vk;
 use glam::Vec2;
 use sdl3::sys::vulkan::SDL_Vulkan_DestroySurface;
 use sdl3::video::Window;
+use vk_mem::Alloc as _;
 
 use crate::game::MaxMSAASamples;
 use crate::shaders;
@@ -89,6 +90,9 @@ pub struct Renderer {
     physical_device_properties: vk::PhysicalDeviceProperties,
     queue_family_indices: QueueFamilyIndices,
     device: ash::Device,
+    /// ManuallyDrop because Renderer has a manual Drop impl: the allocator must be
+    /// destroyed after all buffers/images are freed but before destroy_device.
+    allocator: std::mem::ManuallyDrop<vk_mem::Allocator>,
     debug_utils_device: ash::ext::debug_utils::Device,
     graphics_queue: vk::Queue,
     presentation_queue: vk::Queue,
@@ -104,17 +108,17 @@ pub struct Renderer {
     render_pass: vk::RenderPass,
     swapchain_framebuffers: [vk::Framebuffer; MAX_FRAMES_IN_FLIGHT],
     color_image: vk::Image,
-    color_image_memory: vk::DeviceMemory,
+    color_image_memory: vk_mem::Allocation,
     color_image_view: vk::ImageView,
     depth_image: vk::Image,
-    depth_image_memory: vk::DeviceMemory,
+    depth_image_memory: vk_mem::Allocation,
     depth_image_view: vk::ImageView,
 
     /// resolve images for upscaling, indexed by current_frame
     render_scale: f32,
     render_extent: vk::Extent2D,
     resolve_images: [vk::Image; MAX_FRAMES_IN_FLIGHT],
-    resolve_image_memories: [vk::DeviceMemory; MAX_FRAMES_IN_FLIGHT],
+    resolve_image_memories: [vk_mem::Allocation; MAX_FRAMES_IN_FLIGHT],
     resolve_image_views: [vk::ImageView; MAX_FRAMES_IN_FLIGHT],
 
     command_pool: vk::CommandPool,
@@ -171,15 +175,14 @@ fn calculate_render_extent(display_extent: vk::Extent2D, render_scale: f32) -> v
 }
 
 fn create_resolve_images(
-    instance: &ash::Instance,
+    allocator: &vk_mem::Allocator,
     device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
     render_extent: vk::Extent2D,
     color_format: vk::Format,
 ) -> Result<
     (
         [vk::Image; MAX_FRAMES_IN_FLIGHT],
-        [vk::DeviceMemory; MAX_FRAMES_IN_FLIGHT],
+        [vk_mem::Allocation; MAX_FRAMES_IN_FLIGHT],
         [vk::ImageView; MAX_FRAMES_IN_FLIGHT],
     ),
     anyhow::Error,
@@ -189,15 +192,13 @@ fn create_resolve_images(
         format: color_format,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-        memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
         mip_levels: 1,
         msaa_samples: vk::SampleCountFlags::TYPE_1,
     };
 
     let results: [_; MAX_FRAMES_IN_FLIGHT] = (0..MAX_FRAMES_IN_FLIGHT)
         .map(|_| -> anyhow::Result<_> {
-            let (image, memory) =
-                create_vk_image(instance, device, physical_device, image_options)?;
+            let (image, memory) = create_vk_image(allocator, image_options)?;
             let view =
                 create_image_view(device, image, color_format, vk::ImageAspectFlags::COLOR, 1)?;
             Ok((image, memory, view))
@@ -284,6 +285,18 @@ impl Renderer {
         let device = create_logical_device(&instance, physical_device, &queue_family_indices)?;
         let debug_utils_device = ash::ext::debug_utils::Device::new(&instance, &device);
 
+        let allocator = {
+            let mut allocator_create_info =
+                vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
+            allocator_create_info.vulkan_api_version = vk::API_VERSION_1_3;
+            // matches the buffer_device_address feature enabled for shader printf in debug builds
+            #[cfg(debug_assertions)]
+            {
+                allocator_create_info.flags |= vk_mem::AllocatorCreateFlags::BUFFER_DEVICE_ADDRESS;
+            }
+            std::mem::ManuallyDrop::new(unsafe { vk_mem::Allocator::new(allocator_create_info)? })
+        };
+
         let msaa_samples =
             get_max_usable_sample_count(physical_device_properties, max_msaa_samples);
 
@@ -365,25 +378,20 @@ impl Renderer {
         let render_extent = calculate_render_extent(image_extent, render_scale);
 
         // Create resolve images at render_extent
-        let (resolve_images, resolve_image_memories, resolve_image_views) = create_resolve_images(
-            &instance,
-            &device,
-            physical_device,
-            render_extent,
-            image_format,
-        )?;
+        let (resolve_images, resolve_image_memories, resolve_image_views) =
+            create_resolve_images(&allocator, &device, render_extent, image_format)?;
 
         // Color and depth buffers at render_extent (scaled resolution)
         let (color_image, color_image_memory, color_image_view) = create_color_image(
-            &instance,
+            &allocator,
             &device,
-            physical_device,
             render_extent,
             image_format,
             msaa_samples,
         )?;
 
         let (depth_image, depth_image_memory, depth_image_view) = create_depth_buffer_image(
+            &allocator,
             &instance,
             &device,
             physical_device,
@@ -429,6 +437,7 @@ impl Renderer {
             physical_device_properties,
             queue_family_indices,
             device,
+            allocator,
             debug_utils_device,
             graphics_queue,
             presentation_queue,
@@ -509,6 +518,7 @@ impl Renderer {
         let texture = create_texture(
             source_file_name.into(),
             image,
+            &self.allocator,
             &self.instance,
             &self.device,
             self.physical_device,
@@ -542,6 +552,7 @@ impl Renderer {
             format,
             extent,
             mip_data,
+            &self.allocator,
             &self.instance,
             &self.device,
             self.physical_device,
@@ -565,9 +576,8 @@ impl Renderer {
         unsafe {
             self.device.destroy_sampler(texture.sampler, None);
             self.device.destroy_image_view(texture.image_view, None);
-            if let texture::ImageOwnership::Owned(memory) = texture.image_ownership {
-                self.device.destroy_image(texture.image, None);
-                self.device.free_memory(memory, None);
+            if let texture::ImageOwnership::Owned(mut allocation) = texture.image_ownership {
+                self.allocator.destroy_image(texture.image, &mut allocation);
             }
         }
     }
@@ -579,9 +589,7 @@ impl Renderer {
         format: vk::Format,
     ) -> anyhow::Result<StorageTextureHandle> {
         let (image, image_memory) = create_vk_image(
-            &self.instance,
-            &self.device,
-            self.physical_device,
+            &self.allocator,
             ImageOptions {
                 extent: vk::Extent2D { width, height },
                 format,
@@ -589,7 +597,6 @@ impl Renderer {
                 usage: vk::ImageUsageFlags::STORAGE
                     | vk::ImageUsageFlags::SAMPLED
                     | vk::ImageUsageFlags::TRANSFER_DST,
-                memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 mip_levels: 1,
                 msaa_samples: vk::SampleCountFlags::TYPE_1,
             },
@@ -702,16 +709,14 @@ impl Renderer {
         let st = self.storage_textures.get(handle);
         let buffer_size = std::mem::size_of_val(data) as u64;
 
-        let (staging_buffer, staging_buffer_memory) = create_memory_buffer(
-            &self.instance,
-            &self.device,
-            self.physical_device,
+        let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
+            &self.allocator,
             buffer_size,
             vk::BufferUsageFlags::TRANSFER_SRC,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            BufferMemory::Staging,
         )?;
 
-        unsafe { write_to_gpu_buffer(&self.device, staging_buffer_memory, data)? };
+        unsafe { write_to_gpu_buffer(&self.allocator, &mut staging_buffer_memory, data)? };
 
         let command_buffer = begin_single_time_commands(&self.device, self.command_pool)?;
 
@@ -804,8 +809,8 @@ impl Renderer {
         )?;
 
         unsafe {
-            self.device.destroy_buffer(staging_buffer, None);
-            self.device.free_memory(staging_buffer_memory, None);
+            self.allocator
+                .destroy_buffer(staging_buffer, &mut staging_buffer_memory);
         }
 
         Ok(())
@@ -818,23 +823,18 @@ impl Renderer {
             [const { None }; BUFFER_FRAME_COUNT];
         #[expect(clippy::needless_range_loop)]
         for i in 0..BUFFER_FRAME_COUNT {
-            let (buffer, device_mem) = create_memory_buffer(
-                &self.instance,
-                &self.device,
-                self.physical_device,
+            let (buffer, allocation) = create_memory_buffer(
+                &self.allocator,
                 buffer_size,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                BufferMemory::PersistentlyMapped,
             )?;
 
-            let mapped_mem = unsafe {
-                self.device
-                    .map_memory(device_mem, 0, buffer_size, Default::default())?
-            };
+            let mapped_mem = self.allocator.get_allocation_info(&allocation).mapped_data;
 
             buffers_per_frame[i] = Some(RawUniformBuffer {
                 buffer,
-                device_mem,
+                allocation,
                 mapped_mem,
             });
         }
@@ -852,10 +852,10 @@ impl Renderer {
         }
     }
 
-    fn destroy_uniform_buffer(&mut self, uniform_buffer: RawUniformBuffer) {
+    fn destroy_uniform_buffer(&mut self, mut uniform_buffer: RawUniformBuffer) {
         unsafe {
-            self.device.destroy_buffer(uniform_buffer.buffer, None);
-            self.device.free_memory(uniform_buffer.device_mem, None);
+            self.allocator
+                .destroy_buffer(uniform_buffer.buffer, &mut uniform_buffer.allocation);
         }
     }
 
@@ -869,23 +869,18 @@ impl Renderer {
             [const { None }; BUFFER_FRAME_COUNT];
         #[expect(clippy::needless_range_loop)]
         for i in 0..BUFFER_FRAME_COUNT {
-            let (buffer, device_mem) = create_memory_buffer(
-                &self.instance,
-                &self.device,
-                self.physical_device,
+            let (buffer, allocation) = create_memory_buffer(
+                &self.allocator,
                 buffer_size,
                 vk::BufferUsageFlags::STORAGE_BUFFER,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                BufferMemory::PersistentlyMapped,
             )?;
 
-            let mapped_mem = unsafe {
-                self.device
-                    .map_memory(device_mem, 0, buffer_size, Default::default())?
-            };
+            let mapped_mem = self.allocator.get_allocation_info(&allocation).mapped_data;
 
             buffers_per_frame[i] = Some(RawStorageBuffer {
                 buffer,
-                device_mem,
+                allocation,
                 mapped_mem,
             });
         }
@@ -913,10 +908,10 @@ impl Renderer {
         }
     }
 
-    fn destroy_storage_buffer(&mut self, storage_buffer: RawStorageBuffer) {
+    fn destroy_storage_buffer(&mut self, mut storage_buffer: RawStorageBuffer) {
         unsafe {
-            self.device.destroy_buffer(storage_buffer.buffer, None);
-            self.device.free_memory(storage_buffer.device_mem, None);
+            self.allocator
+                .destroy_buffer(storage_buffer.buffer, &mut storage_buffer.allocation);
         }
     }
 
@@ -937,9 +932,8 @@ impl Renderer {
         // Lazily initialize picking resources on first use
         if self.picking.is_none() {
             self.picking = Some(PickingResources::init(
-                &self.instance,
+                &self.allocator,
                 &self.device,
-                self.physical_device,
                 self.render_extent,
             )?);
         }
@@ -1017,13 +1011,12 @@ impl Renderer {
                     .destroy_descriptor_set_layout(desc_set_layout, None);
             }
 
-            match &pipeline.vertex_pipeline_config {
-                VertexPipelineConfig::VertexAndIndexBuffers(vi_bufs) => {
-                    self.device.destroy_buffer(vi_bufs.index_buffer, None);
-                    self.device.free_memory(vi_bufs.index_buffer_memory, None);
-
-                    self.device.destroy_buffer(vi_bufs.vertex_buffer, None);
-                    self.device.free_memory(vi_bufs.vertex_buffer_memory, None);
+            match pipeline.vertex_pipeline_config {
+                VertexPipelineConfig::VertexAndIndexBuffers(mut vi_bufs) => {
+                    self.allocator
+                        .destroy_buffer(vi_bufs.index_buffer, &mut vi_bufs.index_buffer_memory);
+                    self.allocator
+                        .destroy_buffer(vi_bufs.vertex_buffer, &mut vi_bufs.vertex_buffer_memory);
                 }
 
                 VertexPipelineConfig::VertexCount => {}
@@ -1185,18 +1178,16 @@ impl Renderer {
         let vertex_pipeline_config = match &config.vertex_config {
             VertexConfig::VertexAndIndexBuffers(vertices, indices) => {
                 let (vertex_buffer, vertex_buffer_memory) = create_vertex_buffer(
-                    &self.instance,
+                    &self.allocator,
                     &self.device,
-                    self.physical_device,
                     self.command_pool,
                     self.graphics_queue,
                     vertices,
                 )?;
 
                 let (index_buffer, index_buffer_memory) = create_index_buffer(
-                    &self.instance,
+                    &self.allocator,
                     &self.device,
-                    self.physical_device,
                     self.command_pool,
                     self.graphics_queue,
                     indices,
@@ -2182,21 +2173,20 @@ impl Renderer {
         self.cleanup_swapchain();
         unsafe {
             self.device.destroy_image_view(self.depth_image_view, None);
-            self.device.destroy_image(self.depth_image, None);
-            self.device.free_memory(self.depth_image_memory, None);
+            self.allocator
+                .destroy_image(self.depth_image, &mut self.depth_image_memory);
         }
         unsafe {
             self.device.destroy_image_view(self.color_image_view, None);
-            self.device.destroy_image(self.color_image, None);
-            self.device.free_memory(self.color_image_memory, None);
+            self.allocator
+                .destroy_image(self.color_image, &mut self.color_image_memory);
         }
         unsafe {
             for i in 0..MAX_FRAMES_IN_FLIGHT {
                 self.device
                     .destroy_image_view(self.resolve_image_views[i], None);
-                self.device.destroy_image(self.resolve_images[i], None);
-                self.device
-                    .free_memory(self.resolve_image_memories[i], None);
+                self.allocator
+                    .destroy_image(self.resolve_images[i], &mut self.resolve_image_memories[i]);
             }
         }
 
@@ -2227,9 +2217,8 @@ impl Renderer {
 
         // Recreate resolve images at render_extent (one per frame-in-flight)
         let (resolve_images, resolve_image_memories, resolve_image_views) = create_resolve_images(
-            &self.instance,
+            &self.allocator,
             &self.device,
-            self.physical_device,
             self.render_extent,
             self.image_format,
         )?;
@@ -2239,6 +2228,7 @@ impl Renderer {
 
         // Depth and color at render_extent
         let (depth_image, depth_image_memory, depth_image_view) = create_depth_buffer_image(
+            &self.allocator,
             &self.instance,
             &self.device,
             self.physical_device,
@@ -2252,9 +2242,8 @@ impl Renderer {
         self.depth_image_view = depth_image_view;
 
         let (color_image, color_image_memory, color_image_view) = create_color_image(
-            &self.instance,
+            &self.allocator,
             &self.device,
-            self.physical_device,
             self.render_extent,
             self.image_format,
             self.msaa_samples,
@@ -2282,12 +2271,7 @@ impl Renderer {
         }
 
         if let Some(picking) = &mut self.picking {
-            picking.recreate_images(
-                &self.instance,
-                &self.device,
-                self.physical_device,
-                self.render_extent,
-            )?;
+            picking.recreate_images(&self.allocator, &self.device, self.render_extent)?;
         }
 
         Ok(())
@@ -2547,19 +2531,18 @@ impl Drop for Renderer {
             self.device.destroy_command_pool(self.command_pool, None);
 
             self.device.destroy_image_view(self.depth_image_view, None);
-            self.device.destroy_image(self.depth_image, None);
-            self.device.free_memory(self.depth_image_memory, None);
+            self.allocator
+                .destroy_image(self.depth_image, &mut self.depth_image_memory);
 
             self.device.destroy_image_view(self.color_image_view, None);
-            self.device.destroy_image(self.color_image, None);
-            self.device.free_memory(self.color_image_memory, None);
+            self.allocator
+                .destroy_image(self.color_image, &mut self.color_image_memory);
 
             for i in 0..MAX_FRAMES_IN_FLIGHT {
                 self.device
                     .destroy_image_view(self.resolve_image_views[i], None);
-                self.device.destroy_image(self.resolve_images[i], None);
-                self.device
-                    .free_memory(self.resolve_image_memories[i], None);
+                self.allocator
+                    .destroy_image(self.resolve_images[i], &mut self.resolve_image_memories[i]);
             }
 
             #[cfg(debug_assertions)]
@@ -2577,7 +2560,7 @@ impl Drop for Renderer {
             }
 
             if let Some(picking) = self.picking.take() {
-                picking.destroy(&self.device);
+                picking.destroy(&self.allocator, &self.device);
             }
 
             self.device.destroy_render_pass(self.render_pass, None);
@@ -2590,11 +2573,11 @@ impl Drop for Renderer {
             for texture in self.textures.take_all() {
                 self.destroy_texture(texture);
             }
-            for storage_texture in self.storage_textures.take_all() {
+            for mut storage_texture in self.storage_textures.take_all() {
                 self.device
                     .destroy_image_view(storage_texture.image_view, None);
-                self.device.destroy_image(storage_texture.image, None);
-                self.device.free_memory(storage_texture.image_memory, None);
+                self.allocator
+                    .destroy_image(storage_texture.image, &mut storage_texture.image_memory);
             }
             for pipeline in self.pipelines.take_all() {
                 self.destroy_pipeline(pipeline);
@@ -2615,6 +2598,9 @@ impl Drop for Renderer {
 
             // Drop egui before device destruction so it can clean up its Vulkan resources
             drop(self.egui.take());
+
+            // All allocations must be freed by this point; VMA reports leaks here.
+            std::mem::ManuallyDrop::drop(&mut self.allocator);
 
             self.device.destroy_device(None);
 
@@ -3554,33 +3540,28 @@ fn create_sync_objects(
 }
 
 fn create_vertex_buffer<V: GPUWrite>(
-    instance: &ash::Instance,
+    allocator: &vk_mem::Allocator,
     device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
     vertices: &[V],
-) -> Result<(vk::Buffer, vk::DeviceMemory), anyhow::Error> {
+) -> Result<(vk::Buffer, vk_mem::Allocation), anyhow::Error> {
     let buffer_size = std::mem::size_of_val(vertices) as u64;
 
-    let (staging_buffer, staging_buffer_memory) = create_memory_buffer(
-        instance,
-        device,
-        physical_device,
+    let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
+        allocator,
         buffer_size,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        BufferMemory::Staging,
     )?;
 
-    unsafe { write_to_gpu_buffer(device, staging_buffer_memory, vertices)? };
+    unsafe { write_to_gpu_buffer(allocator, &mut staging_buffer_memory, vertices)? };
 
     let (vertex_buffer, vertex_buffer_memory) = create_memory_buffer(
-        instance,
-        device,
-        physical_device,
+        allocator,
         buffer_size,
         vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        BufferMemory::DeviceLocal,
     )?;
 
     copy_memory_buffer(
@@ -3593,40 +3574,34 @@ fn create_vertex_buffer<V: GPUWrite>(
     )?;
 
     unsafe {
-        device.destroy_buffer(staging_buffer, None);
-        device.free_memory(staging_buffer_memory, None);
+        allocator.destroy_buffer(staging_buffer, &mut staging_buffer_memory);
     }
 
     Ok((vertex_buffer, vertex_buffer_memory))
 }
 
 fn create_index_buffer(
-    instance: &ash::Instance,
+    allocator: &vk_mem::Allocator,
     device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
     indices: &[u32],
-) -> Result<(vk::Buffer, vk::DeviceMemory), anyhow::Error> {
+) -> Result<(vk::Buffer, vk_mem::Allocation), anyhow::Error> {
     let buffer_size = std::mem::size_of_val(indices) as u64;
-    let (staging_buffer, staging_buffer_memory) = create_memory_buffer(
-        instance,
-        device,
-        physical_device,
+    let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
+        allocator,
         buffer_size,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        BufferMemory::Staging,
     )?;
 
-    unsafe { write_to_gpu_buffer(device, staging_buffer_memory, indices)? };
+    unsafe { write_to_gpu_buffer(allocator, &mut staging_buffer_memory, indices)? };
 
     let (index_buffer, index_buffer_memory) = create_memory_buffer(
-        instance,
-        device,
-        physical_device,
+        allocator,
         buffer_size,
         vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        BufferMemory::DeviceLocal,
     )?;
 
     copy_memory_buffer(
@@ -3639,8 +3614,7 @@ fn create_index_buffer(
     )?;
 
     unsafe {
-        device.destroy_buffer(staging_buffer, None);
-        device.free_memory(staging_buffer_memory, None);
+        allocator.destroy_buffer(staging_buffer, &mut staging_buffer_memory);
     }
 
     Ok((index_buffer, index_buffer_memory))
@@ -3666,60 +3640,69 @@ fn copy_memory_buffer(
     Ok(())
 }
 
+/// How a buffer's memory will be accessed, translated to VMA allocation flags.
+#[derive(Clone, Copy)]
+pub(super) enum BufferMemory {
+    /// GPU-only memory (vertex/index buffer targets)
+    DeviceLocal,
+    /// CPU-written upload source, transiently mapped and destroyed after the copy
+    Staging,
+    /// CPU-written per-frame buffer, persistently mapped (uniform/storage buffers)
+    PersistentlyMapped,
+    /// GPU-written, CPU-read, persistently mapped (picking readback)
+    Readback,
+}
+
+impl BufferMemory {
+    fn allocation_create_info(self) -> vk_mem::AllocationCreateInfo {
+        use vk_mem::{AllocationCreateFlags as Flags, MemoryUsage};
+
+        let mut info = vk_mem::AllocationCreateInfo {
+            usage: MemoryUsage::AutoPreferDevice,
+            ..Default::default()
+        };
+
+        match self {
+            Self::DeviceLocal => {}
+            Self::Staging => {
+                info.usage = MemoryUsage::AutoPreferHost;
+                info.flags = Flags::HOST_ACCESS_SEQUENTIAL_WRITE;
+            }
+            Self::PersistentlyMapped => {
+                info.usage = MemoryUsage::Auto;
+                info.flags = Flags::HOST_ACCESS_SEQUENTIAL_WRITE | Flags::MAPPED;
+            }
+            Self::Readback => {
+                info.usage = MemoryUsage::AutoPreferHost;
+                info.flags = Flags::HOST_ACCESS_RANDOM | Flags::MAPPED;
+            }
+        }
+
+        // Mapped writes never flush, so require coherent memory for all host access
+        if !matches!(self, Self::DeviceLocal) {
+            info.required_flags = vk::MemoryPropertyFlags::HOST_COHERENT;
+        }
+
+        info
+    }
+}
+
 pub(super) fn create_memory_buffer(
-    instance: &ash::Instance,
-    device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
+    allocator: &vk_mem::Allocator,
     buffer_size: vk::DeviceSize,
     buffer_usage: vk::BufferUsageFlags,
-    memory_property_flags: vk::MemoryPropertyFlags,
-) -> Result<(vk::Buffer, vk::DeviceMemory), anyhow::Error> {
+    memory: BufferMemory,
+) -> Result<(vk::Buffer, vk_mem::Allocation), anyhow::Error> {
     let buffer_create_info = vk::BufferCreateInfo::default()
         .size(buffer_size)
         .usage(buffer_usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-    let buffer = unsafe { device.create_buffer(&buffer_create_info, None)? };
 
-    let memory_requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+    let allocation_create_info = memory.allocation_create_info();
+    let (buffer, allocation) =
+        unsafe { allocator.create_buffer(&buffer_create_info, &allocation_create_info)? };
 
-    let mem_type_index = find_memory_type_index(
-        instance,
-        physical_device,
-        memory_requirements.memory_type_bits,
-        memory_property_flags,
-    )?;
-    let allocate_info = vk::MemoryAllocateInfo::default()
-        .allocation_size(memory_requirements.size)
-        .memory_type_index(mem_type_index as u32);
-    let buffer_memory = unsafe { device.allocate_memory(&allocate_info, None)? };
-
-    unsafe {
-        device.bind_buffer_memory(buffer, buffer_memory, 0)?;
-    };
-
-    Ok((buffer, buffer_memory))
-}
-
-fn find_memory_type_index(
-    instance: &ash::Instance,
-    physical_device: vk::PhysicalDevice,
-    memory_type_bits: u32,
-    required_properties: vk::MemoryPropertyFlags,
-) -> Result<usize, anyhow::Error> {
-    let memory_properties =
-        unsafe { instance.get_physical_device_memory_properties(physical_device) };
-
-    for (i, mem_type) in memory_properties.memory_types.iter().enumerate() {
-        let matches_type_filter = (memory_type_bits & (1 << i)) != 0;
-        let has_required_properties =
-            (mem_type.property_flags & required_properties) == required_properties;
-
-        if matches_type_filter && has_required_properties {
-            return Ok(i);
-        }
-    }
-
-    Err(anyhow::anyhow!("failed to find suitable memory type"))
+    Ok((buffer, allocation))
 }
 
 fn descriptor_pool_sizes(
@@ -4026,6 +4009,7 @@ pub fn format_block_info(format: vk::Format) -> Option<FormatBlockInfo> {
 fn create_texture(
     source_file_name: String,
     input_image: &image::DynamicImage,
+    allocator: &vk_mem::Allocator,
     instance: &ash::Instance,
     device: &ash::Device,
     physical_device: vk::PhysicalDevice,
@@ -4036,6 +4020,7 @@ fn create_texture(
 ) -> anyhow::Result<Texture> {
     let (texture_image, texture_image_memory, mip_levels) = create_texture_image(
         input_image,
+        allocator,
         instance,
         device,
         physical_device,
@@ -4067,12 +4052,13 @@ fn create_texture(
 
 fn create_texture_image(
     image: &image::DynamicImage,
+    allocator: &vk_mem::Allocator,
     instance: &ash::Instance,
     device: &ash::Device,
     physical_device: vk::PhysicalDevice,
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
-) -> Result<(vk::Image, vk::DeviceMemory, u32), anyhow::Error> {
+) -> Result<(vk::Image, vk_mem::Allocation, u32), anyhow::Error> {
     let bytes = image.to_rgba8().into_raw();
     debug_assert!(
         bytes.len() == (image.width() * image.height() * 4) as usize,
@@ -4082,16 +4068,14 @@ fn create_texture_image(
     let mip_levels = image.width().max(image.height()).ilog2() + 1;
 
     let buffer_size = bytes.len() as u64;
-    let (staging_buffer, staging_buffer_memory) = create_memory_buffer(
-        instance,
-        device,
-        physical_device,
+    let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
+        allocator,
         buffer_size,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        BufferMemory::Staging,
     )?;
 
-    unsafe { write_to_gpu_buffer(device, staging_buffer_memory, &bytes)? };
+    unsafe { write_to_gpu_buffer(allocator, &mut staging_buffer_memory, &bytes)? };
 
     let extent = vk::Extent2D::default()
         .width(image.width())
@@ -4103,12 +4087,10 @@ fn create_texture_image(
         usage: vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::SAMPLED
             | vk::ImageUsageFlags::TRANSFER_SRC, // for mipmap
-        memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
         mip_levels,
         msaa_samples: vk::SampleCountFlags::TYPE_1,
     };
-    let (vk_image, image_memory) =
-        create_vk_image(instance, device, physical_device, image_options)?;
+    let (vk_image, image_memory) = create_vk_image(allocator, image_options)?;
 
     transition_image_layout(
         device,
@@ -4156,8 +4138,7 @@ fn create_texture_image(
     )?;
 
     unsafe {
-        device.destroy_buffer(staging_buffer, None);
-        device.free_memory(staging_buffer_memory, None);
+        allocator.destroy_buffer(staging_buffer, &mut staging_buffer_memory);
     }
 
     Ok((vk_image, image_memory, mip_levels))
@@ -4168,6 +4149,7 @@ fn create_texture_from_mips(
     format: vk::Format,
     extent: vk::Extent2D,
     mip_data: &[&[u8]],
+    allocator: &vk_mem::Allocator,
     instance: &ash::Instance,
     device: &ash::Device,
     physical_device: vk::PhysicalDevice,
@@ -4194,9 +4176,8 @@ fn create_texture_from_mips(
         format,
         extent,
         mip_data,
-        instance,
+        allocator,
         device,
-        physical_device,
         command_pool,
         graphics_queue,
     )?;
@@ -4224,17 +4205,15 @@ fn create_texture_from_mips(
     })
 }
 
-#[expect(clippy::too_many_arguments)]
 fn create_texture_image_from_mips(
     format: vk::Format,
     extent: vk::Extent2D,
     mip_data: &[&[u8]],
-    instance: &ash::Instance,
+    allocator: &vk_mem::Allocator,
     device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
-) -> Result<(vk::Image, vk::DeviceMemory), anyhow::Error> {
+) -> Result<(vk::Image, vk_mem::Allocation), anyhow::Error> {
     anyhow::ensure!(!mip_data.is_empty(), "expected at least one mip level");
     let mip_levels = mip_data.len() as u32;
     anyhow::ensure!(
@@ -4256,19 +4235,15 @@ fn create_texture_image_from_mips(
         buffer_size = offset + level.len() as u64;
     }
 
-    let (staging_buffer, staging_buffer_memory) = create_memory_buffer(
-        instance,
-        device,
-        physical_device,
+    let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
+        allocator,
         buffer_size,
         vk::BufferUsageFlags::TRANSFER_SRC,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        BufferMemory::Staging,
     )?;
 
     unsafe {
-        let mapped_dst =
-            device.map_memory(staging_buffer_memory, 0, buffer_size, Default::default())?
-                as *mut u8;
+        let mapped_dst = allocator.map_memory(&mut staging_buffer_memory)?;
         for (level, &offset) in mip_data.iter().zip(&level_offsets) {
             std::ptr::copy_nonoverlapping(
                 level.as_ptr(),
@@ -4276,7 +4251,7 @@ fn create_texture_image_from_mips(
                 level.len(),
             );
         }
-        device.unmap_memory(staging_buffer_memory);
+        allocator.unmap_memory(&mut staging_buffer_memory);
     }
 
     let image_options = ImageOptions {
@@ -4285,12 +4260,10 @@ fn create_texture_image_from_mips(
         tiling: vk::ImageTiling::OPTIMAL,
         // no TRANSFER_SRC: the mip levels are uploaded directly, not blitted
         usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-        memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
         mip_levels,
         msaa_samples: vk::SampleCountFlags::TYPE_1,
     };
-    let (vk_image, image_memory) =
-        create_vk_image(instance, device, physical_device, image_options)?;
+    let (vk_image, image_memory) = create_vk_image(allocator, image_options)?;
 
     transition_image_layout(
         device,
@@ -4350,8 +4323,7 @@ fn create_texture_image_from_mips(
     )?;
 
     unsafe {
-        device.destroy_buffer(staging_buffer, None);
-        device.free_memory(staging_buffer_memory, None);
+        allocator.destroy_buffer(staging_buffer, &mut staging_buffer_memory);
     }
 
     Ok((vk_image, image_memory))
@@ -4363,17 +4335,14 @@ pub(super) struct ImageOptions {
     format: vk::Format,
     tiling: vk::ImageTiling,
     usage: vk::ImageUsageFlags,
-    memory_properties: vk::MemoryPropertyFlags,
     mip_levels: u32,
     msaa_samples: vk::SampleCountFlags,
 }
 
 pub(super) fn create_vk_image(
-    instance: &ash::Instance,
-    device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
+    allocator: &vk_mem::Allocator,
     options: ImageOptions,
-) -> Result<(vk::Image, vk::DeviceMemory), anyhow::Error> {
+) -> Result<(vk::Image, vk_mem::Allocation), anyhow::Error> {
     let image_create_info = vk::ImageCreateInfo::default()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(options.extent.into())
@@ -4386,22 +4355,14 @@ pub(super) fn create_vk_image(
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .samples(options.msaa_samples);
 
-    let vk_image = unsafe { device.create_image(&image_create_info, None)? };
+    let allocation_create_info = vk_mem::AllocationCreateInfo {
+        usage: vk_mem::MemoryUsage::AutoPreferDevice,
+        ..Default::default()
+    };
+    let (vk_image, allocation) =
+        unsafe { allocator.create_image(&image_create_info, &allocation_create_info)? };
 
-    let memory_requirements = unsafe { device.get_image_memory_requirements(vk_image) };
-    let memory_type_index = find_memory_type_index(
-        instance,
-        physical_device,
-        memory_requirements.memory_type_bits,
-        options.memory_properties,
-    )?;
-    let alloc_info = vk::MemoryAllocateInfo::default()
-        .allocation_size(memory_requirements.size)
-        .memory_type_index(memory_type_index as u32);
-    let image_memory = unsafe { device.allocate_memory(&alloc_info, None)? };
-    unsafe { device.bind_image_memory(vk_image, image_memory, 0)? };
-
-    Ok((vk_image, image_memory))
+    Ok((vk_image, allocation))
 }
 
 fn begin_single_time_commands(
@@ -4628,6 +4589,7 @@ fn create_texture_sampler(
 }
 
 fn create_depth_buffer_image(
+    allocator: &vk_mem::Allocator,
     instance: &ash::Instance,
     device: &ash::Device,
     physical_device: vk::PhysicalDevice,
@@ -4635,7 +4597,7 @@ fn create_depth_buffer_image(
     graphics_queue: vk::Queue,
     swapchain_extent: vk::Extent2D,
     msaa_samples: vk::SampleCountFlags,
-) -> Result<(vk::Image, vk::DeviceMemory, vk::ImageView), anyhow::Error> {
+) -> Result<(vk::Image, vk_mem::Allocation, vk::ImageView), anyhow::Error> {
     let depth_format = find_depth_format(instance, physical_device);
 
     let mip_levels = 1;
@@ -4645,13 +4607,11 @@ fn create_depth_buffer_image(
         format: depth_format,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
         mip_levels,
         msaa_samples,
     };
 
-    let (depth_image, depth_image_memory) =
-        create_vk_image(instance, device, physical_device, image_options)?;
+    let (depth_image, depth_image_memory) = create_vk_image(allocator, image_options)?;
 
     let depth_image_view = create_image_view(
         device,
@@ -4901,26 +4861,23 @@ fn get_max_usable_sample_count(
 }
 
 fn create_color_image(
-    instance: &ash::Instance,
+    allocator: &vk_mem::Allocator,
     device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
     swapchain_extent: vk::Extent2D,
     color_format: vk::Format,
     msaa_samples: vk::SampleCountFlags,
-) -> Result<(vk::Image, vk::DeviceMemory, vk::ImageView), anyhow::Error> {
+) -> Result<(vk::Image, vk_mem::Allocation, vk::ImageView), anyhow::Error> {
     let mip_levels = 1;
     let image_options = ImageOptions {
         extent: swapchain_extent,
         format: color_format,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::TRANSIENT_ATTACHMENT | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-        memory_properties: vk::MemoryPropertyFlags::DEVICE_LOCAL,
         mip_levels,
         msaa_samples,
     };
 
-    let (color_image, color_image_memory) =
-        create_vk_image(instance, device, physical_device, image_options)?;
+    let (color_image, color_image_memory) = create_vk_image(allocator, image_options)?;
 
     let color_image_view = create_image_view(
         device,

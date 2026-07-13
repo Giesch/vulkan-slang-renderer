@@ -120,10 +120,10 @@ pub struct VertexAndIndexBuffersHandle;
 
 pub(super) struct VertexAndIndexBuffers {
     pub(super) vertex_buffer: vk::Buffer,
-    pub(super) vertex_buffer_memory: vk::DeviceMemory,
+    pub(super) vertex_buffer_memory: vk_mem::Allocation,
 
     pub(super) index_buffer: vk::Buffer,
-    pub(super) index_buffer_memory: vk::DeviceMemory,
+    pub(super) index_buffer_memory: vk_mem::Allocation,
 
     pub(super) index_count: u32,
 }

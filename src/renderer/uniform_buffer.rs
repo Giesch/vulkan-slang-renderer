@@ -13,7 +13,8 @@ pub struct UniformBufferHandle<T> {
 
 pub(super) struct RawUniformBuffer {
     pub(super) buffer: vk::Buffer,
-    pub(super) device_mem: vk::DeviceMemory,
+    pub(super) allocation: vk_mem::Allocation,
+    /// cached from the persistently-mapped allocation's info
     pub(super) mapped_mem: *mut c_void,
 }
 

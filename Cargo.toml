@@ -29,6 +29,7 @@ egui-ash-renderer = "0.11.0"
 facet = { version = "0.42", features = ["reflect"] }
 facet-core = { version = "0.42.0", features = ["std"] }
 rodio = "0.22.2"
+vk-mem = "0.5.0"
 
 [dependencies.shader-slang]
 # fork with static build changes
