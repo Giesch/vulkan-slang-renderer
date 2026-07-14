@@ -63,6 +63,15 @@ const ENABLE_SAMPLE_SHADING: bool = false;
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 const BUFFER_FRAME_COUNT: usize = MAX_FRAMES_IN_FLIGHT + 1;
 
+/// the subresource range of a single-mip color image
+const COLOR_SUBRESOURCE_RANGE: vk::ImageSubresourceRange = vk::ImageSubresourceRange {
+    aspect_mask: vk::ImageAspectFlags::COLOR,
+    base_mip_level: 0,
+    level_count: 1,
+    base_array_layer: 0,
+    layer_count: 1,
+};
+
 pub struct Renderer {
     // fields that are created once
     aspect_ratio: f32,
@@ -105,8 +114,7 @@ pub struct Renderer {
     swapchain: vk::SwapchainKHR,
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
-    render_pass: vk::RenderPass,
-    swapchain_framebuffers: [vk::Framebuffer; MAX_FRAMES_IN_FLIGHT],
+    depth_format: vk::Format,
     color_image: vk::Image,
     color_image_memory: vk_mem::Allocation,
     color_image_view: vk::ImageView,
@@ -159,8 +167,6 @@ pub struct Renderer {
     storage_buffers: StorageBufferStorage,
 
     egui: Option<EguiIntegration>,
-    egui_render_pass: Option<vk::RenderPass>,
-    egui_framebuffers: Option<Vec<vk::Framebuffer>>,
     text_input_active: bool,
 
     picking: Option<PickingResources>,
@@ -326,23 +332,17 @@ impl Renderer {
         let (image_available, render_finished, frames_in_flight, compute_finished) =
             create_sync_objects(&device, &swapchain_images)?;
 
-        let render_pass = create_render_pass(
-            &instance,
-            physical_device,
-            &device,
-            image_format,
-            msaa_samples,
-        )?;
+        let depth_format = find_depth_format(&instance, physical_device);
 
-        // egui uses a separate 1-sample render pass to avoid MSAA conflicts
-        let (egui, egui_render_pass, egui_framebuffers) = if enable_egui {
-            let pass = create_egui_render_pass(&device, image_format)?;
-            let framebuffers =
-                create_egui_framebuffers(&device, pass, &swapchain_image_views, image_extent)?;
-            let egui = EguiIntegration::new(&instance, physical_device, device.clone(), pass)?;
-            (Some(egui), Some(pass), Some(framebuffers))
+        let egui = if enable_egui {
+            Some(EguiIntegration::new(
+                &instance,
+                physical_device,
+                device.clone(),
+                image_format,
+            )?)
         } else {
-            (None, None, None)
+            None
         };
 
         let command_pool = create_command_pool(&device, &queue_family_indices)?;
@@ -398,16 +398,6 @@ impl Renderer {
             msaa_samples,
         )?;
 
-        // Framebuffers use resolve_image_views (one per frame-in-flight)
-        let swapchain_framebuffers = create_framebuffers(
-            &device,
-            render_pass,
-            &resolve_image_views,
-            render_extent,
-            depth_image_view,
-            color_image_view,
-        )?;
-
         let pipelines = PipelineStorage::new();
         let compute_pipelines = ComputePipelineStorage::new();
         let textures = TextureStorage::new();
@@ -445,8 +435,7 @@ impl Renderer {
             swapchain,
             swapchain_images,
             swapchain_image_views,
-            render_pass,
-            swapchain_framebuffers,
+            depth_format,
             color_image,
             color_image_memory,
             color_image_view,
@@ -482,8 +471,6 @@ impl Renderer {
             uniform_buffers,
             storage_buffers,
             egui,
-            egui_render_pass,
-            egui_framebuffers,
             picking: None,
             last_picked_object_id: 0,
             text_input_active: false,
@@ -918,13 +905,13 @@ impl Renderer {
                 self.render_extent,
             )?);
         }
-        let picking = self.picking.as_ref().unwrap();
 
         let picking_pipeline_layout =
             ShaderPipelineLayout::create_from_atlas(&self.device, &*picking_config.shader)?;
         let picking_pipeline = create_graphics_pipeline(
             &self.device,
-            picking.render_pass,
+            picking::PICKING_FORMAT,
+            None, // no depth attachment for picking
             vk::SampleCountFlags::TYPE_1,
             &picking_pipeline_layout,
             &picking_config.shader.vertex_binding_descriptions(),
@@ -1142,7 +1129,8 @@ impl Renderer {
             ShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
         let pipeline = create_graphics_pipeline(
             &self.device,
-            self.render_pass,
+            self.image_format,
+            Some(self.depth_format),
             self.msaa_samples,
             &pipeline_layout,
             &config.shader.vertex_binding_descriptions(),
@@ -1389,28 +1377,46 @@ impl Renderer {
                     .cmd_begin_debug_utils_label(command_buffer, &label);
             }
             let picking_pipeline = self.pipelines.get_picking(&picking_config.picking_handle);
-            let picking_framebuffer = picking.framebuffers[self.current_frame];
+            let picking_image = picking.images[self.current_frame];
             let picking_render_area = vk::Rect2D::default()
                 .offset(vk::Offset2D::default())
                 .extent(self.render_extent);
+
+            // transition the picking image for rendering;
+            // the previous readback copy from this image was 2 frames ago
+            let barrier_to_attachment = vk::ImageMemoryBarrier2::default()
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(picking_image)
+                .subresource_range(COLOR_SUBRESOURCE_RANGE)
+                .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                .src_access_mask(vk::AccessFlags2::NONE)
+                .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE);
+            cmd_barrier2(&self.device, command_buffer, &[barrier_to_attachment]);
+
             let picking_clear = vk::ClearValue {
                 color: vk::ClearColorValue {
                     uint32: [0, 0, 0, 0],
                 },
             };
-            let picking_clear_values = [picking_clear];
-            let picking_render_pass_begin = vk::RenderPassBeginInfo::default()
-                .render_pass(picking.render_pass)
-                .framebuffer(picking_framebuffer)
+            let picking_color_attachment = vk::RenderingAttachmentInfo::default()
+                .image_view(picking.image_views[self.current_frame])
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .clear_value(picking_clear);
+            let picking_color_attachments = [picking_color_attachment];
+            let picking_rendering_info = vk::RenderingInfo::default()
                 .render_area(picking_render_area)
-                .clear_values(&picking_clear_values);
+                .layer_count(1)
+                .color_attachments(&picking_color_attachments);
 
             unsafe {
-                self.device.cmd_begin_render_pass(
-                    command_buffer,
-                    &picking_render_pass_begin,
-                    vk::SubpassContents::INLINE,
-                );
+                self.device
+                    .cmd_begin_rendering(command_buffer, &picking_rendering_info);
 
                 self.device.cmd_bind_pipeline(
                     command_buffer,
@@ -1448,8 +1454,22 @@ impl Renderer {
                 );
 
                 self.device.cmd_draw(command_buffer, 3, 1, 0, 0);
-                self.device.cmd_end_render_pass(command_buffer);
+                self.device.cmd_end_rendering(command_buffer);
             }
+
+            // transition the picking image for the readback copy
+            let barrier_to_copy = vk::ImageMemoryBarrier2::default()
+                .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(picking_image)
+                .subresource_range(COLOR_SUBRESOURCE_RANGE)
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                .dst_access_mask(vk::AccessFlags2::TRANSFER_READ);
+            cmd_barrier2(&self.device, command_buffer, &[barrier_to_copy]);
 
             // Copy 1 pixel from picking image to readback buffer
             let mouse_x =
@@ -1512,11 +1532,70 @@ impl Renderer {
             }
         }
 
-        let framebuffer = self.swapchain_framebuffers[self.current_frame];
-        // Main render pass uses render_extent (scaled resolution)
+        // Main rendering uses render_extent (scaled resolution)
         let render_area = vk::Rect2D::default()
             .offset(vk::Offset2D::default())
             .extent(self.render_extent);
+
+        // transition attachments for rendering
+        // (replaces the implicit transitions and entry dependency of the old render pass;
+        // the MSAA color and depth images are shared by all frames in flight)
+        let color_barrier = vk::ImageMemoryBarrier2::default()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(self.color_image)
+            .subresource_range(COLOR_SUBRESOURCE_RANGE)
+            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE);
+
+        let mut depth_aspect = vk::ImageAspectFlags::DEPTH;
+        if has_stencil_component(self.depth_format) {
+            depth_aspect |= vk::ImageAspectFlags::STENCIL;
+        }
+        let depth_barrier = vk::ImageMemoryBarrier2::default()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(self.depth_image)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: depth_aspect,
+                ..COLOR_SUBRESOURCE_RANGE
+            })
+            .src_stage_mask(vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS)
+            .src_access_mask(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE)
+            .dst_stage_mask(
+                vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            )
+            .dst_access_mask(
+                vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            );
+
+        // the previous use of this frame's resolve image was the upscale blit read
+        let resolve_barrier = vk::ImageMemoryBarrier2::default()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(self.resolve_images[self.current_frame])
+            .subresource_range(COLOR_SUBRESOURCE_RANGE)
+            .src_stage_mask(vk::PipelineStageFlags2::BLIT)
+            .src_access_mask(vk::AccessFlags2::NONE)
+            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE);
+
+        cmd_barrier2(
+            &self.device,
+            command_buffer,
+            &[color_barrier, depth_barrier, resolve_barrier],
+        );
+
         let clear_color = vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [0.0, 0.0, 0.0, 1.0],
@@ -1528,21 +1607,35 @@ impl Renderer {
                 stencil: 0,
             },
         };
-        // NOTE this must match the order of the attachments
-        let clear_values = [clear_color, clear_depth_stencil];
-        let render_pass_begin = vk::RenderPassBeginInfo::default()
-            .render_pass(self.render_pass)
-            .framebuffer(framebuffer)
-            .render_area(render_area)
-            .clear_values(&clear_values);
 
-        // BEGIN RENDER PASS
+        // MSAA color renders at msaa_samples and resolves into this frame's resolve
+        // image; only the resolved output is consumed (by the upscale blit)
+        let color_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(self.color_image_view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+            .resolve_image_view(self.resolve_image_views[self.current_frame])
+            .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .clear_value(clear_color);
+        let color_attachments = [color_attachment];
+        let depth_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(self.depth_image_view)
+            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .clear_value(clear_depth_stencil);
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(render_area)
+            .layer_count(1)
+            .color_attachments(&color_attachments)
+            .depth_attachment(&depth_attachment);
+
+        // BEGIN RENDERING
         unsafe {
-            self.device.cmd_begin_render_pass(
-                command_buffer,
-                &render_pass_begin,
-                vk::SubpassContents::INLINE,
-            );
+            self.device
+                .cmd_begin_rendering(command_buffer, &rendering_info);
         }
 
         unsafe {
@@ -1618,8 +1711,23 @@ impl Renderer {
             },
         }
 
-        // END MAIN RENDER PASS
-        unsafe { self.device.cmd_end_render_pass(command_buffer) };
+        // END MAIN RENDERING
+        unsafe { self.device.cmd_end_rendering(command_buffer) };
+
+        // transition this frame's resolve image for the upscale blit read
+        // (replaces the old render pass's TRANSFER_SRC final layout and exit dependency)
+        let resolve_to_blit_src = vk::ImageMemoryBarrier2::default()
+            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(self.resolve_images[self.current_frame])
+            .subresource_range(COLOR_SUBRESOURCE_RANGE)
+            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::BLIT)
+            .dst_access_mask(vk::AccessFlags2::TRANSFER_READ);
+        cmd_barrier2(&self.device, command_buffer, &[resolve_to_blit_src]);
 
         unsafe {
             self.debug_utils_device
@@ -1698,26 +1806,33 @@ impl Renderer {
                 );
             }
 
-            // Always transition to PRESENT_SRC_KHR - egui render pass handles layout internally
-            let final_layout = vk::ImageLayout::PRESENT_SRC_KHR;
-
-            let barrier_to_next = vk::ImageMemoryBarrier2::default()
-                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .new_layout(final_layout)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .image(swapchain_image)
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .src_stage_mask(vk::PipelineStageFlags2::BLIT)
-                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_READ);
+            // With egui active the swapchain image is rendered to once more (the egui
+            // overlay loads and draws on top); otherwise it goes straight to present.
+            let barrier_to_next = if self.egui.is_some() {
+                vk::ImageMemoryBarrier2::default()
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .src_stage_mask(vk::PipelineStageFlags2::BLIT)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                    .dst_access_mask(
+                        vk::AccessFlags2::COLOR_ATTACHMENT_READ
+                            | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                    )
+            } else {
+                vk::ImageMemoryBarrier2::default()
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                    .src_stage_mask(vk::PipelineStageFlags2::BLIT)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    // presentation waits on the render_finished semaphore, not this barrier
+                    .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .dst_access_mask(vk::AccessFlags2::NONE)
+            }
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(swapchain_image)
+            .subresource_range(COLOR_SUBRESOURCE_RANGE);
 
             cmd_barrier2(&self.device, command_buffer, &[barrier_to_next]);
         }
@@ -1727,12 +1842,8 @@ impl Renderer {
                 .cmd_end_debug_utils_label(command_buffer);
         }
 
-        // EGUI RENDER PASS (separate 1-sample pass for egui overlay)
-        if let (Some(egui), Some(egui_render_pass), Some(egui_framebuffers)) = (
-            &mut self.egui,
-            self.egui_render_pass,
-            &self.egui_framebuffers,
-        ) {
+        // EGUI RENDERING (separate 1-sample rendering for egui overlay)
+        if let Some(egui) = &mut self.egui {
             let label = vk::DebugUtilsLabelEXT::default()
                 .label_name(c"Egui")
                 .color([0.8, 0.8, 0.4, 1.0]);
@@ -1741,21 +1852,24 @@ impl Renderer {
                     .cmd_begin_debug_utils_label(command_buffer, &label);
             }
 
-            let egui_framebuffer = egui_framebuffers[image_index as usize];
             let render_area = vk::Rect2D::default()
                 .offset(vk::Offset2D::default())
                 .extent(self.image_extent);
-            let egui_render_pass_begin = vk::RenderPassBeginInfo::default()
-                .render_pass(egui_render_pass)
-                .framebuffer(egui_framebuffer)
-                .render_area(render_area);
+            // draws over the blitted frame on the swapchain image
+            let egui_color_attachment = vk::RenderingAttachmentInfo::default()
+                .image_view(self.swapchain_image_views[image_index as usize])
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE);
+            let egui_color_attachments = [egui_color_attachment];
+            let egui_rendering_info = vk::RenderingInfo::default()
+                .render_area(render_area)
+                .layer_count(1)
+                .color_attachments(&egui_color_attachments);
 
             unsafe {
-                self.device.cmd_begin_render_pass(
-                    command_buffer,
-                    &egui_render_pass_begin,
-                    vk::SubpassContents::INLINE,
-                );
+                self.device
+                    .cmd_begin_rendering(command_buffer, &egui_rendering_info);
             }
 
             // Draw egui overlay (begin_frame is idempotent, safe to call if already begun)
@@ -1778,7 +1892,22 @@ impl Renderer {
                 self.text_input_active = false;
             }
 
-            unsafe { self.device.cmd_end_render_pass(command_buffer) };
+            unsafe { self.device.cmd_end_rendering(command_buffer) };
+
+            // transition the swapchain image for presentation
+            let barrier_to_present = vk::ImageMemoryBarrier2::default()
+                .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(swapchain_image)
+                .subresource_range(COLOR_SUBRESOURCE_RANGE)
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                // presentation waits on the render_finished semaphore, not this barrier
+                .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+                .dst_access_mask(vk::AccessFlags2::NONE);
+            cmd_barrier2(&self.device, command_buffer, &[barrier_to_present]);
 
             unsafe {
                 self.debug_utils_device
@@ -2240,24 +2369,6 @@ impl Renderer {
         self.color_image_memory = color_image_memory;
         self.color_image_view = color_image_view;
 
-        self.swapchain_framebuffers = create_framebuffers(
-            &self.device,
-            self.render_pass,
-            &self.resolve_image_views,
-            self.render_extent,
-            self.depth_image_view,
-            self.color_image_view,
-        )?;
-
-        if let Some(egui_render_pass) = self.egui_render_pass {
-            self.egui_framebuffers = Some(create_egui_framebuffers(
-                &self.device,
-                egui_render_pass,
-                &self.swapchain_image_views,
-                image_extent,
-            )?);
-        }
-
         if let Some(picking) = &mut self.picking {
             picking.recreate_images(&self.allocator, &self.device, self.render_extent)?;
         }
@@ -2267,14 +2378,6 @@ impl Renderer {
 
     fn cleanup_swapchain(&mut self) {
         unsafe {
-            if let Some(egui_framebuffers) = &self.egui_framebuffers {
-                for framebuffer in egui_framebuffers {
-                    self.device.destroy_framebuffer(*framebuffer, None);
-                }
-            }
-            for framebuffer in &self.swapchain_framebuffers {
-                self.device.destroy_framebuffer(*framebuffer, None);
-            }
             for image_view in &self.swapchain_image_views {
                 self.device.destroy_image_view(*image_view, None);
             }
@@ -2370,7 +2473,8 @@ impl Renderer {
 
         render_pipeline_mut.pipeline = create_graphics_pipeline(
             &self.device,
-            self.render_pass,
+            self.image_format,
+            Some(self.depth_format),
             self.msaa_samples,
             &render_pipeline_mut.layout,
             &render_pipeline_mut.shader.vertex_binding_descriptions(),
@@ -2549,11 +2653,6 @@ impl Drop for Renderer {
 
             if let Some(picking) = self.picking.take() {
                 picking.destroy(&self.allocator, &self.device);
-            }
-
-            self.device.destroy_render_pass(self.render_pass, None);
-            if let Some(egui_render_pass) = self.egui_render_pass {
-                self.device.destroy_render_pass(egui_render_pass, None);
             }
 
             self.cleanup_swapchain();
@@ -3130,199 +3229,6 @@ fn create_swapchain_image_views(
     Ok(swapchain_image_views)
 }
 
-fn create_render_pass(
-    instance: &ash::Instance,
-    physical_device: vk::PhysicalDevice,
-    device: &ash::Device,
-    swapchain_format: vk::Format,
-    msaa_samples: vk::SampleCountFlags,
-) -> Result<vk::RenderPass, anyhow::Error> {
-    let color_attachment = vk::AttachmentDescription::default()
-        .format(swapchain_format)
-        .samples(msaa_samples)
-        .load_op(vk::AttachmentLoadOp::CLEAR)
-        .store_op(vk::AttachmentStoreOp::STORE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
-    let color_attachment_ref = vk::AttachmentReference::default()
-        .attachment(0)
-        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
-    let depth_format = find_depth_format(instance, physical_device);
-    let depth_attachment = vk::AttachmentDescription::default()
-        .format(depth_format)
-        .samples(msaa_samples)
-        .load_op(vk::AttachmentLoadOp::CLEAR)
-        .store_op(vk::AttachmentStoreOp::DONT_CARE)
-        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-
-    let depth_attachment_ref = vk::AttachmentReference::default()
-        .attachment(1)
-        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-
-    // Resolve to intermediate image for render scaling (will blit to swapchain)
-    let color_attachment_resolve = vk::AttachmentDescription::default()
-        .format(swapchain_format)
-        .samples(vk::SampleCountFlags::TYPE_1)
-        .load_op(vk::AttachmentLoadOp::DONT_CARE)
-        .store_op(vk::AttachmentStoreOp::STORE)
-        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
-
-    let color_attachment_resolve_ref = vk::AttachmentReference::default()
-        .attachment(2)
-        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
-    let color_attachment_refs = [color_attachment_ref];
-    let resolve_attachment_refs = [color_attachment_resolve_ref];
-    let subpass = vk::SubpassDescription::default()
-        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        // NOTE the index in this array is the one referred to by
-        // 'layout(location = 0) out' in the frag shader
-        .color_attachments(&color_attachment_refs)
-        .depth_stencil_attachment(&depth_attachment_ref)
-        .resolve_attachments(&resolve_attachment_refs);
-
-    // NOTE an alternative to doing this would be to
-    // change the wait stages of image_available to include TOP_OF_PIPE
-    // https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Rendering_and_presentation
-    let subpass_dep = vk::SubpassDependency::default()
-        .src_subpass(vk::SUBPASS_EXTERNAL)
-        .dst_subpass(0)
-        .src_stage_mask(
-            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-        )
-        .src_access_mask(
-            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
-                | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-        )
-        .dst_stage_mask(
-            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-        )
-        .dst_access_mask(
-            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
-                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-        );
-
-    // Explicit exit dependency: narrow stage masks so the implicit ALL_COMMANDS drain
-    // doesn't prevent the driver from overlapping subsequent compute work.
-    let exit_dep = vk::SubpassDependency::default()
-        .src_subpass(0)
-        .dst_subpass(vk::SUBPASS_EXTERNAL)
-        .src_stage_mask(
-            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-        )
-        .src_access_mask(
-            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
-                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-        )
-        .dst_stage_mask(vk::PipelineStageFlags::TRANSFER)
-        .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
-
-    let attachments = [color_attachment, depth_attachment, color_attachment_resolve];
-    let subpasses = [subpass];
-    let dependencies = [subpass_dep, exit_dep];
-    let render_pass_create_info = vk::RenderPassCreateInfo::default()
-        .attachments(&attachments)
-        .subpasses(&subpasses)
-        .dependencies(&dependencies);
-
-    let render_pass = unsafe { device.create_render_pass(&render_pass_create_info, None)? };
-
-    Ok(render_pass)
-}
-
-/// Simple 1-sample render pass for egui overlay.
-/// Draws on top of the main render pass output (uses LOAD op).
-fn create_egui_render_pass(
-    device: &ash::Device,
-    swapchain_format: vk::Format,
-) -> Result<vk::RenderPass, anyhow::Error> {
-    let color_attachment = vk::AttachmentDescription::default()
-        .format(swapchain_format)
-        .samples(vk::SampleCountFlags::TYPE_1)
-        .load_op(vk::AttachmentLoadOp::LOAD)
-        .store_op(vk::AttachmentStoreOp::STORE)
-        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-        .initial_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-
-    let color_attachment_ref = vk::AttachmentReference::default()
-        .attachment(0)
-        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
-    let color_attachment_refs = [color_attachment_ref];
-    let subpass = vk::SubpassDescription::default()
-        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&color_attachment_refs);
-
-    let subpass_dep = vk::SubpassDependency::default()
-        .src_subpass(vk::SUBPASS_EXTERNAL)
-        .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
-
-    // Explicit exit dependency: narrow stage masks to avoid implicit ALL_COMMANDS drain.
-    let exit_dep = vk::SubpassDependency::default()
-        .src_subpass(0)
-        .dst_subpass(vk::SUBPASS_EXTERNAL)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-        .dst_stage_mask(vk::PipelineStageFlags::BOTTOM_OF_PIPE)
-        .dst_access_mask(vk::AccessFlags::empty());
-
-    let attachments = [color_attachment];
-    let subpasses = [subpass];
-    let dependencies = [subpass_dep, exit_dep];
-    let render_pass_create_info = vk::RenderPassCreateInfo::default()
-        .attachments(&attachments)
-        .subpasses(&subpasses)
-        .dependencies(&dependencies);
-
-    let render_pass = unsafe { device.create_render_pass(&render_pass_create_info, None)? };
-
-    Ok(render_pass)
-}
-
-/// Create framebuffers for egui render pass (just swapchain images, no MSAA/depth)
-fn create_egui_framebuffers(
-    device: &ash::Device,
-    render_pass: vk::RenderPass,
-    swapchain_image_views: &[vk::ImageView],
-    image_extent: vk::Extent2D,
-) -> Result<Vec<vk::Framebuffer>, anyhow::Error> {
-    let mut framebuffers = Vec::with_capacity(swapchain_image_views.len());
-
-    for &swapchain_image_view in swapchain_image_views {
-        let attachments = [swapchain_image_view];
-
-        let framebuffer_info = vk::FramebufferCreateInfo::default()
-            .render_pass(render_pass)
-            .attachments(&attachments)
-            .width(image_extent.width)
-            .height(image_extent.height)
-            .layers(1);
-
-        let framebuffer = unsafe { device.create_framebuffer(&framebuffer_info, None)? };
-
-        framebuffers.push(framebuffer);
-    }
-
-    Ok(framebuffers)
-}
-
 /// usage: read_shader_spv("triangle.vert.spv");
 #[expect(unused)]
 fn read_shader_spv(shader_name: &str) -> Result<Vec<u32>, anyhow::Error> {
@@ -3343,7 +3249,8 @@ fn read_shader_spv(shader_name: &str) -> Result<Vec<u32>, anyhow::Error> {
 
 fn create_graphics_pipeline(
     device: &ash::Device,
-    render_pass: vk::RenderPass,
+    color_format: vk::Format,
+    depth_format: Option<vk::Format>,
     msaa_samples: vk::SampleCountFlags,
     pipeline_layout: &ShaderPipelineLayout,
     vertex_binding_descriptions: &[vk::VertexInputBindingDescription],
@@ -3425,6 +3332,11 @@ fn create_graphics_pipeline(
         .depth_bounds_test_enable(false)
         .stencil_test_enable(false);
 
+    let color_attachment_formats = [color_format];
+    let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
+        .color_attachment_formats(&color_attachment_formats)
+        .depth_attachment_format(depth_format.unwrap_or(vk::Format::UNDEFINED));
+
     let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&stages)
         .vertex_input_state(&vertex_input_state)
@@ -3435,9 +3347,8 @@ fn create_graphics_pipeline(
         .color_blend_state(&color_blend_state)
         .dynamic_state(&dynamic_state)
         .layout(pipeline_layout.pipeline_layout)
-        .render_pass(render_pass)
-        .subpass(0)
-        .depth_stencil_state(&depth_stencil_state);
+        .depth_stencil_state(&depth_stencil_state)
+        .push_next(&mut rendering_info);
 
     let graphics_pipelines = unsafe {
         device
@@ -3450,33 +3361,6 @@ fn create_graphics_pipeline(
     unsafe { device.destroy_shader_module(vert_shader, None) };
 
     Ok(graphics_pipeline)
-}
-
-fn create_framebuffers(
-    device: &ash::Device,
-    render_pass: vk::RenderPass,
-    resolve_image_views: &[vk::ImageView; MAX_FRAMES_IN_FLIGHT],
-    render_extent: vk::Extent2D,
-    depth_image_view: vk::ImageView,
-    color_image_view: vk::ImageView,
-) -> Result<[vk::Framebuffer; MAX_FRAMES_IN_FLIGHT], anyhow::Error> {
-    // One framebuffer per frame-in-flight, each with its own resolve target
-    let mut framebuffers = [vk::Framebuffer::null(); MAX_FRAMES_IN_FLIGHT];
-
-    for i in 0..MAX_FRAMES_IN_FLIGHT {
-        let attachments = [color_image_view, depth_image_view, resolve_image_views[i]];
-
-        let framebuffer_info = vk::FramebufferCreateInfo::default()
-            .render_pass(render_pass)
-            .attachments(&attachments)
-            .width(render_extent.width)
-            .height(render_extent.height)
-            .layers(1);
-
-        framebuffers[i] = unsafe { device.create_framebuffer(&framebuffer_info, None)? };
-    }
-
-    Ok(framebuffers)
 }
 
 fn create_command_pool(

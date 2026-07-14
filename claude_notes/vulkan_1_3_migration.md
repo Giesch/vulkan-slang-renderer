@@ -1,10 +1,10 @@
 # Vulkan 1.3 Migration: Dynamic Rendering, Sync2, Timeline Semaphores, Extended Dynamic State, Opt-in BDA
 
-Status: Phases 0–1 complete (2026-07-14); Phases 2–7 pending
+Status: Phases 0–2 complete (2026-07-14); Phases 3–7 pending
 
 ## Context
 
-The renderer already requests `vk::API_VERSION_1_3` at instance, device, and VMA creation — but uses none of the 1.3 features. This migration adopts them for quality-of-life wins: dynamic rendering deletes all render pass/framebuffer machinery (and framebuffer recreation on resize), synchronization2 gives clearer barrier semantics, timeline semaphores collapse the fence/binary-semaphore/bootstrap-flag frame sync, extended dynamic state shrinks pipeline permutations, and buffer device addresses (opt-in via Slang pointer types) open the door to simpler storage-buffer access and future GPU-driven rendering.
+At the outset, the renderer already requested `vk::API_VERSION_1_3` at instance, device, and VMA creation — but used none of the 1.3 features. This migration adopts them for quality-of-life wins: dynamic rendering deletes all render pass/framebuffer machinery (and framebuffer recreation on resize), synchronization2 gives clearer barrier semantics, timeline semaphores collapse the fence/binary-semaphore/bootstrap-flag frame sync, extended dynamic state shrinks pipeline permutations, and buffer device addresses (opt-in via Slang pointer types) open the door to simpler storage-buffer access and future GPU-driven rendering.
 
 **BDA scope decision:** opt-in. Extend reflection/codegen to support `T*` pointer fields in parameter blocks; existing descriptor-bound shaders keep working unchanged. Migrate exactly two examples as proof (`sprite_batch` graphics + `particles` compute); remaining examples migrate later, one-by-one.
 
@@ -12,10 +12,11 @@ The renderer already requests `vk::API_VERSION_1_3` at instance, device, and VMA
 
 **Hardware/market support:** Steam's hardware survey publishes no Vulkan version breakdown, but the 1.3 hardware floor (NVIDIA Maxwell+, AMD Polaris+ on Windows / all GCN on Linux RADV, Intel Gen9+) covers ~95%+ of surveyed systems; the excluded classes (Kepler, pre-Polaris AMD, pre-Skylake Intel) have fallen off the visible GPU list. The real-world gap is stale drivers reporting 1.2 on capable hardware — handled by a clean error at device selection (Phase 0). Within the 1.3 population there is no feature fragmentation: core 1.3 mandates `dynamicRendering`, `synchronization2`, and `bufferDeviceAddress`; 1.2 mandated `timelineSemaphore`.
 
-**Retired risks (verified in code):**
+**Retired risks (verified in code or by landing):**
 - The pinned `slang-rs` fork (`fad6e14`) already exposes `SlangTypeKind::Pointer`, `SlangScalarType::Uint64`, `Type::element_type()`, and `CompilerOptions::capability()` — no fork changes needed.
 - Compiled `.spv` files are SPIR-V 1.5 despite the `spirv_1_6` profile atom (slang emits the minimum version the module needs). Benign: `PhysicalStorageBuffer64` is core in SPIR-V 1.5.
-- `egui-ash-renderer` 0.11 has a compile-time `dynamic-rendering` cargo feature; constructor takes `DynamicRendering { color_attachment_format, depth_attachment_format }` instead of a render pass.
+- `egui-ash-renderer` 0.11 has a compile-time `dynamic-rendering` cargo feature; constructor takes `DynamicRendering { color_attachment_format, depth_attachment_format }` instead of a render pass. (Landed cleanly in Phase 2.)
+- Sync-validation complaints from replacing implicit subpass dependencies with explicit barriers: didn't materialize — Phase 2 landed with zero validation errors across all 14 examples.
 
 ## Phase ordering
 
@@ -57,7 +58,9 @@ Implemented: all 9 `cmd_pipeline_barrier` sites → `ImageMemoryBarrier2`/`Memor
 - Convert the 4 submit sites to `queue_submit2` with `CommandBufferSubmitInfo` + `SemaphoreSubmitInfo` (`.stage_mask()` replaces `wait_dst_stage_mask`).
 - Fences/binary semaphores untouched this phase — only submit structs change.
 
-## Phase 2 — Dynamic rendering
+## Phase 2 — Dynamic rendering ✅ (done 2026-07-14)
+
+Implemented as planned. Notes beyond the plan: `create_graphics_pipeline` takes `(color_format, depth_format: Option<vk::Format>)` (None for picking → `Format::UNDEFINED` in `PipelineRenderingCreateInfo`); a shared `COLOR_SUBRESOURCE_RANGE` const was added; the swapchain-to-present transition uses `dst_stage NONE/NONE` (present orders via the render_finished semaphore); the egui-active blit post-barrier dst access is `COLOR_ATTACHMENT_READ|WRITE` since egui LOADs. `EguiIntegration::new` now takes the swapchain format; `set_render_pass` deleted (it was never called on resize anyway — formats don't change there). Depth aspect derives from the new `Renderer::depth_format` field via `has_stencil_component`. All render pass/framebuffer functions, fields, and destroy calls deleted — zero references to RenderPass/Framebuffer/sync1 flags remain in src/. Verified: check/lint/test green; all 14 examples run clean under validation in debug (incl. 4 egui-using ones and gpu_picking); release spot-checks clean. Not covered by automation: visual parity and resize stress — worth a quick manual look.
 
 `src/renderer.rs`, `src/renderer/picking.rs`, `src/renderer/egui.rs`, `Cargo.toml`. Convert one pass at a time (main → picking → egui), running validation between each.
 
@@ -79,19 +82,20 @@ Verify: MSAA resolve (suzanne/viking_room), render-scale blit, egui editor overl
 
 ## Phase 3 — Timeline-semaphore frame sync
 
-`src/renderer.rs`: sync fields 130–148, `create_sync_objects` 3490–3540, `draw_frame` 1876–2145.
+`src/renderer.rs` (anchors current as of end of Phase 2): sync fields 135–160, `create_sync_objects` ~3393, `Renderer::draw_frame` ~1967 (plus the delegating `FrameRenderer::draw_frame` ~5251), `recreate_swapchain` ~2270.
 
 Two timeline semaphores (`SemaphoreTypeCreateInfo::semaphore_type(TIMELINE)`) replace two fence arrays and two binary-semaphore arrays:
 - `frame_timeline`: graphics submit for frame N signals value N; the CPU fence-wait becomes `wait_semaphores(frame_timeline ≥ N − MAX_FRAMES_IN_FLIGHT)` (wait on ≤0 returns immediately — replaces pre-signaled fences; `reset_fences` disappears). Deletes `frames_in_flight` fences.
-- `compute_timeline`: compute submit N waits ≥N−1 / signals N; graphics submit N waits ≥N−1 with stage `VERTEX_SHADER|FRAGMENT_SHADER|COMPUTE_SHADER` (also fixes a pre-existing latent under-sync: the old wait mask was `FRAGMENT_SHADER` only, but particle buffers are read in the vertex stage). Deletes `compute_finished`, `compute_to_graphics_sem`, `compute_fences`, and the `compute_bootstrapped` three-way branch at 2056–2085 (waiting on 0 succeeds trivially on frame 1).
+- `compute_timeline`: compute submit N waits ≥N−1 / signals N; graphics submit N waits ≥N−1 with the `VERTEX_SHADER|FRAGMENT_SHADER|COMPUTE_SHADER` stage mask (already widened in Phase 1 — carry it over). Deletes `compute_finished`, `compute_to_graphics_sem`, `compute_fences`, and the `compute_bootstrapped` three-way branch (~2166) (waiting on 0 succeeds trivially on frame 1).
+- **Also deleted**: the `recreate_swapchain` block (~2273) that destroys/recreates `compute_finished` + `compute_to_graphics_sem` and resets `compute_bootstrapped` — it exists only because signaled binary semaphores can't be reset; timeline semaphores don't have that problem and must NOT be recreated there (values stay monotonic across recreation).
 - **Must stay binary (WSI constraint):** `image_available` (acquire can't signal timeline) and per-swapchain-image `render_finished` (present can't wait timeline). They mix freely into `SubmitInfo2` — timeline entries just set `.value()`.
-- Frame counter: ensure exactly one increment per submitted frame (audit early-return recreate paths, ~1918); never recreate timeline semaphores on swapchain recreation (values must stay monotonic).
+- Frame counter: ensure exactly one increment per submitted frame (audit early-return recreate paths); the "advance counters BEFORE present" comment in `draw_frame` marks a spot that has bitten before.
 
 Verify: pipelined compute (particles/watercolor), resize storms, clean shutdown mid-flight.
 
 ## Phase 4 — Extended dynamic state
 
-`src/renderer.rs`: `create_graphics_pipeline` 3354–3407, draw recording 1570–1641, picking draw 1424–1470, `RendererPipeline`.
+`src/renderer.rs` (anchors current as of end of Phase 2): `create_graphics_pipeline` ~3250 (dynamic_states list inside it), main draw recording inside `record_command_buffer` ~1348+ (bind at the `cmd_bind_pipeline` after `cmd_begin_rendering`), picking draw in the same fn (~1400s), `RendererPipeline` in `src/renderer/pipeline.rs`.
 
 - Extend `dynamic_states` with core-1.3 states: `CULL_MODE`, `FRONT_FACE`, `PRIMITIVE_TOPOLOGY`, `DEPTH_TEST_ENABLE`, `DEPTH_WRITE_ENABLE`, `DEPTH_COMPARE_OP` (no feature bit needed; do NOT include blend enable — that's EDS3, not core).
 - Store choices in a small `DynamicPipelineState` struct on `RendererPipeline`; populate from existing `PipelineOptions`/`depth_test_enable` inputs (drop that param from `create_graphics_pipeline`; keep the static create-info structs as ignored placeholders).
@@ -100,12 +104,12 @@ Verify: pipelined compute (particles/watercolor), resize storms, clean shutdown 
 
 ## Phase 5 — BDA renderer plumbing
 
-`src/renderer.rs` (`create_storage_buffer` 862–892, `Gpu` ~5191), `src/renderer/storage_buffer.rs`.
+`src/renderer.rs` (anchors current as of end of Phase 2: `create_storage_buffer` ~830, `Gpu` ~5060), `src/renderer/storage_buffer.rs`.
 
 - Enable on **all storage buffers** (no opt-in flag — cost is one usage bit + one query at creation): add `BufferUsageFlags::SHADER_DEVICE_ADDRESS`; after creation call `get_buffer_device_address` and cache `device_address: vk::DeviceAddress` on `RawStorageBuffer` (one per `BUFFER_FRAME_COUNT` copy).
 - Expose via the `Gpu` view (the buffer_frame-aware handle apps write uniforms through): `gpu.device_address(&storage_handle) -> u64` for the current buffer_frame, plus an all-frames variant for init paths.
 - Uniform buffers stay descriptor-bound (addresses live *in* uniform data, not vice versa).
-- Fix the latent push-constant bug while here: `ReflectedPushConstantRange::to_vk` at renderer.rs:5164–5168 sets `.offset(self.size)` — should be the range's offset. Dormant today (no `cmd_push_constants` anywhere) but becomes live if a shader declares one.
+- Fix the latent push-constant bug while here: `impl ReflectedPushConstantRange` at renderer.rs:~5038 sets `.offset(self.size)` (line ~5042, verified still present) — should be the range's offset. Dormant today (no `cmd_push_constants` anywhere) but becomes live if a shader declares one.
 
 ## Phase 6 — Slang reflection/codegen pointer support
 
@@ -135,6 +139,5 @@ Verify: pipelined compute (particles/watercolor), resize storms, clean shutdown 
 ## Remaining risks
 
 - **Slang pointer struct layout** vs generated `#[repr]` structs: a `T*` pointee is laid out under `PhysicalStorageBuffer64` rules that may differ from the std430 used for `StructuredBuffer<T>` (e.g. scalar layout: `float3` at align 4). Failure mode is *silent* wrong data — no validation error. Mitigated three ways: (1) Phase 6's spirv-dis experiment settles the actual layout before any Rust depends on it; (2) reflection-driven offsets + per-field `offset_of!` asserts in codegen (see Phase 6) make divergence a compile error; (3) both proof structs are layout-invariant across std140/std430/scalar (`Particle {float2,float2,float4}` trivially; `Sprite` via its hand-inserted `float2 padding` field) so Phase 7 can't hit it. Residual watch-items: **dual-context types** — during incremental migration, a buffer may be accessed via `Particle*` in one shader and `StructuredBuffer<Particle>` in another; both GPU layouts must agree with each other (fine if pointer layout turns out to be std430; if not, migrate all shaders sharing a struct together), and shared-module codegen emits one Rust struct per type so a type genuinely can't have two layouts.
-- **Sync-validation complaints** after replacing implicit subpass dependencies with explicit barriers: convert one pass at a time within Phase 2.
-- **Timeline + swapchain-recreate edge cases** (frame-counter increments on early-return paths; the code comment at ~2108 shows this area has bitten before): test resize storms.
+- **Timeline + swapchain-recreate edge cases** (frame-counter increments on early-return paths; the "advance counters BEFORE present" comment in `draw_frame` shows this area has bitten before): test resize storms.
 - **`shader_draw_parameters`** feature bit newly actually-enabled in Phase 0 (previously extension-only): strictly more correct, but watch draw-parameter-using examples.

@@ -23,13 +23,16 @@ impl EguiIntegration {
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
         device: ash::Device,
-        render_pass: vk::RenderPass,
+        color_attachment_format: vk::Format,
     ) -> Result<Self, egui_ash_renderer::RendererError> {
         let renderer = egui_ash_renderer::Renderer::with_default_allocator(
             instance,
             physical_device,
             device,
-            render_pass,
+            egui_ash_renderer::DynamicRendering {
+                color_attachment_format,
+                depth_attachment_format: None,
+            },
             egui_ash_renderer::Options {
                 in_flight_frames: MAX_FRAMES_IN_FLIGHT,
                 ..Default::default()
@@ -44,11 +47,6 @@ impl EguiIntegration {
             frame_begun: false,
             pending_free_textures: [vec![], vec![]],
         })
-    }
-
-    /// Called when render pass is recreated (on resize)
-    pub fn set_render_pass(&mut self, render_pass: vk::RenderPass) {
-        self.renderer.set_render_pass(render_pass).unwrap();
     }
 
     /// Free textures that were marked for deletion in a previous frame.
