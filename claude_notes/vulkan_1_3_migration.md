@@ -1,10 +1,12 @@
 # Vulkan 1.3 Migration: Dynamic Rendering, Sync2, Timeline Semaphores, Extended Dynamic State, Opt-in BDA
 
-Status: Phases 0–3 complete (2026-07-14); Phases 4–7 pending
+Status: Phases 0–3 and 5 complete (2026-07-14); Phase 4 won't do (decided 2026-07-14); Phases 6–7 pending
 
 Related notes:
 - [vulkan_1_3_migration/bindless_vs_bda_terminology.md](vulkan_1_3_migration/bindless_vs_bda_terminology.md) — how the BDA pointer-tree direction relates to "bindless", search terms, reading list.
 - [vulkan_1_3_migration/timeline_semaphores.md](vulkan_1_3_migration/timeline_semaphores.md) — timeline semaphore primer, WSI limits, and the Phase 3 old→new sync-object mapping.
+- [vulkan_1_3_migration/dynamic_state.md](vulkan_1_3_migration/dynamic_state.md) — dynamic state primer, benefits/costs, and the (reverted, won't-do) Phase 4 design for reference.
+- [vulkan_1_3_migration/bda_renderer_plumbing.md](vulkan_1_3_migration/bda_renderer_plumbing.md) — BDA primer and the detailed Phase 5 design (address caching, `Gpu` API shape incl. the PingPong-mirroring `device_address_prev`).
 
 ## Context
 
@@ -29,7 +31,7 @@ At the outset, the renderer already requested `vk::API_VERSION_1_3` at instance,
 1. Synchronization2                 (so Phase 2's new explicit barriers are written once, in sync2 style)
 2. Dynamic rendering                (removes passes/framebuffers; needs sync2-style transitions)
 3. Timeline-semaphore frame sync    (builds on SubmitInfo2/SemaphoreSubmitInfo from Phase 1)
-4. Extended dynamic state           (independent)
+4. Extended dynamic state           (independent — won't do)
 5. BDA renderer plumbing            (no shader changes yet)
 6. Slang reflection/codegen pointers (build-time only, snapshot-tested)
 7. Proof examples: sprite_batch + particles
@@ -99,7 +101,11 @@ Two timeline semaphores (`SemaphoreTypeCreateInfo::semaphore_type(TIMELINE)`) re
 
 Verify: pipelined compute (particles/watercolor), resize storms, clean shutdown mid-flight.
 
-## Phase 4 — Extended dynamic state
+## Phase 4 — Extended dynamic state ❌ (won't do, decided 2026-07-14)
+
+Implemented, fully verified green (check/lint/test with zero snapshot churn; gpu_picking, suzanne, sprite_batch, space_invaders, viking_room clean under validation; release and hot-reload spot-checks clean), then **reverted by decision before commit**. Rationale: the phase is purely orthogonal — Phases 5–7 (BDA) have zero dependency on it, and the renderer's only actual static variation today is `depth_test_enable`, so the practical payoff (fewer pipeline permutations, state-agnostic hot reload) is speculative until real per-pipeline state variation exists. The resize benefit often attributed to dynamic state was already banked pre-migration via dynamic VIEWPORT/SCISSOR.
+
+The full design and verified implementation shape are preserved in [vulkan_1_3_migration/dynamic_state.md](vulkan_1_3_migration/dynamic_state.md) — if per-pipeline state variation ever materializes (two-sided materials, line-topology debug views), that note is the restart point; the change is small (two files) and was proven clean.
 
 `src/renderer.rs` (anchors current as of end of Phase 2): `create_graphics_pipeline` ~3250 (dynamic_states list inside it), main draw recording inside `record_command_buffer` ~1348+ (bind at the `cmd_bind_pipeline` after `cmd_begin_rendering`), picking draw in the same fn (~1400s), `RendererPipeline` in `src/renderer/pipeline.rs`.
 
@@ -108,14 +114,16 @@ Verify: pipelined compute (particles/watercolor), resize storms, clean shutdown 
 - After every `cmd_bind_pipeline` (graphics + picking): `cmd_set_cull_mode`, `cmd_set_front_face`, `cmd_set_primitive_topology`, `cmd_set_depth_test_enable`, `cmd_set_depth_write_enable`, `cmd_set_depth_compare_op`.
 - Hot-reload rebuilds no longer vary by these states.
 
-## Phase 5 — BDA renderer plumbing
+## Phase 5 — BDA renderer plumbing ✅ (done 2026-07-14)
 
-`src/renderer.rs` (anchors current as of end of Phase 2: `create_storage_buffer` ~830, `Gpu` ~5060), `src/renderer/storage_buffer.rs`.
+Implemented as designed in [vulkan_1_3_migration/bda_renderer_plumbing.md](vulkan_1_3_migration/bda_renderer_plumbing.md) (BDA primer, verified anchors, `Gpu` API shape, PingPong frame-offset semantics): `SHADER_DEVICE_ADDRESS` usage + per-copy address query/cache in `create_storage_buffer`, `device_address` field on `RawStorageBuffer`, `get_device_address_for_frame` accessor, `Gpu::device_address`/`Gpu::device_address_prev` (the latter mirroring PingPong's −1 frame offset) and `Renderer::device_addresses` for init paths. Verified: check/fmt/lint/test green with zero snapshot churn; basic_triangle, sprite_batch, particles, watercolor, suzanne, gpu_picking clean under validation in debug; particles release spot-check clean. Behaviorally invisible by design — the API's first real exercise is Phase 7.
+
+`src/renderer.rs` (verified anchors 2026-07-14: `create_storage_buffer` 803–833, `Gpu` 5002–5044), `src/renderer/storage_buffer.rs`.
 
 - Enable on **all storage buffers** (no opt-in flag — cost is one usage bit + one query at creation): add `BufferUsageFlags::SHADER_DEVICE_ADDRESS`; after creation call `get_buffer_device_address` and cache `device_address: vk::DeviceAddress` on `RawStorageBuffer` (one per `BUFFER_FRAME_COUNT` copy).
 - Expose via the `Gpu` view (the buffer_frame-aware handle apps write uniforms through): `gpu.device_address(&storage_handle) -> u64` for the current buffer_frame, plus an all-frames variant for init paths.
 - Uniform buffers stay descriptor-bound (addresses live *in* uniform data, not vice versa).
-- Fix the latent push-constant bug while here: `impl ReflectedPushConstantRange` at renderer.rs:~5038 sets `.offset(self.size)` (line ~5042, verified still present) — should be the range's offset. Dormant today (no `cmd_push_constants` anywhere) but becomes live if a shader declares one.
+- ~~Fix the latent push-constant bug while here~~ ✅ done 2026-07-14, landed ahead of the phase: `impl ReflectedPushConstantRange::to_vk` (renderer.rs:4981–4988) now uses `.offset(self.offset)` instead of the old `.offset(self.size)`.
 
 ## Phase 6 — Slang reflection/codegen pointer support
 

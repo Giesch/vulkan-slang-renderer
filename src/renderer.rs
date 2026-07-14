@@ -813,16 +813,24 @@ impl Renderer {
             let (buffer, allocation) = create_memory_buffer(
                 &self.allocator,
                 buffer_size,
-                vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
                 BufferMemory::PersistentlyMapped,
             )?;
 
             let mapped_mem = self.allocator.get_allocation_info(&allocation).mapped_data;
 
+            let device_address = unsafe {
+                self.device.get_buffer_device_address(
+                    &vk::BufferDeviceAddressInfo::default().buffer(buffer),
+                )
+            };
+            debug_assert_ne!(device_address, 0);
+
             buffers_per_frame[i] = Some(RawStorageBuffer {
                 buffer,
                 allocation,
                 mapped_mem,
+                device_address,
             });
         }
         let buffers_per_frame = buffers_per_frame.map(Option::unwrap);
@@ -840,6 +848,15 @@ impl Renderer {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
             }
         }
+    }
+
+    /// the device address of each buffer frame's copy, indexed by buffer frame;
+    /// for init paths - per-frame writes should use Gpu::device_address
+    pub fn device_addresses<T>(&self, buf: &StorageBufferHandle<T>) -> [u64; BUFFER_FRAME_COUNT] {
+        std::array::from_fn(|frame| {
+            self.storage_buffers
+                .get_device_address_for_frame(buf, frame)
+        })
     }
 
     pub fn drop_storage_buffer<T>(&mut self, storage_buffer: StorageBufferHandle<T>) {
@@ -4982,7 +4999,7 @@ impl shaders::json::ReflectedPushConstantRange {
     fn to_vk(&self) -> vk::PushConstantRange {
         vk::PushConstantRange::default()
             .stage_flags(self.stage_flags.to_vk())
-            .offset(self.size)
+            .offset(self.offset)
             .size(self.size)
     }
 }
@@ -5040,6 +5057,22 @@ impl<'f> Gpu<'f> {
         let items = unsafe { std::slice::from_raw_parts_mut(mapped_mem, len) };
 
         items.sort_by(compare);
+    }
+
+    /// the device address of the current buffer frame's copy,
+    /// for writing into a pointer field of a parameter block
+    pub fn device_address<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> u64 {
+        self.storage_buffers
+            .get_device_address_for_frame(storage_buffer, self.buffer_frame)
+    }
+
+    /// the device address of the previous buffer frame's copy;
+    /// matches the -1 frame offset the PingPong descriptor strategy
+    /// applies to the first storage buffer in layout order
+    pub fn device_address_prev<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> u64 {
+        let prev_frame = (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
+        self.storage_buffers
+            .get_device_address_for_frame(storage_buffer, prev_frame)
     }
 }
 

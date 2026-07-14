@@ -24,6 +24,8 @@ pub(super) struct RawStorageBuffer {
     pub(super) allocation: vk_mem::Allocation,
     /// cached from the persistently-mapped allocation's info
     pub(super) mapped_mem: *mut c_void,
+    /// cached at creation; stable for the buffer's whole life
+    pub(super) device_address: vk::DeviceAddress,
 }
 
 // NOTE renderer has to enforce type safety
@@ -56,6 +58,14 @@ impl StorageBufferStorage {
         handle: &RawStorageBufferHandle,
     ) -> &[RawStorageBuffer; BUFFER_FRAME_COUNT] {
         self.0[handle.index].as_ref().unwrap()
+    }
+
+    pub(super) fn get_device_address_for_frame<T>(
+        &self,
+        handle: &StorageBufferHandle<T>,
+        frame: usize,
+    ) -> vk::DeviceAddress {
+        self.0[handle.index].as_ref().unwrap()[frame].device_address
     }
 
     pub(super) fn get_mapped_mem_for_frame<T>(
