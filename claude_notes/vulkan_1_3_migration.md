@@ -1,6 +1,6 @@
 # Vulkan 1.3 Migration: Dynamic Rendering, Sync2, Timeline Semaphores, Extended Dynamic State, Opt-in BDA
 
-Status: Phase 0 complete (2026-07-14); Phases 1–7 pending
+Status: Phases 0–1 complete (2026-07-14); Phases 2–7 pending
 
 ## Context
 
@@ -47,7 +47,9 @@ Implemented as planned, plus: `choose_physical_device` logs a per-device warning
 - Remove `#[cfg(debug_assertions)]` around VMA `AllocatorCreateFlags::BUFFER_DEVICE_ADDRESS` (293–296).
 - Verify in **release too** (`cargo run --release --example ...`) — release previously attached no feature chain at all.
 
-## Phase 1 — Synchronization2
+## Phase 1 — Synchronization2 ✅ (done 2026-07-14)
+
+Implemented: all 9 `cmd_pipeline_barrier` sites → `ImageMemoryBarrier2`/`MemoryBarrier2` via a new `cmd_barrier2` helper (next to `end_single_time_commands`); all 4 submits → `queue_submit2` with `SemaphoreSubmitInfo`/`CommandBufferSubmitInfo`; `FrameRenderer::memory_barrier` + `PendingComputeCommand::Barrier` retyped to `Flags2` (callers in `examples/particles.rs` and `examples/watercolor.rs` updated). Precise stages used: `COPY` for buffer→image uploads, `BLIT` for the render-scale blit and mipmap chain (src stays `ALL_TRANSFER` where the producer is mixed copy/blit). The compute→graphics wait mask was widened from `FRAGMENT_SHADER` to `VERTEX|FRAGMENT|COMPUTE_SHADER` at both submit sites (fixes the latent vertex-stage under-sync, originally slated for Phase 3). Render-pass `SubpassDependency`s intentionally still sync1 — deleted in Phase 2. Verified: check/lint/test green; 8 examples clean under validation in debug; release spot-check clean.
 
 `src/renderer.rs`: barriers at 729–807, 1342–1360, 1664–1760, `transition_image_layout` 4408+, `FrameRenderer::memory_barrier` ~5305; submits at 1998–2008, 2022–2032, 2087–2097, 4390–4400.
 

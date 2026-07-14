@@ -103,10 +103,10 @@ impl Game for Particles {
 
         // Barrier: compute writes must complete before vertex shader reads
         renderer.memory_barrier(
-            vk::PipelineStageFlags::COMPUTE_SHADER,
-            vk::PipelineStageFlags::VERTEX_SHADER,
-            vk::AccessFlags::SHADER_WRITE,
-            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags2::COMPUTE_SHADER,
+            vk::PipelineStageFlags2::VERTEX_SHADER,
+            vk::AccessFlags2::SHADER_WRITE,
+            vk::AccessFlags2::SHADER_READ,
         );
 
         let vertex_count = NUM_PARTICLES * 6; // 6 vertices per particle quad

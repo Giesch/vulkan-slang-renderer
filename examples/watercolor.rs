@@ -224,10 +224,10 @@ fn window_to_canvas(position: Vec2, window_size: Vec2, canvas_size: Vec2) -> Vec
 
 fn compute_barrier(renderer: &mut FrameRenderer) {
     renderer.memory_barrier(
-        vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::AccessFlags::SHADER_WRITE,
-        vk::AccessFlags::SHADER_READ,
+        vk::PipelineStageFlags2::COMPUTE_SHADER,
+        vk::PipelineStageFlags2::COMPUTE_SHADER,
+        vk::AccessFlags2::SHADER_WRITE,
+        vk::AccessFlags2::SHADER_READ,
     );
 }
 

@@ -723,27 +723,19 @@ impl Renderer {
             .level_count(1)
             .layer_count(1);
 
-        let barrier_to_transfer = vk::ImageMemoryBarrier::default()
+        let barrier_to_transfer = vk::ImageMemoryBarrier2::default()
             .old_layout(vk::ImageLayout::GENERAL)
             .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .image(st.image)
             .subresource_range(subresource_range)
-            .src_access_mask(Default::default())
-            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
+            .src_stage_mask(vk::PipelineStageFlags2::NONE)
+            .src_access_mask(vk::AccessFlags2::NONE)
+            .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+            .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE);
 
-        unsafe {
-            self.device.cmd_pipeline_barrier(
-                command_buffer,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::TRANSFER,
-                Default::default(),
-                &[],
-                &[],
-                &[barrier_to_transfer],
-            );
-        }
+        cmd_barrier2(&self.device, command_buffer, &[barrier_to_transfer]);
 
         // Copy buffer to image
         let image_subresource = vk::ImageSubresourceLayers::default()
@@ -776,27 +768,19 @@ impl Renderer {
         }
 
         // Transition TRANSFER_DST_OPTIMAL -> GENERAL
-        let barrier_to_general = vk::ImageMemoryBarrier::default()
+        let barrier_to_general = vk::ImageMemoryBarrier2::default()
             .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
             .new_layout(vk::ImageLayout::GENERAL)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .image(st.image)
             .subresource_range(subresource_range)
-            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+            .src_stage_mask(vk::PipelineStageFlags2::COPY)
+            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+            .dst_access_mask(vk::AccessFlags2::SHADER_READ);
 
-        unsafe {
-            self.device.cmd_pipeline_barrier(
-                command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                Default::default(),
-                &[],
-                &[],
-                &[barrier_to_general],
-            );
-        }
+        cmd_barrier2(&self.device, command_buffer, &[barrier_to_general]);
 
         end_single_time_commands(
             &self.device,
@@ -1336,21 +1320,18 @@ impl Renderer {
                     src_access,
                     dst_access,
                 } => {
-                    let memory_barrier = vk::MemoryBarrier::default()
+                    let memory_barrier = vk::MemoryBarrier2::default()
+                        .src_stage_mask(*src_stage)
                         .src_access_mask(*src_access)
+                        .dst_stage_mask(*dst_stage)
                         .dst_access_mask(*dst_access);
                     let memory_barriers = [memory_barrier];
+                    let dependency_info =
+                        vk::DependencyInfo::default().memory_barriers(&memory_barriers);
 
                     unsafe {
-                        self.device.cmd_pipeline_barrier(
-                            command_buffer,
-                            *src_stage,
-                            *dst_stage,
-                            vk::DependencyFlags::empty(),
-                            &memory_barriers,
-                            &[],
-                            &[],
-                        );
+                        self.device
+                            .cmd_pipeline_barrier2(command_buffer, &dependency_info);
                     }
                 }
             }
@@ -1658,7 +1639,7 @@ impl Renderer {
         let swapchain_image = self.swapchain_images[image_index as usize];
         {
             // Transition swapchain image from UNDEFINED to TRANSFER_DST
-            let barrier_to_transfer = vk::ImageMemoryBarrier::default()
+            let barrier_to_transfer = vk::ImageMemoryBarrier2::default()
                 .old_layout(vk::ImageLayout::UNDEFINED)
                 .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -1671,20 +1652,12 @@ impl Renderer {
                     base_array_layer: 0,
                     layer_count: 1,
                 })
-                .src_access_mask(vk::AccessFlags::empty())
-                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .src_access_mask(vk::AccessFlags2::NONE)
+                .dst_stage_mask(vk::PipelineStageFlags2::BLIT)
+                .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE);
 
-            unsafe {
-                self.device.cmd_pipeline_barrier(
-                    command_buffer,
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[barrier_to_transfer],
-                );
-            }
+            cmd_barrier2(&self.device, command_buffer, &[barrier_to_transfer]);
 
             // Blit from resolve_image to swapchain_image
             let src_subresource = vk::ImageSubresourceLayers::default()
@@ -1728,7 +1701,7 @@ impl Renderer {
             // Always transition to PRESENT_SRC_KHR - egui render pass handles layout internally
             let final_layout = vk::ImageLayout::PRESENT_SRC_KHR;
 
-            let barrier_to_next = vk::ImageMemoryBarrier::default()
+            let barrier_to_next = vk::ImageMemoryBarrier2::default()
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(final_layout)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -1741,20 +1714,12 @@ impl Renderer {
                     base_array_layer: 0,
                     layer_count: 1,
                 })
-                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_READ);
+                .src_stage_mask(vk::PipelineStageFlags2::BLIT)
+                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_READ);
 
-            unsafe {
-                self.device.cmd_pipeline_barrier(
-                    command_buffer,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[barrier_to_next],
-                );
-            }
+            cmd_barrier2(&self.device, command_buffer, &[barrier_to_next]);
         }
 
         unsafe {
@@ -1985,20 +1950,24 @@ impl Renderer {
             // Submit compute: wait on previous compute_finished, signal current + compute_to_graphics
             let prev_buffer_frame =
                 (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
-            let compute_wait = [self.compute_finished[prev_buffer_frame]];
-            let compute_wait_stages = [vk::PipelineStageFlags::COMPUTE_SHADER];
-            let compute_signal = [
-                self.compute_finished[self.buffer_frame],
-                self.compute_to_graphics_sem[self.buffer_frame],
+            let compute_waits = [vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.compute_finished[prev_buffer_frame])
+                .stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)];
+            let compute_signals = [
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(self.compute_finished[self.buffer_frame])
+                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(self.compute_to_graphics_sem[self.buffer_frame])
+                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
             ];
-            let compute_cbs = [compute_cb];
-            let compute_submit = vk::SubmitInfo::default()
-                .wait_semaphores(&compute_wait)
-                .wait_dst_stage_mask(&compute_wait_stages)
-                .command_buffers(&compute_cbs)
-                .signal_semaphores(&compute_signal);
+            let compute_cbs = [vk::CommandBufferSubmitInfo::default().command_buffer(compute_cb)];
+            let compute_submit = vk::SubmitInfo2::default()
+                .wait_semaphore_infos(&compute_waits)
+                .command_buffer_infos(&compute_cbs)
+                .signal_semaphore_infos(&compute_signals);
             unsafe {
-                self.device.queue_submit(
+                self.device.queue_submit2(
                     compute_queue,
                     &[compute_submit],
                     self.compute_fences[self.current_frame],
@@ -2006,23 +1975,30 @@ impl Renderer {
             }
 
             // Submit graphics: wait on image_available + previous compute_to_graphics, signal render_finished
-            let gfx_wait = [
-                self.image_available[self.buffer_frame],
-                self.compute_to_graphics_sem[prev_buffer_frame],
+            let gfx_waits = [
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(self.image_available[self.buffer_frame])
+                    .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(self.compute_to_graphics_sem[prev_buffer_frame])
+                    // compute output may be read by the vertex stage (e.g. particle
+                    // rendering), the fragment stage, or same-frame compute
+                    .stage_mask(
+                        vk::PipelineStageFlags2::VERTEX_SHADER
+                            | vk::PipelineStageFlags2::FRAGMENT_SHADER
+                            | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    ),
             ];
-            let gfx_wait_stages = [
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-            ];
-            let gfx_signal = [self.render_finished[image_index as usize]];
-            let gfx_cbs = [command_buffer];
-            let gfx_submit = vk::SubmitInfo::default()
-                .wait_semaphores(&gfx_wait)
-                .wait_dst_stage_mask(&gfx_wait_stages)
-                .command_buffers(&gfx_cbs)
-                .signal_semaphores(&gfx_signal);
+            let gfx_signals = [vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.render_finished[image_index as usize])
+                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
+            let gfx_cbs = [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
+            let gfx_submit = vk::SubmitInfo2::default()
+                .wait_semaphore_infos(&gfx_waits)
+                .command_buffer_infos(&gfx_cbs)
+                .signal_semaphore_infos(&gfx_signals);
             unsafe {
-                self.device.queue_submit(
+                self.device.queue_submit2(
                     self.graphics_queue,
                     &[gfx_submit],
                     self.frames_in_flight[self.current_frame],
@@ -2044,50 +2020,65 @@ impl Renderer {
                 ComputePlacement::BeforeGraphics,
             )?;
 
-            let submit_command_buffers = [command_buffer];
+            let submit_command_buffers =
+                [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
+
+            let image_available_wait = vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.image_available[self.buffer_frame])
+                .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT);
+            let render_finished_signal = vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.render_finished[image_index as usize])
+                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS);
 
             // When compute pipelines exist, add cross-frame synchronization:
             // - Wait on the previous frame's compute_finished semaphore (so reads see prior writes)
             // - Signal this frame's compute_finished semaphore (for the next frame to wait on)
-            let (wait_semaphores, wait_dst_stage_mask, signal_semaphores);
+            let (wait_semaphores, signal_semaphores);
             if self.has_compute_pipelines && self.compute_bootstrapped {
                 let prev_buffer_frame =
                     (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
                 wait_semaphores = vec![
-                    self.image_available[self.buffer_frame],
-                    self.compute_finished[prev_buffer_frame],
-                ];
-                wait_dst_stage_mask = vec![
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    image_available_wait,
+                    vk::SemaphoreSubmitInfo::default()
+                        .semaphore(self.compute_finished[prev_buffer_frame])
+                        // compute output may be read by this frame's compute, or by the
+                        // vertex or fragment stages (e.g. particle rendering)
+                        .stage_mask(
+                            vk::PipelineStageFlags2::VERTEX_SHADER
+                                | vk::PipelineStageFlags2::FRAGMENT_SHADER
+                                | vk::PipelineStageFlags2::COMPUTE_SHADER,
+                        ),
                 ];
                 signal_semaphores = vec![
-                    self.render_finished[image_index as usize],
-                    self.compute_finished[self.buffer_frame],
+                    render_finished_signal,
+                    vk::SemaphoreSubmitInfo::default()
+                        .semaphore(self.compute_finished[self.buffer_frame])
+                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
                 ];
             } else if self.has_compute_pipelines {
                 // First frame: no previous compute to wait on, but still signal
                 // Also signal compute_to_graphics for the pipelined path to bootstrap from
-                wait_semaphores = vec![self.image_available[self.buffer_frame]];
-                wait_dst_stage_mask = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+                wait_semaphores = vec![image_available_wait];
                 signal_semaphores = vec![
-                    self.render_finished[image_index as usize],
-                    self.compute_finished[self.buffer_frame],
-                    self.compute_to_graphics_sem[self.buffer_frame],
+                    render_finished_signal,
+                    vk::SemaphoreSubmitInfo::default()
+                        .semaphore(self.compute_finished[self.buffer_frame])
+                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
+                    vk::SemaphoreSubmitInfo::default()
+                        .semaphore(self.compute_to_graphics_sem[self.buffer_frame])
+                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
                 ];
             } else {
-                wait_semaphores = vec![self.image_available[self.buffer_frame]];
-                wait_dst_stage_mask = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-                signal_semaphores = vec![self.render_finished[image_index as usize]];
+                wait_semaphores = vec![image_available_wait];
+                signal_semaphores = vec![render_finished_signal];
             }
 
-            let submit_info = vk::SubmitInfo::default()
-                .wait_semaphores(&wait_semaphores)
-                .wait_dst_stage_mask(&wait_dst_stage_mask)
-                .command_buffers(&submit_command_buffers)
-                .signal_semaphores(&signal_semaphores);
+            let submit_info = vk::SubmitInfo2::default()
+                .wait_semaphore_infos(&wait_semaphores)
+                .command_buffer_infos(&submit_command_buffers)
+                .signal_semaphore_infos(&signal_semaphores);
             unsafe {
-                self.device.queue_submit(
+                self.device.queue_submit2(
                     self.graphics_queue,
                     &[submit_info],
                     self.frames_in_flight[self.current_frame],
@@ -4422,15 +4413,26 @@ fn end_single_time_commands(
 
     unsafe { device.end_command_buffer(command_buffer)? };
 
-    let submit_info = vk::SubmitInfo::default().command_buffers(&command_buffers);
+    let command_buffer_infos =
+        [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
+    let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&command_buffer_infos);
     let submits = [submit_info];
     unsafe {
-        device.queue_submit(graphics_queue, &submits, vk::Fence::null())?;
+        device.queue_submit2(graphics_queue, &submits, vk::Fence::null())?;
         device.device_wait_idle()?;
     }
     unsafe { device.free_command_buffers(command_pool, &command_buffers) };
 
     Ok(())
+}
+
+fn cmd_barrier2(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    image_barriers: &[vk::ImageMemoryBarrier2],
+) {
+    let dependency_info = vk::DependencyInfo::default().image_memory_barriers(image_barriers);
+    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency_info) };
 }
 
 fn transition_image_layout(
@@ -4451,7 +4453,7 @@ fn transition_image_layout(
         .level_count(mip_levels)
         .base_array_layer(0)
         .layer_count(1);
-    let mut barrier = vk::ImageMemoryBarrier::default()
+    let mut barrier = vk::ImageMemoryBarrier2::default()
         .old_layout(old_layout)
         .new_layout(new_layout)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -4459,32 +4461,29 @@ fn transition_image_layout(
         .image(image)
         .subresource_range(subresource_range);
 
-    let src_stage_mask: vk::PipelineStageFlags;
-    let dst_stage_mask: vk::PipelineStageFlags;
-
     match (old_layout, new_layout) {
         (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => {
-            barrier.src_access_mask = Default::default();
-            barrier.dst_access_mask = vk::AccessFlags::TRANSFER_WRITE;
+            barrier.src_stage_mask = vk::PipelineStageFlags2::NONE;
+            barrier.src_access_mask = vk::AccessFlags2::NONE;
 
-            src_stage_mask = vk::PipelineStageFlags::TOP_OF_PIPE;
-            dst_stage_mask = vk::PipelineStageFlags::TRANSFER;
+            barrier.dst_stage_mask = vk::PipelineStageFlags2::ALL_TRANSFER;
+            barrier.dst_access_mask = vk::AccessFlags2::TRANSFER_WRITE;
         }
 
         (vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) => {
-            barrier.src_access_mask = vk::AccessFlags::TRANSFER_WRITE;
-            barrier.dst_access_mask = vk::AccessFlags::SHADER_READ;
+            barrier.src_stage_mask = vk::PipelineStageFlags2::ALL_TRANSFER;
+            barrier.src_access_mask = vk::AccessFlags2::TRANSFER_WRITE;
 
-            src_stage_mask = vk::PipelineStageFlags::TRANSFER;
-            dst_stage_mask = vk::PipelineStageFlags::FRAGMENT_SHADER;
+            barrier.dst_stage_mask = vk::PipelineStageFlags2::FRAGMENT_SHADER;
+            barrier.dst_access_mask = vk::AccessFlags2::SHADER_READ;
         }
 
         (vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL) => {
-            barrier.src_access_mask = Default::default();
-            barrier.dst_access_mask = Default::default();
+            barrier.src_stage_mask = vk::PipelineStageFlags2::NONE;
+            barrier.src_access_mask = vk::AccessFlags2::NONE;
 
-            src_stage_mask = vk::PipelineStageFlags::TOP_OF_PIPE;
-            dst_stage_mask = vk::PipelineStageFlags::COMPUTE_SHADER;
+            barrier.dst_stage_mask = vk::PipelineStageFlags2::COMPUTE_SHADER;
+            barrier.dst_access_mask = vk::AccessFlags2::NONE;
         }
 
         (vk::ImageLayout::UNDEFINED, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL) => {
@@ -4494,12 +4493,12 @@ fn transition_image_layout(
                 barrier.subresource_range.aspect_mask |= vk::ImageAspectFlags::STENCIL;
             }
 
-            barrier.src_access_mask = Default::default();
-            barrier.dst_access_mask = vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE;
+            barrier.src_stage_mask = vk::PipelineStageFlags2::NONE;
+            barrier.src_access_mask = vk::AccessFlags2::NONE;
 
-            src_stage_mask = vk::PipelineStageFlags::TOP_OF_PIPE;
-            dst_stage_mask = vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS;
+            barrier.dst_stage_mask = vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS;
+            barrier.dst_access_mask = vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
+                | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE;
         }
 
         transition => {
@@ -4508,18 +4507,7 @@ fn transition_image_layout(
     }
 
     // https://docs.vulkan.org/spec/latest/chapters/synchronization.html#synchronization-access-types-supported
-    let image_barriers = [barrier];
-    unsafe {
-        device.cmd_pipeline_barrier(
-            command_buffer,
-            src_stage_mask,
-            dst_stage_mask,
-            Default::default(),
-            &[],
-            &[],
-            &image_barriers,
-        )
-    };
+    cmd_barrier2(device, command_buffer, &[barrier]);
 
     end_single_time_commands(device, command_pool, graphics_queue, command_buffer)?;
 
@@ -4739,7 +4727,7 @@ fn generate_mipmaps(
         .base_array_layer(0)
         .layer_count(1)
         .level_count(1);
-    let mut barrier = vk::ImageMemoryBarrier::default()
+    let mut barrier = vk::ImageMemoryBarrier2::default()
         .image(image)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -4752,21 +4740,13 @@ fn generate_mipmaps(
         barrier.subresource_range.base_mip_level = i - 1;
         barrier.old_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
         barrier.new_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        barrier.src_access_mask = vk::AccessFlags::TRANSFER_WRITE;
-        barrier.dst_access_mask = vk::AccessFlags::TRANSFER_READ;
+        // level 0 is written by a copy, levels above by the previous blit
+        barrier.src_stage_mask = vk::PipelineStageFlags2::ALL_TRANSFER;
+        barrier.src_access_mask = vk::AccessFlags2::TRANSFER_WRITE;
+        barrier.dst_stage_mask = vk::PipelineStageFlags2::BLIT;
+        barrier.dst_access_mask = vk::AccessFlags2::TRANSFER_READ;
 
-        unsafe {
-            let image_memory_barriers = [barrier];
-            device.cmd_pipeline_barrier(
-                command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::TRANSFER,
-                Default::default(),
-                &[],
-                &[],
-                &image_memory_barriers,
-            )
-        };
+        cmd_barrier2(device, command_buffer, &[barrier]);
 
         let src_subresource = vk::ImageSubresourceLayers::default()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -4808,20 +4788,12 @@ fn generate_mipmaps(
 
         barrier.old_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
         barrier.new_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-        barrier.src_access_mask = vk::AccessFlags::TRANSFER_READ;
-        barrier.dst_access_mask = vk::AccessFlags::SHADER_READ;
-        unsafe {
-            let image_memory_barriers = &[barrier];
-            device.cmd_pipeline_barrier(
-                command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                Default::default(),
-                &[],
-                &[],
-                image_memory_barriers,
-            )
-        };
+        barrier.src_stage_mask = vk::PipelineStageFlags2::BLIT;
+        barrier.src_access_mask = vk::AccessFlags2::TRANSFER_READ;
+        barrier.dst_stage_mask = vk::PipelineStageFlags2::FRAGMENT_SHADER;
+        barrier.dst_access_mask = vk::AccessFlags2::SHADER_READ;
+
+        cmd_barrier2(device, command_buffer, &[barrier]);
 
         if mip_width > 1 {
             mip_width /= 2;
@@ -4835,21 +4807,12 @@ fn generate_mipmaps(
     barrier.subresource_range.base_mip_level = mip_levels - 1;
     barrier.old_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
     barrier.new_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-    barrier.src_access_mask = vk::AccessFlags::TRANSFER_WRITE;
-    barrier.dst_access_mask = vk::AccessFlags::SHADER_READ;
+    barrier.src_stage_mask = vk::PipelineStageFlags2::ALL_TRANSFER;
+    barrier.src_access_mask = vk::AccessFlags2::TRANSFER_WRITE;
+    barrier.dst_stage_mask = vk::PipelineStageFlags2::FRAGMENT_SHADER;
+    barrier.dst_access_mask = vk::AccessFlags2::SHADER_READ;
 
-    let image_memory_barriers = [barrier];
-    unsafe {
-        device.cmd_pipeline_barrier(
-            command_buffer,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            Default::default(),
-            &[],
-            &[],
-            &image_memory_barriers,
-        )
-    };
+    cmd_barrier2(device, command_buffer, &[barrier]);
 
     end_single_time_commands(device, command_pool, graphics_queue, command_buffer)?;
 
@@ -5267,10 +5230,10 @@ enum PendingComputeCommand {
         group_count: [u32; 3],
     },
     Barrier {
-        src_stage: vk::PipelineStageFlags,
-        dst_stage: vk::PipelineStageFlags,
-        src_access: vk::AccessFlags,
-        dst_access: vk::AccessFlags,
+        src_stage: vk::PipelineStageFlags2,
+        dst_stage: vk::PipelineStageFlags2,
+        src_access: vk::AccessFlags2,
+        dst_access: vk::AccessFlags2,
     },
 }
 
@@ -5332,10 +5295,10 @@ impl<'f> FrameRenderer<'f> {
 
     pub fn memory_barrier(
         &mut self,
-        src_stage: vk::PipelineStageFlags,
-        dst_stage: vk::PipelineStageFlags,
-        src_access: vk::AccessFlags,
-        dst_access: vk::AccessFlags,
+        src_stage: vk::PipelineStageFlags2,
+        dst_stage: vk::PipelineStageFlags2,
+        src_access: vk::AccessFlags2,
+        dst_access: vk::AccessFlags2,
     ) {
         self.pending_compute.push(PendingComputeCommand::Barrier {
             src_stage,
