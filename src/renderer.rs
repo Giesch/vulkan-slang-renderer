@@ -289,11 +289,8 @@ impl Renderer {
             let mut allocator_create_info =
                 vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
             allocator_create_info.vulkan_api_version = vk::API_VERSION_1_3;
-            // matches the buffer_device_address feature enabled for shader printf in debug builds
-            #[cfg(debug_assertions)]
-            {
-                allocator_create_info.flags |= vk_mem::AllocatorCreateFlags::BUFFER_DEVICE_ADDRESS;
-            }
+            // matches the buffer_device_address feature enabled at device creation
+            allocator_create_info.flags |= vk_mem::AllocatorCreateFlags::BUFFER_DEVICE_ADDRESS;
             std::mem::ManuallyDrop::new(unsafe { vk_mem::Allocator::new(allocator_create_info)? })
         };
 
@@ -2750,14 +2747,11 @@ impl QueueFamilyIndices {
     }
 }
 
-const REQUIRED_DEVICE_EXTENSIONS: [&CStr; 2] = [
+const REQUIRED_DEVICE_EXTENSIONS: [&CStr; 1] = [
     // always required
     vk::KHR_SWAPCHAIN_NAME,
-    // required by slang's generated spirv after 2025.10
-    //   the feature is required by the 2024 roadmap
-    //   https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#profile-features-roadmap-2024
-    // it might be more correct to use physical device features 2 for this
-    vk::KHR_SHADER_DRAW_PARAMETERS_NAME,
+    // NOTE shader draw parameters (required by slang's generated spirv after 2025.10)
+    // is core in 1.1; the feature bit is enabled via PhysicalDeviceVulkan11Features
 ];
 
 fn choose_physical_device(
@@ -2794,12 +2788,45 @@ fn choose_physical_device(
             continue;
         }
 
-        let features = unsafe { instance.get_physical_device_features(physical_device) };
-        if features.sampler_anisotropy != vk::TRUE {
-            continue;
-        }
+        let mut vulkan_11_features = vk::PhysicalDeviceVulkan11Features::default();
+        let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default();
+        let mut vulkan_13_features = vk::PhysicalDeviceVulkan13Features::default();
+        let mut features2 = vk::PhysicalDeviceFeatures2::default()
+            .push_next(&mut vulkan_11_features)
+            .push_next(&mut vulkan_12_features)
+            .push_next(&mut vulkan_13_features);
+        unsafe { instance.get_physical_device_features2(physical_device, &mut features2) };
+        let features = features2.features;
+
+        let missing_features: Vec<&str> = [
+            (features.sampler_anisotropy, "samplerAnisotropy"),
+            (
+                vulkan_11_features.shader_draw_parameters,
+                "shaderDrawParameters",
+            ),
+            (vulkan_12_features.timeline_semaphore, "timelineSemaphore"),
+            (
+                vulkan_12_features.buffer_device_address,
+                "bufferDeviceAddress",
+            ),
+            (vulkan_13_features.dynamic_rendering, "dynamicRendering"),
+            (vulkan_13_features.synchronization2, "synchronization2"),
+        ]
+        .into_iter()
+        .filter(|(supported, _name)| *supported != vk::TRUE)
+        .map(|(_supported, name)| name)
+        .collect();
 
         let props = unsafe { instance.get_physical_device_properties(physical_device) };
+
+        if !missing_features.is_empty() {
+            log::warn!(
+                "skipping device {}: missing required features: {}",
+                device_name_as_string(props),
+                missing_features.join(", ")
+            );
+            continue;
+        }
 
         devices_with_indices_and_props.push((physical_device, indices, props));
     }
@@ -2816,7 +2843,11 @@ fn choose_physical_device(
     });
 
     let Some(chosen_device) = devices_with_indices_and_props.into_iter().next() else {
-        anyhow::bail!("no graphics device availble");
+        anyhow::bail!(
+            "no suitable graphics device available \
+             (requires Vulkan 1.3 with dynamicRendering, synchronization2, \
+             timelineSemaphore, and bufferDeviceAddress)"
+        );
     };
 
     #[cfg(debug_assertions)]
@@ -2828,7 +2859,6 @@ fn choose_physical_device(
     Ok(chosen_device)
 }
 
-#[cfg(debug_assertions)]
 fn device_name_as_string(props: vk::PhysicalDeviceProperties) -> String {
     let device_name_bytes: Vec<u8> = props
         .device_name
@@ -3015,44 +3045,42 @@ fn create_logical_device(
             .shader_int64(true);
     }
 
+    // required by slang's generated spirv after 2025.10
+    //   the feature is required by the 2024 roadmap
+    //   https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#profile-features-roadmap-2024
+    let mut vulkan_11_features =
+        vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
+
+    let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default()
+        .timeline_semaphore(true)
+        .buffer_device_address(true);
+    if cfg!(debug_assertions) {
+        // features used by shader println
+        vulkan_12_features = vulkan_12_features
+            .vulkan_memory_model(true)
+            .vulkan_memory_model_device_scope(true)
+            .storage_buffer8_bit_access(true);
+    }
+
+    let mut vulkan_13_features = vk::PhysicalDeviceVulkan13Features::default()
+        .dynamic_rendering(true)
+        .synchronization2(true);
+
+    let mut features2 = vk::PhysicalDeviceFeatures2::default()
+        .features(features)
+        .push_next(&mut vulkan_11_features)
+        .push_next(&mut vulkan_12_features)
+        .push_next(&mut vulkan_13_features);
+
     let enabled_extension_names: Vec<_> = REQUIRED_DEVICE_EXTENSIONS
         .iter()
         .map(|cstr| cstr.as_ptr())
         .collect();
 
-    #[cfg(not(debug_assertions))]
     let create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_create_infos)
-        .enabled_features(&features)
-        .enabled_extension_names(&enabled_extension_names);
-
-    #[cfg(debug_assertions)]
-    let mut create_info = vk::DeviceCreateInfo::default()
-        .queue_create_infos(&queue_create_infos)
-        .enabled_features(&features)
-        .enabled_extension_names(&enabled_extension_names);
-    // features used by shader println
-    #[cfg(debug_assertions)]
-    let mut timeline_semaphore_features =
-        vk::PhysicalDeviceTimelineSemaphoreFeatures::default().timeline_semaphore(true);
-    #[cfg(debug_assertions)]
-    let mut memory_model_features = vk::PhysicalDeviceVulkanMemoryModelFeatures::default()
-        .vulkan_memory_model(true)
-        .vulkan_memory_model_device_scope(true);
-    #[cfg(debug_assertions)]
-    let mut buffer_device_address_features =
-        vk::PhysicalDeviceBufferDeviceAddressFeatures::default().buffer_device_address(true);
-    #[cfg(debug_assertions)]
-    let mut eight_bit_storage_features =
-        vk::PhysicalDevice8BitStorageFeatures::default().storage_buffer8_bit_access(true);
-    #[cfg(debug_assertions)]
-    {
-        create_info = create_info
-            .push_next(&mut timeline_semaphore_features)
-            .push_next(&mut memory_model_features)
-            .push_next(&mut buffer_device_address_features)
-            .push_next(&mut eight_bit_storage_features);
-    }
+        .enabled_extension_names(&enabled_extension_names)
+        .push_next(&mut features2);
 
     let device = unsafe { instance.create_device(physical_device, &create_info, None)? };
 
