@@ -204,7 +204,7 @@ dependencies = [
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1031,15 +1031,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1762,7 +1753,7 @@ dependencies = [
  "built",
  "cfg-if",
  "interpolate_name",
- "itertools 0.12.1",
+ "itertools",
  "libc",
  "libfuzzer-sys",
  "log",
@@ -2068,7 +2059,7 @@ dependencies = [
 [[package]]
 name = "shader-slang"
 version = "0.1.0"
-source = "git+https://github.com/Giesch/slang-rs.git?branch=main#fad6e1450990645c0c0bb660ac86e56495c72b4f"
+source = "git+https://github.com/Giesch/slang-rs.git?branch=main#40be8169f2a8a2ebe501cacabfd056a88054dc3f"
 dependencies = [
  "shader-slang-sys",
 ]
@@ -2076,7 +2067,7 @@ dependencies = [
 [[package]]
 name = "shader-slang-sys"
 version = "0.1.0"
-source = "git+https://github.com/Giesch/slang-rs.git?branch=main#fad6e1450990645c0c0bb660ac86e56495c72b4f"
+source = "git+https://github.com/Giesch/slang-rs.git?branch=main#40be8169f2a8a2ebe501cacabfd056a88054dc3f"
 dependencies = [
  "bindgen",
  "link-cplusplus",

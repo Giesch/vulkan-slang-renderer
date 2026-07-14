@@ -112,9 +112,10 @@ build-slang:
     cmake --preset default -DSLANG_LIB_TYPE=STATIC && \
     cmake --build --preset release
 
-# NOTE: the tests and slang-rhi dependency are temporarily disabled, 
-# until the mainline slang release depends on a version of slang-rhi with this change:
-# https://github.com/shader-slang/slang-rhi/pull/630
+# NOTE: the tests and slang-rhi dependency are disabled below.
+# The slang-rhi fix this was waiting on (https://github.com/shader-slang/slang-rhi/pull/630)
+# is included in the slang-rhi pinned by slang v2026.13.1, so these flags are
+# likely removable; keeping them until that's verified on a Windows machine.
 # build slang as a static library (requires cmake, ninja, python3, and visual studio)
 [windows]
 build-slang:
