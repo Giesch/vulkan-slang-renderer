@@ -136,28 +136,25 @@ pub struct Renderer {
     /// render finished semaphores indexed by image_index
     /// ie, one per swapchain image, not per frame-in-flight
     render_finished: Vec<vk::Semaphore>,
-    /// frame fences indexed by current_frame
-    frames_in_flight: [vk::Fence; MAX_FRAMES_IN_FLIGHT],
+    /// timeline semaphore: the graphics submit for frame N signals value N (= total_frames)
+    frame_timeline: vk::Semaphore,
     /// looping index for sync primitives (0..MAX_FRAMES_IN_FLIGHT)
     current_frame: usize,
     /// looping index for buffers (0..BUFFER_FRAME_COUNT)
     buffer_frame: usize,
 
-    compute_finished: [vk::Semaphore; BUFFER_FRAME_COUNT],
+    /// timeline semaphore: the k-th compute-signaling submit signals value k
+    compute_timeline: vk::Semaphore,
+    /// number of submits so far that signal compute_timeline (its highest pending value)
+    compute_frames: u64,
     has_compute_pipelines: bool,
 
     /// Dedicated compute queue for async compute (None = single-queue fallback)
     compute_queue: Option<vk::Queue>,
     /// Command buffers for pipelined compute dispatches
     compute_command_buffers: [vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT],
-    /// Fences for compute command buffer reuse
-    compute_fences: [vk::Fence; MAX_FRAMES_IN_FLIGHT],
-    /// Semaphores signaled by compute, waited by graphics (one frame behind)
-    compute_to_graphics_sem: [vk::Semaphore; BUFFER_FRAME_COUNT],
     /// Per-frame flag: use pipelined compute submission
     pipelined_compute: bool,
-    /// True after the first non-pipelined compute submit has signaled bootstrap semaphores
-    compute_bootstrapped: bool,
 
     pipelines: PipelineStorage,
     compute_pipelines: ComputePipelineStorage,
@@ -329,7 +326,7 @@ impl Renderer {
         let swapchain_images = unsafe { swapchain_device_ext.get_swapchain_images(swapchain)? };
         let swapchain_image_views =
             create_swapchain_image_views(&device, image_format, &swapchain_images)?;
-        let (image_available, render_finished, frames_in_flight, compute_finished) =
+        let (image_available, render_finished, frame_timeline, compute_timeline) =
             create_sync_objects(&device, &swapchain_images)?;
 
         let depth_format = find_depth_format(&instance, physical_device);
@@ -348,28 +345,6 @@ impl Renderer {
         let command_pool = create_command_pool(&device, &queue_family_indices)?;
         let command_buffers = create_command_buffers(&device, command_pool)?;
         let compute_command_buffers = create_command_buffers(&device, command_pool)?;
-
-        // Create compute-specific sync objects
-        let compute_fences = {
-            let mut fences: [Option<vk::Fence>; MAX_FRAMES_IN_FLIGHT] =
-                [const { None }; MAX_FRAMES_IN_FLIGHT];
-            #[expect(clippy::needless_range_loop)]
-            for i in 0..MAX_FRAMES_IN_FLIGHT {
-                let fence_create_info =
-                    vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-                fences[i] = Some(unsafe { device.create_fence(&fence_create_info, None)? });
-            }
-            fences.map(Option::unwrap)
-        };
-        let compute_to_graphics_sem = {
-            let mut sems: [Option<vk::Semaphore>; BUFFER_FRAME_COUNT] =
-                [const { None }; BUFFER_FRAME_COUNT];
-            #[expect(clippy::needless_range_loop)]
-            for i in 0..BUFFER_FRAME_COUNT {
-                sems[i] = Some(unsafe { device.create_semaphore(&Default::default(), None)? });
-            }
-            sems.map(Option::unwrap)
-        };
 
         // Calculate scaled render extent
         let render_extent = calculate_render_extent(image_extent, render_scale);
@@ -451,18 +426,16 @@ impl Renderer {
             command_buffers,
             image_available,
             render_finished,
-            frames_in_flight,
+            frame_timeline,
             current_frame: 0,
             buffer_frame: 0,
 
-            compute_finished,
+            compute_timeline,
+            compute_frames: 0,
             has_compute_pipelines: false,
             compute_queue,
             compute_command_buffers,
-            compute_fences,
-            compute_to_graphics_sem,
             pipelined_compute: false,
-            compute_bootstrapped: false,
 
             pipelines,
             compute_pipelines,
@@ -2007,10 +1980,11 @@ impl Renderer {
         };
 
         self.total_frames += 1;
+        let frame_value = self.total_frames as u64;
 
-        // 2. CPU buffer writes BEFORE fence wait
+        // 2. CPU buffer writes BEFORE the timeline wait
         //    Safe because buffer[buffer_frame] was last used by frame (total - BUFFER_FRAME_COUNT)
-        //    and that frame's fence was waited for during frame (total - 1)
+        //    and that frame's timeline value was waited for during frame (total - 1)
         let mut gpu = Gpu {
             buffer_frame: self.buffer_frame,
             uniform_buffers: &mut self.uniform_buffers,
@@ -2018,9 +1992,14 @@ impl Renderer {
         };
         gpu_update(&mut gpu);
 
-        // 3. Wait for fence (command buffer reuse)
-        let fences = [self.frames_in_flight[self.current_frame]];
-        unsafe { self.device.wait_for_fences(&fences, true, u64::MAX)? };
+        // 3. Wait until frame (N - MAX_FRAMES_IN_FLIGHT)'s graphics submit retires
+        //    (command buffer reuse). Frames 1 and 2 wait on value 0, trivially satisfied.
+        let semaphores = [self.frame_timeline];
+        let values = [frame_value.saturating_sub(MAX_FRAMES_IN_FLIGHT as u64)];
+        let wait_info = vk::SemaphoreWaitInfo::default()
+            .semaphores(&semaphores)
+            .values(&values);
+        unsafe { self.device.wait_semaphores(&wait_info, u64::MAX)? };
 
         // 3a. Read picking result from staging buffer (written 2 frames ago, now safe to read)
         if let Some(picking) = &self.picking {
@@ -2028,17 +2007,18 @@ impl Renderer {
             self.last_picked_object_id = id;
         }
 
-        // 4. Free egui textures (must be after fence wait)
+        // 4. Free egui textures (must be after the timeline wait)
         if let Some(egui) = &mut self.egui {
             egui.free_pending_textures(self.current_frame);
         }
 
-        // 5. Reset fences and continue with submit
-        unsafe { self.device.reset_fences(&fences)? };
-
-        // Determine if we should use pipelined async compute this frame
+        // Determine if we should use pipelined async compute this frame.
+        // The first compute frame always goes through the combined path below,
+        // so graphics sees that frame's compute output.
         let use_pipelined =
-            self.pipelined_compute && self.has_compute_pipelines && self.compute_bootstrapped;
+            self.pipelined_compute && self.has_compute_pipelines && self.compute_frames > 0;
+        // This frame's compute_timeline value, if compute is submitted
+        let compute_value = self.compute_frames + 1;
 
         if use_pipelined {
             // --- PIPELINED: separate compute and graphics submissions ---
@@ -2047,13 +2027,15 @@ impl Renderer {
             let compute_queue = self.compute_queue.unwrap_or(self.graphics_queue);
             let compute_cb = self.compute_command_buffers[self.current_frame];
 
-            // Wait for previous compute fence (compute CB reuse)
-            let compute_fences = [self.compute_fences[self.current_frame]];
-            unsafe {
-                self.device
-                    .wait_for_fences(&compute_fences, true, u64::MAX)?
-            };
-            unsafe { self.device.reset_fences(&compute_fences)? };
+            // Wait until this slot's previous compute submit retires (compute CB reuse).
+            // compute_frames advances every frame once compute is active, so the slot's
+            // last user signaled compute_value - MAX_FRAMES_IN_FLIGHT.
+            let semaphores = [self.compute_timeline];
+            let values = [compute_value.saturating_sub(MAX_FRAMES_IN_FLIGHT as u64)];
+            let wait_info = vk::SemaphoreWaitInfo::default()
+                .semaphores(&semaphores)
+                .values(&values);
+            unsafe { self.device.wait_semaphores(&wait_info, u64::MAX)? };
 
             // Record compute command buffer
             unsafe {
@@ -2076,40 +2058,34 @@ impl Renderer {
                 ComputePlacement::SeparateCommandBuffer,
             )?;
 
-            // Submit compute: wait on previous compute_finished, signal current + compute_to_graphics
-            let prev_buffer_frame =
-                (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
+            // Submit compute: wait on the previous frame's compute, signal this frame's value
             let compute_waits = [vk::SemaphoreSubmitInfo::default()
-                .semaphore(self.compute_finished[prev_buffer_frame])
+                .semaphore(self.compute_timeline)
+                .value(compute_value - 1)
                 .stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)];
-            let compute_signals = [
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(self.compute_finished[self.buffer_frame])
-                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(self.compute_to_graphics_sem[self.buffer_frame])
-                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
-            ];
+            let compute_signals = [vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.compute_timeline)
+                .value(compute_value)
+                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
             let compute_cbs = [vk::CommandBufferSubmitInfo::default().command_buffer(compute_cb)];
             let compute_submit = vk::SubmitInfo2::default()
                 .wait_semaphore_infos(&compute_waits)
                 .command_buffer_infos(&compute_cbs)
                 .signal_semaphore_infos(&compute_signals);
             unsafe {
-                self.device.queue_submit2(
-                    compute_queue,
-                    &[compute_submit],
-                    self.compute_fences[self.current_frame],
-                )?;
+                self.device
+                    .queue_submit2(compute_queue, &[compute_submit], vk::Fence::null())?;
             }
 
-            // Submit graphics: wait on image_available + previous compute_to_graphics, signal render_finished
+            // Submit graphics: wait on image_available + previous frame's compute,
+            // signal render_finished + this frame's timeline value
             let gfx_waits = [
                 vk::SemaphoreSubmitInfo::default()
                     .semaphore(self.image_available[self.buffer_frame])
                     .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
                 vk::SemaphoreSubmitInfo::default()
-                    .semaphore(self.compute_to_graphics_sem[prev_buffer_frame])
+                    .semaphore(self.compute_timeline)
+                    .value(compute_value - 1)
                     // compute output may be read by the vertex stage (e.g. particle
                     // rendering), the fragment stage, or same-frame compute
                     .stage_mask(
@@ -2118,21 +2094,26 @@ impl Renderer {
                             | vk::PipelineStageFlags2::COMPUTE_SHADER,
                     ),
             ];
-            let gfx_signals = [vk::SemaphoreSubmitInfo::default()
-                .semaphore(self.render_finished[image_index as usize])
-                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
+            let gfx_signals = [
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(self.render_finished[image_index as usize])
+                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(self.frame_timeline)
+                    .value(frame_value)
+                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
+            ];
             let gfx_cbs = [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
             let gfx_submit = vk::SubmitInfo2::default()
                 .wait_semaphore_infos(&gfx_waits)
                 .command_buffer_infos(&gfx_cbs)
                 .signal_semaphore_infos(&gfx_signals);
             unsafe {
-                self.device.queue_submit2(
-                    self.graphics_queue,
-                    &[gfx_submit],
-                    self.frames_in_flight[self.current_frame],
-                )?;
+                self.device
+                    .queue_submit2(self.graphics_queue, &[gfx_submit], vk::Fence::null())?;
             }
+
+            self.compute_frames += 1;
         } else {
             // --- NON-PIPELINED: compute + graphics in one command buffer ---
             // Compute runs first with barriers, then graphics reads results in same frame.
@@ -2158,18 +2139,22 @@ impl Renderer {
             let render_finished_signal = vk::SemaphoreSubmitInfo::default()
                 .semaphore(self.render_finished[image_index as usize])
                 .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS);
+            let frame_timeline_signal = vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.frame_timeline)
+                .value(frame_value)
+                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS);
 
             // When compute pipelines exist, add cross-frame synchronization:
-            // - Wait on the previous frame's compute_finished semaphore (so reads see prior writes)
-            // - Signal this frame's compute_finished semaphore (for the next frame to wait on)
+            // - Wait on the previous frame's compute_timeline value (so reads see prior writes)
+            // - Signal this frame's value (for the next frame to wait on)
             let (wait_semaphores, signal_semaphores);
-            if self.has_compute_pipelines && self.compute_bootstrapped {
-                let prev_buffer_frame =
-                    (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
+            if self.has_compute_pipelines {
                 wait_semaphores = vec![
                     image_available_wait,
                     vk::SemaphoreSubmitInfo::default()
-                        .semaphore(self.compute_finished[prev_buffer_frame])
+                        .semaphore(self.compute_timeline)
+                        // 0 on the first compute frame, which is trivially satisfied
+                        .value(compute_value - 1)
                         // compute output may be read by this frame's compute, or by the
                         // vertex or fragment stages (e.g. particle rendering)
                         .stage_mask(
@@ -2180,26 +2165,15 @@ impl Renderer {
                 ];
                 signal_semaphores = vec![
                     render_finished_signal,
+                    frame_timeline_signal,
                     vk::SemaphoreSubmitInfo::default()
-                        .semaphore(self.compute_finished[self.buffer_frame])
-                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
-                ];
-            } else if self.has_compute_pipelines {
-                // First frame: no previous compute to wait on, but still signal
-                // Also signal compute_to_graphics for the pipelined path to bootstrap from
-                wait_semaphores = vec![image_available_wait];
-                signal_semaphores = vec![
-                    render_finished_signal,
-                    vk::SemaphoreSubmitInfo::default()
-                        .semaphore(self.compute_finished[self.buffer_frame])
-                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
-                    vk::SemaphoreSubmitInfo::default()
-                        .semaphore(self.compute_to_graphics_sem[self.buffer_frame])
+                        .semaphore(self.compute_timeline)
+                        .value(compute_value)
                         .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
                 ];
             } else {
                 wait_semaphores = vec![image_available_wait];
-                signal_semaphores = vec![render_finished_signal];
+                signal_semaphores = vec![render_finished_signal, frame_timeline_signal];
             }
 
             let submit_info = vk::SubmitInfo2::default()
@@ -2210,12 +2184,12 @@ impl Renderer {
                 self.device.queue_submit2(
                     self.graphics_queue,
                     &[submit_info],
-                    self.frames_in_flight[self.current_frame],
+                    vk::Fence::null(),
                 )?;
             }
 
             if self.has_compute_pipelines {
-                self.compute_bootstrapped = true;
+                self.compute_frames += 1;
             }
         }
 
@@ -2270,22 +2244,8 @@ impl Renderer {
     pub fn recreate_swapchain(&mut self) -> Result<(), anyhow::Error> {
         unsafe { self.device.device_wait_idle()? }
 
-        // Destroy and recreate compute semaphores to reset them to unsignaled state.
-        // After device_wait_idle, some may be left in signaled state from the last submit,
-        // and binary semaphores cannot be reset — they must be destroyed and recreated.
-        unsafe {
-            for i in 0..BUFFER_FRAME_COUNT {
-                self.device
-                    .destroy_semaphore(self.compute_finished[i], None);
-                self.compute_finished[i] =
-                    self.device.create_semaphore(&Default::default(), None)?;
-                self.device
-                    .destroy_semaphore(self.compute_to_graphics_sem[i], None);
-                self.compute_to_graphics_sem[i] =
-                    self.device.create_semaphore(&Default::default(), None)?;
-            }
-        }
-        self.compute_bootstrapped = false;
+        // NOTE: the timeline semaphores are monotonic and must NOT be recreated here —
+        // resetting their values to 0 would deadlock the next frame's waits.
 
         self.cleanup_swapchain();
         unsafe {
@@ -2601,24 +2561,14 @@ impl Drop for Renderer {
         let _ = unsafe { self.device.device_wait_idle() };
 
         unsafe {
-            for fence in &self.frames_in_flight {
-                self.device.destroy_fence(*fence, None);
-            }
             for semaphore in &self.render_finished {
                 self.device.destroy_semaphore(*semaphore, None);
             }
             for semaphore in &self.image_available {
                 self.device.destroy_semaphore(*semaphore, None);
             }
-            for semaphore in &self.compute_finished {
-                self.device.destroy_semaphore(*semaphore, None);
-            }
-            for fence in &self.compute_fences {
-                self.device.destroy_fence(*fence, None);
-            }
-            for semaphore in &self.compute_to_graphics_sem {
-                self.device.destroy_semaphore(*semaphore, None);
-            }
+            self.device.destroy_semaphore(self.frame_timeline, None);
+            self.device.destroy_semaphore(self.compute_timeline, None);
 
             self.device.destroy_command_pool(self.command_pool, None);
 
@@ -3397,8 +3347,8 @@ fn create_sync_objects(
     (
         [vk::Semaphore; BUFFER_FRAME_COUNT],
         Vec<vk::Semaphore>,
-        [vk::Fence; MAX_FRAMES_IN_FLIGHT],
-        [vk::Semaphore; BUFFER_FRAME_COUNT],
+        vk::Semaphore,
+        vk::Semaphore,
     ),
     anyhow::Error,
 > {
@@ -3416,30 +3366,23 @@ fn create_sync_objects(
         render_finished.push(semaphore);
     }
 
-    let mut frames_in_flight: [Option<vk::Fence>; MAX_FRAMES_IN_FLIGHT] =
-        [const { None }; MAX_FRAMES_IN_FLIGHT];
-    #[expect(clippy::needless_range_loop)]
-    for i in 0..MAX_FRAMES_IN_FLIGHT {
-        let fence_create_info =
-            vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-        frames_in_flight[i] = Some(unsafe { device.create_fence(&fence_create_info, None)? });
-    }
-    let frames_in_flight = frames_in_flight.map(Option::unwrap);
-
-    let mut compute_finished: [Option<vk::Semaphore>; BUFFER_FRAME_COUNT] =
-        [const { None }; BUFFER_FRAME_COUNT];
-    #[expect(clippy::needless_range_loop)]
-    for i in 0..BUFFER_FRAME_COUNT {
-        compute_finished[i] = Some(unsafe { device.create_semaphore(&Default::default(), None)? });
-    }
-    let compute_finished = compute_finished.map(Option::unwrap);
+    let frame_timeline = create_timeline_semaphore(device)?;
+    let compute_timeline = create_timeline_semaphore(device)?;
 
     Ok((
         image_available,
         render_finished,
-        frames_in_flight,
-        compute_finished,
+        frame_timeline,
+        compute_timeline,
     ))
+}
+
+fn create_timeline_semaphore(device: &ash::Device) -> Result<vk::Semaphore, anyhow::Error> {
+    let mut type_info = vk::SemaphoreTypeCreateInfo::default()
+        .semaphore_type(vk::SemaphoreType::TIMELINE)
+        .initial_value(0);
+    let create_info = vk::SemaphoreCreateInfo::default().push_next(&mut type_info);
+    Ok(unsafe { device.create_semaphore(&create_info, None)? })
 }
 
 fn create_vertex_buffer<V: GPUWrite>(

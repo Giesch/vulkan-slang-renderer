@@ -1,8 +1,10 @@
 # Vulkan 1.3 Migration: Dynamic Rendering, Sync2, Timeline Semaphores, Extended Dynamic State, Opt-in BDA
 
-Status: Phases 0–2 complete (2026-07-14); Phases 3–7 pending
+Status: Phases 0–3 complete (2026-07-14); Phases 4–7 pending
 
-Related notes: [vulkan_1_3_migration/bindless_vs_bda_terminology.md](vulkan_1_3_migration/bindless_vs_bda_terminology.md) — how the BDA pointer-tree direction relates to "bindless", search terms, reading list.
+Related notes:
+- [vulkan_1_3_migration/bindless_vs_bda_terminology.md](vulkan_1_3_migration/bindless_vs_bda_terminology.md) — how the BDA pointer-tree direction relates to "bindless", search terms, reading list.
+- [vulkan_1_3_migration/timeline_semaphores.md](vulkan_1_3_migration/timeline_semaphores.md) — timeline semaphore primer, WSI limits, and the Phase 3 old→new sync-object mapping.
 
 ## Context
 
@@ -82,7 +84,9 @@ Implemented as planned. Notes beyond the plan: `create_graphics_pipeline` takes 
 
 Verify: MSAA resolve (suzanne/viking_room), render-scale blit, egui editor overlay, picking clicks, resize stress.
 
-## Phase 3 — Timeline-semaphore frame sync
+## Phase 3 — Timeline-semaphore frame sync ✅ (done 2026-07-14)
+
+Implemented as planned, with two deliberate deviations. (1) `compute_timeline` values come from a dedicated `compute_frames: u64` counter (incremented per compute-signaling submit), not the frame number — `has_compute_pipelines` can flip true mid-run, and frame-number values would make the first compute submit's wait `≥ N−1` unsatisfiable (deadlock; timeline signal values may jump but waits must still be reached). (2) `use_pipelined` gained a derived `compute_frames > 0` term replacing `compute_bootstrapped`, preserving the first-compute-frame-goes-combined behavior with no managed flag and nothing to reset on recreate. The pipelined compute-CB-reuse fence became a CPU wait `compute_timeline ≥ compute_value − MAX_FRAMES_IN_FLIGHT` (exact because compute_frames advances every frame once compute is active, and the CB slots alternate with frame parity). All fences deleted (`queue_submit2` now takes `Fence::null()` everywhere); one timeline signal per compute submit serves both the next compute wait (@COMPUTE_SHADER) and next graphics wait (@V|F|C). One behavior change: the first post-resize frame goes straight to pipelined (previously re-bootstrapped) — safe since `recreate_swapchain`'s `device_wait_idle` guarantees all signaled values are reached. Verified: check/fmt/lint/test green; basic_triangle, particles (non-pipelined), watercolor (pipelined), suzanne, gpu_picking clean under validation in debug; watercolor release spot-check clean; no frame-1/2 hang (CPU-usage check). Not covered by automation: resize storms and clean-shutdown-mid-flight — worth a quick manual look.
 
 `src/renderer.rs` (anchors current as of end of Phase 2): sync fields 135–160, `create_sync_objects` ~3393, `Renderer::draw_frame` ~1967 (plus the delegating `FrameRenderer::draw_frame` ~5251), `recreate_swapchain` ~2270.
 
