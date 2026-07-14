@@ -2,6 +2,8 @@
 
 Status: Phases 0–2 complete (2026-07-14); Phases 3–7 pending
 
+Related notes: [vulkan_1_3_migration/bindless_vs_bda_terminology.md](vulkan_1_3_migration/bindless_vs_bda_terminology.md) — how the BDA pointer-tree direction relates to "bindless", search terms, reading list.
+
 ## Context
 
 At the outset, the renderer already requested `vk::API_VERSION_1_3` at instance, device, and VMA creation — but used none of the 1.3 features. This migration adopts them for quality-of-life wins: dynamic rendering deletes all render pass/framebuffer machinery (and framebuffer recreation on resize), synchronization2 gives clearer barrier semantics, timeline semaphores collapse the fence/binary-semaphore/bootstrap-flag frame sync, extended dynamic state shrinks pipeline permutations, and buffer device addresses (opt-in via Slang pointer types) open the door to simpler storage-buffer access and future GPU-driven rendering.
