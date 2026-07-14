@@ -90,8 +90,10 @@ pub trait Game {
             .window(window_desc.title, window_desc.width, window_desc.height)
             .position_centered()
             .resizable()
+            .hidden()
             .vulkan()
             .build()?;
+        let mut startup_window = window.clone();
 
         let enable_egui = cfg!(debug_assertions);
         let render_scale = match Self::render_scale() {
@@ -102,6 +104,10 @@ pub trait Game {
         let mut renderer = Renderer::init(window, enable_egui, render_scale, max_msaa_samples)?;
         let game = Self::setup(&mut renderer)?;
         let app = App::init(renderer, game)?;
+
+        if !startup_window.show() {
+            log::warn!("failed to show window: {}", sdl3::get_error());
+        }
 
         let event_pump = sdl.event_pump()?;
         app.run_loop(event_pump)
