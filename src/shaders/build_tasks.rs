@@ -989,12 +989,20 @@ fn gather_struct_defs(
         StructField::Matrix(matrix) => {
             let VectorElementType::Scalar(scalar) = &matrix.element_type;
 
+            // Only float4x4 is supported: it is 64 contiguous bytes under every GPU
+            // layout rule set, matching glam::Mat4 exactly. Smaller matrices have
+            // interior column-stride padding on the GPU (std140 mat3 = 48 bytes vs
+            // glam::Mat3's contiguous 36) that a Rust field of a glam type cannot
+            // express, producing silently wrong data.
             let field_type = match (scalar.scalar_type, matrix.row_count, matrix.column_count) {
                 (ScalarType::Float32, 4, 4) => "glam::Mat4",
-                (ScalarType::Float32, 3, 3) => "glam::Mat3",
-                (ScalarType::Float32, 2, 2) => "glam::Mat2",
                 (s, r, c) => {
-                    panic!("matrix not supported: scalar_type: {s:?}, rows: {r}, cols: {c}")
+                    panic!(
+                        "matrix field '{}' not supported in parameter blocks: \
+                        scalar_type: {s:?}, rows: {r}, cols: {c}; \
+                        use float4x4, or padded float4 rows",
+                        matrix.field_name,
+                    )
                 }
             };
 
@@ -1173,7 +1181,7 @@ fn field_offset_size(field: &StructField) -> Option<(usize, usize)> {
 /// These rules are the same for both std140 and std430 for basic types.
 fn field_alignment(type_name: &str) -> usize {
     match type_name {
-        "glam::Vec4" | "glam::Mat4" | "glam::Mat3" | "glam::Mat2" => 16,
+        "glam::Vec4" | "glam::Mat4" => 16,
         "glam::Vec3" => 16, // vec3 has 16-byte alignment in both std140 and std430
         "glam::Vec2" => 8,
         "f32" | "u32" | "i32" => 4,
@@ -1511,6 +1519,138 @@ mod tests {
                 insta::assert_snapshot!(content);
             });
         });
+    }
+
+    // glam::Mat3/Mat2 have no interior column-stride padding, so they can never
+    // match the GPU layout of a float3x3/float2x2 in a parameter block; the codegen
+    // must reject them rather than emit silently wrong data.
+    #[test]
+    #[should_panic(expected = "matrix field 'bad' not supported in parameter blocks")]
+    fn small_matrix_fields_are_rejected() {
+        let field = StructField::Matrix(MatrixStructField {
+            field_name: "bad".to_string(),
+            binding: Binding::Uniform(OffsetSizeBinding {
+                offset: 0,
+                size: 48,
+            }),
+            row_count: 3,
+            column_count: 3,
+            element_type: VectorElementType::Scalar(ScalarVectorElementType {
+                scalar_type: ScalarType::Float32,
+            }),
+        });
+
+        gather_struct_defs(&field, &mut Vec::new(), None);
+    }
+
+    /// Returns the size of the Rust type the codegen emits for a given type name,
+    /// or None for generated struct types (whose interiors are checked field-by-field).
+    fn rust_size_of(rust_type_name: &str) -> Option<usize> {
+        let size = match rust_type_name {
+            "f32" => std::mem::size_of::<f32>(),
+            "u32" => std::mem::size_of::<u32>(),
+            "glam::Vec2" => std::mem::size_of::<glam::Vec2>(),
+            "glam::Vec3" => std::mem::size_of::<glam::Vec3>(),
+            "glam::Vec4" => std::mem::size_of::<glam::Vec4>(),
+            "glam::Mat2" => std::mem::size_of::<glam::Mat2>(),
+            "glam::Mat3" => std::mem::size_of::<glam::Mat3>(),
+            "glam::Mat4" => std::mem::size_of::<glam::Mat4>(),
+            _ => return None,
+        };
+
+        Some(size)
+    }
+
+    fn check_field_sizes(fields: &[StructField], context: &str, mismatches: &mut Vec<String>) {
+        for field in fields {
+            match field {
+                StructField::Struct(s) => {
+                    let context = format!("{context}.{}", s.field_name);
+                    check_field_sizes(&s.struct_type.fields, &context, mismatches);
+                    continue;
+                }
+
+                StructField::Resource(res) => {
+                    if let ResourceResultType::Struct(s) = &res.result_type {
+                        let context = format!("{context}.{}", res.field_name);
+                        check_field_sizes(&s.fields, &context, mismatches);
+                    }
+                    continue;
+                }
+
+                StructField::Scalar(_) | StructField::Vector(_) | StructField::Matrix(_) => {}
+            }
+
+            let Some((_offset, reflected_size)) = field_offset_size(field) else {
+                continue;
+            };
+            let Some(generated) = gather_struct_defs(field, &mut Vec::new(), None) else {
+                continue;
+            };
+            let Some(rust_size) = rust_size_of(&generated.type_name) else {
+                continue;
+            };
+
+            if rust_size != reflected_size {
+                mismatches.push(format!(
+                    "{context}.{}: {} is {rust_size} bytes in Rust, but the reflected GPU size is {reflected_size}",
+                    generated.field_name, generated.type_name,
+                ));
+            }
+        }
+    }
+
+    /// Asserts that every uniform-bound field's emitted Rust type has exactly the
+    /// reflected GPU size. This catches interior-stride mismatches (e.g. glam::Mat3 =
+    /// 36 contiguous bytes vs std430's 48 with 16-byte column stride) that total-size
+    /// and per-field offset asserts cannot see, because stride padding always changes
+    /// a field's total size.
+    #[cfg(not(windows))]
+    #[test]
+    fn field_size_tripwire() {
+        let tmp_prefix = format!("shader-test-{}", uuid::Uuid::new_v4());
+        let tmp_dir_path = std::env::temp_dir().join(tmp_prefix);
+
+        let config = Config {
+            generate_rust_source: false,
+            rust_source_dir: tmp_dir_path.join("src"),
+            shaders_source_dir: manifest_path(["shaders", "test"]),
+            compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
+        };
+        let compiled_dir = config.compiled_shaders_dir.clone();
+
+        write_precompiled_shaders(config).unwrap();
+
+        let mut mismatches = Vec::new();
+        for entry in std::fs::read_dir(&compiled_dir).unwrap() {
+            let entry = entry.unwrap();
+            let file_name = entry.file_name().to_string_lossy().to_string();
+
+            let json_str;
+            let global_parameters = if file_name.ends_with(".comp.json") {
+                json_str = std::fs::read_to_string(entry.path()).unwrap();
+                let json: ComputeReflectionJson = serde_json::from_str(&json_str).unwrap();
+                json.global_parameters
+            } else if file_name.ends_with(".json") {
+                json_str = std::fs::read_to_string(entry.path()).unwrap();
+                let json: ReflectionJson = serde_json::from_str(&json_str).unwrap();
+                json.global_parameters
+            } else {
+                continue;
+            };
+
+            for global_parameter in &global_parameters {
+                let GlobalParameter::ParameterBlock(block) = global_parameter;
+                let context = format!("{file_name}: {}", block.parameter_name);
+                check_field_sizes(&block.element_type.fields, &context, &mut mismatches);
+            }
+        }
+
+        assert!(
+            mismatches.is_empty(),
+            "field size mismatches (Rust type byte image != reflected GPU size):\n{}",
+            mismatches.join("\n"),
+        );
     }
 
     fn count_branch_instructions(spv_bytes: &[u8]) -> usize {

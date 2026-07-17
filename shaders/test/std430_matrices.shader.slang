@@ -3,7 +3,10 @@
 module std430_matrices;
 
 // Test: Matrix alignment (column-major, columns are vectors)
-// All matrix columns have 16-byte alignment in std430
+// Mat4x4: 4 columns of Vec4 = 64 bytes, 16-byte aligned
+// Note: Mat3x3 and Mat2x2 are not tested because glam's representations
+// don't match GPU layout (glam::Mat3 = 36 contiguous bytes, GPU expects 48
+// with 16-byte column stride) — the codegen rejects them with a hard error.
 
 ParameterBlock<Params> params;
 
@@ -12,10 +15,8 @@ struct Params {
 }
 
 struct MatrixData {
-    float2x2 a;     // 2 columns of vec2: size 16 (2x8), align 8
-    float3x3 b;     // 3 columns of vec3 (padded to vec4): size 48 (3x16), align 16
-    float4x4 c;     // 4 columns of vec4: size 64 (4x16), align 16
-    float d;        // scalar after matrices
+    float4x4 c;     // offset 0, size 64, align 16
+    float d;        // scalar after matrix, offset 64
 }
 
 [shader("vertex")]
