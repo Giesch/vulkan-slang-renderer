@@ -87,6 +87,7 @@ pub enum StructField {
     Struct(StructStructField),
     Matrix(MatrixStructField),
     Resource(ResourceStructField),
+    Pointer(PointerStructField),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -220,6 +221,20 @@ pub struct StructFieldType {
     pub fields: Vec<StructField>,
 }
 
+/// A physical-storage-buffer pointer field (slang `Ptr<T, ..., Std430DataLayout>`).
+/// 8 bytes of uniform data holding a buffer device address; consumes no
+/// descriptor slot. The pointee fields carry std430 offsets.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PointerStructField {
+    pub field_name: String,
+    pub binding: Binding,
+    pub pointee_type: StructFieldType,
+    /// reflected std430 size of the pointee — cross-checked against the
+    /// codegen's computed struct size
+    pub pointee_size: usize,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum VectorElementType {
@@ -237,4 +252,5 @@ pub struct ScalarVectorElementType {
 pub enum ScalarType {
     Float32,
     Uint32,
+    Uint64,
 }

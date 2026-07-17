@@ -152,7 +152,9 @@ Original design notes: D3 + D5, plus factor the field comparison out of `try_add
 
 Churn: **additive-only** across ~40 `.rs` snapshots (12 alignment_tests + ~30 generated_files) and the committed `src/generated/shader_atlas/*.rs` (regen via `just shaders`). Zero `.json` churn; **zero changes to existing field/padding lines** — offsets already drive padding (`field_offset_size`, build_tasks.rs:1156–1170), so any field-line change means the reflected offsets disagree with the old table and is a *discovered bug* to review individually, not accept blind. Gate: a scripted check that every changed snapshot line matches the assert/guard patterns; check_crate `cargo check` green (the moment the asserts become load-bearing).
 
-### Step D — Pointer concept end-to-end (reflection + JSON + codegen), no test shader yet
+### Step D — Pointer concept end-to-end (reflection + JSON + codegen), no test shader yet ✅ (done 2026-07-17)
+
+Implemented per the D2-resolved design; gate held: zero snapshot diffs, zero diff in committed generated code, check/lint/test green. One simplification against the notes below: shaders use the **builtin `LayoutPtr<T, Std430DataLayout>` alias** (core.meta.slang:1512) instead of a project `BufferPtr<T>` shared module — no custom module needed, and the rejection message names `LayoutPtr` directly. The `check_rust_placeable` hard error and `rust_type_alignment` landed in Step C; Step D only added their `u64` entries.
 
 One step because the new `StructField` variant breaks every exhaustive match, compile-coupling the three files:
 

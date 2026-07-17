@@ -917,11 +917,45 @@ fn gather_struct_defs(
             let field_type = match scalar.scalar_type {
                 ScalarType::Float32 => "f32",
                 ScalarType::Uint32 => "u32",
+                ScalarType::Uint64 => "u64",
             };
 
             Some(GeneratedStructFieldDefinition::new(
                 scalar.field_name.to_snake_case(),
                 field_type.to_string(),
+            ))
+        }
+
+        StructField::Pointer(ptr) => {
+            // The pointee struct is emitted like a StructuredBuffer element
+            // (std430 per the reflected offsets); the pointer field itself is
+            // 8 bytes of uniform data holding a buffer device address, written
+            // per-frame via Gpu::device_address — no descriptor, no Resources
+            // entry.
+            let (fields, struct_alignment, expected_size) =
+                generate_std430_struct_fields(&ptr.pointee_type.fields, struct_defs);
+
+            assert_eq!(
+                expected_size, ptr.pointee_size,
+                "computed std430 size of pointee '{}' disagrees with slang reflection",
+                ptr.pointee_type.type_name,
+            );
+
+            try_add_struct_def(
+                struct_defs,
+                GeneratedStructDefinition {
+                    type_name: ptr.pointee_type.type_name.clone(),
+                    source_module: None,
+                    fields,
+                    trait_derives: vec!["Debug", "Clone", "Serialize"],
+                    alignment: Some(Alignment::Std430 { struct_alignment }),
+                    expected_size: Some(expected_size),
+                },
+            );
+
+            Some(GeneratedStructFieldDefinition::new(
+                ptr.field_name.to_snake_case(),
+                "u64".to_string(),
             ))
         }
 
@@ -1053,6 +1087,7 @@ fn resource_type_name(result_type: &ResourceResultType) -> String {
         ResourceResultType::Scalar(s) => match s.scalar_type {
             ScalarType::Float32 => "f32".to_string(),
             ScalarType::Uint32 => "u32".to_string(),
+            ScalarType::Uint64 => "u64".to_string(),
         },
 
         ResourceResultType::Vector(v) => match &v.element_type {
@@ -1060,6 +1095,7 @@ fn resource_type_name(result_type: &ResourceResultType) -> String {
                 let element_type = match s.scalar_type {
                     ScalarType::Float32 => "f32",
                     ScalarType::Uint32 => "u32",
+                    ScalarType::Uint64 => "u64",
                 };
 
                 format!("Vec<{element_type}>")
@@ -1216,6 +1252,7 @@ fn field_offset_size(field: &StructField) -> Option<(usize, usize)> {
         StructField::Vector(VectorStructField::Semantic(_)) => None,
         StructField::Matrix(m) => Some(&m.binding),
         StructField::Struct(s) => Some(&s.binding),
+        StructField::Pointer(p) => Some(&p.binding),
         StructField::Resource(_) => None,
     };
 
@@ -1231,7 +1268,7 @@ fn field_alignment(type_name: &str) -> usize {
     match type_name {
         "glam::Vec4" | "glam::Mat4" => 16,
         "glam::Vec3" => 16, // vec3 has 16-byte alignment in both std140 and std430
-        "glam::Vec2" => 8,
+        "glam::Vec2" | "u64" => 8,
         "f32" | "u32" | "i32" => 4,
         _ => 16, // assume 16 for unknown/struct types
     }
@@ -1249,6 +1286,7 @@ fn rust_type_alignment(type_name: &str) -> Option<usize> {
     Some(match type_name {
         "f32" => std::mem::align_of::<f32>(),
         "u32" => std::mem::align_of::<u32>(),
+        "u64" => std::mem::align_of::<u64>(),
         "glam::Vec2" => std::mem::align_of::<glam::Vec2>(),
         "glam::Vec3" => std::mem::align_of::<glam::Vec3>(),
         "glam::Vec4" => std::mem::align_of::<glam::Vec4>(),
@@ -1637,6 +1675,7 @@ mod tests {
         let size = match rust_type_name {
             "f32" => std::mem::size_of::<f32>(),
             "u32" => std::mem::size_of::<u32>(),
+            "u64" => std::mem::size_of::<u64>(),
             "glam::Vec2" => std::mem::size_of::<glam::Vec2>(),
             "glam::Vec3" => std::mem::size_of::<glam::Vec3>(),
             "glam::Vec4" => std::mem::size_of::<glam::Vec4>(),
@@ -1664,6 +1703,13 @@ mod tests {
                         check_field_sizes(&s.fields, &context, mismatches);
                     }
                     continue;
+                }
+
+                StructField::Pointer(ptr) => {
+                    // check the pointee's fields, then fall through to the
+                    // leaf check for the pointer's own u64
+                    let pointee_context = format!("{context}.{}", ptr.field_name);
+                    check_field_sizes(&ptr.pointee_type.fields, &pointee_context, mismatches);
                 }
 
                 StructField::Scalar(_) | StructField::Vector(_) | StructField::Matrix(_) => {}

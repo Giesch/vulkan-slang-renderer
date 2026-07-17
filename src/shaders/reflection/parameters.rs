@@ -46,7 +46,7 @@ pub fn reflect_entry_points(
         let element_type = match element_type_layout.kind() {
             slang::TypeKind::Struct => {
                 let element_type_name = element_type_layout.name().unwrap().to_string();
-                let fields = reflect_struct_fields(element_type_layout)?;
+                let fields = reflect_struct_fields(element_type_layout, program_layout, false)?;
 
                 ParameterBlockElementType {
                     type_name: element_type_name,
@@ -77,7 +77,7 @@ pub fn reflect_entry_points(
 
             let entry_point_param_json = match type_layout.kind() {
                 slang::TypeKind::Struct => {
-                    let fields = reflect_struct_fields(type_layout)?;
+                    let fields = reflect_struct_fields(type_layout, program_layout, false)?;
                     let type_name = type_layout.name().unwrap().to_string();
 
                     EntryPointParameter::Struct(StructEntryPointParameter {
@@ -162,6 +162,8 @@ pub fn reflect_entry_points(
 
 fn reflect_struct_fields(
     struct_type_layout: &slang::reflection::TypeLayout,
+    program_layout: &slang::reflection::Shader,
+    in_pointer_pointee: bool,
 ) -> anyhow::Result<Vec<StructField>> {
     let mut fields = vec![];
 
@@ -244,7 +246,8 @@ fn reflect_struct_fields(
             }
 
             slang::TypeKind::Struct => {
-                let field_fields = reflect_struct_fields(field_type_layout)?;
+                let field_fields =
+                    reflect_struct_fields(field_type_layout, program_layout, in_pointer_pointee)?;
                 let field_type_name = field_type_layout.name().unwrap().to_string();
 
                 StructField::Struct(StructStructField {
@@ -293,7 +296,8 @@ fn reflect_struct_fields(
                         let element_type_layout = field_type_layout.element_type_layout().unwrap();
                         let element_type_name = element_type_layout.name().unwrap().to_string();
 
-                        let struct_fields = reflect_struct_fields(element_type_layout)?;
+                        let struct_fields =
+                            reflect_struct_fields(element_type_layout, program_layout, false)?;
 
                         let struct_result_type = StructResultType {
                             type_name: element_type_name,
@@ -319,6 +323,70 @@ fn reflect_struct_fields(
                 })
             }
 
+            slang::TypeKind::Pointer => {
+                if in_pointer_pointee {
+                    anyhow::bail!(
+                        "pointer field '{field_name}': nested pointers \
+                        (a pointer inside a pointer's pointee) are not supported"
+                    );
+                }
+
+                let ptr_type = field_type_layout.ty().unwrap();
+                let ptr_type_name = ptr_type
+                    .full_name()
+                    .map(|blob| String::from_utf8_lossy(blob.as_slice()).to_string())
+                    .unwrap_or_default();
+
+                // A default `T*` pointee uses slang's natural (C-like) layout, which
+                // reflection misreports for layout-annotated pointers and glam types
+                // cannot always express; only std430 pointees are supported.
+                let layout_arg = ptr_type_name
+                    .trim_end_matches('>')
+                    .rsplit(',')
+                    .next()
+                    .map(str::trim)
+                    .unwrap_or_default();
+                if layout_arg != "Std430DataLayout" {
+                    anyhow::bail!(
+                        "pointer field '{field_name}' ({ptr_type_name}): only Std430DataLayout \
+                        pointers are supported; declare it as LayoutPtr<T, Std430DataLayout>"
+                    );
+                }
+
+                // The pointer's own element_type_layout() reports default-layout
+                // offsets even for Std430DataLayout pointers; query the std430
+                // layout explicitly.
+                let pointee_ty = field_type_layout
+                    .element_type_layout()
+                    .unwrap()
+                    .ty()
+                    .unwrap();
+                let pointee_layout = program_layout
+                    .type_layout(pointee_ty, slang::LayoutRules::DefaultStructuredBuffer)
+                    .expect("failed to lay out pointer pointee type");
+
+                if pointee_layout.kind() != slang::TypeKind::Struct {
+                    anyhow::bail!(
+                        "pointer field '{field_name}': only struct pointees are supported, got {:?}",
+                        pointee_layout.kind()
+                    );
+                }
+
+                let pointee_type_name = pointee_layout.name().unwrap().to_string();
+                let pointee_fields = reflect_struct_fields(pointee_layout, program_layout, true)?;
+                let pointee_size = pointee_layout.size(slang::ParameterCategory::Uniform);
+
+                StructField::Pointer(PointerStructField {
+                    field_name,
+                    binding: binding.expect("pointer field without binding"),
+                    pointee_type: StructFieldType {
+                        type_name: pointee_type_name,
+                        fields: pointee_fields,
+                    },
+                    pointee_size,
+                })
+            }
+
             k => todo!("field type layout kind not handled: {k:?}"),
         };
 
@@ -339,6 +407,7 @@ fn slang_base_shape(shape_with_flags: slang::ResourceShape) -> slang::ResourceSh
 fn scalar_from_slang(scalar: slang::ScalarType) -> ScalarType {
     match scalar {
         slang::ScalarType::Uint32 => ScalarType::Uint32,
+        slang::ScalarType::Uint64 => ScalarType::Uint64,
         slang::ScalarType::Float32 => ScalarType::Float32,
         k => todo!("slang scalar type not handled: {k:?}"),
     }
@@ -368,7 +437,7 @@ pub fn reflect_compute_entry_point(
         let element_type = match element_type_layout.kind() {
             slang::TypeKind::Struct => {
                 let element_type_name = element_type_layout.name().unwrap().to_string();
-                let fields = reflect_struct_fields(element_type_layout)?;
+                let fields = reflect_struct_fields(element_type_layout, program_layout, false)?;
 
                 ParameterBlockElementType {
                     type_name: element_type_name,
