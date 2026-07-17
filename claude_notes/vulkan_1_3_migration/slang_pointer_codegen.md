@@ -1,6 +1,6 @@
 # Slang Pointer Codegen: The Phase 6 Design
 
-Companion note to [../vulkan_1_3_migration.md](../vulkan_1_3_migration.md). **Status: Steps A and B done (2026-07-16); Steps C–F pending. Step A's finding fired the D2 contingency — default `T*` pointee layout is *natural*, not std430 — and D1/D2/D6 plus the Step D sketch were re-planned accordingly (see D2 for the resolved design).** Phase 6 is build-time only: reflection → JSON → Rust codegen. The runtime plumbing (`Gpu::device_address` etc.) landed in Phase 5 — see [bda_renderer_plumbing.md](bda_renderer_plumbing.md) — and the first real shader consumer is Phase 7 (`sprite_batch` + `particles`).
+Companion note to [../vulkan_1_3_migration.md](../vulkan_1_3_migration.md). **Status: Phase 6 complete (Steps A–B 2026-07-16, C–F 2026-07-17). Step A's finding fired the D2 contingency — default `T*` pointee layout is *natural*, not std430 — and D1/D2/D6 plus the Step D sketch were re-planned accordingly (see D2 for the resolved design). Next: Phase 7 proof examples.** Phase 6 is build-time only: reflection → JSON → Rust codegen. The runtime plumbing (`Gpu::device_address` etc.) landed in Phase 5 — see [bda_renderer_plumbing.md](bda_renderer_plumbing.md) — and the first real shader consumer is Phase 7 (`sprite_batch` + `particles`).
 
 ## The concept
 
@@ -171,9 +171,9 @@ Implemented as designed, using the builtin `LayoutPtr<T, Std430DataLayout>` in t
 
 Original design notes — churn: new snapshots only (`pointer_pointee_layout`, `pointer_dual_context`, `pointer_params` × .json/.rs) plus the module-list line in the atlas snapshot. Gate: hand-review the new `.rs` snapshots against the expected std430 offsets; check_crate green; the dual-context shader emits `DualData` exactly once.
 
-### Step F — Verification sweep + docs
+### Step F — Verification sweep + docs ✅ (done 2026-07-17)
 
-Full gate suite, plus `timeout 3 just dev` for basic_triangle, suzanne, sprite_batch, particles, gpu_picking, watercolor with zero validation errors — behavior must be *identical*, since no source shader uses pointers yet. Optional: `spirv-val` on the pointer test `.spv`s if locally installed. Update the parent doc (Phase 6 status line; record the Step-A layout finding under Remaining risks — retiring the layout risk or documenting the contingency taken) and finalize this note's status line.
+Full gate suite green (check/fmt/lint/test, plus the pre-commit hook's shader regen with zero diff). `timeout 3 just dev` ran clean with zero validation output for basic_triangle, suzanne, sprite_batch, particles, gpu_picking, and watercolor. `spirv-val --target-env vulkan1.3` passes on all five pointer test binaries (both stages of the two graphics shaders + the compute shader) — confirming std430 PhysicalStorageBuffer blocks are valid with no extra device features. Parent doc status + risk section updated (the layout risk is retired; residual slang-upgrade drift is pinned by `pointer_pointee_spirv_layout`).
 
 ## Rules of thumb (gotchas encoded in this design)
 

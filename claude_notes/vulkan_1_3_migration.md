@@ -1,6 +1,6 @@
 # Vulkan 1.3 Migration: Dynamic Rendering, Sync2, Timeline Semaphores, Extended Dynamic State, Opt-in BDA
 
-Status: Phases 0–3 and 5 complete (2026-07-14); Phase 4 won't do (decided 2026-07-14); Phase 6 in progress — Steps A–B done 2026-07-16 (layout experiment + matrix hard error; see companion note); Phase 7 pending
+Status: Phases 0–3, 5, and 6 complete (Phase 6 done 2026-07-17; see companion note — pointer pointees are natural-layout by default, so shaders must use `LayoutPtr<T, Std430DataLayout>`); Phase 4 won't do (decided 2026-07-14); Phase 7 pending
 
 Related notes:
 - [vulkan_1_3_migration/bindless_vs_bda_terminology.md](vulkan_1_3_migration/bindless_vs_bda_terminology.md) — how the BDA pointer-tree direction relates to "bindless", search terms, reading list.
@@ -126,9 +126,9 @@ Implemented as designed in [vulkan_1_3_migration/bda_renderer_plumbing.md](vulka
 - Uniform buffers stay descriptor-bound (addresses live *in* uniform data, not vice versa).
 - ~~Fix the latent push-constant bug while here~~ ✅ done 2026-07-14, landed ahead of the phase: `impl ReflectedPushConstantRange::to_vk` (renderer.rs:4981–4988) now uses `.offset(self.offset)` instead of the old `.offset(self.size)`.
 
-## Phase 6 — Slang reflection/codegen pointer support
+## Phase 6 — Slang reflection/codegen pointer support ✅ (done 2026-07-17)
 
-Detailed design in [vulkan_1_3_migration/slang_pointer_codegen.md](vulkan_1_3_migration/slang_pointer_codegen.md) (written 2026-07-16); the summary below is superseded by that note where they differ.
+Implemented per the companion note [vulkan_1_3_migration/slang_pointer_codegen.md](vulkan_1_3_migration/slang_pointer_codegen.md), which records the step-by-step results; the summary below is superseded by that note where they differ. Headline deviation from the sketch below: the Step A experiment found default `T*` pointees use slang's *natural* layout (not std430), so shaders must declare `LayoutPtr<T, Std430DataLayout>` (bare `T*` is a reflection hard error) and pointee offsets are reflected via `type_layout(_, DefaultStructuredBuffer)`. Also landed en route: per-field `offset_of!`/`size_of` asserts on all generated GPU structs, the glam align guard, the shared-module layout-compatibility check, the field-size tripwire test, and the matrix hard error (the "dormant" Mat3 bug was live in std430_matrices).
 
 `src/shaders/reflection/parameters.rs`, `src/shaders/json/parameters.rs`, `src/shaders/build_tasks.rs`, `templates/shader_atlas_entry.rs.askama` + compute/shared-module templates, `shaders/test/`, insta snapshots.
 
