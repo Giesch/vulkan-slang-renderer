@@ -18,6 +18,9 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
+
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct GpuPickingIdParams {
@@ -28,6 +31,10 @@ pub struct GpuPickingIdParams {
 
 impl GPUWrite for GpuPickingIdParams {}
 const _: () = assert!(std::mem::size_of::<GpuPickingIdParams>() == 96);
+const _: () = assert!(std::mem::offset_of!(GpuPickingIdParams, camera) == 0);
+const _: () = assert!(std::mem::size_of::<RayMarchCamera>() == 80);
+const _: () = assert!(std::mem::offset_of!(GpuPickingIdParams, cube_count) == 80);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
 
 pub struct Resources<'a> {
     pub cubes: &'a StorageBufferHandle<Cube>,

@@ -21,6 +21,8 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -38,6 +40,22 @@ pub struct KochCurveParams {
 
 impl GPUWrite for KochCurveParams {}
 const _: () = assert!(std::mem::size_of::<KochCurveParams>() == 48);
+const _: () = assert!(std::mem::offset_of!(KochCurveParams, resolution) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(KochCurveParams, mouse) == 8);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(KochCurveParams, time) == 16);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(KochCurveParams, koch_iterations) == 20);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(KochCurveParams, scale_factor) == 24);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(KochCurveParams, sphere_radius) == 28);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(KochCurveParams, sphere_blend) == 32);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(KochCurveParams, rotation_speed) == 36);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
     pub cube_map: &'a TextureHandle,

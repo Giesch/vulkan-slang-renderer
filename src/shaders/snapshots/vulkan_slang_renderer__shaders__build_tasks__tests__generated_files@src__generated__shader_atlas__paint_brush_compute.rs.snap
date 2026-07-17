@@ -18,6 +18,8 @@ use crate::renderer::*;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -35,6 +37,22 @@ pub struct BrushParams {
 
 impl GPUWrite for BrushParams {}
 const _: () = assert!(std::mem::size_of::<BrushParams>() == 80);
+const _: () = assert!(std::mem::offset_of!(BrushParams, point_count) == 0);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(BrushParams, brush_radius) == 4);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(BrushParams, brush_opacity) == 8);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(BrushParams, brush_pressure) == 12);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(BrushParams, pigment_color_0_3) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(BrushParams, pigment_color_4_7) == 32);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(BrushParams, pigment_color_8_11) == 48);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(BrushParams, canvas_size) == 64);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(8))]
@@ -44,6 +62,8 @@ pub struct StrokePoint {
 
 impl GPUWrite for StrokePoint {}
 const _: () = assert!(std::mem::size_of::<StrokePoint>() == 8);
+const _: () = assert!(std::mem::offset_of!(StrokePoint, position) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub wet_mask: &'a StorageTextureHandle,

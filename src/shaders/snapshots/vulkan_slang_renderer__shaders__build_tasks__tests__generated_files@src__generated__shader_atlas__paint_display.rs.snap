@@ -21,6 +21,8 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -46,6 +48,38 @@ pub struct DisplayParams {
 
 impl GPUWrite for DisplayParams {}
 const _: () = assert!(std::mem::size_of::<DisplayParams>() == 416);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, texel_size) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, debug_view) == 8);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, canvas_aspect) == 12);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, window_aspect) == 16);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment0) == 32);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment1) == 64);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment2) == 96);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment3) == 128);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment4) == 160);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment5) == 192);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment6) == 224);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment7) == 256);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment8) == 288);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment9) == 320);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment10) == 352);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment11) == 384);
+const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -58,6 +92,10 @@ pub struct PigmentKM {
 
 impl GPUWrite for PigmentKM {}
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
+const _: () = assert!(std::mem::offset_of!(PigmentKM, absorption) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(PigmentKM, scattering) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 
 pub struct Resources<'a> {
     pub deposit_0_3: &'a TextureHandle,

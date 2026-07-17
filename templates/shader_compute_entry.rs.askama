@@ -17,6 +17,8 @@ use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 {% for import in shared_module_imports -%}
 pub use super::{{ import.module_name }}::{ {{- import.type_names|join(", ") -}} };
 {% endfor %}
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 {% for def in struct_defs %}
 {%~ match def.trait_derive_line() -%}
 {%- when Some with (derive_line) -%}
@@ -41,6 +43,9 @@ impl GPUWrite for {{ def.type_name }} {}
 const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 {%- when None -%}
 {%- endmatch %}
+{%- for assert_line in def.layout_assert_lines() +%}
+{{ assert_line }}
+{%- endfor %}
 {% endfor %}
 
 pub const WORKGROUP_SIZE: [u32; 3] = [{{ shader_impl.workgroup_size[0] }}, {{ shader_impl.workgroup_size[1] }}, {{ shader_impl.workgroup_size[2] }}];

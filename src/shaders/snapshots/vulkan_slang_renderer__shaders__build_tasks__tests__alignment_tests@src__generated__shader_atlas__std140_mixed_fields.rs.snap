@@ -21,6 +21,8 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -37,6 +39,18 @@ pub struct MixedData {
 
 impl GPUWrite for MixedData {}
 const _: () = assert!(std::mem::size_of::<MixedData>() == 64);
+const _: () = assert!(std::mem::offset_of!(MixedData, a) == 0);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(MixedData, b) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(MixedData, c) == 28);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(MixedData, d) == 32);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(MixedData, e) == 40);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(MixedData, f) == 48);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<MixedData>,

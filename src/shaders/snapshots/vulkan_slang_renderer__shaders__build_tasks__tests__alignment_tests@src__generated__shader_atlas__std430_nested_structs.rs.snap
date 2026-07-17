@@ -21,6 +21,8 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -42,6 +44,12 @@ pub struct OuterData {
 
 impl GPUWrite for OuterData {}
 const _: () = assert!(std::mem::size_of::<OuterData>() == 32);
+const _: () = assert!(std::mem::offset_of!(OuterData, x) == 0);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(OuterData, inner) == 8);
+const _: () = assert!(std::mem::size_of::<InnerData>() == 16);
+const _: () = assert!(std::mem::offset_of!(OuterData, y) == 24);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(8))]
@@ -53,6 +61,10 @@ pub struct InnerData {
 
 impl GPUWrite for InnerData {}
 const _: () = assert!(std::mem::size_of::<InnerData>() == 16);
+const _: () = assert!(std::mem::offset_of!(InnerData, a) == 0);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(InnerData, b) == 8);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub data: &'a StorageBufferHandle<OuterData>,

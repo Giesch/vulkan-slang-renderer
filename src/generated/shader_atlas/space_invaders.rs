@@ -17,6 +17,9 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
+
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct SpaceInvadersParams {
@@ -25,6 +28,8 @@ pub struct SpaceInvadersParams {
 
 impl GPUWrite for SpaceInvadersParams {}
 const _: () = assert!(std::mem::size_of::<SpaceInvadersParams>() == 64);
+const _: () = assert!(std::mem::offset_of!(SpaceInvadersParams, projection) == 0);
+const _: () = assert!(std::mem::size_of::<Projection>() == 64);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -36,6 +41,12 @@ pub struct DebugBox {
 
 impl GPUWrite for DebugBox {}
 const _: () = assert!(std::mem::size_of::<DebugBox>() == 32);
+const _: () = assert!(std::mem::offset_of!(DebugBox, color) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(DebugBox, position) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(DebugBox, size) == 24);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -54,6 +65,26 @@ pub struct Sprite {
 
 impl GPUWrite for Sprite {}
 const _: () = assert!(std::mem::size_of::<Sprite>() == 64);
+const _: () = assert!(std::mem::offset_of!(Sprite, scale) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(Sprite, flags) == 8);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Sprite, debug_box_id) == 12);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Sprite, position) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(Sprite, rotation) == 28);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Sprite, tex_u) == 32);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Sprite, tex_v) == 36);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Sprite, tex_w) == 40);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Sprite, tex_h) == 44);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Sprite, color) == 48);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 
 pub struct Resources<'a> {
     pub sprites: &'a StorageBufferHandle<Sprite>,

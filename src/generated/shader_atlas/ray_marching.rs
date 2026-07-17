@@ -18,6 +18,9 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
+
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct RayMarchingParams {
@@ -31,6 +34,16 @@ pub struct RayMarchingParams {
 
 impl GPUWrite for RayMarchingParams {}
 const _: () = assert!(std::mem::size_of::<RayMarchingParams>() == 112);
+const _: () = assert!(std::mem::offset_of!(RayMarchingParams, camera) == 0);
+const _: () = assert!(std::mem::size_of::<RayMarchCamera>() == 80);
+const _: () = assert!(std::mem::offset_of!(RayMarchingParams, light_position) == 80);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(RayMarchingParams, sphere_count) == 92);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(RayMarchingParams, box_count) == 96);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(RayMarchingParams, resolution) == 104);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -44,6 +57,12 @@ pub struct BoxRect {
 
 impl GPUWrite for BoxRect {}
 const _: () = assert!(std::mem::size_of::<BoxRect>() == 96);
+const _: () = assert!(std::mem::offset_of!(BoxRect, transform) == 0);
+const _: () = assert!(std::mem::size_of::<Projection>() == 64);
+const _: () = assert!(std::mem::offset_of!(BoxRect, radii) == 64);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(BoxRect, color) == 80);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -56,6 +75,12 @@ pub struct Sphere {
 
 impl GPUWrite for Sphere {}
 const _: () = assert!(std::mem::size_of::<Sphere>() == 32);
+const _: () = assert!(std::mem::offset_of!(Sphere, center) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(Sphere, radius) == 12);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Sphere, color) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 
 pub struct Resources<'a> {
     pub spheres: &'a StorageBufferHandle<Sphere>,

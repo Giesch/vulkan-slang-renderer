@@ -21,6 +21,8 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -32,6 +34,10 @@ pub struct DragonParams {
 
 impl GPUWrite for DragonParams {}
 const _: () = assert!(std::mem::size_of::<DragonParams>() == 16);
+const _: () = assert!(std::mem::offset_of!(DragonParams, resolution) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(DragonParams, time) == 8);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<DragonParams>,

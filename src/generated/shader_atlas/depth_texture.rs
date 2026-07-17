@@ -17,6 +17,9 @@ use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
+
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct DepthTextureParams {
@@ -25,6 +28,8 @@ pub struct DepthTextureParams {
 
 impl GPUWrite for DepthTextureParams {}
 const _: () = assert!(std::mem::size_of::<DepthTextureParams>() == 192);
+const _: () = assert!(std::mem::offset_of!(DepthTextureParams, mvp) == 0);
+const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

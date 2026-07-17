@@ -13,6 +13,9 @@ use crate::renderer::*;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
+
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
@@ -22,6 +25,8 @@ pub struct Params {
 
 impl GPUWrite for Params {}
 const _: () = assert!(std::mem::size_of::<Params>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub u: &'a StorageTextureHandle,

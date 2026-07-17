@@ -743,7 +743,8 @@ fn generate_std430_struct_fields(
         let alignment_for_nested = Some(Alignment::Std430 {
             struct_alignment: 16,
         });
-        let Some(gen_field) = gather_struct_defs(source_field, struct_defs, alignment_for_nested)
+        let Some(mut gen_field) =
+            gather_struct_defs(source_field, struct_defs, alignment_for_nested)
         else {
             continue;
         };
@@ -754,6 +755,10 @@ fn generate_std430_struct_fields(
             generated_fields.push(gen_field);
             continue;
         };
+
+        check_rust_placeable(&gen_field, expected_offset);
+        gen_field.offset = Some(expected_offset);
+        gen_field.size = Some(field_size);
 
         // Track max alignment for struct alignment calculation
         let field_align = field_alignment(&gen_field.type_name);
@@ -808,7 +813,7 @@ fn generate_std140_struct_fields(
         }
 
         // Get the generated field (and recurse for nested structs)
-        let Some(gen_field) =
+        let Some(mut gen_field) =
             gather_struct_defs(source_field, struct_defs, Some(Alignment::Std140))
         else {
             continue;
@@ -820,6 +825,10 @@ fn generate_std140_struct_fields(
             generated_fields.push(gen_field);
             continue;
         };
+
+        check_rust_placeable(&gen_field, expected_offset);
+        gen_field.offset = Some(expected_offset);
+        gen_field.size = Some(field_size);
 
         // Insert padding if needed
         if expected_offset > current_offset {
@@ -1094,12 +1103,47 @@ impl GeneratedStructDefinition {
     fn expected_size(&self) -> Option<usize> {
         self.expected_size
     }
+
+    /// Per-field layout assertion lines for the generated source.
+    /// Offsets check field placement; sizes check field extent (interior
+    /// stride padding always changes a type's total size, which offset
+    /// asserts alone cannot see). Layout bugs reached through raw device
+    /// addresses produce no validation errors, so mismatches must fail
+    /// at cargo check instead.
+    fn layout_assert_lines(&self) -> Vec<String> {
+        let mut lines = vec![];
+
+        for field in &self.fields {
+            let Some(offset) = field.offset else {
+                continue;
+            };
+
+            lines.push(format!(
+                "const _: () = assert!(std::mem::offset_of!({}, {}) == {offset});",
+                self.type_name, field.field_name,
+            ));
+
+            if let Some(size) = field.size {
+                lines.push(format!(
+                    "const _: () = assert!(std::mem::size_of::<{}>() == {size});",
+                    field.type_name,
+                ));
+            }
+        }
+
+        lines
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct GeneratedStructFieldDefinition {
     field_name: String,
     type_name: String,
+    /// reflected offset within the GPU struct; None for padding fields
+    /// and fields outside GPU layout (vertex inputs, CPU-only structs)
+    offset: Option<usize>,
+    /// reflected size within the GPU struct; None when offset is None
+    size: Option<usize>,
 }
 
 impl GeneratedStructFieldDefinition {
@@ -1107,6 +1151,8 @@ impl GeneratedStructFieldDefinition {
         Self {
             field_name,
             type_name,
+            offset: None,
+            size: None,
         }
     }
 
@@ -1114,6 +1160,8 @@ impl GeneratedStructFieldDefinition {
         Self {
             field_name: format!("_padding_{index}"),
             type_name: format!("[u8; {size}]"),
+            offset: None,
+            size: None,
         }
     }
 }
@@ -1194,6 +1242,43 @@ fn align_to(offset: usize, alignment: usize) -> usize {
     offset.div_ceil(alignment) * alignment
 }
 
+/// The actual Rust alignment of an emitted leaf type, or None for generated
+/// struct types (whose #[repr(C, align(N))] matches their GPU alignment by
+/// construction, so their reflected offsets are always placeable).
+fn rust_type_alignment(type_name: &str) -> Option<usize> {
+    Some(match type_name {
+        "f32" => std::mem::align_of::<f32>(),
+        "u32" => std::mem::align_of::<u32>(),
+        "glam::Vec2" => std::mem::align_of::<glam::Vec2>(),
+        "glam::Vec3" => std::mem::align_of::<glam::Vec3>(),
+        "glam::Vec4" => std::mem::align_of::<glam::Vec4>(),
+        "glam::Mat4" => std::mem::align_of::<glam::Mat4>(),
+        _ => return None,
+    })
+}
+
+/// A reflected offset that isn't a multiple of the emitted Rust type's alignment
+/// cannot be reproduced with a #[repr(C)] field of that type — unreachable under
+/// std140/std430, so it means a non-std GPU layout leaked into codegen.
+fn check_rust_placeable(gen_field: &GeneratedStructFieldDefinition, expected_offset: usize) {
+    if let Some(align) = rust_type_alignment(&gen_field.type_name)
+        && !expected_offset.is_multiple_of(align)
+    {
+        panic!(
+            "field '{}' has reflected offset {expected_offset}, which is not a multiple of \
+            {}'s Rust alignment ({align}); non-std GPU layout detected",
+            gen_field.field_name, gen_field.type_name,
+        );
+    }
+}
+
+/// Two generated definitions of the same type must agree exactly — field names,
+/// Rust types, and reflected offsets/sizes. A same-size mismatch here means two
+/// shaders see the same struct with different GPU layouts.
+fn struct_defs_compatible(a: &GeneratedStructDefinition, b: &GeneratedStructDefinition) -> bool {
+    a.fields == b.fields
+}
+
 /// Adds a struct definition if it doesn't already exist.
 /// Panics if a struct with the same name exists but has incompatible fields.
 fn try_add_struct_def(
@@ -1204,15 +1289,7 @@ fn try_add_struct_def(
         .iter()
         .find(|d| d.type_name == new_def.type_name)
     {
-        // Verify compatibility by comparing fields
-        let fields_match = existing.fields.len() == new_def.fields.len()
-            && existing
-                .fields
-                .iter()
-                .zip(&new_def.fields)
-                .all(|(a, b)| a.field_name == b.field_name && a.type_name == b.type_name);
-
-        if !fields_match {
+        if !struct_defs_compatible(existing, &new_def) {
             panic!(
                 "Incompatible struct definitions for '{}': fields differ",
                 new_def.type_name
@@ -1301,13 +1378,24 @@ fn collect_shared_modules(
 ) -> BTreeMap<String, Vec<GeneratedStructDefinition>> {
     let mut modules: BTreeMap<String, Vec<GeneratedStructDefinition>> = BTreeMap::new();
 
-    for (_shader_name, defs) in all_shader_defs {
+    for (shader_name, defs) in all_shader_defs {
         for def in defs {
             if let Some(ref module_name) = def.source_module {
                 let module_defs = modules.entry(module_name.clone()).or_default();
-                // Only add if not already present (dedup by type_name)
-                if !module_defs.iter().any(|d| d.type_name == def.type_name) {
-                    module_defs.push(def.clone());
+                match module_defs.iter().find(|d| d.type_name == def.type_name) {
+                    Some(existing) => {
+                        // a shared type must have the same layout in every shader
+                        // that uses it; first-definition-wins would silently drop
+                        // one of two diverging layouts
+                        if !struct_defs_compatible(existing, def) {
+                            panic!(
+                                "shared type '{}' (module '{module_name}') has an \
+                                incompatible layout in shader '{shader_name}'",
+                                def.type_name,
+                            );
+                        }
+                    }
+                    None => module_defs.push(def.clone()),
                 }
             }
         }

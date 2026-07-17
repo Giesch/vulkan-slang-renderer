@@ -13,6 +13,9 @@ use crate::renderer::*;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
+
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
@@ -35,6 +38,36 @@ pub struct Params {
 
 impl GPUWrite for Params {}
 const _: () = assert!(std::mem::size_of::<Params>() == 208);
+const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, dt) == 8);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Params, transfer_rate) == 12);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Params, pigment0) == 16);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment1) == 32);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment2) == 48);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment3) == 64);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment4) == 80);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment5) == 96);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment6) == 112);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment7) == 128);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment8) == 144);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment9) == 160);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment10) == 176);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment11) == 192);
+const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -47,6 +80,12 @@ pub struct PigmentProperties {
 
 impl GPUWrite for PigmentProperties {}
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
+const _: () = assert!(std::mem::offset_of!(PigmentProperties, density) == 0);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(PigmentProperties, staining_power) == 4);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(PigmentProperties, granulation) == 8);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
     pub pigment_in_0_3: &'a TextureHandle,
