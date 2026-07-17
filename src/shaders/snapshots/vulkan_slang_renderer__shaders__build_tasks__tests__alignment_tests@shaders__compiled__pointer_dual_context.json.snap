@@ -1,0 +1,166 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: shaders/compiled/pointer_dual_context.json
+---
+{
+  "sourceFileName": "pointer_dual_context.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "by_pointer",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "DualData",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "pos",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "w",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 32
+          },
+          {
+            "kind": "resource",
+            "fieldName": "by_buffer",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "structuredBuffer",
+            "resultType": {
+              "kind": "struct",
+              "typeName": "DualData",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "pos",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "w",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": []
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          },
+          {
+            "binding": 1,
+            "descriptorType": "storageBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

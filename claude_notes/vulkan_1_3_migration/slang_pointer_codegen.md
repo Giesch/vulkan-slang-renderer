@@ -165,11 +165,11 @@ One step because the new `StructField` variant breaks every exhaustive match, co
 
 Churn: **zero** — nothing exercises the new arms yet. Gate: `just test` reports zero snapshot diffs; `just shaders` produces zero diff in committed generated code.
 
-### Step E — Pointer test shaders + snapshots + permanent SPIR-V pin
+### Step E — Pointer test shaders + snapshots + permanent SPIR-V pin ✅ (done 2026-07-17)
 
-Add the `BufferPtr<T>` typealias in a shared slang module (usable from both `shaders/test/` and `shaders/source/`); add the three D6 shaders; land the D6 unit tests, including re-landing Step A's inspection as the permanent pin test with hard-coded expected offsets and the default-layout-pointer rejection test.
+Implemented as designed, using the builtin `LayoutPtr<T, Std430DataLayout>` in the shaders (no `BufferPtr` module — see Step D note). All gates held on review: the generated `HostileData` asserts offsets 0/12/16/32/48/80/88/104 and size 112 (byte-identical to the Step A SPIR-V, now also asserted by the permanent `pointer_pointee_spirv_layout` rspirv test including `ArrayStride 112` and nested `InnerA.v == 16`/`InnerB.q == 8`); `Params` emits `pub items: u64` at offset 8 with no `Resources` entry; the dual-context shader emits `DualData` exactly once with `by_buffer` descriptor-bound alongside the pointer; the compute shader exercises the compute template's asserts in check_crate (first compute shader in `shaders/test/`). `default_layout_pointer_is_rejected` pins the bare-`T*` hard error via a temp-dir fixture. Churn: 6 new snapshots + the atlas module-list; **zero changes to every other existing snapshot** (descriptor path untouched); zero committed `src/generated` churn.
 
-Churn: new snapshots only (`pointer_pointee_layout`, `pointer_dual_context`, `pointer_params` × .json/.rs) plus the module-list line in the atlas snapshot; **every other existing snapshot: zero churn** (proves the descriptor path untouched). Gate: hand-review the new `.rs` snapshots against the expected std430 offsets (u64 pointer fields at reflected offsets; `HostileData` asserts at 0/12/16/32/48/80/88/104, size 112); check_crate green; the dual-context shader emits `DualData` exactly once.
+Original design notes — churn: new snapshots only (`pointer_pointee_layout`, `pointer_dual_context`, `pointer_params` × .json/.rs) plus the module-list line in the atlas snapshot. Gate: hand-review the new `.rs` snapshots against the expected std430 offsets; check_crate green; the dual-context shader emits `DualData` exactly once.
 
 ### Step F — Verification sweep + docs
 

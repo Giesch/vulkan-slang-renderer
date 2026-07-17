@@ -1,0 +1,94 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: shaders/compiled/pointer_params.comp.json
+---
+{
+  "sourceFileName": "pointer_params.compute.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "data",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "PtrItem",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "a",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "b",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            },
+            "pointeeSize": 16
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "count",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 4
+            },
+            "scalarType": "uint32"
+          }
+        ]
+      }
+    }
+  ],
+  "computeEntryPoint": {
+    "entryPointName": "computeMain",
+    "stage": "compute",
+    "parameters": []
+  },
+  "workgroupSize": [
+    64,
+    1,
+    1
+  ],
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

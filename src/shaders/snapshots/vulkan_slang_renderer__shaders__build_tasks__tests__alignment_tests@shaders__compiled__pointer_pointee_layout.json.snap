@@ -1,0 +1,235 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: shaders/compiled/pointer_pointee_layout.json
+---
+{
+  "sourceFileName": "pointer_pointee_layout.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "scalar",
+            "fieldName": "scale",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "items",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "HostileData",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "a",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "b",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "c",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "d",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 32,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "struct",
+                  "fieldName": "ia",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 48,
+                    "size": 32
+                  },
+                  "structType": {
+                    "typeName": "InnerA",
+                    "fields": [
+                      {
+                        "kind": "scalar",
+                        "fieldName": "x",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 4
+                        },
+                        "scalarType": "float32"
+                      },
+                      {
+                        "kind": "vector",
+                        "fieldName": "v",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 16,
+                          "size": 12
+                        },
+                        "elementCount": 3,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "e",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 80,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "struct",
+                  "fieldName": "ib",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 88,
+                    "size": 16
+                  },
+                  "structType": {
+                    "typeName": "InnerB",
+                    "fields": [
+                      {
+                        "kind": "vector",
+                        "fieldName": "p",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 8
+                        },
+                        "elementCount": 2,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "fieldName": "q",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 8,
+                          "size": 4
+                        },
+                        "scalarType": "float32"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "f",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 104,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            },
+            "pointeeSize": 112
+          },
+          {
+            "kind": "vector",
+            "fieldName": "post",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": []
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

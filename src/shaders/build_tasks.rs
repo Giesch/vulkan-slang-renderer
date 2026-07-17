@@ -1787,6 +1787,166 @@ mod tests {
         );
     }
 
+    /// Pins the SPIR-V layout of Std430DataLayout pointer pointees. The generated
+    /// Rust structs assert the *reflected* offsets; this test asserts the *emitted*
+    /// offsets match them, closing the loop reflection alone cannot close (the
+    /// pointer's own element_type_layout() misreports layout-annotated pointees).
+    /// This is the regression guard for slang upgrades changing pointer layout.
+    #[cfg(not(windows))]
+    #[test]
+    fn pointer_pointee_spirv_layout() {
+        use rspirv::dr::Operand;
+        use rspirv::spirv::{Decoration, Op, StorageClass};
+
+        let search_path = manifest_path(["shaders", "test"]);
+        let reflected = prepare_reflected_shader(
+            "pointer_pointee_layout.shader.slang",
+            search_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+        let module = rspirv::dr::load_bytes(&reflected.vertex_shader.shader_bytecode)
+            .expect("failed to parse SPIR-V");
+
+        // the PhysicalStorageBuffer pointer type identifies the pointee struct
+        let (ptr_type_id, pointee_struct_id) = module
+            .types_global_values
+            .iter()
+            .find_map(|inst| {
+                if inst.class.opcode != Op::TypePointer {
+                    return None;
+                }
+                match inst.operands.as_slice() {
+                    [
+                        Operand::StorageClass(StorageClass::PhysicalStorageBuffer),
+                        Operand::IdRef(pointee),
+                    ] => Some((inst.result_id.unwrap(), *pointee)),
+                    _ => None,
+                }
+            })
+            .expect("no PhysicalStorageBuffer pointer type in SPIR-V");
+
+        let member_offsets = |struct_id: u32| -> Vec<(u32, u32)> {
+            let mut offsets: Vec<(u32, u32)> = module
+                .annotations
+                .iter()
+                .filter(|inst| inst.class.opcode == Op::MemberDecorate)
+                .filter_map(|inst| match inst.operands.as_slice() {
+                    [
+                        Operand::IdRef(target),
+                        Operand::LiteralBit32(member),
+                        Operand::Decoration(Decoration::Offset),
+                        Operand::LiteralBit32(offset),
+                    ] if *target == struct_id => Some((*member, *offset)),
+                    _ => None,
+                })
+                .collect();
+            offsets.sort_unstable();
+            offsets
+        };
+
+        // HostileData under std430 (see pointer_pointee_layout.shader.slang)
+        assert_eq!(
+            member_offsets(pointee_struct_id),
+            vec![
+                (0, 0),
+                (1, 12),
+                (2, 16),
+                (3, 32),
+                (4, 48),
+                (5, 80),
+                (6, 88),
+                (7, 104)
+            ],
+        );
+
+        // pointer indexing stride == std430 struct size
+        let array_stride = module
+            .annotations
+            .iter()
+            .filter(|inst| inst.class.opcode == Op::Decorate)
+            .find_map(|inst| match inst.operands.as_slice() {
+                [
+                    Operand::IdRef(target),
+                    Operand::Decoration(Decoration::ArrayStride),
+                    Operand::LiteralBit32(stride),
+                ] if *target == ptr_type_id => Some(*stride),
+                _ => None,
+            })
+            .expect("no ArrayStride on the PhysicalStorageBuffer pointer type");
+        assert_eq!(array_stride, 112);
+
+        // nested pointee structs: InnerA (member 4), InnerB (member 6)
+        let struct_def = module
+            .types_global_values
+            .iter()
+            .find(|inst| {
+                inst.class.opcode == Op::TypeStruct && inst.result_id == Some(pointee_struct_id)
+            })
+            .expect("pointee struct type not found");
+        let member_type = |index: usize| match struct_def.operands[index] {
+            Operand::IdRef(id) => id,
+            _ => unreachable!("struct member operands are type ids"),
+        };
+        // natural layout would put InnerA.v at 4
+        assert_eq!(member_offsets(member_type(4)), vec![(0, 0), (1, 16)]);
+        assert_eq!(member_offsets(member_type(6)), vec![(0, 0), (1, 8)]);
+    }
+
+    // A bare `T*` pointee uses slang's natural layout, which codegen would
+    // silently mis-generate as std430; the reflection hard error is the only
+    // guard, so it gets its own pin. The fixture lives in a temp dir because
+    // every shader in shaders/test must compile.
+    #[cfg(not(windows))]
+    #[test]
+    fn default_layout_pointer_is_rejected() {
+        let tmp_dir = std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let source = r#"#language slang 2026
+
+module default_layout_pointer;
+
+struct Item {
+    float4 value;
+}
+
+struct Params {
+    Item* items;
+}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return params.items[id].value;
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        std::fs::write(tmp_dir.join("default_layout_pointer.shader.slang"), source).unwrap();
+
+        let result = prepare_reflected_shader(
+            "default_layout_pointer.shader.slang",
+            tmp_dir.to_str().unwrap(),
+        );
+
+        std::fs::remove_dir_all(&tmp_dir).ok();
+
+        let err = match result {
+            Ok(_) => panic!("a default-layout pointer field must be rejected"),
+            Err(err) => err,
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("Std430DataLayout"),
+            "unexpected error message: {message}"
+        );
+    }
+
     fn count_branch_instructions(spv_bytes: &[u8]) -> usize {
         let module = rspirv::dr::load_bytes(spv_bytes).expect("Failed to parse SPIR-V module");
         module
