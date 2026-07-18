@@ -8,7 +8,7 @@ ParameterBlock<RenderParams> renderParams;
 
 struct RenderParams {
     uint particleCount;
-    StructuredBuffer<Particle> particles;
+    LayoutPtr<Particle, Std430DataLayout> particles;
 }
 
 struct FragInput {

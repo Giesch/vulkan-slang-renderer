@@ -6,10 +6,11 @@ use glam::{Vec2, Vec4};
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
     Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer,
-    StorageBufferFrameStrategy, StorageBufferHandle, UniformBufferHandle,
+    StorageBufferHandle, UniformBufferHandle,
 };
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
+use vulkan_slang_renderer::generated::shader_atlas::particle;
 use vulkan_slang_renderer::generated::shader_atlas::particle_render;
 use vulkan_slang_renderer::generated::shader_atlas::particles_compute;
 
@@ -23,8 +24,7 @@ struct Particles {
     last_frame: Instant,
     compute_pipeline: PipelineHandle<Compute>,
     render_pipeline: PipelineHandle<DrawVertexCount>,
-    #[expect(unused)] // used only on the GPU after startup
-    particle_buffer: StorageBufferHandle<particles_compute::Particle>,
+    particle_buffer: StorageBufferHandle<particle::Particle>,
     sim_params_buffer: UniformBufferHandle<particles_compute::SimParams>,
     render_params_buffer: UniformBufferHandle<particle_render::RenderParams>,
 }
@@ -47,7 +47,7 @@ impl Game for Particles {
         let initial_particles = create_initial_particles();
 
         let mut particle_buffer =
-            renderer.create_storage_buffer::<particles_compute::Particle>(NUM_PARTICLES)?;
+            renderer.create_storage_buffer::<particle::Particle>(NUM_PARTICLES)?;
 
         let sim_params_buffer = renderer.create_uniform_buffer::<particles_compute::SimParams>()?;
 
@@ -56,23 +56,17 @@ impl Game for Particles {
 
         renderer.write_storage_all_frames(&mut particle_buffer, &initial_particles);
 
-        // Create compute pipeline — both inputs point to the same buffer,
-        // frame offsets handle the ping-pong via descriptor set wiring
+        // The particle buffer is never descriptor-bound — the shaders read and
+        // write it through device addresses supplied per-frame in the uniforms
         let shaders = ShaderAtlas::init();
 
         let compute_resources = particles_compute::Resources {
-            particles_in: &particle_buffer,
-            particles_out: &particle_buffer,
             sim_params_buffer: &sim_params_buffer,
         };
-        let mut compute_config = shaders.particles_compute.pipeline_config(compute_resources);
-        // particles_in reads previous frame (offset -1), particles_out writes current frame (offset 0)
-        compute_config.storage_buffer_frame_strategy = StorageBufferFrameStrategy::PingPong;
+        let compute_config = shaders.particles_compute.pipeline_config(compute_resources);
         let compute_pipeline = renderer.create_compute_pipeline(compute_config)?;
 
-        // Create render pipeline — reads current frame's data (default offset 0)
         let render_resources = particle_render::Resources {
-            particles: &particle_buffer,
             render_params_buffer: &render_params_buffer,
         };
         let render_config = shaders.particle_render.pipeline_config(render_resources);
@@ -114,6 +108,10 @@ impl Game for Particles {
             gpu.write_uniform(
                 &mut self.sim_params_buffer,
                 particles_compute::SimParams {
+                    // ping-pong: read the previous frame's buffer copy,
+                    // write the current frame's copy
+                    particles_in: gpu.device_address_prev(&self.particle_buffer),
+                    particles_out: gpu.device_address(&self.particle_buffer),
                     delta_time,
                     _padding_0: Default::default(),
                 },
@@ -124,6 +122,7 @@ impl Game for Particles {
                 particle_render::RenderParams {
                     particle_count: NUM_PARTICLES,
                     _padding_0: Default::default(),
+                    particles: gpu.device_address(&self.particle_buffer),
                 },
             );
         })?;
@@ -132,7 +131,7 @@ impl Game for Particles {
     }
 }
 
-fn create_initial_particles() -> Vec<particles_compute::Particle> {
+fn create_initial_particles() -> Vec<particle::Particle> {
     let mut particles = Vec::with_capacity(NUM_PARTICLES as usize);
 
     for i in 0..NUM_PARTICLES {
@@ -150,7 +149,7 @@ fn create_initial_particles() -> Vec<particles_compute::Particle> {
         let hue = t * 6.0;
         let color = hue_to_rgb(hue);
 
-        particles.push(particles_compute::Particle {
+        particles.push(particle::Particle {
             position,
             velocity,
             color,

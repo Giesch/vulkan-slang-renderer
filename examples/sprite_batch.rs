@@ -78,7 +78,6 @@ impl Game for SpriteBatch {
         let texture = renderer.create_texture(image_file_name, &image, TextureFilter::Nearest)?;
 
         let resources = Resources {
-            sprites: &sprites_buffer,
             params_buffer: &params_buffer,
             texture: &texture,
         };
@@ -132,11 +131,15 @@ impl Game for SpriteBatch {
         let projection = Projection {
             matrix: Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0),
         };
-        let params = SpriteBatchParams { projection };
         // 6 = the corners in 2 triangles to make a quad
         let vertex_count = self.sprites.len() as u32 * 6;
 
         renderer.draw_vertex_count(&self.pipeline, vertex_count, |gpu| {
+            let params = SpriteBatchParams {
+                sprites: gpu.device_address(&self.sprites_buffer),
+                _padding_0: Default::default(),
+                projection,
+            };
             gpu.write_uniform(&mut self.params_buffer, params);
             gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
         })

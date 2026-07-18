@@ -7,8 +7,8 @@ import particle;
 ParameterBlock<SimParams> simParams;
 
 struct SimParams {
-    StructuredBuffer<Particle> particlesIn;
-    RWStructuredBuffer<Particle> particlesOut;
+    LayoutPtr<Particle, Std430DataLayout> particlesIn;
+    LayoutPtr<Particle, Std430DataLayout> particlesOut;
     float deltaTime;
 }
 

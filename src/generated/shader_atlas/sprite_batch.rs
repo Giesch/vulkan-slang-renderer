@@ -23,12 +23,16 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct SpriteBatchParams {
+    pub sprites: u64,
+    pub _padding_0: [u8; 8],
     pub projection: Projection,
 }
 
 impl GPUWrite for SpriteBatchParams {}
-const _: () = assert!(std::mem::size_of::<SpriteBatchParams>() == 64);
-const _: () = assert!(std::mem::offset_of!(SpriteBatchParams, projection) == 0);
+const _: () = assert!(std::mem::size_of::<SpriteBatchParams>() == 80);
+const _: () = assert!(std::mem::offset_of!(SpriteBatchParams, sprites) == 0);
+const _: () = assert!(std::mem::size_of::<u64>() == 8);
+const _: () = assert!(std::mem::offset_of!(SpriteBatchParams, projection) == 16);
 const _: () = assert!(std::mem::size_of::<Projection>() == 64);
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,7 +71,6 @@ const _: () = assert!(std::mem::offset_of!(Sprite, color) == 48);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 
 pub struct Resources<'a> {
-    pub sprites: &'a StorageBufferHandle<Sprite>,
     pub texture: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<SpriteBatchParams>,
 }
@@ -106,7 +109,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
-            RawStorageBufferHandle::from_typed(resources.sprites),
         ];
 
         #[rustfmt::skip]

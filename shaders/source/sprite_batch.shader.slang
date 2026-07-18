@@ -15,7 +15,7 @@ import projection;
 ParameterBlock<SpriteBatchParams> params;
 
 struct SpriteBatchParams {
-    StructuredBuffer<Sprite> sprites;
+    LayoutPtr<Sprite, Std430DataLayout> sprites;
     Projection projection;
     Sampler2D texture;
 }

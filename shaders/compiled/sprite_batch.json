@@ -8,16 +8,14 @@
         "typeName": "SpriteBatchParams",
         "fields": [
           {
-            "kind": "resource",
+            "kind": "pointer",
             "fieldName": "sprites",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
             },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
+            "pointeeType": {
               "typeName": "Sprite",
               "fields": [
                 {
@@ -127,14 +125,15 @@
                   }
                 }
               ]
-            }
+            },
+            "pointeeSize": 64
           },
           {
             "kind": "struct",
             "fieldName": "projection",
             "binding": {
               "kind": "uniform",
-              "offset": 0,
+              "offset": 16,
               "size": 64
             },
             "structType": {
@@ -163,7 +162,7 @@
             "fieldName": "texture",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 2,
+              "index": 1,
               "count": 1
             },
             "resourceShape": "texture2D",
@@ -257,21 +256,14 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 64
+            "size": 80
           },
           {
             "binding": 1,
-            "descriptorType": "storageBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 64
-          },
-          {
-            "binding": 2,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 64
+            "size": 80
           }
         ]
       }
