@@ -7,7 +7,7 @@ Related notes:
 - [vulkan_1_3_migration/timeline_semaphores.md](vulkan_1_3_migration/timeline_semaphores.md) — timeline semaphore primer, WSI limits, and the Phase 3 old→new sync-object mapping.
 - [vulkan_1_3_migration/dynamic_state.md](vulkan_1_3_migration/dynamic_state.md) — dynamic state primer, benefits/costs, and the (reverted, won't-do) Phase 4 design for reference.
 - [vulkan_1_3_migration/bda_renderer_plumbing.md](vulkan_1_3_migration/bda_renderer_plumbing.md) — BDA primer and the detailed Phase 5 design (address caching, `Gpu` API shape incl. the PingPong-mirroring `device_address_prev`).
-- [vulkan_1_3_migration/slang_pointer_codegen.md](vulkan_1_3_migration/slang_pointer_codegen.md) — the detailed Phase 6 design (JSON `PointerStructField` shape, empirical pointee-layout experiment, per-field `offset_of!` asserts, step sequence A–F with per-step churn gates).
+- [vulkan_1_3_migration/slang_pointer_codegen.md](vulkan_1_3_migration/slang_pointer_codegen.md) — the Phase 6 design and implementation record (JSON `PointerStructField` shape, the pointee-layout findings incl. why `LayoutPtr<T, Std430DataLayout>` is required, per-field `offset_of!`/`size_of` asserts, steps A–F with results).
 
 ## Context
 
@@ -20,7 +20,7 @@ At the outset, the renderer already requested `vk::API_VERSION_1_3` at instance,
 **Hardware/market support:** Steam's hardware survey publishes no Vulkan version breakdown, but the 1.3 hardware floor (NVIDIA Maxwell+, AMD Polaris+ on Windows / all GCN on Linux RADV, Intel Gen9+) covers ~95%+ of surveyed systems; the excluded classes (Kepler, pre-Polaris AMD, pre-Skylake Intel) have fallen off the visible GPU list. The real-world gap is stale drivers reporting 1.2 on capable hardware — handled by a clean error at device selection (Phase 0). Within the 1.3 population there is no feature fragmentation: core 1.3 mandates `dynamicRendering`, `synchronization2`, and `bufferDeviceAddress`; 1.2 mandated `timelineSemaphore`.
 
 **Retired risks (verified in code or by landing):**
-- The pinned `slang-rs` fork (`fad6e14`) already exposes `SlangTypeKind::Pointer`, `SlangScalarType::Uint64`, `Type::element_type()`, and `CompilerOptions::capability()` — no fork changes needed.
+- The pinned `slang-rs` fork (`fad6e14`) already exposes `SlangTypeKind::Pointer`, `SlangScalarType::Uint64`, `Type::element_type()`, and `CompilerOptions::capability()` — no fork changes needed. (Phase 6 correction: `Type::element_type()` returns None on pointer types; the pointee is resolved via `element_type_layout().ty()` instead.)
 - Compiled `.spv` files are SPIR-V 1.5 despite the `spirv_1_6` profile atom (slang emits the minimum version the module needs). Benign: `PhysicalStorageBuffer64` is core in SPIR-V 1.5.
 - `egui-ash-renderer` 0.11 has a compile-time `dynamic-rendering` cargo feature; constructor takes `DynamicRendering { color_attachment_format, depth_attachment_format }` instead of a render pass. (Landed cleanly in Phase 2.)
 - Sync-validation complaints from replacing implicit subpass dependencies with explicit barriers: didn't materialize — Phase 2 landed with zero validation errors across all 14 examples.
@@ -142,8 +142,10 @@ Implemented per the companion note [vulkan_1_3_migration/slang_pointer_codegen.m
 
 ## Phase 7 — Proof examples
 
-- **sprite_batch** (graphics): `shaders/source/sprite_batch.shader.slang` — replace `StructuredBuffer<Sprite> sprites` with `Sprite* sprites` in the ParameterBlock; app sets `params.sprites = gpu.device_address(&sprite_buffer)` in the per-frame update. Storage buffer created as before, just never descriptor-bound. Confirm the Rust `Sprite` repr matches slang's pointer-load layout (should already match std430; add size assert if not).
-- **particles** (compute): `particles.compute.slang` — `Particle* particlesIn/particlesOut` in the params struct; `particle_render.shader.slang` — `Particle* particles` for the vertex-stage read. App supplies addresses respecting the existing ping-pong buffer_frame rotation (the address written into frame N's uniform copy must target the same prev/current buffer copies the descriptor `PingPong` strategy used). Keep the pipelined-compute path exercised.
+Pointer syntax note (per Phase 6's landed design): bare `T*` is a reflection hard error — all pointer fields must be `LayoutPtr<T, Std430DataLayout>`.
+
+- **sprite_batch** (graphics): `shaders/source/sprite_batch.shader.slang` — replace `StructuredBuffer<Sprite> sprites` with `LayoutPtr<Sprite, Std430DataLayout> sprites` in the ParameterBlock; app sets `params.sprites = gpu.device_address(&sprite_buffer)` in the per-frame update. Storage buffer created as before, just never descriptor-bound. Rust `Sprite` repr matching the pointer-load layout is enforced automatically by Phase 6 (per-field `offset_of!`/`size_of` asserts, the `pointee_size` cross-check, and the dual-context compatibility panic) — no manual verification step needed.
+- **particles** (compute): `particles.compute.slang` — `LayoutPtr<Particle, Std430DataLayout> particlesIn/particlesOut` in the params struct; `particle_render.shader.slang` — same for the vertex-stage read. App supplies addresses respecting the existing ping-pong buffer_frame rotation (the address written into frame N's uniform copy must target the same prev/current buffer copies the descriptor `PingPong` strategy used). Keep the pipelined-compute path exercised.
 - Regenerate everything (`just shaders`).
 
 ## Verification (overall gate)

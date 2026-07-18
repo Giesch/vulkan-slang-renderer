@@ -1,6 +1,6 @@
 # Slang Pointer Codegen: The Phase 6 Design
 
-Companion note to [../vulkan_1_3_migration.md](../vulkan_1_3_migration.md). **Status: Phase 6 complete (Steps A–B 2026-07-16, C–F 2026-07-17). Step A's finding fired the D2 contingency — default `T*` pointee layout is *natural*, not std430 — and D1/D2/D6 plus the Step D sketch were re-planned accordingly (see D2 for the resolved design). Next: Phase 7 proof examples.** Phase 6 is build-time only: reflection → JSON → Rust codegen. The runtime plumbing (`Gpu::device_address` etc.) landed in Phase 5 — see [bda_renderer_plumbing.md](bda_renderer_plumbing.md) — and the first real shader consumer is Phase 7 (`sprite_batch` + `particles`).
+Companion note to [../vulkan_1_3_migration.md](../vulkan_1_3_migration.md). **Status: Phase 6 complete (Steps A–B 2026-07-16, C–F 2026-07-17). Step A's finding fired the D2 contingency — default `T*` pointee layout is *natural*, not std430 — and D1/D2/D6 plus the Step D sketch were re-planned accordingly (see D2 for the resolved design). Next: Phase 7 proof examples.** Phase 6 is build-time only: reflection → JSON → Rust codegen. The runtime plumbing (`Gpu::device_address` etc.) landed in Phase 5 — see [bda_renderer_plumbing.md](bda_renderer_plumbing.md) — and the first real shader consumer is Phase 7 (`sprite_batch` + `particles`). Source `path:line` anchors below are as of design time (2026-07-16, pre-implementation) and have drifted; the function names alongside them are the durable reference.
 
 ## The concept
 
@@ -40,7 +40,7 @@ pub struct PointerStructField {
 - **`pointee_type.fields` (and `pointee_size`) must be reflected from `program_layout.type_layout(pointee_ty, LayoutRules::DefaultStructuredBuffer)`, not from the pointer's `element_type_layout()`** — the latter reports the wrong (natural) offsets for `Std430DataLayout` pointers; see D2 finding 3.
 - `pointee_size` is a belt-and-suspenders cross-check: codegen asserts its own computed struct size equals what Slang reflected, catching divergence in trailing-pad math.
 - **Struct-def gathering/dedup:** the `gather_struct_defs` Pointer arm mirrors the `ResourceResultType::Struct` arm (build_tasks.rs:~876–897): `generate_std430_struct_fields(&ptr.pointee_type.fields, struct_defs)` then `try_add_struct_def`. A struct referenced both by a pointer and a `StructuredBuffer` produces byte-identical defs and dedups. Shared modules need nothing new (`tag_source_modules` works on type names).
-- **Gap to close while here:** `collect_shared_modules` (build_tasks.rs:~1291–1309) dedups by type name with *no* field-compatibility check — first definition silently wins. Factor the comparison out of `try_add_struct_def` and apply it there too, so a cross-shader layout divergence panics instead of silently dropping one layout.
+- **Gap to close while here** ✅ (closed in Step C): `collect_shared_modules` dedup'd by type name with *no* field-compatibility check — first definition silently won. The comparison (`struct_defs_compatible`) is now shared with `try_add_struct_def`, so a cross-shader layout divergence panics instead of silently dropping one layout.
 
 ### D2 — Pointee layout: settled empirically (Step A, 2026-07-16)
 
@@ -55,10 +55,10 @@ Also confirmed en route: the pointer field itself is `ParameterCategory::Uniform
 
 **Resolved design — require std430-layout pointers:**
 
-- Shaders must declare pointer fields as `Ptr<T, Access.ReadWrite, AddressSpace.Device, Std430DataLayout>`; Step E adds a project `typealias` in a shared module (e.g. `BufferPtr<T>`) so shaders write `BufferPtr<Sprite> sprites;`.
-- Reflection parses the pointer type's `full_name()`; a `DefaultDataLayout` (or any non-`Std430DataLayout`) pointer is a **hard error** whose message names the alias — never silently accepted, because its natural layout would otherwise be codegen'd as std430 and silently corrupt (finding 3 means the pointee's own reflected layout cannot be trusted to reveal the mismatch).
+- Shaders must declare pointer fields with the **builtin `LayoutPtr<T, Std430DataLayout>` alias** (as landed in Steps D/E; the originally-planned project `BufferPtr<T>` shared module proved unnecessary — `LayoutPtr` ships in slang's core module).
+- Reflection parses the pointer type's `full_name()`; a `DefaultDataLayout` (or any non-`Std430DataLayout`) pointer is a **hard error** whose message names `LayoutPtr<T, Std430DataLayout>` — never silently accepted, because its natural layout would otherwise be codegen'd as std430 and silently corrupt (finding 3 means the pointee's own reflected layout cannot be trusted to reveal the mismatch).
 - Pointee field offsets come from `program_layout.type_layout(pointee_ty, LayoutRules::DefaultStructuredBuffer)`, NOT from the pointer's `element_type_layout()`. This stays reflection-driven (no local layout table) and matches the emitted SPIR-V. Implementation note: `reflect_struct_fields` doesn't currently see the program layout — the Pointer arm needs the `slang::reflection::Shader` threaded down (or the pointee resolved before recursion).
-- Everything downstream keeps the original std430 shape: reuse `Alignment::Std430` + `generate_std430_struct_fields`; dual-context types (same struct via `BufferPtr<T>` and `StructuredBuffer<T>`) are byte-identical **by construction**; glam types stay usable (std430 never mis-aligns them); no new device feature needed (natural layout would have required `scalarBlockLayout`).
+- Everything downstream keeps the original std430 shape: reuse `Alignment::Std430` + `generate_std430_struct_fields`; dual-context types (same struct via `LayoutPtr<T, Std430DataLayout>` and `StructuredBuffer<T>`) are byte-identical **by construction**; glam types stay usable (std430 never mis-aligns them); no new device feature needed (natural layout would have required `scalarBlockLayout`).
 - Slang-upgrade drift (default layout changing, `full_name` format changing, `DefaultStructuredBuffer` ≠ std430) is pinned by Step E's permanent rspirv offset test plus the `pointee_size` cross-check.
 
 Rejected alternative — embrace natural-layout pointees (default `T*`): reflection agrees with SPIR-V there, but it forfeits dual-context byte-identity (natural ≠ std430 whenever a `float3`/`float4` needs padding), forces `[f32; N]` fallbacks where glam types land mis-aligned (e.g. `float4` at offset 20), and requires enabling the `scalarBlockLayout` device feature for the SPIR-V to be valid. Std430-required is strictly simpler and keeps Phase 7's dual-context migration story.
@@ -67,11 +67,14 @@ Rejected alternative — embrace natural-layout pointees (default `T*`): reflect
 
 Emit for every GPU-layout struct, not just pointer pointees: the descriptor path has the same silent-failure class, the churn is additive-only and mechanically reviewable, and landing it *before* pointer support keeps the pointer steps' zero-churn gates meaningful.
 
-Shape: `GeneratedStructFieldDefinition` (build_tasks.rs:1091–1111) gains `offset: Option<usize>` (`new()`/`padding()` → `None`); `generate_std430_struct_fields` (732–789) and `generate_std140_struct_fields` (794–854) set it where they already consult `field_offset_size`. Vertex structs and `Resources<'a>` never get offsets, so asserts appear exactly on GPU-layout structs with no extra gating. Template block added after the existing size assert in all three templates (shader_atlas_entry.rs.askama ~44, shader_compute_entry.rs.askama ~41, shader_shared_module.rs.askama ~34 — identical struct blocks): for each field with `Some(offset)`, emit
+Shape (as landed in Step C): `GeneratedStructFieldDefinition` gains `offset: Option<usize>` **and** `size: Option<usize>` (`new()`/`padding()` → `None`); `generate_std430_struct_fields` and `generate_std140_struct_fields` set them where they already consult `field_offset_size`. Vertex structs and `Resources<'a>` never get offsets, so asserts appear exactly on GPU-layout structs with no extra gating. The assert lines come from a `layout_assert_lines()` method on `GeneratedStructDefinition` (all three templates share one identical two-line loop insertion after the existing size assert), emitting per field with `Some(offset)`:
 
 ```rust
-const _: () = assert!(core::mem::offset_of!(TypeName, field_name) == N);
+const _: () = assert!(std::mem::offset_of!(TypeName, field_name) == N);  // placement
+const _: () = assert!(std::mem::size_of::<FieldType>() == S);           // extent
 ```
+
+(`std::mem`, matching the repo's existing idiom in vertex attribute descriptions.)
 
 ### D4 — Nested pointers: error initially
 
@@ -80,16 +83,16 @@ const _: () = assert!(core::mem::offset_of!(TypeName, field_name) == N);
 ### D5 — glam guards
 
 - Padding stays `[u8; N]` (align 1) — already true.
-- Reflected offset not a multiple of the Rust type's alignment → **hard error** (panic in `generate_*_struct_fields`), not an `[f32; N]` fallback — it's unreachable under std140/std430, so a fallback is dead complexity. Requires a new `rust_type_alignment` map, distinct from the *GPU* `field_alignment` table (build_tasks.rs:1172–1182): `glam::Vec4`/`glam::Mat4` → 16, `glam::Vec2` → 8, `glam::Vec3` → **4** (this is what lets fields tail-pack after a `float3` — never substitute `Vec3A`), `f32`/`u32` → 4, `u64` → 8; generated struct types skip the check (their `repr(align)` equals their GPU alignment, which divides their reflected offset).
+- Reflected offset not a multiple of the Rust type's alignment → **hard error** (`check_rust_placeable`, panicking in `generate_*_struct_fields`), not an `[f32; N]` fallback — it's unreachable under std140/std430, so a fallback is dead complexity. Requires a `rust_type_alignment` map, distinct from the *GPU* `field_alignment` table; **as landed it uses real `align_of::<T>()` calls rather than hand-coded values** — the design draft's `Vec2 → 8` was wrong (glam `Vec2` is align 4), which is exactly the class of mistake the compiler-answered map avoids. Load-bearing fact: glam `Vec3` is align **4**, which is what lets fields tail-pack after a `float3` — never substitute `Vec3A`. Generated struct types skip the check (their `repr(align)` equals their GPU alignment, which divides their reflected offset).
 - Emit `const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);` once per generated file (all three templates) — catches a transitively-enabled glam `scalar-math` feature at `cargo check`, in both the main crate and check_crate.
 
 ### D6 — Test shaders and pin tests
 
 Three new files in `shaders/test/` (auto-discovered by `alignment_tests`):
 
-All pointer declarations in these shaders use the std430-layout form per D2 — `BufferPtr<T>` (the project alias for `Ptr<T, Access.ReadWrite, AddressSpace.Device, Std430DataLayout>`), never bare `T*`.
+All pointer declarations in these shaders use the std430-layout form per D2 — the builtin `LayoutPtr<T, Std430DataLayout>` (= `Ptr<T, Access.ReadWrite, AddressSpace.Device, Std430DataLayout>`), never bare `T*`.
 
-1. **`pointer_pointee_layout.shader.slang`** — the layout-hostile pointee, the *same* struct as Step A's experiment so the committed test pins the finding. The param block also exercises pointer *placement*: `float scale; BufferPtr<HostileData> items; float2 post;` (pointer at std140 offset 8, `post` at 16). Pointee, with expected std430 offsets (verified against SPIR-V in Step A):
+1. **`pointer_pointee_layout.shader.slang`** — the layout-hostile pointee, the *same* struct as Step A's experiment so the committed test pins the finding. The param block also exercises pointer *placement*: `float scale; LayoutPtr<HostileData, Std430DataLayout> items; float2 post;` (pointer at std140 offset 8, `post` at 16). Pointee, with expected std430 offsets (verified against SPIR-V in Step A):
 
 ```slang
 struct InnerA { float x; float3 v; }   // std430 size 32 (v at 16); scalar layout would put v at 4
@@ -109,15 +112,16 @@ struct HostileData {
 
 `InnerA` discriminates std-vs-scalar layout; `InnerB` discriminates std430-vs-std140. The vertex shader reads `params.items[id]` so an `ArrayStride`/`PtrAccessChain` appears in the SPIR-V.
 
-2. **`pointer_dual_context.shader.slang`** — one struct (`DualData { float3 pos; float w; float4 color; }`) used as **both** `BufferPtr<DualData> by_pointer` and `StructuredBuffer<DualData> by_buffer` in one param block. Pins the dual-context invariant mechanically: if pointer layout ever diverges from std430, `try_add_struct_def`'s compatibility check panics inside `alignment_tests`.
+2. **`pointer_dual_context.shader.slang`** — one struct (`DualData { float3 pos; float w; float4 color; }`) used as **both** `LayoutPtr<DualData, Std430DataLayout> by_pointer` and `StructuredBuffer<DualData> by_buffer` in one param block. Pins the dual-context invariant mechanically: if pointer layout ever diverges from std430, `try_add_struct_def`'s compatibility check panics inside `alignment_tests`.
 
-3. **`pointer_params.compute.slang`** — minimal compute (`struct Params { BufferPtr<PtrItem> data; uint count; }`, `PtrItem { float2 a; float b; }`). `shaders/test/` currently has zero compute shaders, so this is what makes check_crate actually compile the compute template's new assert block.
+3. **`pointer_params.compute.slang`** — minimal compute (`struct Params { LayoutPtr<PtrItem, Std430DataLayout> data; uint count; }`, `PtrItem { float2 a; float b; }`). Previously `shaders/test/` had zero compute shaders, so this is what makes check_crate actually compile the compute template's assert block.
 
-Plus three unit tests in build_tasks.rs `tests` (a fourth — the field-size tripwire — lands earlier, in Step B):
+Plus two unit tests landed in Step E (the field-size tripwire and the `#[should_panic]` matrix-error test landed earlier, in Step B):
 
 - **Permanent SPIR-V pin test**: compile `pointer_pointee_layout.shader.slang` via `prepare_reflected_shader`, parse the vertex SPIR-V with the already-in-use `rspirv` crate (cf. `count_branch_instructions`, build_tasks.rs:1516), locate the PhysicalStorageBuffer-storage-class struct, assert its `OpMemberDecorate Offset`s (0/12/16/32/48/80/88/104) and the pointer `ArrayStride` (112) equal the std430 values Step A verified. This is the regression guard for future slang upgrades.
-- **Default-layout-pointer rejection test**: a shader (compiled from an inline string or scratch fixture, NOT a file in `shaders/test/` — it must fail) declaring a bare `T*` field, asserting reflection errors with the message naming `BufferPtr`/`Std430DataLayout`. This pins D2's hard error — the one guard standing between a bare `T*` and silent natural-vs-std430 corruption.
-- **`#[should_panic]` matrix-error test** calling `gather_struct_defs` with a synthetic `MatrixStructField` — the hard error can't live as a test shader (it would fail the whole `alignment_tests` compile pass).
+- **Default-layout-pointer rejection test** (`default_layout_pointer_is_rejected`): a shader written to a temp dir at test time (NOT a file in `shaders/test/` — it must fail to reflect) declaring a bare `T*` field, asserting the error message names `Std430DataLayout`. This pins D2's hard error — the one guard standing between a bare `T*` and silent natural-vs-std430 corruption.
+
+(The `#[should_panic]` matrix-error test — `small_matrix_fields_are_rejected`, calling `gather_struct_defs` with a synthetic `MatrixStructField` — is a Step B deliverable; it can't live as a test shader because it would fail the whole `alignment_tests` compile pass.)
 
 ## Step sequence
 
