@@ -1,13 +1,21 @@
 #+title: Todo
 
 * Now
-- [ ] update to Vulkan 1.3
-  - [ ] support buffer device addresses and push constants via reflection
+- [-] update to Vulkan 1.3
+  - [X] support buffer device addresses and push constants via reflection
+  - [ ] add a more type-safe way to use BDAs
+    both slang and rust get non-int pointers that include target type
+  - [ ] update remaining examples to use BDAs where appropriate
+
   - [ ] support bindless textures using slang handles
-  - [ ] migrate the examples to use these features
+  - [ ] migrate the examples to use bindless textures
+
+  - [ ] change the api to require passing things every frame?
+    can order matter here? it shouldn't really
 
 - [ ] add a wind waker style demo
-  - multi-draw materials
+  - multi-draw materials?
+    do we actually need multi-draw yet for this
   - cel shading
   - eyes trick
 
