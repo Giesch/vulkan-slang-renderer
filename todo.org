@@ -1,25 +1,43 @@
 #+title: Todo
 
 * Now
+- [ ] update to Vulkan 1.3
+  - [ ] support buffer device addresses and push constants via reflection
+  - [ ] support bindless textures using slang handles
+  - [ ] migrate the examples to use these features
+
+- [ ] add a wind waker style demo
+  - multi-draw materials
+  - cel shading
+  - eyes trick
+
 - [ ] review all of the watercolor example
   - [ ] document canvas size literals
     ie, this is deliberately oversized and hardcoded
-  - [ ] document simualtion parameters (ie, DT, MU, etc)
-  - [ ] factor out a module to handle ping-pong behavior?
-    or build it in as a renderer feature ala FLAME?
+  - [ ] document simulation parameters (ie, DT, MU, etc)
+  - [ ] factor out slang & rust modules to handle ping-pong behavior?
+    or build it in as a renderer feature ala FLAME? see below
 
 - [ ] review renderer changes for compute shaders
   expecially the set of 3 resources
 
-- [ ] FLAME GPU-based render graph
-  strucutured solution for pipelined compute shader simulations
+- [ ] re-enable build_tasks unit tests on windows
+  #+begin_src rust
+  // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
+  #+end_src
 
 
 * Next
+- [ ] reconsider FLAME GPU-based render graph
+  - find a strucutured solution for pipelined compute shader simulations
+  - look for a potentially nicer way using BDAs and a slang helper module
+
 - [ ] investigate whether static slang build includes spirv-opt or not
   ie, does a build of this renderer still depend on dynamic linking glslang?
+    can we fully replace its use of opt with our own to get a static build,
+    without upstream changes?
 
-- [ ] profile startup
+- [X] profile startup
   find the source of the black screen (and duration)
   maybe do more work before opening the window
 

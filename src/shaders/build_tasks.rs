@@ -1579,7 +1579,7 @@ mod tests {
         write_precompiled_shaders(config).unwrap();
 
         // Run cargo check on the generated code to verify it compiles
-        // this primarily to test the generated const assertions
+        // this is primarily to test the generated const layout assertions
         {
             use std::fmt::Write;
 
