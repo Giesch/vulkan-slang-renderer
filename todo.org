@@ -27,6 +27,10 @@
   - [ ] factor out slang & rust modules to handle ping-pong behavior?
     or build it in as a renderer feature ala FLAME? see below
 
+- [ ] comment gardening
+  - [ ] do a full-repo review of comments to remove/update
+  - [ ] make some kind of tool for doing this type of review against a git diff
+
 - [ ] review renderer changes for compute shaders
   expecially the set of 3 resources
 
