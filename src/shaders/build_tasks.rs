@@ -955,7 +955,7 @@ fn gather_struct_defs(
 
             Some(GeneratedStructFieldDefinition::new(
                 ptr.field_name.to_snake_case(),
-                "u64".to_string(),
+                format!("Addr<{}>", ptr.pointee_type.type_name),
             ))
         }
 
@@ -1270,7 +1270,8 @@ fn field_alignment(type_name: &str) -> usize {
         "glam::Vec3" => 16, // vec3 has 16-byte alignment in both std140 and std430
         "glam::Vec2" | "u64" => 8,
         "f32" | "u32" | "i32" => 4,
-        _ => 16, // assume 16 for unknown/struct types
+        s if s.starts_with("Addr<") => 8, // repr(transparent) over u64
+        _ => 16,                          // assume 16 for unknown/struct types
     }
 }
 
@@ -1291,6 +1292,8 @@ fn rust_type_alignment(type_name: &str) -> Option<usize> {
         "glam::Vec3" => std::mem::align_of::<glam::Vec3>(),
         "glam::Vec4" => std::mem::align_of::<glam::Vec4>(),
         "glam::Mat4" => std::mem::align_of::<glam::Mat4>(),
+        // Addr<T> is repr(transparent) over u64 for every T
+        s if s.starts_with("Addr<") => std::mem::align_of::<u64>(),
         _ => return None,
     })
 }
@@ -1942,7 +1945,7 @@ float4 fragMain() : SV_Target {
         };
         let message = format!("{err:#}");
         assert!(
-            message.contains("Std430DataLayout"),
+            message.contains("Std430DataLayout") && message.contains("Addr<"),
             "unexpected error message: {message}"
         );
     }

@@ -349,7 +349,8 @@ fn reflect_struct_fields(
                 if layout_arg != "Std430DataLayout" {
                     anyhow::bail!(
                         "pointer field '{field_name}' ({ptr_type_name}): only Std430DataLayout \
-                        pointers are supported; declare it as LayoutPtr<T, Std430DataLayout>"
+                        pointers are supported; declare it as Addr<T> (import addr;) \
+                        or LayoutPtr<T, Std430DataLayout>"
                     );
                 }
 

@@ -27,14 +27,14 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
-    pub by_pointer: u64,
+    pub by_pointer: Addr<DualData>,
     pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for Params {}
 const _: () = assert!(std::mem::size_of::<Params>() == 16);
 const _: () = assert!(std::mem::offset_of!(Params, by_pointer) == 0);
-const _: () = assert!(std::mem::size_of::<u64>() == 8);
+const _: () = assert!(std::mem::size_of::<Addr<DualData>>() == 8);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]

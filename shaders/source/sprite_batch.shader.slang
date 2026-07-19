@@ -2,6 +2,7 @@
 
 module sprite_batch;
 
+import addr;
 import projection;
 
 // Based on the official SDL_gpu example here:
@@ -15,7 +16,7 @@ import projection;
 ParameterBlock<SpriteBatchParams> params;
 
 struct SpriteBatchParams {
-    LayoutPtr<Sprite, Std430DataLayout> sprites;
+    Addr<Sprite> sprites;
     Projection projection;
     Sampler2D texture;
 }

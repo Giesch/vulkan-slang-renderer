@@ -1,6 +1,8 @@
+pub mod addr;
 pub mod gpu_write;
 pub mod vertex_description;
 
+pub use addr::*;
 pub use gpu_write::*;
 pub use vertex_description::*;
 

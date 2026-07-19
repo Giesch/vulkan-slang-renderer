@@ -2,13 +2,14 @@
 
 module particles_compute;
 
+import addr;
 import particle;
 
 ParameterBlock<SimParams> simParams;
 
 struct SimParams {
-    LayoutPtr<Particle, Std430DataLayout> particlesIn;
-    LayoutPtr<Particle, Std430DataLayout> particlesOut;
+    Addr<Particle> particlesIn;
+    Addr<Particle> particlesOut;
     float deltaTime;
 }
 

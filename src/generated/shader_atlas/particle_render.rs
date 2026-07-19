@@ -9,6 +9,7 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+pub use super::particle::Particle;
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -24,7 +25,7 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 pub struct RenderParams {
     pub particle_count: u32,
     pub _padding_0: [u8; 4],
-    pub particles: u64,
+    pub particles: Addr<Particle>,
 }
 
 impl GPUWrite for RenderParams {}
@@ -32,7 +33,7 @@ const _: () = assert!(std::mem::size_of::<RenderParams>() == 16);
 const _: () = assert!(std::mem::offset_of!(RenderParams, particle_count) == 0);
 const _: () = assert!(std::mem::size_of::<u32>() == 4);
 const _: () = assert!(std::mem::offset_of!(RenderParams, particles) == 8);
-const _: () = assert!(std::mem::size_of::<u64>() == 8);
+const _: () = assert!(std::mem::size_of::<Addr<Particle>>() == 8);
 
 pub struct Resources<'a> {
     pub render_params_buffer: &'a UniformBufferHandle<RenderParams>,

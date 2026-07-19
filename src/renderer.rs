@@ -41,6 +41,9 @@ pub use uniform_buffer::*;
 pub mod storage_buffer;
 pub use storage_buffer::*;
 
+pub mod addr;
+pub use addr::*;
+
 pub mod storage_texture;
 pub use storage_texture::*;
 
@@ -852,10 +855,15 @@ impl Renderer {
 
     /// the device address of each buffer frame's copy, indexed by buffer frame;
     /// for init paths - per-frame writes should use Gpu::device_address
-    pub fn device_addresses<T>(&self, buf: &StorageBufferHandle<T>) -> [u64; BUFFER_FRAME_COUNT] {
+    pub fn device_addresses<T>(
+        &self,
+        buf: &StorageBufferHandle<T>,
+    ) -> [Addr<T>; BUFFER_FRAME_COUNT] {
         std::array::from_fn(|frame| {
-            self.storage_buffers
-                .get_device_address_for_frame(buf, frame)
+            Addr::from_raw(
+                self.storage_buffers
+                    .get_device_address_for_frame(buf, frame),
+            )
         })
     }
 
@@ -5061,18 +5069,22 @@ impl<'f> Gpu<'f> {
 
     /// the device address of the current buffer frame's copy,
     /// for writing into a pointer field of a parameter block
-    pub fn device_address<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> u64 {
-        self.storage_buffers
-            .get_device_address_for_frame(storage_buffer, self.buffer_frame)
+    pub fn device_address<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
+        Addr::from_raw(
+            self.storage_buffers
+                .get_device_address_for_frame(storage_buffer, self.buffer_frame),
+        )
     }
 
     /// the device address of the previous buffer frame's copy;
     /// matches the -1 frame offset the PingPong descriptor strategy
     /// applies to the first storage buffer in layout order
-    pub fn device_address_prev<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> u64 {
+    pub fn device_address_prev<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
         let prev_frame = (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
-        self.storage_buffers
-            .get_device_address_for_frame(storage_buffer, prev_frame)
+        Addr::from_raw(
+            self.storage_buffers
+                .get_device_address_for_frame(storage_buffer, prev_frame),
+        )
     }
 }
 

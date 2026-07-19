@@ -29,7 +29,7 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 pub struct Params {
     pub scale: f32,
     pub _padding_0: [u8; 4],
-    pub items: u64,
+    pub items: Addr<HostileData>,
     pub post: glam::Vec2,
     pub _padding_1: [u8; 8],
 }
@@ -39,7 +39,7 @@ const _: () = assert!(std::mem::size_of::<Params>() == 32);
 const _: () = assert!(std::mem::offset_of!(Params, scale) == 0);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 const _: () = assert!(std::mem::offset_of!(Params, items) == 8);
-const _: () = assert!(std::mem::size_of::<u64>() == 8);
+const _: () = assert!(std::mem::size_of::<Addr<HostileData>>() == 8);
 const _: () = assert!(std::mem::offset_of!(Params, post) == 16);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 

@@ -2,13 +2,14 @@
 
 module particle_render;
 
+import addr;
 import particle;
 
 ParameterBlock<RenderParams> renderParams;
 
 struct RenderParams {
     uint particleCount;
-    LayoutPtr<Particle, Std430DataLayout> particles;
+    Addr<Particle> particles;
 }
 
 struct FragInput {
