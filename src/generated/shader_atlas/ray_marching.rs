@@ -30,10 +30,12 @@ pub struct RayMarchingParams {
     pub box_count: u32,
     pub _padding_0: [u8; 4],
     pub resolution: glam::Vec2,
+    pub spheres: ReadAddr<Sphere>,
+    pub boxes: ReadAddr<BoxRect>,
 }
 
 impl GPUWrite for RayMarchingParams {}
-const _: () = assert!(std::mem::size_of::<RayMarchingParams>() == 112);
+const _: () = assert!(std::mem::size_of::<RayMarchingParams>() == 128);
 const _: () = assert!(std::mem::offset_of!(RayMarchingParams, camera) == 0);
 const _: () = assert!(std::mem::size_of::<RayMarchCamera>() == 80);
 const _: () = assert!(std::mem::offset_of!(RayMarchingParams, light_position) == 80);
@@ -44,6 +46,10 @@ const _: () = assert!(std::mem::offset_of!(RayMarchingParams, box_count) == 96);
 const _: () = assert!(std::mem::size_of::<u32>() == 4);
 const _: () = assert!(std::mem::offset_of!(RayMarchingParams, resolution) == 104);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(RayMarchingParams, spheres) == 112);
+const _: () = assert!(std::mem::size_of::<ReadAddr<Sphere>>() == 8);
+const _: () = assert!(std::mem::offset_of!(RayMarchingParams, boxes) == 120);
+const _: () = assert!(std::mem::size_of::<ReadAddr<BoxRect>>() == 8);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -83,8 +89,6 @@ const _: () = assert!(std::mem::offset_of!(Sphere, color) == 16);
 const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 
 pub struct Resources<'a> {
-    pub spheres: &'a StorageBufferHandle<Sphere>,
-    pub boxes: &'a StorageBufferHandle<BoxRect>,
     pub params_buffer: &'a UniformBufferHandle<RayMarchingParams>,
 }
 
@@ -121,8 +125,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
-            RawStorageBufferHandle::from_typed(resources.spheres),
-            RawStorageBufferHandle::from_typed(resources.boxes),
         ];
 
         #[rustfmt::skip]

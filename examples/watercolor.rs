@@ -489,7 +489,6 @@ impl Game for Watercolor {
                         pigment_4_7: pigment_4_7.read_storage(false),
                         pigment_8_11: pigment_8_11.read_storage(false),
                         saturation: saturation.read_storage(false),
-                        stroke_points: &stroke_points_buffer,
                         brush_params_buffer: &brush_params_buffer,
                     },
                 ))?,
@@ -501,7 +500,6 @@ impl Game for Watercolor {
                         pigment_4_7: pigment_4_7.read_storage(true),
                         pigment_8_11: pigment_8_11.read_storage(true),
                         saturation: saturation.read_storage(true),
-                        stroke_points: &stroke_points_buffer,
                         brush_params_buffer: &brush_params_buffer,
                     },
                 ))?,
@@ -1062,7 +1060,7 @@ impl Game for Watercolor {
                     pigment_color_4_7,
                     pigment_color_8_11,
                     canvas_size: grid_size,
-                    _padding_0: Default::default(),
+                    stroke_points: gpu.current_addr(stroke_points_buffer).into(),
                 },
             );
 

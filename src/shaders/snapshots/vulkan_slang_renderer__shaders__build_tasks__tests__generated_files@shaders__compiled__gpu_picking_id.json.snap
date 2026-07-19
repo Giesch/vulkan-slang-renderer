@@ -80,16 +80,14 @@ info:
             "scalarType": "uint32"
           },
           {
-            "kind": "resource",
+            "kind": "pointer",
             "fieldName": "cubes",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 88,
+              "size": 8
             },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
+            "pointeeType": {
               "typeName": "Cube",
               "fields": [
                 {
@@ -121,7 +119,9 @@ info:
                   }
                 }
               ]
-            }
+            },
+            "pointeeSize": 32,
+            "access": "read"
           }
         ]
       }
@@ -188,13 +188,6 @@ info:
           {
             "binding": 0,
             "descriptorType": "constantBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 96
-          },
-          {
-            "binding": 1,
-            "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 96

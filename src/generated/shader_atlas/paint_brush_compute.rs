@@ -27,7 +27,7 @@ pub struct BrushParams {
     pub pigment_color_4_7: glam::Vec4,
     pub pigment_color_8_11: glam::Vec4,
     pub canvas_size: glam::Vec2,
-    pub _padding_0: [u8; 8],
+    pub stroke_points: ReadAddr<StrokePoint>,
 }
 
 impl GPUWrite for BrushParams {}
@@ -48,6 +48,8 @@ const _: () = assert!(std::mem::offset_of!(BrushParams, pigment_color_8_11) == 4
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 const _: () = assert!(std::mem::offset_of!(BrushParams, canvas_size) == 64);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(BrushParams, stroke_points) == 72);
+const _: () = assert!(std::mem::size_of::<ReadAddr<StrokePoint>>() == 8);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(8))]
@@ -67,7 +69,6 @@ pub struct Resources<'a> {
     pub pigment_4_7: &'a StorageTextureHandle,
     pub pigment_8_11: &'a StorageTextureHandle,
     pub saturation: &'a StorageTextureHandle,
-    pub stroke_points: &'a StorageBufferHandle<StrokePoint>,
     pub brush_params_buffer: &'a UniformBufferHandle<BrushParams>,
 }
 
@@ -103,7 +104,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
-            RawStorageBufferHandle::from_typed(resources.stroke_points),
         ];
 
         #[rustfmt::skip]

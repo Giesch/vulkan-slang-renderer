@@ -156,8 +156,6 @@ impl Game for SpaceInvaders {
         let sprite_sheet_texture = load_texture(renderer, "sprite_sheet.png")?;
 
         let resources = Resources {
-            sprites: &sprites_buffer,
-            debug_boxes: &debug_boxes_buffer,
             sprite_sheet: &sprite_sheet_texture,
             params_buffer: &params_buffer,
         };
@@ -371,8 +369,6 @@ impl Game for SpaceInvaders {
         let projection = Projection {
             matrix: Mat4::orthographic_lh(0.0, width, height, 0.0, 0.0, -1.0),
         };
-        let params = SpaceInvadersParams { projection };
-
         // draw
         let visible_sprites = self
             .sprites
@@ -382,6 +378,11 @@ impl Game for SpaceInvaders {
         let vertex_count = visible_sprites as u32 * 6;
 
         renderer.draw_vertex_count(&self.pipeline, vertex_count, |gpu| {
+            let params = SpaceInvadersParams {
+                projection,
+                sprites: gpu.current_addr(&self.sprites_buffer).into(),
+                debug_boxes: gpu.current_addr(&self.debug_boxes_buffer).into(),
+            };
             gpu.write_uniform(&mut self.params_buffer, params);
 
             gpu.write_storage(&mut self.debug_boxes_buffer, &self.debug_boxes);

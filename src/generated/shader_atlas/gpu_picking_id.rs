@@ -26,7 +26,8 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 pub struct GpuPickingIdParams {
     pub camera: RayMarchCamera,
     pub cube_count: u32,
-    pub _padding_0: [u8; 12],
+    pub _padding_0: [u8; 4],
+    pub cubes: ReadAddr<Cube>,
 }
 
 impl GPUWrite for GpuPickingIdParams {}
@@ -35,9 +36,10 @@ const _: () = assert!(std::mem::offset_of!(GpuPickingIdParams, camera) == 0);
 const _: () = assert!(std::mem::size_of::<RayMarchCamera>() == 80);
 const _: () = assert!(std::mem::offset_of!(GpuPickingIdParams, cube_count) == 80);
 const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(GpuPickingIdParams, cubes) == 88);
+const _: () = assert!(std::mem::size_of::<ReadAddr<Cube>>() == 8);
 
 pub struct Resources<'a> {
-    pub cubes: &'a StorageBufferHandle<Cube>,
     pub params_buffer: &'a UniformBufferHandle<GpuPickingIdParams>,
 }
 
@@ -74,7 +76,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
-            RawStorageBufferHandle::from_typed(resources.cubes),
         ];
 
         #[rustfmt::skip]

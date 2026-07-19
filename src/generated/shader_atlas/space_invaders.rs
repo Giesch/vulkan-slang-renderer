@@ -24,12 +24,18 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[repr(C, align(16))]
 pub struct SpaceInvadersParams {
     pub projection: Projection,
+    pub sprites: ReadAddr<Sprite>,
+    pub debug_boxes: ReadAddr<DebugBox>,
 }
 
 impl GPUWrite for SpaceInvadersParams {}
-const _: () = assert!(std::mem::size_of::<SpaceInvadersParams>() == 64);
+const _: () = assert!(std::mem::size_of::<SpaceInvadersParams>() == 80);
 const _: () = assert!(std::mem::offset_of!(SpaceInvadersParams, projection) == 0);
 const _: () = assert!(std::mem::size_of::<Projection>() == 64);
+const _: () = assert!(std::mem::offset_of!(SpaceInvadersParams, sprites) == 64);
+const _: () = assert!(std::mem::size_of::<ReadAddr<Sprite>>() == 8);
+const _: () = assert!(std::mem::offset_of!(SpaceInvadersParams, debug_boxes) == 72);
+const _: () = assert!(std::mem::size_of::<ReadAddr<DebugBox>>() == 8);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -87,8 +93,6 @@ const _: () = assert!(std::mem::offset_of!(Sprite, color) == 48);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 
 pub struct Resources<'a> {
-    pub sprites: &'a StorageBufferHandle<Sprite>,
-    pub debug_boxes: &'a StorageBufferHandle<DebugBox>,
     pub sprite_sheet: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<SpaceInvadersParams>,
 }
@@ -127,8 +131,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_buffer_handles = vec![
-            RawStorageBufferHandle::from_typed(resources.sprites),
-            RawStorageBufferHandle::from_typed(resources.debug_boxes),
         ];
 
         #[rustfmt::skip]

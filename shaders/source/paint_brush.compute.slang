@@ -2,6 +2,8 @@
 
 module paint_brush;
 
+import addr;
+
 ParameterBlock<BrushParams> brushParams;
 
 public struct StrokePoint {
@@ -15,7 +17,6 @@ struct BrushParams {
     RWTexture2D<float4> pigment_4_7;
     RWTexture2D<float4> pigment_8_11;
     RWTexture2D<float> saturation;
-    StructuredBuffer<StrokePoint> strokePoints;
     uint pointCount;
     float brushRadius;
     float brushOpacity;
@@ -24,6 +25,7 @@ struct BrushParams {
     float4 pigmentColor_4_7;
     float4 pigmentColor_8_11;
     float2 canvasSize;
+    ReadAddr<StrokePoint> strokePoints;
 }
 
 [numthreads(16, 16, 1)]

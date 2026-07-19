@@ -42,16 +42,14 @@ info:
             }
           },
           {
-            "kind": "resource",
+            "kind": "pointer",
             "fieldName": "sprites",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 64,
+              "size": 8
             },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
+            "pointeeType": {
               "typeName": "Sprite",
               "fields": [
                 {
@@ -167,19 +165,19 @@ info:
                   }
                 }
               ]
-            }
+            },
+            "pointeeSize": 64,
+            "access": "read"
           },
           {
-            "kind": "resource",
+            "kind": "pointer",
             "fieldName": "debugBoxes",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
+              "kind": "uniform",
+              "offset": 72,
+              "size": 8
             },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
+            "pointeeType": {
               "typeName": "DebugBox",
               "fields": [
                 {
@@ -225,14 +223,16 @@ info:
                   }
                 }
               ]
-            }
+            },
+            "pointeeSize": 32,
+            "access": "read"
           },
           {
             "kind": "resource",
             "fieldName": "spriteSheet",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 3,
+              "index": 1,
               "count": 1
             },
             "resourceShape": "texture2D",
@@ -350,28 +350,14 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 64
+            "size": 80
           },
           {
             "binding": 1,
-            "descriptorType": "storageBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 64
-          },
-          {
-            "binding": 2,
-            "descriptorType": "storageBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 64
-          },
-          {
-            "binding": 3,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 64
+            "size": 80
           }
         ]
       }

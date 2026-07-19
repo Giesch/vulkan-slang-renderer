@@ -41,7 +41,6 @@ impl Game for GpuPicking {
         let params_buffer = renderer.create_uniform_buffer::<GpuPickingParams>()?;
         let cubes_buffer = renderer.create_storage_buffer::<Cube>(MAX_CUBES)?;
         let visual_resources = Resources {
-            cubes: &cubes_buffer,
             params_buffer: &params_buffer,
         };
         let visual_config = atlas.gpu_picking.pipeline_config(visual_resources);
@@ -51,7 +50,6 @@ impl Game for GpuPicking {
         let picking_params_buffer =
             renderer.create_uniform_buffer::<gpu_picking_id::GpuPickingIdParams>()?;
         let picking_resources = gpu_picking_id::Resources {
-            cubes: &cubes_buffer,
             params_buffer: &picking_params_buffer,
         };
         let picking_config = atlas.gpu_picking_id.pipeline_config(picking_resources);
@@ -112,7 +110,7 @@ impl Game for GpuPicking {
                     camera: camera.clone(),
                     picked_object_id: picked_id,
                     cube_count: self.cubes.len() as u32,
-                    _padding_0: Default::default(),
+                    cubes: gpu.current_addr(&self.cubes_buffer).into(),
                 };
                 gpu.write_uniform(&mut self.params_buffer, picking_params);
                 gpu.write_storage(&mut self.cubes_buffer, &self.cubes);
@@ -121,6 +119,7 @@ impl Game for GpuPicking {
                     camera: camera.clone(),
                     cube_count: self.cubes.len() as u32,
                     _padding_0: Default::default(),
+                    cubes: gpu.current_addr(&self.cubes_buffer).into(),
                 };
                 gpu.write_uniform(&mut self.picking_params_buffer, picking_id_params);
             },

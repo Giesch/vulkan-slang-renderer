@@ -2,6 +2,8 @@
 
 module gpu_picking_common;
 
+import addr;
+
 public struct Cube {
     public float3 position;
     public float3 radii;
@@ -27,7 +29,7 @@ public func marchCubes(
     rayOrigin: float3,
     rayDir: float3,
     cubeCount: uint,
-    cubes: StructuredBuffer<Cube>
+    cubes: ReadAddr<Cube>
 ) -> Optional<RayMarchHit> {
     const int MAX_STEPS = 128;
     const float MAX_DIST = 100.0;

@@ -50,8 +50,6 @@ impl Game for RayMarching {
         let spheres_buffer = renderer.create_storage_buffer::<Sphere>(SHAPE_BUFFER_SIZE)?;
         let boxes_buffer = renderer.create_storage_buffer::<BoxRect>(SHAPE_BUFFER_SIZE)?;
         let resources = Resources {
-            spheres: &spheres_buffer,
-            boxes: &boxes_buffer,
             params_buffer: &params_buffer,
         };
 
@@ -152,16 +150,20 @@ impl Game for RayMarching {
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let camera = self.camera_controller.camera(renderer.aspect_ratio());
 
-        let params = RayMarchingParams {
-            camera,
-            light_position: self.sun_position,
-            sphere_count: self.spheres.len() as u32,
-            box_count: self.boxes.len() as u32,
-            _padding_0: Default::default(),
-            resolution: renderer.window_resolution(),
-        };
+        let resolution = renderer.window_resolution();
 
         renderer.draw_vertex_count(&self.pipeline, 3, |gpu| {
+            let params = RayMarchingParams {
+                camera,
+                light_position: self.sun_position,
+                sphere_count: self.spheres.len() as u32,
+                box_count: self.boxes.len() as u32,
+                _padding_0: Default::default(),
+                resolution,
+                spheres: gpu.current_addr(&self.spheres_buffer).into(),
+                boxes: gpu.current_addr(&self.boxes_buffer).into(),
+            };
+
             gpu.write_uniform(&mut self.params_buffer, params);
             gpu.write_storage(&mut self.spheres_buffer, &self.spheres);
             gpu.write_storage(&mut self.boxes_buffer, &self.boxes);

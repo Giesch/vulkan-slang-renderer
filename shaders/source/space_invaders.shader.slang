@@ -3,14 +3,15 @@
 // based on the sprite_batch example
 module space_invaders;
 
+import addr;
 import projection;
 
 ParameterBlock<SpaceInvadersParams> params;
 
 struct SpaceInvadersParams {
     Projection projection;
-    StructuredBuffer<Sprite> sprites;
-    StructuredBuffer<DebugBox> debugBoxes;
+    ReadAddr<Sprite> sprites;
+    ReadAddr<DebugBox> debugBoxes;
     Sampler2D spriteSheet;
 }
 

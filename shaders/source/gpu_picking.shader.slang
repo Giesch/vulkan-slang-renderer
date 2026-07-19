@@ -2,6 +2,7 @@
 
 module gpu_picking;
 
+import addr;
 import fullscreen_triangle;
 import ray_march_camera;
 import projection;
@@ -13,7 +14,7 @@ struct GpuPickingParams {
     RayMarchCamera camera;
     uint pickedObjectId;
     uint cubeCount;
-    StructuredBuffer<Cube> cubes;
+    ReadAddr<Cube> cubes;
 }
 
 [shader("vertex")]

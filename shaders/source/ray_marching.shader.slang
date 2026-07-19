@@ -2,6 +2,7 @@
 
 module ray_marching;
 
+import addr;
 import ray_march;
 import fullscreen_triangle;
 import ray_march_camera;
@@ -22,8 +23,8 @@ struct RayMarchingParams {
 
     float2 resolution;
 
-    StructuredBuffer<Sphere> spheres;
-    StructuredBuffer<BoxRect> boxes;
+    ReadAddr<Sphere> spheres;
+    ReadAddr<BoxRect> boxes;
 }
 
 struct FragInput {
@@ -79,10 +80,10 @@ float4 fragMain(FragInput input) : SV_Target {
 }
 
 struct RayMarchWorld : IRayMarchWorld {
-    StructuredBuffer<Sphere> spheres;
+    ReadAddr<Sphere> spheres;
     uint sphereCount;
 
-    StructuredBuffer<BoxRect> boxes;
+    ReadAddr<BoxRect> boxes;
     uint boxCount;
 
     float minHitDistance = 0.001;

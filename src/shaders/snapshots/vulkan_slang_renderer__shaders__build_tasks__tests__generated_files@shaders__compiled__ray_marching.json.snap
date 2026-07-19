@@ -118,16 +118,14 @@ info:
             }
           },
           {
-            "kind": "resource",
+            "kind": "pointer",
             "fieldName": "spheres",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 112,
+              "size": 8
             },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
+            "pointeeType": {
               "typeName": "Sphere",
               "fields": [
                 {
@@ -169,19 +167,19 @@ info:
                   }
                 }
               ]
-            }
+            },
+            "pointeeSize": 32,
+            "access": "read"
           },
           {
-            "kind": "resource",
+            "kind": "pointer",
             "fieldName": "boxes",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
+              "kind": "uniform",
+              "offset": 120,
+              "size": 8
             },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
+            "pointeeType": {
               "typeName": "BoxRect",
               "fields": [
                 {
@@ -242,7 +240,9 @@ info:
                   }
                 }
               ]
-            }
+            },
+            "pointeeSize": 96,
+            "access": "read"
           }
         ]
       }
@@ -311,21 +311,7 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 112
-          },
-          {
-            "binding": 1,
-            "descriptorType": "storageBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 112
-          },
-          {
-            "binding": 2,
-            "descriptorType": "storageBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 112
+            "size": 128
           }
         ]
       }

@@ -104,36 +104,6 @@
             }
           },
           {
-            "kind": "resource",
-            "fieldName": "strokePoints",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 7,
-              "count": 1
-            },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
-              "typeName": "StrokePoint",
-              "fields": [
-                {
-                  "kind": "vector",
-                  "fieldName": "position",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 0,
-                    "size": 8
-                  },
-                  "elementCount": 2,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                }
-              ]
-            }
-          },
-          {
             "kind": "scalar",
             "fieldName": "pointCount",
             "binding": {
@@ -228,6 +198,36 @@
               "kind": "scalar",
               "scalarType": "float32"
             }
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "strokePoints",
+            "binding": {
+              "kind": "uniform",
+              "offset": 72,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "StrokePoint",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 8,
+            "access": "read"
           }
         ]
       }
@@ -292,13 +292,6 @@
           {
             "binding": 6,
             "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 80
-          },
-          {
-            "binding": 7,
-            "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 80
