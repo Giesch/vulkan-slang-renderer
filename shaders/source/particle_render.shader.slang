@@ -9,7 +9,7 @@ ParameterBlock<RenderParams> renderParams;
 
 struct RenderParams {
     uint particleCount;
-    Addr<Particle> particles;
+    ReadAddr<Particle> particles;
 }
 
 struct FragInput {

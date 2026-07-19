@@ -16,7 +16,7 @@ import projection;
 ParameterBlock<SpriteBatchParams> params;
 
 struct SpriteBatchParams {
-    Addr<Sprite> sprites;
+    ReadAddr<Sprite> sprites;
     Projection projection;
     Sampler2D texture;
 }

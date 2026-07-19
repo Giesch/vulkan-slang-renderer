@@ -126,7 +126,8 @@
                 }
               ]
             },
-            "pointeeSize": 64
+            "pointeeSize": 64,
+            "access": "read"
           },
           {
             "kind": "struct",

@@ -179,7 +179,8 @@ info:
                 }
               ]
             },
-            "pointeeSize": 112
+            "pointeeSize": 112,
+            "access": "readWrite"
           },
           {
             "kind": "vector",

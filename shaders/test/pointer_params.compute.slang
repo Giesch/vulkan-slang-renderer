@@ -12,8 +12,9 @@ struct PtrItem {
 }               // size 16, align 8
 
 struct Params {
-    LayoutPtr<PtrItem, Std430DataLayout> data; // 0
-    uint count;                                // 8
+    LayoutPtr<PtrItem, Std430DataLayout> data;                        // 0
+    Ptr<PtrItem, Access.Read, AddressSpace.Device, Std430DataLayout> src; // 8
+    uint count;                                                       // 16
 }
 
 ParameterBlock<Params> params;
@@ -26,6 +27,6 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
         return;
     }
 
-    PtrItem item = params.data[index];
+    PtrItem item = params.src[index];
     params.data[index].b = item.a.x + item.a.y;
 }

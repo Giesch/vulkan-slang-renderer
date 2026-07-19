@@ -8,7 +8,7 @@ import particle;
 ParameterBlock<SimParams> simParams;
 
 struct SimParams {
-    Addr<Particle> particlesIn;
+    ReadAddr<Particle> particlesIn;
     Addr<Particle> particlesOut;
     float deltaTime;
 }

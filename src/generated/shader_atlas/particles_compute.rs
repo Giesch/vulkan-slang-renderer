@@ -20,7 +20,7 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct SimParams {
-    pub particles_in: Addr<Particle>,
+    pub particles_in: ReadAddr<Particle>,
     pub particles_out: Addr<Particle>,
     pub delta_time: f32,
     pub _padding_0: [u8; 12],
@@ -29,7 +29,7 @@ pub struct SimParams {
 impl GPUWrite for SimParams {}
 const _: () = assert!(std::mem::size_of::<SimParams>() == 32);
 const _: () = assert!(std::mem::offset_of!(SimParams, particles_in) == 0);
-const _: () = assert!(std::mem::size_of::<Addr<Particle>>() == 8);
+const _: () = assert!(std::mem::size_of::<ReadAddr<Particle>>() == 8);
 const _: () = assert!(std::mem::offset_of!(SimParams, particles_out) == 8);
 const _: () = assert!(std::mem::size_of::<Addr<Particle>>() == 8);
 const _: () = assert!(std::mem::offset_of!(SimParams, delta_time) == 16);

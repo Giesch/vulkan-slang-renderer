@@ -25,7 +25,7 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 pub struct RenderParams {
     pub particle_count: u32,
     pub _padding_0: [u8; 4],
-    pub particles: Addr<Particle>,
+    pub particles: ReadAddr<Particle>,
 }
 
 impl GPUWrite for RenderParams {}
@@ -33,7 +33,7 @@ const _: () = assert!(std::mem::size_of::<RenderParams>() == 16);
 const _: () = assert!(std::mem::offset_of!(RenderParams, particle_count) == 0);
 const _: () = assert!(std::mem::size_of::<u32>() == 4);
 const _: () = assert!(std::mem::offset_of!(RenderParams, particles) == 8);
-const _: () = assert!(std::mem::size_of::<Addr<Particle>>() == 8);
+const _: () = assert!(std::mem::size_of::<ReadAddr<Particle>>() == 8);
 
 pub struct Resources<'a> {
     pub render_params_buffer: &'a UniformBufferHandle<RenderParams>,

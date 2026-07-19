@@ -354,6 +354,25 @@ fn reflect_struct_fields(
                     );
                 }
 
+                // The Access generic argument prints as its enum case name
+                // (e.g. `Ptr<T, Access.Read, AddressSpace.Device, Std430DataLayout>`).
+                let generic_args: Vec<&str> = ptr_type_name
+                    .trim_end_matches('>')
+                    .split(',')
+                    .map(str::trim)
+                    .collect();
+                let access = if generic_args.contains(&"Access.Read") {
+                    PointerAccess::Read
+                } else if generic_args.contains(&"Access.Immutable") {
+                    anyhow::bail!(
+                        "pointer field '{field_name}' ({ptr_type_name}): Access.Immutable \
+                        pointers are not supported (immutability is UB if the buffer changes \
+                        during execution); use ReadAddr<T> (Access.Read) instead"
+                    );
+                } else {
+                    PointerAccess::ReadWrite
+                };
+
                 // The pointer's own element_type_layout() reports default-layout
                 // offsets even for Std430DataLayout pointers; query the std430
                 // layout explicitly.
@@ -385,6 +404,7 @@ fn reflect_struct_fields(
                         fields: pointee_fields,
                     },
                     pointee_size,
+                    access,
                 })
             }
 

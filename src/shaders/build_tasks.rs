@@ -953,9 +953,13 @@ fn gather_struct_defs(
                 },
             );
 
+            let addr_type = match ptr.access {
+                PointerAccess::ReadWrite => "Addr",
+                PointerAccess::Read => "ReadAddr",
+            };
             Some(GeneratedStructFieldDefinition::new(
                 ptr.field_name.to_snake_case(),
-                format!("Addr<{}>", ptr.pointee_type.type_name),
+                format!("{addr_type}<{}>", ptr.pointee_type.type_name),
             ))
         }
 
@@ -1270,8 +1274,9 @@ fn field_alignment(type_name: &str) -> usize {
         "glam::Vec3" => 16, // vec3 has 16-byte alignment in both std140 and std430
         "glam::Vec2" | "u64" => 8,
         "f32" | "u32" | "i32" => 4,
-        s if s.starts_with("Addr<") => 8, // repr(transparent) over u64
-        _ => 16,                          // assume 16 for unknown/struct types
+        // Addr<T> / ReadAddr<T> are repr(transparent) over u64
+        s if s.starts_with("Addr<") || s.starts_with("ReadAddr<") => 8,
+        _ => 16, // assume 16 for unknown/struct types
     }
 }
 
@@ -1292,8 +1297,8 @@ fn rust_type_alignment(type_name: &str) -> Option<usize> {
         "glam::Vec3" => std::mem::align_of::<glam::Vec3>(),
         "glam::Vec4" => std::mem::align_of::<glam::Vec4>(),
         "glam::Mat4" => std::mem::align_of::<glam::Mat4>(),
-        // Addr<T> is repr(transparent) over u64 for every T
-        s if s.starts_with("Addr<") => std::mem::align_of::<u64>(),
+        // Addr<T> / ReadAddr<T> are repr(transparent) over u64 for every T
+        s if s.starts_with("Addr<") || s.starts_with("ReadAddr<") => std::mem::align_of::<u64>(),
         _ => return None,
     })
 }

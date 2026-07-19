@@ -56,8 +56,6 @@ impl Game for Particles {
 
         renderer.write_storage_all_frames(&mut particle_buffer, &initial_particles);
 
-        // The particle buffer is never descriptor-bound — the shaders read and
-        // write it through device addresses supplied per-frame in the uniforms
         let shaders = ShaderAtlas::init();
 
         let compute_resources = particles_compute::Resources {
@@ -108,10 +106,8 @@ impl Game for Particles {
             gpu.write_uniform(
                 &mut self.sim_params_buffer,
                 particles_compute::SimParams {
-                    // ping-pong: read the previous frame's buffer copy,
-                    // write the current frame's copy
-                    particles_in: gpu.device_address_prev(&self.particle_buffer),
-                    particles_out: gpu.device_address(&self.particle_buffer),
+                    particles_in: gpu.previous_addr(&self.particle_buffer),
+                    particles_out: gpu.current_addr(&self.particle_buffer),
                     delta_time,
                     _padding_0: Default::default(),
                 },
@@ -122,7 +118,7 @@ impl Game for Particles {
                 particle_render::RenderParams {
                     particle_count: NUM_PARTICLES,
                     _padding_0: Default::default(),
-                    particles: gpu.device_address(&self.particle_buffer),
+                    particles: gpu.current_addr(&self.particle_buffer).into(),
                 },
             );
         })?;

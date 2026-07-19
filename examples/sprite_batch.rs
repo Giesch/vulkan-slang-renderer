@@ -136,7 +136,7 @@ impl Game for SpriteBatch {
 
         renderer.draw_vertex_count(&self.pipeline, vertex_count, |gpu| {
             let params = SpriteBatchParams {
-                sprites: gpu.device_address(&self.sprites_buffer),
+                sprites: gpu.current_addr(&self.sprites_buffer).into(),
                 _padding_0: Default::default(),
                 projection,
             };

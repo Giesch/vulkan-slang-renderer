@@ -63,7 +63,8 @@ info:
                 }
               ]
             },
-            "pointeeSize": 32
+            "pointeeSize": 32,
+            "access": "readWrite"
           },
           {
             "kind": "resource",

@@ -5069,7 +5069,7 @@ impl<'f> Gpu<'f> {
 
     /// the device address of the current buffer frame's copy,
     /// for writing into a pointer field of a parameter block
-    pub fn device_address<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
+    pub fn current_addr<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
         Addr::from_raw(
             self.storage_buffers
                 .get_device_address_for_frame(storage_buffer, self.buffer_frame),
@@ -5079,9 +5079,9 @@ impl<'f> Gpu<'f> {
     /// the device address of the previous buffer frame's copy;
     /// matches the -1 frame offset the PingPong descriptor strategy
     /// applies to the first storage buffer in layout order
-    pub fn device_address_prev<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
+    pub fn previous_addr<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> ReadAddr<T> {
         let prev_frame = (self.buffer_frame + BUFFER_FRAME_COUNT - 1) % BUFFER_FRAME_COUNT;
-        Addr::from_raw(
+        ReadAddr::from_raw(
             self.storage_buffers
                 .get_device_address_for_frame(storage_buffer, prev_frame),
         )

@@ -5,7 +5,7 @@
   - [X] support buffer device addresses and push constants via reflection
   - [X] add a more type-safe way to use BDAs
     both slang and rust get non-int pointers that include target type
-  - [ ] see if it's possible to get read-only/read-write type safety for Addr
+  - [X] see if it's possible to get read-only/read-write type safety for Addr
   - [ ] update remaining examples to use BDAs where appropriate
 
   - [ ] support bindless textures using slang handles

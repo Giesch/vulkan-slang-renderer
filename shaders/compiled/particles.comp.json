@@ -62,7 +62,8 @@
                 }
               ]
             },
-            "pointeeSize": 32
+            "pointeeSize": 32,
+            "access": "read"
           },
           {
             "kind": "pointer",
@@ -119,7 +120,8 @@
                 }
               ]
             },
-            "pointeeSize": 32
+            "pointeeSize": 32,
+            "access": "readWrite"
           },
           {
             "kind": "scalar",

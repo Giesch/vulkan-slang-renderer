@@ -233,6 +233,17 @@ pub struct PointerStructField {
     /// reflected std430 size of the pointee — cross-checked against the
     /// codegen's computed struct size
     pub pointee_size: usize,
+    #[serde(default)]
+    pub access: PointerAccess,
+}
+
+/// The access mode of a pointer field (slang `Access.ReadWrite` / `Access.Read`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PointerAccess {
+    #[default]
+    ReadWrite,
+    Read,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
