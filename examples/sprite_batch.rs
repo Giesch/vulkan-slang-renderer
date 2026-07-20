@@ -17,7 +17,7 @@ use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 use vulkan_slang_renderer::editor::Label;
 use vulkan_slang_renderer::game::{Game, MaxMSAASamples};
 use vulkan_slang_renderer::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
+    DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, Renderer,
     TextureFilter, UniformBufferHandle,
 };
 use vulkan_slang_renderer::util::load_image;
@@ -37,7 +37,7 @@ pub struct EditState {
 pub struct SpriteBatch {
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<SpriteBatchParams>,
-    sprites_buffer: StorageBufferHandle<Sprite>,
+    sprites_buffer: ImmutableBufferHandle<Sprite>,
     sprites: Vec<Sprite>,
     edit_state: EditState,
     last_frame_time: Instant,
@@ -71,7 +71,7 @@ impl Game for SpriteBatch {
         unsafe { SDL_srand(0) };
 
         let params_buffer = renderer.create_uniform_buffer::<SpriteBatchParams>()?;
-        let sprites_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
+        let sprites_buffer = renderer.create_immutable_buffer::<Sprite>(sprites.len() as u32)?;
 
         let image_file_name = "ravioli_atlas.bmp";
         let image = load_image(image_file_name)?;
@@ -136,12 +136,12 @@ impl Game for SpriteBatch {
 
         renderer.draw_vertex_count(&self.pipeline, vertex_count, |gpu| {
             let params = SpriteBatchParams {
-                sprites: gpu.current_addr(&self.sprites_buffer).into(),
+                sprites: gpu.current_immutable_addr(&self.sprites_buffer),
                 _padding_0: Default::default(),
                 projection,
             };
             gpu.write_uniform(&mut self.params_buffer, params);
-            gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
+            gpu.write_immutable(&mut self.sprites_buffer, &self.sprites);
         })
     }
 

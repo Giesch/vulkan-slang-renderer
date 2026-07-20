@@ -1,21 +1,37 @@
 #+title: Todo
 
 * Now
+- [X] get a better understanding of 3-buffer ping-pong for compute
+- [ ] refactor/rename things to make it easier to follow/understand
+
 - [-] update to Vulkan 1.3
   - [X] support buffer device addresses and push constants via reflection
   - [X] add a more type-safe way to use BDAs
     both slang and rust get non-int pointers that include target type
   - [X] see if it's possible to get read-only/read-write type safety for Addr
   - [X] update remaining examples to use BDAs where appropriate
+  - [X] see if there's a way to use ImmutablePtr safely
+    this makes no difference for current examples,
+    but the optimization does matter if you pass the pointer around to functions or similar
+  - [ ] migrate remaining examples to BDAs
   - [ ] remove the descriptor-based storage buffer path now that no example uses it
     LayoutDescription::Storage, storage_buffer_handles plumbing, StorageBufferFrameStrategy::PingPong;
     needs fixture rework (shaders/test std430_* and pointer_dual_context elicit StructuredBuffer codegen)
+      maybe we want to keep this around as an example for a WebGPU Slang-based renderer?
+      no; having dead code here will be a misleading problem for me and for models
 
   - [ ] support bindless textures using slang handles
-  - [ ] migrate the examples to use bindless textures
+    - [ ] add the feature to the renderer
+    - [ ] implement one example
+    - [ ] migrate all examples to use bindless textures
+    - [ ] remove old way of doing things from the renderer
 
-  - [ ] change the api to require passing things every frame?
-    can order matter here? it shouldn't really
+- [ ] change the api to require passing things every frame
+  goal is something nice for a typed scripting language
+  - [ ] make it impossible to forget to write a required field
+  - [ ] allow both memcpy and encase writer patterns
+  - [ ] come up with a way to not need sort_storage_by
+
 
 - [ ] add a wind waker style demo
   - multi-draw materials?
@@ -37,10 +53,22 @@
 - [ ] review renderer changes for compute shaders
   expecially the set of 3 resources
 
+- [ ] consider using a single out-buffer for readback
+  either for picking or in general (eg. for sound effects)
+  this could be based on atomics like the queue used by nanite for graph traversal
+
 - [ ] re-enable build_tasks unit tests on windows
   #+begin_src rust
   // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
   #+end_src
+
+- [ ] get a more principled slang parsing setup
+  - [ ] avoid the direct 'starts_with' stuff in build_tasks
+  - [ ] see if there's a better slang compiler api to be using
+  - [ ] if not, adopt some kind of IR maybe
+    or at least something more structured with defined helper functions
+    - [ ] think about how to make mapped wrapper structs generalizable
+    - [ ] add a feature that can handle the Addr types or a game-dev created slang type
 
 
 * Next
@@ -73,11 +101,15 @@
   - read all the red blob games stuff
 
 - [ ] Roc scripting
+  - [ ] make an example that's a roc platform, based on the rust template
 
 - [ ] add a way for claude to check for vulkan validation errors
   - panic on validation error, based on an environment variable?
   - set up a just command that runs an exammple with this env var
   - add instructions about this just command to CLAUDE.md
+  - [ ] build a better timeout into a cli
+    i think the current 'timeout' version doesn't test/exercise drop impls correctly
+    this could also be used by game-level tests
 
 - [-] frame rate improvements on sprite batch example
   - [X] fence wating at frame start

@@ -14,7 +14,8 @@ struct PtrItem {
 struct Params {
     LayoutPtr<PtrItem, Std430DataLayout> data;                        // 0
     Ptr<PtrItem, Access.Read, AddressSpace.Device, Std430DataLayout> src; // 8
-    uint count;                                                       // 16
+    Ptr<PtrItem, Access.Immutable, AddressSpace.Device, Std430DataLayout> lut; // 16
+    uint count;                                                       // 24
 }
 
 ParameterBlock<Params> params;
@@ -28,5 +29,5 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     }
 
     PtrItem item = params.src[index];
-    params.data[index].b = item.a.x + item.a.y;
+    params.data[index].b = item.a.x + item.a.y + params.lut[index].b;
 }

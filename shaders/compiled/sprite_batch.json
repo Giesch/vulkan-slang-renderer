@@ -127,7 +127,7 @@
               ]
             },
             "pointeeSize": 64,
-            "access": "read"
+            "access": "immutable"
           },
           {
             "kind": "struct",

@@ -66,3 +66,40 @@ impl<T> Serialize for ReadAddr<T> {
         serializer.serialize_u64(self.address)
     }
 }
+
+/// Stub of the real renderer::ImmutableAddr (src/renderer/addr.rs): a typed
+/// device address for a buffer nothing on the GPU ever writes.
+#[repr(transparent)]
+pub struct ImmutableAddr<T> {
+    address: u64,
+    _pointee: PhantomData<fn() -> T>,
+}
+
+impl<T> From<ImmutableAddr<T>> for ReadAddr<T> {
+    fn from(addr: ImmutableAddr<T>) -> Self {
+        Self {
+            address: addr.address,
+            _pointee: PhantomData,
+        }
+    }
+}
+
+impl<T> Clone for ImmutableAddr<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for ImmutableAddr<T> {}
+
+impl<T> std::fmt::Debug for ImmutableAddr<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ImmutableAddr({:#x})", self.address)
+    }
+}
+
+impl<T> Serialize for ImmutableAddr<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u64(self.address)
+    }
+}

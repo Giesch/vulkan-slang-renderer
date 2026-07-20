@@ -364,11 +364,7 @@ fn reflect_struct_fields(
                 let access = if generic_args.contains(&"Access.Read") {
                     PointerAccess::Read
                 } else if generic_args.contains(&"Access.Immutable") {
-                    anyhow::bail!(
-                        "pointer field '{field_name}' ({ptr_type_name}): Access.Immutable \
-                        pointers are not supported (immutability is UB if the buffer changes \
-                        during execution); use ReadAddr<T> (Access.Read) instead"
-                    );
+                    PointerAccess::Immutable
                 } else {
                     PointerAccess::ReadWrite
                 };

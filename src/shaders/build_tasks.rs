@@ -956,6 +956,7 @@ fn gather_struct_defs(
             let addr_type = match ptr.access {
                 PointerAccess::ReadWrite => "Addr",
                 PointerAccess::Read => "ReadAddr",
+                PointerAccess::Immutable => "ImmutableAddr",
             };
             Some(GeneratedStructFieldDefinition::new(
                 ptr.field_name.to_snake_case(),
@@ -1274,8 +1275,13 @@ fn field_alignment(type_name: &str) -> usize {
         "glam::Vec3" => 16, // vec3 has 16-byte alignment in both std140 and std430
         "glam::Vec2" | "u64" => 8,
         "f32" | "u32" | "i32" => 4,
-        // Addr<T> / ReadAddr<T> are repr(transparent) over u64
-        s if s.starts_with("Addr<") || s.starts_with("ReadAddr<") => 8,
+        // Addr<T> / ReadAddr<T> / ImmutableAddr<T> are repr(transparent) over u64
+        s if s.starts_with("Addr<")
+            || s.starts_with("ReadAddr<")
+            || s.starts_with("ImmutableAddr<") =>
+        {
+            8
+        }
         _ => 16, // assume 16 for unknown/struct types
     }
 }
@@ -1297,8 +1303,13 @@ fn rust_type_alignment(type_name: &str) -> Option<usize> {
         "glam::Vec3" => std::mem::align_of::<glam::Vec3>(),
         "glam::Vec4" => std::mem::align_of::<glam::Vec4>(),
         "glam::Mat4" => std::mem::align_of::<glam::Mat4>(),
-        // Addr<T> / ReadAddr<T> are repr(transparent) over u64 for every T
-        s if s.starts_with("Addr<") || s.starts_with("ReadAddr<") => std::mem::align_of::<u64>(),
+        // Addr<T> / ReadAddr<T> / ImmutableAddr<T> are repr(transparent) over u64 for every T
+        s if s.starts_with("Addr<")
+            || s.starts_with("ReadAddr<")
+            || s.starts_with("ImmutableAddr<") =>
+        {
+            std::mem::align_of::<u64>()
+        }
         _ => return None,
     })
 }
@@ -1953,6 +1964,62 @@ float4 fragMain() : SV_Target {
             message.contains("Std430DataLayout") && message.contains("Addr<"),
             "unexpected error message: {message}"
         );
+    }
+
+    // Access.Immutable is only sound with the ImmutableBufferHandle allocation
+    // kind, so reflection must map it to its own PointerAccess variant rather
+    // than falling through to ReadWrite (which would happen silently if slang's
+    // full_name() stopped printing the Access generic arg as `Access.Immutable`).
+    #[cfg(not(windows))]
+    #[test]
+    fn immutable_pointer_is_reflected() {
+        let tmp_dir = std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let source = r#"#language slang 2026
+
+module immutable_pointer;
+
+struct Item {
+    float4 value;
+}
+
+struct Params {
+    Ptr<Item, Access.Immutable, AddressSpace.Device, Std430DataLayout> items;
+}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return params.items[id].value;
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        std::fs::write(tmp_dir.join("immutable_pointer.shader.slang"), source).unwrap();
+
+        let result =
+            prepare_reflected_shader("immutable_pointer.shader.slang", tmp_dir.to_str().unwrap());
+
+        std::fs::remove_dir_all(&tmp_dir).ok();
+
+        let reflected = result.expect("an Access.Immutable pointer field must be accepted");
+        let GlobalParameter::ParameterBlock(block) =
+            &reflected.reflection_json.global_parameters[0];
+        let access = block
+            .element_type
+            .fields
+            .iter()
+            .find_map(|field| match field {
+                StructField::Pointer(ptr) if ptr.field_name == "items" => Some(ptr.access),
+                _ => None,
+            })
+            .expect("pointer field 'items' not reflected");
+        assert_eq!(access, PointerAccess::Immutable);
     }
 
     fn count_branch_instructions(spv_bytes: &[u8]) -> usize {

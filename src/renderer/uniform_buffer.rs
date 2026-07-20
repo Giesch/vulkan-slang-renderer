@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use ash::vk;
 
-use super::BUFFER_FRAME_COUNT;
+use super::PRE_WAIT_RING_LEN;
 
 #[derive(Debug)]
 pub struct UniformBufferHandle<T> {
@@ -20,7 +20,7 @@ pub(super) struct RawUniformBuffer {
 
 // NOTE renderer has to enforce type safety
 // ordered first by handle index, then by frame
-pub(super) struct UniformBufferStorage(Vec<Option<[RawUniformBuffer; BUFFER_FRAME_COUNT]>>);
+pub(super) struct UniformBufferStorage(Vec<Option<[RawUniformBuffer; PRE_WAIT_RING_LEN]>>);
 
 impl UniformBufferStorage {
     pub fn new() -> Self {
@@ -29,7 +29,7 @@ impl UniformBufferStorage {
 
     pub fn add<T>(
         &mut self,
-        buffers_per_frame: [RawUniformBuffer; BUFFER_FRAME_COUNT],
+        buffers_per_frame: [RawUniformBuffer; PRE_WAIT_RING_LEN],
     ) -> UniformBufferHandle<T> {
         let handle = UniformBufferHandle {
             index: self.0.len(),
@@ -44,7 +44,7 @@ impl UniformBufferStorage {
     pub fn get_raw(
         &self,
         handle: &RawUniformBufferHandle,
-    ) -> &[RawUniformBuffer; BUFFER_FRAME_COUNT] {
+    ) -> &[RawUniformBuffer; PRE_WAIT_RING_LEN] {
         self.0[handle.index].as_ref().unwrap()
     }
 
@@ -61,11 +61,11 @@ impl UniformBufferStorage {
     pub fn take<T>(
         &mut self,
         handle: UniformBufferHandle<T>,
-    ) -> [RawUniformBuffer; BUFFER_FRAME_COUNT] {
+    ) -> [RawUniformBuffer; PRE_WAIT_RING_LEN] {
         self.0[handle.index].take().unwrap()
     }
 
-    pub fn take_all(&mut self) -> Vec<[RawUniformBuffer; BUFFER_FRAME_COUNT]> {
+    pub fn take_all(&mut self) -> Vec<[RawUniformBuffer; PRE_WAIT_RING_LEN]> {
         self.0
             .iter_mut()
             .filter_map(|option| option.take())

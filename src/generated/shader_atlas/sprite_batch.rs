@@ -23,7 +23,7 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
 pub struct SpriteBatchParams {
-    pub sprites: ReadAddr<Sprite>,
+    pub sprites: ImmutableAddr<Sprite>,
     pub _padding_0: [u8; 8],
     pub projection: Projection,
 }
@@ -31,7 +31,7 @@ pub struct SpriteBatchParams {
 impl GPUWrite for SpriteBatchParams {}
 const _: () = assert!(std::mem::size_of::<SpriteBatchParams>() == 80);
 const _: () = assert!(std::mem::offset_of!(SpriteBatchParams, sprites) == 0);
-const _: () = assert!(std::mem::size_of::<ReadAddr<Sprite>>() == 8);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<Sprite>>() == 8);
 const _: () = assert!(std::mem::offset_of!(SpriteBatchParams, projection) == 16);
 const _: () = assert!(std::mem::size_of::<Projection>() == 64);
 

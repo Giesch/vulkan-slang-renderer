@@ -237,13 +237,18 @@ pub struct PointerStructField {
     pub access: PointerAccess,
 }
 
-/// The access mode of a pointer field (slang `Access.ReadWrite` / `Access.Read`).
+/// The access mode of a pointer field
+/// (eg. Slang's `Access.ReadWrite` / `Access.Read` / `Access.Immutable`)
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PointerAccess {
+    /// The pointer is writable
     #[default]
     ReadWrite,
+    /// The pointer is read-only
     Read,
+    /// The underlying data is immutable during shader execution
+    Immutable,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
