@@ -110,7 +110,7 @@ impl Game for GpuPicking {
                     camera: camera.clone(),
                     picked_object_id: picked_id,
                     cube_count: self.cubes.len() as u32,
-                    cubes: gpu.current_addr(&self.cubes_buffer).into(),
+                    cubes: gpu.addr(&self.cubes_buffer).into(),
                 };
                 gpu.write_uniform(&mut self.params_buffer, picking_params);
                 gpu.write_storage(&mut self.cubes_buffer, &self.cubes);
@@ -119,7 +119,7 @@ impl Game for GpuPicking {
                     camera: camera.clone(),
                     cube_count: self.cubes.len() as u32,
                     _padding_0: Default::default(),
-                    cubes: gpu.current_addr(&self.cubes_buffer).into(),
+                    cubes: gpu.addr(&self.cubes_buffer).into(),
                 };
                 gpu.write_uniform(&mut self.picking_params_buffer, picking_id_params);
             },

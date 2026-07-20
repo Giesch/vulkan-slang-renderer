@@ -170,7 +170,8 @@ pub struct Renderer {
     compute_queue: Option<vk::Queue>,
     /// Command buffers for pipelined compute dispatches
     compute_command_buffers: [vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT],
-    /// Per-frame flag: use pipelined compute submission
+    /// Use pipelined compute submission; set once during Game::setup via
+    /// Renderer::enable_pipelined_compute
     pipelined_compute: bool,
 
     pipelines: PipelineStorage,
@@ -833,6 +834,27 @@ impl Renderer {
         Ok(self.storage_buffers.add_immutable(buffers_per_frame, len))
     }
 
+    pub fn create_gpu_only_buffer<T: GPUWrite>(
+        &mut self,
+        len: u32,
+    ) -> anyhow::Result<GpuOnlyBufferHandle<T>> {
+        let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
+        Ok(self.storage_buffers.add_gpu_only(buffers_per_frame, len))
+    }
+
+    /// Enable pipelined async compute; call during Game::setup.
+    /// Compute dispatches are submitted separately so they can run concurrently
+    /// with the previous frame's graphics, on a dedicated compute queue when one
+    /// exists (single-queue fallback otherwise).
+    ///
+    /// In this mode a frame's graphics submit does NOT wait for that frame's
+    /// compute — graphics shaders must read compute output via
+    /// `Gpu::previous_addr`, never `Gpu::current_gpu_only_addr`.
+    /// TODO: make the warning above unnecessary
+    pub fn enable_pipelined_compute(&mut self) {
+        self.pipelined_compute = true;
+    }
+
     fn create_storage_buffers_per_frame<T: GPUWrite>(
         &mut self,
         len: u32,
@@ -879,20 +901,6 @@ impl Renderer {
         }
     }
 
-    /// the device address of each buffer frame's copy, indexed by buffer frame;
-    /// for init paths - per-frame writes should use Gpu::device_address
-    pub fn device_addresses<T>(
-        &self,
-        buf: &StorageBufferHandle<T>,
-    ) -> [Addr<T>; PRE_WAIT_RING_LEN] {
-        std::array::from_fn(|frame| {
-            Addr::from_raw(
-                self.storage_buffers
-                    .get_device_address_for_frame(buf, frame),
-            )
-        })
-    }
-
     pub fn write_immutable_all_frames<T>(
         &mut self,
         buf: &mut ImmutableBufferHandle<T>,
@@ -909,18 +917,18 @@ impl Renderer {
         }
     }
 
-    /// the device address of each buffer frame's copy, indexed by buffer frame;
-    /// for init paths - per-frame writes should use Gpu::current_immutable_addr
-    pub fn immutable_device_addresses<T>(
-        &self,
-        buf: &ImmutableBufferHandle<T>,
-    ) -> [ImmutableAddr<T>; PRE_WAIT_RING_LEN] {
-        std::array::from_fn(|frame| {
-            ImmutableAddr::from_raw(
-                self.storage_buffers
-                    .get_device_address_for_frame_immutable(buf, frame),
-            )
-        })
+    /// setup-time initialization for a GPU-only buffer; the only CPU write
+    /// path it has, safe because nothing is in flight yet
+    pub fn write_gpu_only_all_frames<T>(&mut self, buf: &mut GpuOnlyBufferHandle<T>, data: &[T]) {
+        let len = data.len().min(buf.len() as usize);
+        for frame in 0..PRE_WAIT_RING_LEN {
+            let mapped = self
+                .storage_buffers
+                .get_mapped_mem_for_frame_gpu_only(buf, frame);
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
+            }
+        }
     }
 
     pub fn drop_storage_buffer<T>(&mut self, storage_buffer: StorageBufferHandle<T>) {
@@ -932,6 +940,13 @@ impl Renderer {
 
     pub fn drop_immutable_buffer<T>(&mut self, immutable_buffer: ImmutableBufferHandle<T>) {
         let buffers_per_frame = self.storage_buffers.take_immutable(immutable_buffer);
+        for raw_storage_buffer in buffers_per_frame {
+            self.destroy_storage_buffer(raw_storage_buffer);
+        }
+    }
+
+    pub fn drop_gpu_only_buffer<T>(&mut self, gpu_only_buffer: GpuOnlyBufferHandle<T>) {
+        let buffers_per_frame = self.storage_buffers.take_gpu_only(gpu_only_buffer);
         for raw_storage_buffer in buffers_per_frame {
             self.destroy_storage_buffer(raw_storage_buffer);
         }
@@ -2280,9 +2295,6 @@ impl Renderer {
                 self.compute_frames += 1;
             }
         }
-
-        // Reset pipelined flag for next frame
-        self.pipelined_compute = false;
 
         // 6. Advance both frame counters BEFORE present
         //    This ensures that if present triggers swapchain recreation (early return),
@@ -5146,23 +5158,34 @@ impl<'f> Gpu<'f> {
         }
     }
 
-    /// the device address of the current buffer frame's copy,
-    /// for writing into a pointer field of a parameter block
-    pub fn current_addr<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
+    /// A pointer to the current frame's buffer
+    pub fn addr<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
         Addr::from_raw(
             self.storage_buffers
                 .get_device_address_for_frame(storage_buffer, self.ring_slot),
         )
     }
 
-    /// the device address of the previous buffer frame's copy;
-    /// matches the -1 frame offset the PingPong descriptor strategy
-    /// applies to the first storage buffer in layout order
-    pub fn previous_addr<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> ReadAddr<T> {
+    /// A pointer to the current frame's ping-pong buffer
+    ///
+    /// We distinguish between current and previous only for gpu-only buffers,
+    /// as these are the only ones that can read the previous frame's output.
+    pub fn current_addr<T>(&self, gpu_only_buffer: &GpuOnlyBufferHandle<T>) -> Addr<T> {
+        Addr::from_raw(
+            self.storage_buffers
+                .get_device_address_for_frame_gpu_only(gpu_only_buffer, self.ring_slot),
+        )
+    }
+
+    /// A pointer to the previous frame's ping-pong buffer
+    ///
+    /// We distinguish between current and previous only for gpu-only buffers,
+    /// as these are the only ones that can read the previous frame's output.
+    pub fn previous_addr<T>(&self, gpu_only_buffer: &GpuOnlyBufferHandle<T>) -> ReadAddr<T> {
         let prev_frame = (self.ring_slot + PRE_WAIT_RING_LEN - 1) % PRE_WAIT_RING_LEN;
         ReadAddr::from_raw(
             self.storage_buffers
-                .get_device_address_for_frame(storage_buffer, prev_frame),
+                .get_device_address_for_frame_gpu_only(gpu_only_buffer, prev_frame),
         )
     }
 
@@ -5212,7 +5235,7 @@ pub enum DrawError {
 }
 
 impl<'f> FrameRenderer<'f> {
-    pub fn new(renderer: &'f mut Renderer) -> Self {
+    pub(super) fn new(renderer: &'f mut Renderer) -> Self {
         Self {
             renderer,
             pending_compute: vec![],
@@ -5238,13 +5261,6 @@ impl<'f> FrameRenderer<'f> {
     /// Returns the current render scale (0.25 to 1.0)
     pub fn render_scale(&self) -> f32 {
         self.renderer.render_scale
-    }
-
-    /// Enable pipelined async compute for this frame.
-    /// Compute dispatches run on a dedicated queue concurrently with the previous frame's display.
-    /// Falls back to single-queue when only 1 queue is available.
-    pub fn enable_pipelined_compute(&mut self) {
-        self.renderer.pipelined_compute = true;
     }
 
     pub fn dispatch(&mut self, pipeline: &PipelineHandle<Compute>, x: u32, y: u32, z: u32) {

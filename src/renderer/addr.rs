@@ -14,7 +14,7 @@ pub struct Addr<T> {
 }
 
 impl<T> Addr<T> {
-    pub fn from_raw(address: u64) -> Self {
+    pub(super) fn from_raw(address: u64) -> Self {
         Self {
             address,
             _pointee: PhantomData,
@@ -69,7 +69,7 @@ pub struct ReadAddr<T> {
 }
 
 impl<T> ReadAddr<T> {
-    pub fn from_raw(address: u64) -> Self {
+    pub(super) fn from_raw(address: u64) -> Self {
         Self {
             address,
             _pointee: PhantomData,
@@ -136,7 +136,7 @@ impl<T> ImmutableAddr<T> {
     // pub(crate): minting is restricted to Renderer/Gpu accessors that take
     // an ImmutableBufferHandle, which upholds the never-GPU-written invariant
     // Access.Immutable requires.
-    pub(crate) fn from_raw(address: u64) -> Self {
+    pub(super) fn from_raw(address: u64) -> Self {
         Self {
             address,
             _pointee: PhantomData,

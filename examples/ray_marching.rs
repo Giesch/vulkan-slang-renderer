@@ -160,8 +160,8 @@ impl Game for RayMarching {
                 box_count: self.boxes.len() as u32,
                 _padding_0: Default::default(),
                 resolution,
-                spheres: gpu.current_addr(&self.spheres_buffer).into(),
-                boxes: gpu.current_addr(&self.boxes_buffer).into(),
+                spheres: gpu.addr(&self.spheres_buffer).into(),
+                boxes: gpu.addr(&self.boxes_buffer).into(),
             };
 
             gpu.write_uniform(&mut self.params_buffer, params);

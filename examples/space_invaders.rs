@@ -380,8 +380,8 @@ impl Game for SpaceInvaders {
         renderer.draw_vertex_count(&self.pipeline, vertex_count, |gpu| {
             let params = SpaceInvadersParams {
                 projection,
-                sprites: gpu.current_addr(&self.sprites_buffer).into(),
-                debug_boxes: gpu.current_addr(&self.debug_boxes_buffer).into(),
+                sprites: gpu.addr(&self.sprites_buffer).into(),
+                debug_boxes: gpu.addr(&self.debug_boxes_buffer).into(),
             };
             gpu.write_uniform(&mut self.params_buffer, params);
 

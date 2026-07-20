@@ -407,6 +407,8 @@ impl Game for Watercolor {
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self> {
+        renderer.enable_pipelined_compute();
+
         // Create all ping-pong textures
         let velocity_u = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
         let velocity_v = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
@@ -917,8 +919,6 @@ impl Game for Watercolor {
     }
 
     fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
-        renderer.enable_pipelined_compute();
-
         let stroke_points = std::mem::take(&mut self.stroke_points);
         let point_count = stroke_points
             .len()
@@ -1060,7 +1060,7 @@ impl Game for Watercolor {
                     pigment_color_4_7,
                     pigment_color_8_11,
                     canvas_size: grid_size,
-                    stroke_points: gpu.current_addr(stroke_points_buffer).into(),
+                    stroke_points: gpu.addr(stroke_points_buffer).into(),
                 },
             );
 

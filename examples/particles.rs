@@ -5,8 +5,8 @@ use glam::{Vec2, Vec4};
 
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
-    Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer,
-    StorageBufferHandle, UniformBufferHandle,
+    Compute, DrawError, DrawVertexCount, FrameRenderer, GpuOnlyBufferHandle, PipelineHandle,
+    Renderer, UniformBufferHandle,
 };
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
@@ -24,7 +24,7 @@ struct Particles {
     last_frame: Instant,
     compute_pipeline: PipelineHandle<Compute>,
     render_pipeline: PipelineHandle<DrawVertexCount>,
-    particle_buffer: StorageBufferHandle<particle::Particle>,
+    particle_buffer: GpuOnlyBufferHandle<particle::Particle>,
     sim_params_buffer: UniformBufferHandle<particles_compute::SimParams>,
     render_params_buffer: UniformBufferHandle<particle_render::RenderParams>,
 }
@@ -47,14 +47,14 @@ impl Game for Particles {
         let initial_particles = create_initial_particles();
 
         let mut particle_buffer =
-            renderer.create_storage_buffer::<particle::Particle>(NUM_PARTICLES)?;
+            renderer.create_gpu_only_buffer::<particle::Particle>(NUM_PARTICLES)?;
 
         let sim_params_buffer = renderer.create_uniform_buffer::<particles_compute::SimParams>()?;
 
         let render_params_buffer =
             renderer.create_uniform_buffer::<particle_render::RenderParams>()?;
 
-        renderer.write_storage_all_frames(&mut particle_buffer, &initial_particles);
+        renderer.write_gpu_only_all_frames(&mut particle_buffer, &initial_particles);
 
         let shaders = ShaderAtlas::init();
 

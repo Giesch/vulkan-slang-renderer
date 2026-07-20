@@ -40,6 +40,30 @@ impl<T> ImmutableBufferHandle<T> {
     }
 }
 
+/// A storage buffer the CPU writes only at setup, never from `gpu_update`
+///
+/// During the frame loop only the GPU touches it, reading and writing via
+/// `Addr`/`ReadAddr`. Because no CPU write can land before the frame_timeline
+/// wait, this is the only handle that can mint a `Gpu::previous_addr` history
+/// pointer: an in-flight frame's read of the previous slot cannot race a CPU
+/// write that no longer exists.
+///
+/// Initialize with `Renderer::write_gpu_only_all_frames`. Not bindable as a
+/// descriptor (no `RawStorageBufferHandle` conversion).
+#[derive(Debug)]
+pub struct GpuOnlyBufferHandle<T> {
+    index: usize,
+    len: u32,
+    _phantom_data: PhantomData<T>,
+}
+
+#[expect(clippy::len_without_is_empty)] // vulkan does not allow allocating an empty buffer
+impl<T> GpuOnlyBufferHandle<T> {
+    pub fn len(&self) -> u32 {
+        self.len
+    }
+}
+
 pub(super) struct RawStorageBuffer {
     pub(super) buffer: vk::Buffer,
     pub(super) allocation: vk_mem::Allocation,
@@ -145,6 +169,49 @@ impl StorageBufferStorage {
     pub fn take_immutable<T>(
         &mut self,
         handle: ImmutableBufferHandle<T>,
+    ) -> [RawStorageBuffer; PRE_WAIT_RING_LEN] {
+        self.0[handle.index].take().unwrap()
+    }
+
+    // GPU-only buffers also share this storage; their handle type is what
+    // keeps them out of Gpu's per-frame CPU write methods.
+
+    pub fn add_gpu_only<T>(
+        &mut self,
+        buffers_per_frame: [RawStorageBuffer; PRE_WAIT_RING_LEN],
+        len: u32,
+    ) -> GpuOnlyBufferHandle<T> {
+        let handle = GpuOnlyBufferHandle {
+            index: self.0.len(),
+            len,
+            _phantom_data: PhantomData::<T>,
+        };
+
+        self.0.push(Some(buffers_per_frame));
+
+        handle
+    }
+
+    pub(super) fn get_device_address_for_frame_gpu_only<T>(
+        &self,
+        handle: &GpuOnlyBufferHandle<T>,
+        frame: usize,
+    ) -> vk::DeviceAddress {
+        self.0[handle.index].as_ref().unwrap()[frame].device_address
+    }
+
+    pub(super) fn get_mapped_mem_for_frame_gpu_only<T>(
+        &mut self,
+        handle: &mut GpuOnlyBufferHandle<T>,
+        frame: usize,
+    ) -> *mut T {
+        let raw_storage_buffer = &mut self.0[handle.index].as_mut().unwrap()[frame];
+        raw_storage_buffer.mapped_mem as *mut T
+    }
+
+    pub fn take_gpu_only<T>(
+        &mut self,
+        handle: GpuOnlyBufferHandle<T>,
     ) -> [RawStorageBuffer; PRE_WAIT_RING_LEN] {
         self.0[handle.index].take().unwrap()
     }
