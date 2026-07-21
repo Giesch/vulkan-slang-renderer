@@ -892,6 +892,7 @@ impl Renderer {
     }
 
     pub fn write_storage_all_frames<T>(&mut self, buf: &mut StorageBufferHandle<T>, data: &[T]) {
+        debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
         for frame in 0..PRE_WAIT_RING_LEN {
             let mapped = self.storage_buffers.get_mapped_mem_for_frame(buf, frame);
@@ -906,6 +907,7 @@ impl Renderer {
         buf: &mut ImmutableBufferHandle<T>,
         data: &[T],
     ) {
+        debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
         for frame in 0..PRE_WAIT_RING_LEN {
             let mapped = self
@@ -920,6 +922,7 @@ impl Renderer {
     /// setup-time initialization for a GPU-only buffer; the only CPU write
     /// path it has, safe because nothing is in flight yet
     pub fn write_gpu_only_all_frames<T>(&mut self, buf: &mut GpuOnlyBufferHandle<T>, data: &[T]) {
+        debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
         for frame in 0..PRE_WAIT_RING_LEN {
             let mapped = self

@@ -46,13 +46,12 @@ storage/immutable/gpu-only but there is **no `write_uniform_all_frames`** —
 a truly constant uniform *must* be rewritten every frame or it reads stale
 2 of 3 frames.
 
-### 5. Oversized writes silently truncate
-Not an overflow — every path clamps with `.min()` — but the tail is dropped
-with zero diagnostics: `write_storage`/`write_immutable` have a
-`debug_assert!` then clamp (src/renderer.rs:5117-5128, 5144-5159; release:
-silent); `write_storage_all_frames`/`write_immutable_all_frames`/
-`write_gpu_only_all_frames` have **no assert at all** — silent even in debug
-(src/renderer.rs:894-932).
+### 5. Oversized writes silently truncate — **done**
+Not an overflow — every path clamps with `.min()`. All write paths
+(`write_storage`/`write_immutable` and the three `write_*_all_frames`
+functions) now `debug_assert!` the length before clamping, so oversized
+writes are caught in debug builds; in release the tail is still dropped
+with zero diagnostics.
 
 ### 6. Duplicate same-frame writes: silent last-write-wins
 Two pipelines sharing one uniform/storage handle, written twice with
