@@ -73,8 +73,8 @@ testing: external oracles + our own tests).
 **Converter side** (established by P1/P2/P3 implementation; authoritative
 detail in the phase docs and their Recorded facts):
 
-- P0–P2 are **done and committed** (`a76d0cb`, `6431f0a`, `8a0a4af`); **P3 is
-  implemented and verified** (`just link-verify-p3` green, pending commit).
+- P0–P3 are **done and committed** (`a76d0cb`, `6431f0a`, `8a0a4af`,
+  `7704292`), each with its verify gate green.
   Each phase is behind a byte-exact gate against an independent gclib-based
   oracle (`just link-verify-p1/p2/geometry`): P1 chunk table, P2 44/44
   pixel-identical textures + a zero-diff canonical MAT3 table, P3 zero-diff
@@ -105,29 +105,42 @@ detail in the phase docs and their Recorded facts):
   automated gate everywhere; SuperBMD is a manual second opinion only
   (Blender DAE overlay), never load-bearing.
 
-**Renderer side** (line numbers as of `bef946e`):
+**Renderer side** (line numbers as of `aaf479e`; post-BDA-migration —
+descriptor-based storage buffers no longer exist):
 
-- One pipeline + one draw call per frame: `FrameRenderer` (src/renderer.rs:5042)
+- One pipeline + one draw call per frame: `FrameRenderer` (src/renderer.rs:5162)
   consumes itself in `draw_indexed`/`draw_vertex_count`; the bind+draw block in
-  `record_command_buffer` is src/renderer.rs:1546–1617. A queue pattern already
-  exists for compute (`pending_compute: Vec<PendingComputeCommand>`).
-- Hardcoded pipeline state in `create_graphics_pipeline` (src/renderer.rs:3305):
-  blend always SRC_ALPHA/ONE_MINUS_SRC_ALPHA ADD (3366), color write mask RGBA
-  (3374), cull BACK + CCW (3354–3357), depth LESS + write always on (3384),
-  stencil off. `PipelineConfig` (src/renderer/pipeline.rs:139) exposes only
-  `disable_depth_test`.
+  `record_command_buffer` (1399) is src/renderer.rs:1692–1763. A queue pattern
+  already exists for compute (`pending_compute: Vec<PendingComputeCommand>`,
+  5147).
+- Hardcoded pipeline state in `create_graphics_pipeline` (src/renderer.rs:3275):
+  blend always SRC_ALPHA/ONE_MINUS_SRC_ALPHA ADD (3339–3344), color write mask
+  RGBA (3345), cull BACK + CCW (3327–3328), depth LESS + write always on
+  (3353–3358), stencil off. `PipelineConfig` (src/renderer/pipeline.rs:135)
+  exposes only `disable_depth_test`; `VertexPipelineConfig` is pipeline.rs:117.
 - Textures: always `R8G8B8A8_SRGB`, full mip chain, REPEAT wrap, anisotropy on
-  (src/renderer.rs:3966/4022/4347). Only filter (Linear/Nearest) is selectable.
+  (`create_texture` src/renderer.rs:3877, `create_texture_sampler` 4424). Only
+  filter (Linear/Nearest) is selectable.
 - Index buffers are u32-only; vertex/index buffers are owned per-pipeline.
 - Per-pipeline descriptor sets and uniform buffers are allocated at
-  `create_pipeline` (2 frames in flight); `Gpu::write_uniform` writes mapped
-  memory per frame. So N materials = N pipelines, each with its own uniforms and
+  `create_pipeline` (a 3-slot pre-wait ring: `PRE_WAIT_RING_LEN =
+  MAX_FRAMES_IN_FLIGHT + 1 = 3`); `Gpu::write_uniform` writes mapped memory per
+  frame. So N materials = N pipelines, each with its own uniforms and
   textures — no dynamic offsets needed.
+- Hot reload (`check_for_shader_recompile`, 2427):
+  `assert_shader_interface_unchanged` (added `6a8552f`) panics if a reloaded
+  shader's reflected interface differs from the build-time-embedded reflection.
+  Shader-body edits (TEV math) still hot-reload; changing `ToonLinkParams`'
+  shape requires `just shaders` + restart. (This was always unsafe — the panic
+  replaces silent GPU-data corruption, not a previously working path.)
 - Shader flow: `shaders/source/<name>.shader.slang` (exactly 1 vert + 1 frag
   entry) → `just shaders` → SPIR-V + reflection JSON + generated Rust bindings in
   `src/generated/shader_atlas/`. Multiple `Sampler2D`s per parameter block proven
-  (paint_display uses 5). `StructuredBuffer` readable from vertex shaders
-  (sprite_batch). Codegen covered by insta snapshot tests (`just test`).
+  (paint_display uses 5). Buffers readable from vertex shaders via BDA pointers:
+  sprite_batch declares `ImmutableAddr<Sprite>` in its param block, created with
+  `Renderer::create_immutable_buffer` and written via `write_immutable`
+  (`StructuredBuffer` was removed in the BDA migration). Codegen covered by
+  insta snapshot tests (`just test`).
 
 ## 1. Architecture overview
 
@@ -311,8 +324,8 @@ Two committed, hand-written files:
 The shader is a **data-driven interpreter**: per-material TEV configuration
 arrives as uniform data built from the manifest. Uniform layout uses **flat
 `uint4`/`float4` arrays only** (codegen support for arrays-of-structs is
-unverified — see risks; fallback is a `StructuredBuffer`, proven via
-sprite_batch):
+unverified — see risks; fallback is an immutable BDA buffer read by pointer,
+`ImmutableAddr<T>`, proven via sprite_batch):
 
 ```slang
 struct ToonLinkParams {
@@ -369,10 +382,17 @@ nicety.
 
 ## 4. Renderer extensions
 
-Four additive changes, each independently landable, ordered below. All 10
+Four additive changes, each independently landable, ordered below. All
 existing examples keep compiling and running; no codegen/template changes, so
 `just test` snapshots stay untouched. Defaults reproduce today's behavior
 exactly.
+
+Note: the approved-but-unimplemented FrameInputs plan
+(`frame_inputs_api.md`) will eventually replace the `gpu_update` closure with
+declarative `frame_inputs` calls. P4 deliberately proceeds against the
+current closure API, keeping the single-terminal-submit shape
+(`submit_draws(self, …)`) that FrameInputs also depends on, so the later
+migration stays mechanical.
 
 ### 4.1 Multi-draw queue (src/renderer.rs)
 
@@ -493,6 +513,12 @@ Eye write-mask multi-pass (needs `color_write` exercised + per-pass shape-group
 toggling), destination-alpha tricks, stencil, u16 index buffers, BTP/BTK eye
 animation, runtime skinning.
 
+Also deferred from P4: **picking + multi-draw.** Picking stays on the legacy
+single-draw wrapper (`draw_vertex_count_with_picking`, guarded by a
+`debug_assert` that the draw queue is empty); revisit integrating a picking
+config into `submit_draws` when something needs to pick over a multi-draw
+frame.
+
 ## 5. The example — `examples/toon_link.rs`
 
 - **setup**: read `assets/link/converted/link.manifest.json` via
@@ -531,8 +557,8 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P0** ✅ `a76d0cb` | `scripts/extract_link.sh`, `just extract-link`, `.gitignore` entry — detailed plan: [`link_rendering/phase_00.md`](link_rendering/phase_00.md) | sizes + SHA256s match `dtk vfs ls` (golden hashes, permanently stable); `J3D2bdl4` magic; idempotent; `git status` clean | ½ day |
 | **P1** ✅ `6431f0a` | converter skeleton: `be.rs`, chunk walk, `--info` chunk table — detailed plan: [`link_rendering/phase_01.md`](link_rendering/phase_01.md) | internal invariants (chunk sizes sum to file size, 42 joints, cross-chunk counts agree); `--info` diffed against a gclib oracle (`just link-verify-p1`, zero-line diff); `BeReader` unit tests on synthetic buffers | 1 day |
 | **P2** ✅ `8a0a4af` | TEX1+BTI decode → PNGs (+ standalone `.bti` re-emit per entry); full MAT3 parse + `--dump-mat3` — detailed plan: [`link_rendering/phase_02.md`](link_rendering/phase_02.md) | **as run** (`just link-verify-p2`): gclib pixel-diff 44/44 zero differences; canonical MAT3 table zero-line diff vs a gclib oracle (SuperBMD demoted to manual backup); synthetic per-format tile snapshots (insta); ramp names confirmed; **TEV subset frozen** (see §3) | 2–3 days |
-| **P3** ✅ (pending commit) | geometry: baked bind pose, strip→list, manifest v1 (full TEV materials), `--obj`+`.mtl` export — detailed plan: [`link_rendering/phase_03.md`](link_rendering/phase_03.md) | **`just link-verify-p3` green**: invBind identity (residual 0.0145) + weighted-identity (0.0077) hard checks; canonical geometry table **zero-diff** vs a gclib+struct-walk oracle; exactly 2,874 triangles; Blender pass partial (face orientation uniform red, rigid attachment + per-batch isolation OK). Stored-AABB cross-check dropped as redundant; full Blender pass outstanding | 3–4 days |
-| **P4** | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) | `just test` green (snapshots byte-identical); validation-clean sweep of **all** examples (`timeout 3 just dev <name>` loop); multi_mesh renders its sub-ranges with no gaps/overlaps | 2 days |
+| **P3** ✅ `7704292` | geometry: baked bind pose, strip→list, manifest v1 (full TEV materials), `--obj`+`.mtl` export — detailed plan: [`link_rendering/phase_03.md`](link_rendering/phase_03.md) | **`just link-verify-p3` green**: invBind identity (residual 0.0145) + weighted-identity (0.0077) hard checks; canonical geometry table **zero-diff** vs a gclib+struct-walk oracle; exactly 2,874 triangles; Blender pass partial (face orientation uniform red, rigid attachment + per-batch isolation OK). Stored-AABB cross-check dropped as redundant; full Blender pass outstanding | 3–4 days |
+| **P4** | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) — detailed plan: [`link_rendering/phase_04.md`](link_rendering/phase_04.md) | `just test` green (snapshots byte-identical); validation-clean sweep of **all** examples (`timeout 3 just dev <name>` loop); multi_mesh renders its sub-ranges with no gaps/overlaps | 2 days |
 | **P5** | renderer 4.3 + 4.4 (raster state, texture options); extend multi_mesh with per-state test objects | multi_mesh: cull-front object inside-out, opaque-vs-alpha blend, depth-write-off artifact on demand; wrap/filter quad (clamp/repeat × linear/nearest); sRGB-vs-UNORM gray-quad brightness check; same validation sweep | 1–2 days |
 | **P6** | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches | **uniform-array smoke test first** (`uint4[8]`, known pattern as colors); `just shaders`; `timeout 3 just dev toon_link`: correctly shaped Link, smooth normal gradients, silhouette vs noclip; culling off → then on (winding check), no validation errors | 1–2 days |
 | **P7** | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state | UV features vs noclip (face decals, eyes, belt buckle, tunic pattern); clean alpha-cutout edges on brows/lashes; no missing parts from per-material cull | 1 day |
@@ -572,8 +598,10 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
    GX-native — the flip decision stays with P6.*
 4. **Uniform array codegen** — unverified that the shader atlas codegen handles
    `uint4 foo[8]` uniform arrays. Mitigation: flat arrays only; smoke-test with
-   a throwaway shader early in P6; fallback to `StructuredBuffer`
-   (sprite_batch-proven). *(Still the top open repo-local risk.)*
+   a throwaway shader early in P6; fallback: move the TEV param arrays into an
+   immutable BDA buffer read via `ImmutableAddr<T>` (sprite_batch-proven;
+   `StructuredBuffer` no longer exists post-BDA-migration). *(Still the top
+   open repo-local risk.)*
 5. ~~**SRTG texgen details**~~ — *resolved by the P2 dump*: SRTG sources
    COLOR0 with the identity matrix; no texture matrix on the ramp path. Two
    findings replace it: (a) 2 **non-identity texture matrices** exist
