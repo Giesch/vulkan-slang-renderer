@@ -6,27 +6,31 @@
 
 - [ ] change the api to require passing things every frame
   goal is something nice for a typed scripting language
+  - [ ] start by addressing the footguns document one-by-one
+    then see if the full API change is necessary
+
   - [ ] make it impossible to forget to write a required field
   - [ ] allow both memcpy and encase writer patterns
   - [ ] come up with a way to not need sort_storage_by
   - [ ] change gpu_only naming to something about compute / ping-pong
     mention that they're GPU-only in a doc comment
 
+
 - [-] update to Vulkan 1.3
   - [X] support buffer device addresses and push constants via reflection
-  - [X] add a more type-safe way to use BDAs
-    both slang and rust get non-int pointers that include target type
-  - [X] see if it's possible to get read-only/read-write type safety for Addr
-  - [X] update remaining examples to use BDAs where appropriate
-  - [X] see if there's a way to use ImmutablePtr safely
-    this makes no difference for current examples,
-    but the optimization does matter if you pass the pointer around to functions or similar
-  - [X] migrate remaining examples to BDAs
-  - [ ] remove the descriptor-based storage buffer path now that no example uses it
-    LayoutDescription::Storage, storage_buffer_handles plumbing, StorageBufferFrameStrategy
-    needs fixture rework (shaders/test std430_* and pointer_dual_context elicit StructuredBuffer codegen)
-      maybe we want to keep this around as an example for a WebGPU Slang-based renderer?
-      no; having dead code here will be a misleading problem for me and for models
+    - [X] add a more type-safe way to use BDAs
+      both slang and rust get non-int pointers that include target type
+    - [X] see if it's possible to get read-only/read-write type safety for Addr
+    - [X] update remaining examples to use BDAs where appropriate
+    - [X] see if there's a way to use ImmutablePtr safely
+      this makes no difference for current examples,
+      but the optimization does matter if you pass the pointer around to functions or similar
+    - [X] migrate remaining examples to BDAs
+    - [X] remove the descriptor-based storage buffer path now that no example uses it
+      LayoutDescription::Storage, storage_buffer_handles plumbing, StorageBufferFrameStrategy
+      needs fixture rework (shaders/test std430_* and pointer_dual_context elicit StructuredBuffer codegen)
+        maybe we want to keep this around as an example for a WebGPU Slang-based renderer?
+        no; having dead code here will be a misleading problem for me and for models
 
   - [ ] support bindless textures using slang handles
     - [ ] add the feature to the renderer

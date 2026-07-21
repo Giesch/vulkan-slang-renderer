@@ -59,7 +59,7 @@ disagreeing data — second write silently wins (src/renderer.rs:5109-5128).
 No dirty flag, no diagnostic. The intent mismatch ("each pipeline gets its
 own data") is invisible.
 
-### 7. `sort_storage_by` is a triple footgun
+### 7. `sort_storage_by` is a triple footgun - **done**
 (src/renderer.rs:5130-5142; sole user examples/space_invaders.rs:391)
 - Sorts **only the current slot** → same per-slot divergence class as #1
   unless called every frame.
@@ -68,6 +68,7 @@ own data") is invisible.
 - Comparator **reads persistently-mapped `HOST_ACCESS_SEQUENTIAL_WRITE`
   memory** (src/renderer.rs:3617-3619) — VMA may place it write-combined,
   where reads are pathologically slow.
+- removed 2026-07-21
 
 ### 8. Partial writes leave stale tails; count/data can desync
 A short `write_storage` slice updates only the prefix; the per-slot tail

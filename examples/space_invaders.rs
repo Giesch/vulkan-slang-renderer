@@ -387,8 +387,9 @@ impl Game for SpaceInvaders {
 
             gpu.write_storage(&mut self.debug_boxes_buffer, &self.debug_boxes);
 
-            gpu.write_storage(&mut self.sprites_buffer, &self.sprites);
-            gpu.sort_storage_by(&mut self.sprites_buffer, sprite_draw_order);
+            let mut sorted_sprites = self.sprites.clone();
+            sorted_sprites.sort_by(sprite_draw_order);
+            gpu.write_storage(&mut self.sprites_buffer, &sorted_sprites);
         })
     }
 }
