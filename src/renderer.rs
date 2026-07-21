@@ -2884,6 +2884,17 @@ fn choose_physical_device(
     // this corresponds to the tutorial's 'isDeviceSuitable'
     let mut devices_with_indices_and_props = vec![];
     for physical_device in physical_devices {
+        let props = unsafe { instance.get_physical_device_properties(physical_device) };
+
+        if props.api_version < vk::API_VERSION_1_3 {
+            let device_name = device_name_as_string(props);
+            let major = vk::api_version_major(props.api_version);
+            let minor = vk::api_version_minor(props.api_version);
+            log::warn!("skipping device {device_name}: Vulkan {major}.{minor} < 1.3");
+
+            continue;
+        }
+
         let indices = QueueFamilyIndices::find(instance, surface_ext, surface, physical_device)?;
         let Some(indices) = indices else {
             continue;
@@ -2931,8 +2942,6 @@ fn choose_physical_device(
         .filter(|(supported, _name)| *supported != vk::TRUE)
         .map(|(_supported, name)| name)
         .collect();
-
-        let props = unsafe { instance.get_physical_device_properties(physical_device) };
 
         if !missing_features.is_empty() {
             log::warn!(
