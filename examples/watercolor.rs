@@ -710,12 +710,8 @@ impl Game for Watercolor {
                     )?);
                 }
             }
-            [
-                pipelines.remove(0),
-                pipelines.remove(0),
-                pipelines.remove(0),
-                pipelines.remove(0),
-            ]
+
+            pipelines.try_into().unwrap()
         };
 
         // Capillary flow: 2 pipelines for saturation parity

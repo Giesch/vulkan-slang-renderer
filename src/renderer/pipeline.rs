@@ -15,15 +15,18 @@ pub trait DrawCall {}
 
 /// A marker that the pipeline uses basic cmd_draw draw calls,
 /// passing a vertex count with no other vertex data
+#[derive(Debug)]
 pub struct DrawVertexCount;
 impl DrawCall for DrawVertexCount {}
 
 /// A marker that the pipeline uses cmd_draw_indexed draw calls,
 /// using pre-allocated vertex and index buffers
+#[derive(Debug)]
 pub struct DrawIndexed;
 impl DrawCall for DrawIndexed {}
 
 /// A marker for compute pipelines
+#[derive(Debug)]
 pub struct Compute;
 impl DrawCall for Compute {}
 
