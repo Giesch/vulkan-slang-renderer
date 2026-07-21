@@ -33,13 +33,3 @@ public float bilinearSampleR(
 public bool inBounds(uint2 pixel, float2 gridSize) {
     return pixel.x < uint(gridSize.x) && pixel.y < uint(gridSize.y);
 }
-
-// Gaussian blur constants shared by wc_gaussian_blur and wc_blur_v_and_flow_outward
-
-public static const int BLUR_RADIUS = 10;
-
-// Precomputed weights for exp(-float(i * i) / (2.0 * SIGMA * SIGMA)) where SIGMA = 3.333
-public static const float BLUR_WEIGHTS[11] = {
-    1.0, 0.955997, 0.835214, 0.667013, 0.486752,
-    0.324652, 0.197899, 0.110251, 0.056149, 0.026133, 0.011109
-};

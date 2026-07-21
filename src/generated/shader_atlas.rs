@@ -21,9 +21,9 @@ pub mod space_invaders;
 pub mod sprite_batch;
 pub mod suzanne;
 pub mod wc_advect_and_transfer_pigment_compute;
-pub mod wc_blur_v_and_flow_outward_compute;
 pub mod wc_capillary_flow_compute;
 pub mod wc_divergence_compute;
+pub mod wc_flow_outward_compute;
 pub mod wc_gaussian_blur_compute;
 pub mod wc_pressure_jacobi_compute;
 pub mod wc_project_velocity_compute;
@@ -45,9 +45,9 @@ pub struct ShaderAtlas {
     pub sprite_batch: sprite_batch::Shader,
     pub paint_display: paint_display::Shader,
     pub gpu_picking_id: gpu_picking_id::Shader,
-    pub wc_blur_v_and_flow_outward_compute: wc_blur_v_and_flow_outward_compute::Shader,
     pub wc_update_velocity_compute: wc_update_velocity_compute::Shader,
     pub wc_capillary_flow_compute: wc_capillary_flow_compute::Shader,
+    pub wc_flow_outward_compute: wc_flow_outward_compute::Shader,
     pub wc_advect_and_transfer_pigment_compute: wc_advect_and_transfer_pigment_compute::Shader,
     pub wc_pressure_jacobi_compute: wc_pressure_jacobi_compute::Shader,
     pub wc_project_velocity_compute: wc_project_velocity_compute::Shader,
@@ -75,9 +75,9 @@ impl ShaderAtlas {
             sprite_batch: sprite_batch::Shader::init(),
             paint_display: paint_display::Shader::init(),
             gpu_picking_id: gpu_picking_id::Shader::init(),
-            wc_blur_v_and_flow_outward_compute: wc_blur_v_and_flow_outward_compute::Shader::init(),
             wc_update_velocity_compute: wc_update_velocity_compute::Shader::init(),
             wc_capillary_flow_compute: wc_capillary_flow_compute::Shader::init(),
+            wc_flow_outward_compute: wc_flow_outward_compute::Shader::init(),
             wc_advect_and_transfer_pigment_compute:
                 wc_advect_and_transfer_pigment_compute::Shader::init(),
             wc_pressure_jacobi_compute: wc_pressure_jacobi_compute::Shader::init(),

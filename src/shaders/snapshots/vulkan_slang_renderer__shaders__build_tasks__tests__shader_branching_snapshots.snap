@@ -35,9 +35,9 @@ sprite_batch.vert.spv: 0
 suzanne.frag.spv: 2
 suzanne.vert.spv: 0
 wc_advect_and_transfer_pigment.comp.spv: 15
-wc_blur_v_and_flow_outward.comp.spv: 4
 wc_capillary_flow.comp.spv: 4
 wc_divergence.comp.spv: 2
+wc_flow_outward.comp.spv: 2
 wc_gaussian_blur.comp.spv: 4
 wc_move_pigment.comp.spv: 3
 wc_pressure_jacobi.comp.spv: 2

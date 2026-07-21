@@ -1,11 +1,6 @@
----
-source: src/shaders/build_tasks.rs
-info:
-  relative_path: src/generated/shader_atlas/wc_blur_v_and_flow_outward_compute.rs
----
 // GENERATED FILE (do not edit directly)
 
-//! generated from slang compute shader: wc_blur_v_and_flow_outward.compute.slang
+//! generated from slang compute shader: wc_flow_outward.compute.slang
 
 use std::ffi::CString;
 use std::io::Cursor;
@@ -37,13 +32,12 @@ const _: () = assert!(std::mem::offset_of!(Params, eta) == 8);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
-    pub input_tex: &'a TextureHandle,
+    pub blurred_mask: &'a TextureHandle,
     pub wet_mask: &'a TextureHandle,
     pub pressure: &'a StorageTextureHandle,
     pub saturation: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
-
 
 pub const WORKGROUP_SIZE: [u32; 3] = [16, 16, 1];
 
@@ -55,7 +49,7 @@ impl Shader {
     pub fn init() -> Self {
         let json_str = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/wc_blur_v_and_flow_outward.comp.json"
+            "/shaders/compiled/wc_flow_outward.comp.json"
         ));
 
         let reflection_json: ComputeReflectionJson = serde_json::from_str(json_str).unwrap();
@@ -63,15 +57,12 @@ impl Shader {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config(
-        self,
-        resources: Resources<'_>,
-    ) -> ComputePipelineConfig<'_> {
+    pub fn pipeline_config(self, resources: Resources<'_>) -> ComputePipelineConfig<'_> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.input_tex,
+            resources.blurred_mask,
             resources.wet_mask,
         ];
 
@@ -107,7 +98,7 @@ impl Shader {
     fn comp_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/wc_blur_v_and_flow_outward.comp.spv"
+            "/shaders/compiled/wc_flow_outward.comp.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")

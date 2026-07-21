@@ -16,6 +16,14 @@ struct Params {
     float2 direction; // (1,0) for horizontal, (0,1) for vertical
 }
 
+static const int BLUR_RADIUS = 10;
+
+// Precomputed weights for exp(-float(i * i) / (2.0 * SIGMA * SIGMA)) where SIGMA = 3.333
+static const float BLUR_WEIGHTS[11] = {
+    1.0, 0.955997, 0.835214, 0.667013, 0.486752,
+    0.324652, 0.197899, 0.110251, 0.056149, 0.026133, 0.011109
+};
+
 [numthreads(16, 16, 1)]
 [shader("compute")]
 void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {

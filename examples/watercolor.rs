@@ -19,9 +19,9 @@ use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
 use vulkan_slang_renderer::generated::shader_atlas::paint_brush_compute;
 use vulkan_slang_renderer::generated::shader_atlas::paint_display;
 use vulkan_slang_renderer::generated::shader_atlas::wc_advect_and_transfer_pigment_compute;
-use vulkan_slang_renderer::generated::shader_atlas::wc_blur_v_and_flow_outward_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_capillary_flow_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_divergence_compute;
+use vulkan_slang_renderer::generated::shader_atlas::wc_flow_outward_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_gaussian_blur_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_pressure_jacobi_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_project_velocity_compute;
@@ -150,6 +150,8 @@ struct Watercolor {
     divergence: StorageTextureHandle,
     #[expect(unused)]
     blur_temp: StorageTextureHandle,
+    #[expect(unused)]
+    blurred_mask: StorageTextureHandle,
 
     // Pipelines
     brush_pipelines: [PipelineHandle<Compute>; 2],
@@ -158,7 +160,8 @@ struct Watercolor {
     pressure_jacobi_pipelines: [PipelineHandle<Compute>; 2],
     project_velocity_pipelines: [PipelineHandle<Compute>; 2],
     blur_h_pipelines: [PipelineHandle<Compute>; 2],
-    blur_v_and_flow_pipelines: [PipelineHandle<Compute>; 2],
+    blur_v_pipeline: PipelineHandle<Compute>,
+    flow_outward_pipelines: [PipelineHandle<Compute>; 2],
     advect_and_transfer_pipelines: [PipelineHandle<Compute>; 4], // [sim_parity * 2 + deposit_parity]
     capillary_flow_pipelines: [PipelineHandle<Compute>; 2],
     display_pipelines: [PipelineHandle<DrawVertexCount>; 4], // [wet_mask_parity * 2 + deposit_parity]
@@ -172,7 +175,8 @@ struct Watercolor {
     pressure_jacobi_params_buffer: UniformBufferHandle<wc_pressure_jacobi_compute::Params>,
     project_vel_params_buffer: UniformBufferHandle<wc_project_velocity_compute::Params>,
     blur_h_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
-    blur_v_and_flow_params_buffer: UniformBufferHandle<wc_blur_v_and_flow_outward_compute::Params>,
+    blur_v_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
+    flow_outward_params_buffer: UniformBufferHandle<wc_flow_outward_compute::Params>,
     advect_and_transfer_params_buffer:
         UniformBufferHandle<wc_advect_and_transfer_pigment_compute::Params>,
     capillary_flow_params_buffer: UniformBufferHandle<wc_capillary_flow_compute::Params>,
@@ -443,6 +447,11 @@ impl Game for Watercolor {
         renderer.clear_storage_texture(&blur_temp)?;
         let blur_temp_sampled = renderer.storage_texture_as_sampled(&blur_temp)?;
 
+        let blurred_mask =
+            renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
+        renderer.clear_storage_texture(&blurred_mask)?;
+        let blurred_mask_sampled = renderer.storage_texture_as_sampled(&blurred_mask)?;
+
         // Paper height map
         let paper_height =
             renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
@@ -469,8 +478,10 @@ impl Game for Watercolor {
             renderer.create_uniform_buffer::<wc_project_velocity_compute::Params>()?;
         let blur_h_params_buffer =
             renderer.create_uniform_buffer::<wc_gaussian_blur_compute::Params>()?;
-        let blur_v_and_flow_params_buffer =
-            renderer.create_uniform_buffer::<wc_blur_v_and_flow_outward_compute::Params>()?;
+        let blur_v_params_buffer =
+            renderer.create_uniform_buffer::<wc_gaussian_blur_compute::Params>()?;
+        let flow_outward_params_buffer =
+            renderer.create_uniform_buffer::<wc_flow_outward_compute::Params>()?;
         let advect_and_transfer_params_buffer =
             renderer.create_uniform_buffer::<wc_advect_and_transfer_pigment_compute::Params>()?;
         let capillary_flow_params_buffer =
@@ -644,34 +655,42 @@ impl Game for Watercolor {
             ]
         };
 
-        // Blur V + Flow outward (fused): vertical blur of blur_temp + flow formula into pressure
+        // Gaussian blur V: blur_temp → blurred_mask (single pipeline, neither is ping-ponged)
+        let blur_v_pipeline = {
+            let s = ShaderAtlas::init();
+            renderer.create_compute_pipeline(s.wc_gaussian_blur_compute.pipeline_config(
+                wc_gaussian_blur_compute::Resources {
+                    input_tex: &blur_temp_sampled,
+                    output_tex: &blurred_mask,
+                    params_buffer: &blur_v_params_buffer,
+                },
+            ))?
+        };
+
+        // Flow outward: flow formula from blurred wet mask into pressure + saturation
         // 2 pipelines for wet_mask parity
-        let blur_v_and_flow_pipelines = {
+        let flow_outward_pipelines = {
             let s0 = ShaderAtlas::init();
             let s1 = ShaderAtlas::init();
             [
-                renderer.create_compute_pipeline(
-                    s0.wc_blur_v_and_flow_outward_compute.pipeline_config(
-                        wc_blur_v_and_flow_outward_compute::Resources {
-                            input_tex: &blur_temp_sampled,
-                            wet_mask: wet_mask.read_sampled(false),
-                            pressure: pressure.read_storage(false),
-                            saturation: saturation.read_storage(false),
-                            params_buffer: &blur_v_and_flow_params_buffer,
-                        },
-                    ),
-                )?,
-                renderer.create_compute_pipeline(
-                    s1.wc_blur_v_and_flow_outward_compute.pipeline_config(
-                        wc_blur_v_and_flow_outward_compute::Resources {
-                            input_tex: &blur_temp_sampled,
-                            wet_mask: wet_mask.read_sampled(true),
-                            pressure: pressure.read_storage(false),
-                            saturation: saturation.read_storage(true),
-                            params_buffer: &blur_v_and_flow_params_buffer,
-                        },
-                    ),
-                )?,
+                renderer.create_compute_pipeline(s0.wc_flow_outward_compute.pipeline_config(
+                    wc_flow_outward_compute::Resources {
+                        blurred_mask: &blurred_mask_sampled,
+                        wet_mask: wet_mask.read_sampled(false),
+                        pressure: pressure.read_storage(false),
+                        saturation: saturation.read_storage(false),
+                        params_buffer: &flow_outward_params_buffer,
+                    },
+                ))?,
+                renderer.create_compute_pipeline(s1.wc_flow_outward_compute.pipeline_config(
+                    wc_flow_outward_compute::Resources {
+                        blurred_mask: &blurred_mask_sampled,
+                        wet_mask: wet_mask.read_sampled(true),
+                        pressure: pressure.read_storage(false),
+                        saturation: saturation.read_storage(true),
+                        params_buffer: &flow_outward_params_buffer,
+                    },
+                ))?,
             ]
         };
 
@@ -785,6 +804,7 @@ impl Game for Watercolor {
             deposit_8_11: deposit_8_11_storage,
             divergence,
             blur_temp,
+            blurred_mask,
 
             brush_pipelines,
             update_velocity_pipelines,
@@ -792,7 +812,8 @@ impl Game for Watercolor {
             project_velocity_pipelines,
             pressure_jacobi_pipelines,
             blur_h_pipelines,
-            blur_v_and_flow_pipelines,
+            blur_v_pipeline,
+            flow_outward_pipelines,
             advect_and_transfer_pipelines,
             capillary_flow_pipelines,
             display_pipelines,
@@ -805,7 +826,8 @@ impl Game for Watercolor {
             pressure_jacobi_params_buffer,
             project_vel_params_buffer,
             blur_h_params_buffer,
-            blur_v_and_flow_params_buffer,
+            blur_v_params_buffer,
+            flow_outward_params_buffer,
             advect_and_transfer_params_buffer,
             capillary_flow_params_buffer,
 
@@ -968,10 +990,17 @@ impl Game for Watercolor {
             compute_barrier(&mut renderer);
         }
 
-        // 7. Blur V + Flow outward (fused: vertical blur of blur_temp → flow formula into pressure)
+        // 7. Gaussian blur V (blur_temp → blurred_mask)
         {
-            let (wx, wy) = workgroups(wc_blur_v_and_flow_outward_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.blur_v_and_flow_pipelines[sim as usize], wx, wy, 1);
+            let (wx, wy) = workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE);
+            renderer.dispatch(&self.blur_v_pipeline, wx, wy, 1);
+            compute_barrier(&mut renderer);
+        }
+
+        // 8. Flow outward (blurred_mask → flow formula into pressure + saturation)
+        {
+            let (wx, wy) = workgroups(wc_flow_outward_compute::WORKGROUP_SIZE);
+            renderer.dispatch(&self.flow_outward_pipelines[sim as usize], wx, wy, 1);
             compute_barrier(&mut renderer);
         }
 
@@ -997,7 +1026,7 @@ impl Game for Watercolor {
         // barrier needed. A compute→compute barrier suffices for next frame's reads.
         compute_barrier(&mut renderer);
 
-        // 12. Display
+        // 11. Display
         let grid_size = Vec2::new(CANVAS_WIDTH as f32, CANVAS_HEIGHT as f32);
         let texel_size = Vec2::new(1.0 / CANVAS_WIDTH as f32, 1.0 / CANVAS_HEIGHT as f32);
         let window_size = renderer.window_resolution();
@@ -1014,7 +1043,8 @@ impl Game for Watercolor {
         let pressure_jacobi_params_buffer = &mut self.pressure_jacobi_params_buffer;
         let project_vel_params_buffer = &mut self.project_vel_params_buffer;
         let blur_h_params_buffer = &mut self.blur_h_params_buffer;
-        let blur_v_and_flow_params_buffer = &mut self.blur_v_and_flow_params_buffer;
+        let blur_v_params_buffer = &mut self.blur_v_params_buffer;
+        let flow_outward_params_buffer = &mut self.flow_outward_params_buffer;
         let advect_and_transfer_params_buffer = &mut self.advect_and_transfer_params_buffer;
         let capillary_flow_params_buffer = &mut self.capillary_flow_params_buffer;
 
@@ -1105,8 +1135,16 @@ impl Game for Watercolor {
             );
 
             gpu.write_uniform(
-                blur_v_and_flow_params_buffer,
-                wc_blur_v_and_flow_outward_compute::Params {
+                blur_v_params_buffer,
+                wc_gaussian_blur_compute::Params {
+                    grid_size,
+                    direction: Vec2::new(0.0, 1.0),
+                },
+            );
+
+            gpu.write_uniform(
+                flow_outward_params_buffer,
+                wc_flow_outward_compute::Params {
                     grid_size,
                     eta: ETA,
                     _padding_0: Default::default(),

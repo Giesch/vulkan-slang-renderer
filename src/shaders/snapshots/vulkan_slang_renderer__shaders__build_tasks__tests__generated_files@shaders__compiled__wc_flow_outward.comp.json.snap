@@ -1,5 +1,10 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: shaders/compiled/wc_flow_outward.comp.json
+---
 {
-  "sourceFileName": "wc_blur_v_and_flow_outward.compute.slang",
+  "sourceFileName": "wc_flow_outward.compute.slang",
   "globalParameters": [
     {
       "kind": "parameterBlock",
@@ -9,7 +14,7 @@
         "fields": [
           {
             "kind": "resource",
-            "fieldName": "inputTex",
+            "fieldName": "blurredMask",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 1,
