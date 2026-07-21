@@ -21,9 +21,7 @@ impl<T> StorageBufferHandle<T> {
 
 /// A storage buffer that nothing on the GPU ever writes
 ///
-/// This means that:
-///   1. it can only mint `ImmutableAddr<T>` (never a writable `Addr<T>`)
-///   2. it cannot be bound as a descriptor (no `RawStorageBufferHandle` conversion).
+/// It can only mint `ImmutableAddr<T>` (never a writable `Addr<T>`).
 ///
 /// The CPU may still update it between frames via `Gpu::write_immutable`
 #[derive(Debug)]
@@ -48,8 +46,7 @@ impl<T> ImmutableBufferHandle<T> {
 /// pointer: an in-flight frame's read of the previous slot cannot race a CPU
 /// write that no longer exists.
 ///
-/// Initialize with `Renderer::write_gpu_only_all_frames`. Not bindable as a
-/// descriptor (no `RawStorageBufferHandle` conversion).
+/// Initialize with `Renderer::write_gpu_only_all_frames`.
 #[derive(Debug)]
 pub struct GpuOnlyBufferHandle<T> {
     index: usize,
@@ -98,13 +95,6 @@ impl StorageBufferStorage {
         handle
     }
 
-    pub fn get_raw(
-        &self,
-        handle: &RawStorageBufferHandle,
-    ) -> &[RawStorageBuffer; PRE_WAIT_RING_LEN] {
-        self.0[handle.index].as_ref().unwrap()
-    }
-
     pub(super) fn get_device_address_for_frame<T>(
         &self,
         handle: &StorageBufferHandle<T>,
@@ -130,8 +120,7 @@ impl StorageBufferStorage {
     }
 
     // Immutable buffers share this storage; the distinct handle type (with no
-    // RawStorageBufferHandle conversion and no Addr accessors) is what keeps
-    // them un-bindable and un-writable on the GPU.
+    // Addr accessors) is what keeps them un-writable on the GPU.
 
     pub fn add_immutable<T>(
         &mut self,
@@ -221,18 +210,5 @@ impl StorageBufferStorage {
             .iter_mut()
             .filter_map(|option| option.take())
             .collect()
-    }
-}
-
-// NOTE find a way to limit this to generated code
-//   would need to make PipelineConfig fields private
-pub struct RawStorageBufferHandle {
-    index: usize,
-}
-
-impl RawStorageBufferHandle {
-    pub fn from_typed<T>(handle: &StorageBufferHandle<T>) -> Self {
-        let index = handle.index;
-        Self { index }
     }
 }

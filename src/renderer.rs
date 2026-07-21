@@ -1006,13 +1006,6 @@ impl Renderer {
                 .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
                 .collect();
 
-        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer; PRE_WAIT_RING_LEN]> =
-            picking_config
-                .storage_buffer_handles
-                .iter()
-                .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
-                .collect();
-
         let set_layouts: Vec<_> = picking_pipeline_layout
             .descriptor_set_layouts
             .iter()
@@ -1023,11 +1016,9 @@ impl Renderer {
             descriptor_pool,
             &set_layouts,
             &uniform_buffers_in_layout_frame_order,
-            &storage_buffers_in_layout_frame_order,
             &[],
             &[],
             layout_bindings,
-            StorageBufferFrameStrategy::Standard,
         )?;
 
         let renderer_pipeline = RendererPipeline {
@@ -1137,13 +1128,6 @@ impl Renderer {
                 .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
                 .collect();
 
-        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer; PRE_WAIT_RING_LEN]> =
-            config
-                .storage_buffer_handles
-                .iter()
-                .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
-                .collect();
-
         let storage_images: Vec<&storage_texture::StorageTexture> = config
             .storage_texture_handles
             .iter()
@@ -1160,11 +1144,9 @@ impl Renderer {
             descriptor_pool,
             &set_layouts,
             &uniform_buffers_in_layout_frame_order,
-            &storage_buffers_in_layout_frame_order,
             &textures,
             &storage_images,
             layout_bindings,
-            config.storage_buffer_frame_strategy,
         )?;
 
         let compute_renderer_pipeline = ComputeRendererPipeline {
@@ -1274,13 +1256,6 @@ impl Renderer {
                 .map(|raw_handle| self.uniform_buffers.get_raw(raw_handle))
                 .collect();
 
-        let storage_buffers_in_layout_frame_order: Vec<&[RawStorageBuffer; PRE_WAIT_RING_LEN]> =
-            config
-                .storage_buffer_handles
-                .iter()
-                .map(|raw_handle| self.storage_buffers.get_raw(raw_handle))
-                .collect();
-
         let storage_images: Vec<&storage_texture::StorageTexture> = config
             .storage_texture_handles
             .iter()
@@ -1297,11 +1272,9 @@ impl Renderer {
             descriptor_pool,
             &set_layouts,
             &uniform_buffers_in_layout_frame_order,
-            &storage_buffers_in_layout_frame_order,
             &textures,
             &storage_images,
             layout_bindings,
-            config.storage_buffer_frame_strategy,
         )?;
 
         Ok(RendererPipeline {
@@ -3660,9 +3633,6 @@ fn descriptor_pool_sizes(
             .ty(vk::DescriptorType::UNIFORM_BUFFER)
             .descriptor_count(sets_across_frames * total_counts.uniform_buffers),
         vk::DescriptorPoolSize::default()
-            .ty(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(sets_across_frames * total_counts.storage_buffers),
-        vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .descriptor_count(sets_across_frames * total_counts.combined_texture_samplers),
         vk::DescriptorPoolSize::default()
@@ -3725,20 +3695,11 @@ fn create_descriptor_pool(
 pub enum LayoutDescription {
     Uniform(UniformBufferDescription),
     Texture(TextureDescription),
-    Storage(StorageBufferDescription),
     StorageImage(StorageImageDescription),
 }
 
 #[derive(Debug)]
 pub struct UniformBufferDescription {
-    pub size: u64,
-    pub binding: u32,
-    // the number of descriptors in the descriptor set
-    pub descriptor_count: u32,
-}
-
-#[derive(Debug)]
-pub struct StorageBufferDescription {
     pub size: u64,
     pub binding: u32,
     // the number of descriptors in the descriptor set
@@ -3766,11 +3727,9 @@ fn create_descriptor_sets(
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layouts: &[vk::DescriptorSetLayout],
     uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer; PRE_WAIT_RING_LEN]],
-    storage_buffers_in_layout_frame_order: &[&[RawStorageBuffer; PRE_WAIT_RING_LEN]],
     textures: &[&Texture],
     storage_images: &[&storage_texture::StorageTexture],
     layout_bindings: Vec<Vec<LayoutDescription>>,
-    storage_buffer_frame_strategy: StorageBufferFrameStrategy,
 ) -> Result<Vec<vk::DescriptorSet>, anyhow::Error> {
     // this vec and the resulting vec of descriptor sets are arranged like this:
     // [
@@ -3797,7 +3756,6 @@ fn create_descriptor_sets(
 
     for frame in 0..PRE_WAIT_RING_LEN {
         let mut uniform_buffer_index = 0;
-        let mut storage_buffer_index = 0;
         let mut texture_index = 0;
         let mut storage_image_index = 0;
 
@@ -3830,43 +3788,6 @@ fn create_descriptor_sets(
                         let writes = [uniform_buffer_write];
                         unsafe { device.update_descriptor_sets(&writes, &[]) };
                         uniform_buffer_index += 1;
-                    }
-
-                    LayoutDescription::Storage(storage_buffer_description) => {
-                        let raw_storage_buffers_by_frame =
-                            storage_buffers_in_layout_frame_order[storage_buffer_index];
-                        let offset =
-                            match storage_buffer_frame_strategy {
-                                StorageBufferFrameStrategy::Standard => 0,
-                                StorageBufferFrameStrategy::PingPong => {
-                                    if storage_buffer_index == 0 { -1 } else { 0 }
-                                }
-                            };
-                        let effective_frame =
-                            ((frame as i32 + offset).rem_euclid(PRE_WAIT_RING_LEN as i32)) as usize;
-                        let storage_buffer: vk::Buffer =
-                            raw_storage_buffers_by_frame[effective_frame].buffer;
-
-                        // "If range is not equal to VK_WHOLE_SIZE, range must be less than or equal to the size of buffer minus offset"
-                        // https://docs.vulkan.org/refpages/latest/refpages/source/VkDescriptorBufferInfo.html
-                        let mem_reqs =
-                            unsafe { device.get_buffer_memory_requirements(storage_buffer) };
-                        let buffer_info = vk::DescriptorBufferInfo::default()
-                            .offset(0)
-                            .buffer(storage_buffer)
-                            .range(mem_reqs.size);
-                        let buffer_info = [buffer_info];
-                        let storage_buffer_write = vk::WriteDescriptorSet::default()
-                            .dst_set(dst_set)
-                            .dst_binding(storage_buffer_description.binding)
-                            .dst_array_element(0)
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                            .descriptor_count(storage_buffer_description.descriptor_count)
-                            .buffer_info(&buffer_info);
-
-                        let writes = [storage_buffer_write];
-                        unsafe { device.update_descriptor_sets(&writes, &[]) };
-                        storage_buffer_index += 1;
                     }
 
                     LayoutDescription::Texture(texture_description) => {
@@ -4951,7 +4872,6 @@ impl shaders::json::ReflectedBindingType {
             Self::Texture => vk::DescriptorType::SAMPLED_IMAGE,
             Self::ConstantBuffer => vk::DescriptorType::UNIFORM_BUFFER,
             Self::CombinedTextureSampler => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            Self::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
             Self::StorageImage => vk::DescriptorType::STORAGE_IMAGE,
         }
     }
@@ -4997,7 +4917,6 @@ impl shaders::json::ReflectedPipelineLayout {
 #[derive(Debug, Clone, Copy)]
 struct DescriptorCounts {
     uniform_buffers: u32,
-    storage_buffers: u32,
     combined_texture_samplers: u32,
     sampled_images: u32,
     storage_images: u32,
@@ -5020,7 +4939,6 @@ impl std::ops::Add for DescriptorCounts {
     fn add(self, rhs: Self) -> Self::Output {
         Self {
             uniform_buffers: self.uniform_buffers + rhs.uniform_buffers,
-            storage_buffers: self.storage_buffers + rhs.storage_buffers,
             combined_texture_samplers: self.combined_texture_samplers
                 + rhs.combined_texture_samplers,
             sampled_images: self.sampled_images + rhs.sampled_images,
@@ -5032,7 +4950,6 @@ impl std::ops::Add for DescriptorCounts {
 impl DescriptorCounts {
     const ZERO: Self = Self {
         uniform_buffers: 0,
-        storage_buffers: 0,
         combined_texture_samplers: 0,
         sampled_images: 0,
         storage_images: 0,
@@ -5040,7 +4957,6 @@ impl DescriptorCounts {
 
     fn from_descriptor_set_layout(set_layout: &ReflectedDescriptorSetLayout) -> Self {
         let mut uniform_buffers = 0;
-        let mut storage_buffers = 0;
         let mut combined_texture_samplers = 0;
         let mut sampled_images = 0;
         let mut storage_images = 0;
@@ -5048,9 +4964,6 @@ impl DescriptorCounts {
             match binding.descriptor_type {
                 shaders::json::ReflectedBindingType::ConstantBuffer => {
                     uniform_buffers += 1;
-                }
-                shaders::json::ReflectedBindingType::StorageBuffer => {
-                    storage_buffers += 1;
                 }
                 shaders::json::ReflectedBindingType::CombinedTextureSampler => {
                     combined_texture_samplers += 1;
@@ -5069,7 +4982,6 @@ impl DescriptorCounts {
 
         Self {
             uniform_buffers,
-            storage_buffers,
             combined_texture_samplers,
             sampled_images,
             storage_images,

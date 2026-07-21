@@ -68,10 +68,6 @@ impl Shader {
         ];
 
         #[rustfmt::skip]
-        let storage_buffer_handles = vec![
-        ];
-
-        #[rustfmt::skip]
         let storage_texture_handles = vec![
             resources.pressure_out,
         ];
@@ -80,9 +76,7 @@ impl Shader {
             shader: Box::new(self),
             texture_handles,
             uniform_buffer_handles,
-            storage_buffer_handles,
             storage_texture_handles,
-            storage_buffer_frame_strategy: StorageBufferFrameStrategy::default(),
         }
     }
 

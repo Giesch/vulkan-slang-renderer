@@ -13,16 +13,14 @@ info:
         "typeName": "Params",
         "fields": [
           {
-            "kind": "resource",
+            "kind": "pointer",
             "fieldName": "data",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 0,
-              "count": 1
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
             },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
+            "pointeeType": {
               "typeName": "MixedData",
               "fields": [
                 {
@@ -98,7 +96,9 @@ info:
                   }
                 }
               ]
-            }
+            },
+            "pointeeSize": 64,
+            "access": "readWrite"
           }
         ]
       }
@@ -127,10 +127,10 @@ info:
         "bindingRanges": [
           {
             "binding": 0,
-            "descriptorType": "storageBuffer",
+            "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 0
+            "size": 16
           }
         ]
       }

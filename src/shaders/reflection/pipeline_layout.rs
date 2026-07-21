@@ -324,7 +324,12 @@ impl ReflectedBindingType {
             slang::BindingType::Texture => Self::Texture,
             slang::BindingType::ConstantBuffer => Self::ConstantBuffer,
             slang::BindingType::CombinedTextureSampler => Self::CombinedTextureSampler,
-            slang::BindingType::RawBuffer => Self::StorageBuffer,
+            // unreachable in practice: parameters reflection rejects structured
+            // buffers first with a friendlier, field-specific error
+            slang::BindingType::RawBuffer | slang::BindingType::MutableRawBuffer => panic!(
+                "StructuredBuffer descriptors are unsupported; \
+                use a BDA pointer (LayoutPtr<T, Std430DataLayout>) instead"
+            ),
 
             slang::BindingType::PushConstant => todo!(),
             slang::BindingType::ParameterBlock => todo!(),
@@ -339,7 +344,6 @@ impl ReflectedBindingType {
             slang::BindingType::MutableFlag => todo!(),
             slang::BindingType::MutableTeture => Self::StorageImage,
             slang::BindingType::MutableTypedBuffer => todo!(),
-            slang::BindingType::MutableRawBuffer => Self::StorageBuffer,
             slang::BindingType::BaseMask => todo!(),
             slang::BindingType::ExtMask => todo!(),
             slang::BindingType::Unknown => todo!(),

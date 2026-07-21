@@ -8,7 +8,7 @@ module std430_mixed_fields;
 ParameterBlock<Params> params;
 
 struct Params {
-    StructuredBuffer<MixedData> data;
+    LayoutPtr<MixedData, Std430DataLayout> data;
 }
 
 struct MixedData {

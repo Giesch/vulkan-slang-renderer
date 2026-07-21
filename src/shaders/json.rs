@@ -50,8 +50,7 @@ pub fn layout_bindings_from_pipeline_layout(
             use ash::vk;
 
             use crate::renderer::{
-                StorageBufferDescription, StorageImageDescription, TextureDescription,
-                UniformBufferDescription,
+                StorageImageDescription, TextureDescription, UniformBufferDescription,
             };
             use crate::shaders::json::ReflectedBindingType;
 
@@ -62,14 +61,6 @@ pub fn layout_bindings_from_pipeline_layout(
                 .map(|b| match b.descriptor_type {
                     ReflectedBindingType::ConstantBuffer => {
                         LayoutDescription::Uniform(UniformBufferDescription {
-                            size: b.size as u64,
-                            binding: b.binding,
-                            descriptor_count: 1,
-                        })
-                    }
-
-                    ReflectedBindingType::StorageBuffer => {
-                        LayoutDescription::Storage(StorageBufferDescription {
                             size: b.size as u64,
                             binding: b.binding,
                             descriptor_count: 1,

@@ -175,7 +175,6 @@ pub struct ResourceStructField {
 pub enum ResourceShape {
     Texture2D,
     RWTexture2D,
-    StructuredBuffer,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

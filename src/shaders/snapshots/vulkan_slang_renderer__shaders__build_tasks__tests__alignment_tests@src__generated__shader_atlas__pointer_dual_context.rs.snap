@@ -28,13 +28,15 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[repr(C, align(16))]
 pub struct Params {
     pub by_pointer: Addr<DualData>,
-    pub _padding_0: [u8; 8],
+    pub by_read: ReadAddr<DualData>,
 }
 
 impl GPUWrite for Params {}
 const _: () = assert!(std::mem::size_of::<Params>() == 16);
 const _: () = assert!(std::mem::offset_of!(Params, by_pointer) == 0);
 const _: () = assert!(std::mem::size_of::<Addr<DualData>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, by_read) == 8);
+const _: () = assert!(std::mem::size_of::<ReadAddr<DualData>>() == 8);
 
 #[derive(Debug, Clone, Serialize)]
 #[repr(C, align(16))]
@@ -54,7 +56,6 @@ const _: () = assert!(std::mem::offset_of!(DualData, color) == 16);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 
 pub struct Resources<'a> {
-    pub by_buffer: &'a StorageBufferHandle<DualData>,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -92,11 +93,6 @@ impl Shader {
         ];
 
         #[rustfmt::skip]
-        let storage_buffer_handles = vec![
-            RawStorageBufferHandle::from_typed(resources.by_buffer),
-        ];
-
-        #[rustfmt::skip]
         let storage_texture_handles = vec![
         ];
 
@@ -107,9 +103,7 @@ impl Shader {
             vertex_config,
             texture_handles,
             uniform_buffer_handles,
-            storage_buffer_handles,
             storage_texture_handles,
-            storage_buffer_frame_strategy: StorageBufferFrameStrategy::default(),
             disable_depth_test: false,
         }
         .build()

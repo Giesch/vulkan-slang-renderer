@@ -388,9 +388,6 @@ fn collect_graphics_shader_data(
                 RequiredResourceType::UniformBuffer(element_type_name) => {
                     format!("&'a UniformBufferHandle<{element_type_name}>")
                 }
-                RequiredResourceType::StructuredBuffer(element_type_name) => {
-                    format!("&'a StorageBufferHandle<{element_type_name}>")
-                }
                 RequiredResourceType::StorageTexture2D => "&'a StorageTextureHandle".to_string(),
             };
 
@@ -415,7 +412,6 @@ fn collect_graphics_shader_data(
     // NOTE these must be in descriptor set layout order in the reflection json
     let mut resources_texture_fields: Vec<String> = vec![];
     let mut resources_uniform_buffer_fields: Vec<String> = vec![];
-    let mut resources_storage_buffer_fields: Vec<String> = vec![];
     let mut resources_storage_texture_fields: Vec<String> = vec![];
     for res in &required_resources {
         match res.resource_type {
@@ -426,9 +422,6 @@ fn collect_graphics_shader_data(
             }
             RequiredResourceType::UniformBuffer(_) => {
                 resources_uniform_buffer_fields.push(res.field_name.clone());
-            }
-            RequiredResourceType::StructuredBuffer(_) => {
-                resources_storage_buffer_fields.push(res.field_name.clone());
             }
             RequiredResourceType::StorageTexture2D => {
                 resources_storage_texture_fields.push(res.field_name.clone());
@@ -442,7 +435,6 @@ fn collect_graphics_shader_data(
         vertex_type_name,
         resources_texture_fields,
         resources_uniform_buffer_fields,
-        resources_storage_buffer_fields,
         resources_storage_texture_fields,
     };
 
@@ -533,7 +525,6 @@ struct GeneratedComputeShaderImpl {
     workgroup_size: [u32; 3],
     resources_texture_fields: Vec<String>,
     resources_uniform_buffer_fields: Vec<String>,
-    resources_storage_buffer_fields: Vec<String>,
     resources_storage_texture_fields: Vec<String>,
 }
 
@@ -544,7 +535,6 @@ struct GeneratedShaderImpl {
     vertex_type_name: Option<String>,
     resources_texture_fields: Vec<String>,
     resources_uniform_buffer_fields: Vec<String>,
-    resources_storage_buffer_fields: Vec<String>,
     resources_storage_texture_fields: Vec<String>,
 }
 
@@ -623,9 +613,6 @@ fn collect_compute_shader_data(
                 RequiredResourceType::UniformBuffer(element_type_name) => {
                     format!("&'a UniformBufferHandle<{element_type_name}>")
                 }
-                RequiredResourceType::StructuredBuffer(element_type_name) => {
-                    format!("&'a StorageBufferHandle<{element_type_name}>")
-                }
                 RequiredResourceType::StorageTexture2D => "&'a StorageTextureHandle".to_string(),
             };
 
@@ -650,7 +637,6 @@ fn collect_compute_shader_data(
     // NOTE these must be in descriptor set layout order in the reflection json
     let mut resources_texture_fields: Vec<String> = vec![];
     let mut resources_uniform_buffer_fields: Vec<String> = vec![];
-    let mut resources_storage_buffer_fields: Vec<String> = vec![];
     let mut resources_storage_texture_fields: Vec<String> = vec![];
     for res in &required_resources {
         match res.resource_type {
@@ -660,9 +646,6 @@ fn collect_compute_shader_data(
             }
             RequiredResourceType::UniformBuffer(_) => {
                 resources_uniform_buffer_fields.push(res.field_name.clone());
-            }
-            RequiredResourceType::StructuredBuffer(_) => {
-                resources_storage_buffer_fields.push(res.field_name.clone());
             }
             RequiredResourceType::StorageTexture2D => {
                 resources_storage_texture_fields.push(res.field_name.clone());
@@ -676,7 +659,6 @@ fn collect_compute_shader_data(
         workgroup_size: reflection_json.workgroup_size,
         resources_texture_fields,
         resources_uniform_buffer_fields,
-        resources_storage_buffer_fields,
         resources_storage_texture_fields,
     };
 
@@ -868,50 +850,8 @@ fn gather_struct_defs(
     alignment: Option<Alignment>,
 ) -> Option<GeneratedStructFieldDefinition> {
     match field {
-        StructField::Resource(res) => {
-            match &res.resource_shape {
-                ResourceShape::Texture2D | ResourceShape::RWTexture2D => None,
-
-                ResourceShape::StructuredBuffer => {
-                    match &res.result_type {
-                        ResourceResultType::Scalar(_) => {}
-
-                        ResourceResultType::Vector(vector_result_type) => {
-                            match vector_result_type.element_type {
-                                VectorElementType::Scalar(_) => {}
-                            };
-                        }
-
-                        ResourceResultType::Struct(struct_result_type) => {
-                            // Storage buffer struct - need to calculate std430 layout
-                            let (fields, struct_alignment, expected_size) =
-                                generate_std430_struct_fields(
-                                    &struct_result_type.fields,
-                                    struct_defs,
-                                );
-
-                            let alignment = Some(Alignment::Std430 { struct_alignment });
-
-                            try_add_struct_def(
-                                struct_defs,
-                                GeneratedStructDefinition {
-                                    type_name: struct_result_type.type_name.clone(),
-                                    source_module: None,
-                                    fields,
-                                    trait_derives: vec!["Debug", "Clone", "Serialize"],
-                                    alignment,
-                                    expected_size: Some(expected_size),
-                                },
-                            );
-                        }
-                    }
-
-                    // NOTE handled via resoruces;
-                    // not a field of the uniform buffer struct
-                    None
-                }
-            }
-        }
+        // textures are handled via resources; not a field of the uniform buffer struct
+        StructField::Resource(_) => None,
 
         StructField::Scalar(scalar) => {
             let field_type = match scalar.scalar_type {
@@ -1074,40 +1014,9 @@ fn required_resource(field: &StructField) -> Option<RequiredResource> {
                 field_name: res.field_name.to_snake_case(),
                 resource_type: RequiredResourceType::StorageTexture2D,
             }),
-
-            ResourceShape::StructuredBuffer => Some(RequiredResource {
-                field_name: res.field_name.to_snake_case(),
-                resource_type: RequiredResourceType::StructuredBuffer(resource_type_name(
-                    &res.result_type,
-                )),
-            }),
         },
 
         _ => None,
-    }
-}
-
-fn resource_type_name(result_type: &ResourceResultType) -> String {
-    match result_type {
-        ResourceResultType::Scalar(s) => match s.scalar_type {
-            ScalarType::Float32 => "f32".to_string(),
-            ScalarType::Uint32 => "u32".to_string(),
-            ScalarType::Uint64 => "u64".to_string(),
-        },
-
-        ResourceResultType::Vector(v) => match &v.element_type {
-            VectorElementType::Scalar(s) => {
-                let element_type = match s.scalar_type {
-                    ScalarType::Float32 => "f32",
-                    ScalarType::Uint32 => "u32",
-                    ScalarType::Uint64 => "u64",
-                };
-
-                format!("Vec<{element_type}>")
-            }
-        },
-
-        ResourceResultType::Struct(s) => s.type_name.clone(),
     }
 }
 
@@ -1246,7 +1155,6 @@ enum RequiredResourceType {
     Texture,
     StorageTexture2D,
     UniformBuffer(String),
-    StructuredBuffer(String),
 }
 
 /// Extracts offset and size from a StructField's binding
@@ -1962,6 +1870,54 @@ float4 fragMain() : SV_Target {
         let message = format!("{err:#}");
         assert!(
             message.contains("Std430DataLayout") && message.contains("Addr<"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn structured_buffer_is_rejected() {
+        let tmp_dir = std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let source = r#"#language slang 2026
+
+module structured_buffer;
+
+struct Item {
+    float4 value;
+}
+
+struct Params {
+    StructuredBuffer<Item> items;
+}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return params.items[id].value;
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        std::fs::write(tmp_dir.join("structured_buffer.shader.slang"), source).unwrap();
+
+        let result =
+            prepare_reflected_shader("structured_buffer.shader.slang", tmp_dir.to_str().unwrap());
+
+        std::fs::remove_dir_all(&tmp_dir).ok();
+
+        let err = match result {
+            Ok(_) => panic!("a StructuredBuffer field must be rejected"),
+            Err(err) => err,
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("StructuredBuffer") && message.contains("BDA pointer"),
             "unexpected error message: {message}"
         );
     }

@@ -273,7 +273,11 @@ fn reflect_struct_fields(
                             ResourceShape::Texture2D
                         }
                     }
-                    slang::ResourceShape::SlangStructuredBuffer => ResourceShape::StructuredBuffer,
+                    slang::ResourceShape::SlangStructuredBuffer => anyhow::bail!(
+                        "field '{field_name}': StructuredBuffer/RWStructuredBuffer descriptors \
+                        are unsupported; use a BDA pointer instead (e.g. Addr<T> via import addr, \
+                        or LayoutPtr<T, Std430DataLayout>)"
+                    ),
                     s => todo!("unhandled slang base shape: {s:?}"),
                 };
 

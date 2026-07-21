@@ -9,7 +9,7 @@ module std430_nested_structs;
 ParameterBlock<Params> params;
 
 struct Params {
-    StructuredBuffer<OuterData> data;
+    LayoutPtr<OuterData, Std430DataLayout> data;
 }
 
 struct InnerData {

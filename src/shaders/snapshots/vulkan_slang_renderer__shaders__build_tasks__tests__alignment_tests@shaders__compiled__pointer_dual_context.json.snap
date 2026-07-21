@@ -67,16 +67,14 @@ info:
             "access": "readWrite"
           },
           {
-            "kind": "resource",
-            "fieldName": "by_buffer",
+            "kind": "pointer",
+            "fieldName": "by_read",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
             },
-            "resourceShape": "structuredBuffer",
-            "resultType": {
-              "kind": "struct",
+            "pointeeType": {
               "typeName": "DualData",
               "fields": [
                 {
@@ -118,7 +116,9 @@ info:
                   }
                 }
               ]
-            }
+            },
+            "pointeeSize": 32,
+            "access": "read"
           }
         ]
       }
@@ -148,13 +148,6 @@ info:
           {
             "binding": 0,
             "descriptorType": "constantBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 16
-          },
-          {
-            "binding": 1,
-            "descriptorType": "storageBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 16

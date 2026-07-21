@@ -11,7 +11,7 @@ module std430_matrices;
 ParameterBlock<Params> params;
 
 struct Params {
-    StructuredBuffer<MatrixData> data;
+    LayoutPtr<MatrixData, Std430DataLayout> data;
 }
 
 struct MatrixData {

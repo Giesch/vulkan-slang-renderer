@@ -9,7 +9,7 @@ module std430_vectors;
 ParameterBlock<Params> params;
 
 struct Params {
-    StructuredBuffer<VectorData> data;
+    LayoutPtr<VectorData, Std430DataLayout> data;
 }
 
 struct VectorData {

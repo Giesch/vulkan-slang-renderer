@@ -130,10 +130,6 @@ impl Shader {
         ];
 
         #[rustfmt::skip]
-        let storage_buffer_handles = vec![
-        ];
-
-        #[rustfmt::skip]
         let storage_texture_handles = vec![
         ];
 
@@ -144,9 +140,7 @@ impl Shader {
             vertex_config,
             texture_handles,
             uniform_buffer_handles,
-            storage_buffer_handles,
             storage_texture_handles,
-            storage_buffer_frame_strategy: StorageBufferFrameStrategy::default(),
             disable_depth_test: false,
         }
         .build()

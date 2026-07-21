@@ -9,20 +9,12 @@ pub use vertex_description::*;
 use std::marker::PhantomData;
 
 pub struct UniformBufferHandle<T>(PhantomData<T>);
-pub struct StorageBufferHandle<T>(PhantomData<T>);
 pub struct TextureHandle;
 pub struct StorageTextureHandle;
 
 pub struct RawUniformBufferHandle;
 impl RawUniformBufferHandle {
     pub fn from_typed<T>(_: &UniformBufferHandle<T>) -> Self {
-        Self
-    }
-}
-
-pub struct RawStorageBufferHandle;
-impl RawStorageBufferHandle {
-    pub fn from_typed<T>(_: &StorageBufferHandle<T>) -> Self {
         Self
     }
 }
@@ -42,21 +34,12 @@ pub enum VertexConfig<V> {
     VertexCount,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub enum StorageBufferFrameStrategy {
-    #[default]
-    Standard,
-    PingPong,
-}
-
 pub struct PipelineConfigBuilder<'a, V> {
     pub shader: Box<dyn crate::shaders::atlas::ShaderAtlasEntry>,
     pub vertex_config: VertexConfig<V>,
     pub texture_handles: Vec<&'a TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
-    pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
     pub storage_texture_handles: Vec<&'a StorageTextureHandle>,
-    pub storage_buffer_frame_strategy: StorageBufferFrameStrategy,
     pub disable_depth_test: bool,
 }
 
@@ -64,9 +47,7 @@ pub struct ComputePipelineConfig<'a> {
     pub shader: Box<dyn crate::shaders::atlas::ComputeShaderAtlasEntry>,
     pub texture_handles: Vec<&'a TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
-    pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
     pub storage_texture_handles: Vec<&'a StorageTextureHandle>,
-    pub storage_buffer_frame_strategy: StorageBufferFrameStrategy,
 }
 
 impl<'a, V> PipelineConfigBuilder<'a, V> {

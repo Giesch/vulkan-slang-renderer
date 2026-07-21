@@ -9,7 +9,7 @@ module std430_vec3_padding;
 ParameterBlock<Params> params;
 
 struct Params {
-    StructuredBuffer<Vec3Data> data;
+    LayoutPtr<Vec3Data, Std430DataLayout> data;
 }
 
 struct Vec3Data {

@@ -47,7 +47,6 @@ pub enum ReflectedBindingType {
     Texture,
     ConstantBuffer,
     CombinedTextureSampler,
-    StorageBuffer,
     StorageImage,
 }
 

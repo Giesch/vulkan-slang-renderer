@@ -8,7 +8,7 @@ module std430_scalars;
 ParameterBlock<Params> params;
 
 struct Params {
-    StructuredBuffer<ScalarData> data;
+    LayoutPtr<ScalarData, Std430DataLayout> data;
 }
 
 struct ScalarData {

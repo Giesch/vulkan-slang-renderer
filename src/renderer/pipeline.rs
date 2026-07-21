@@ -6,8 +6,8 @@ use crate::shaders::atlas::{ComputeShaderAtlasEntry, ShaderAtlasEntry};
 
 use super::vertex_description::VertexDescription;
 use super::{
-    ComputeShaderPipelineLayout, RawStorageBufferHandle, RawUniformBufferHandle,
-    ShaderPipelineLayout, StorageTextureHandle, TextureHandle,
+    ComputeShaderPipelineLayout, RawUniformBufferHandle, ShaderPipelineLayout,
+    StorageTextureHandle, TextureHandle,
 };
 
 /// A marker trait for different draw call types
@@ -128,13 +128,6 @@ pub(super) struct VertexAndIndexBuffers {
     pub(super) index_count: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub enum StorageBufferFrameStrategy {
-    #[default]
-    Standard,
-    PingPong,
-}
-
 /// the generic arguments for creating a pipeline
 pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall> {
     pub(super) shader: Box<dyn ShaderAtlasEntry>,
@@ -142,9 +135,7 @@ pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall> {
     _draw_call: PhantomData<D>,
     pub(super) texture_handles: Vec<&'t TextureHandle>,
     pub(super) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
-    pub(super) storage_buffer_handles: Vec<RawStorageBufferHandle>,
     pub(super) storage_texture_handles: Vec<&'t StorageTextureHandle>,
-    pub(super) storage_buffer_frame_strategy: StorageBufferFrameStrategy,
 
     pub disable_depth_test: bool,
 }
@@ -164,9 +155,7 @@ pub struct PipelineConfigBuilder<'t, V: VertexDescription> {
     pub vertex_config: VertexConfig<V>,
     pub texture_handles: Vec<&'t TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
-    pub storage_buffer_handles: Vec<RawStorageBufferHandle>,
     pub storage_texture_handles: Vec<&'t StorageTextureHandle>,
-    pub storage_buffer_frame_strategy: StorageBufferFrameStrategy,
 
     pub disable_depth_test: bool,
 }
@@ -180,9 +169,7 @@ impl<'t, V: VertexDescription> PipelineConfigBuilder<'t, V> {
             _draw_call: PhantomData,
             texture_handles: self.texture_handles,
             uniform_buffer_handles: self.uniform_buffer_handles,
-            storage_buffer_handles: self.storage_buffer_handles,
             storage_texture_handles: self.storage_texture_handles,
-            storage_buffer_frame_strategy: self.storage_buffer_frame_strategy,
             disable_depth_test: self.disable_depth_test,
         }
     }
@@ -244,7 +231,5 @@ pub struct ComputePipelineConfig<'t> {
     pub(crate) shader: Box<dyn ComputeShaderAtlasEntry>,
     pub(crate) texture_handles: Vec<&'t TextureHandle>,
     pub(crate) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
-    pub(crate) storage_buffer_handles: Vec<RawStorageBufferHandle>,
     pub(crate) storage_texture_handles: Vec<&'t StorageTextureHandle>,
-    pub storage_buffer_frame_strategy: StorageBufferFrameStrategy,
 }

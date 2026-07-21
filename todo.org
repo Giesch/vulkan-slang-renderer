@@ -4,6 +4,14 @@
 - [X] get a better understanding of 3-buffer ping-pong for compute
 - [X] refactor/rename things to make it easier to follow/understand
 
+- [ ] change the api to require passing things every frame
+  goal is something nice for a typed scripting language
+  - [ ] make it impossible to forget to write a required field
+  - [ ] allow both memcpy and encase writer patterns
+  - [ ] come up with a way to not need sort_storage_by
+  - [ ] change gpu_only naming to something about compute / ping-pong
+    mention that they're GPU-only in a doc comment
+
 - [-] update to Vulkan 1.3
   - [X] support buffer device addresses and push constants via reflection
   - [X] add a more type-safe way to use BDAs
@@ -25,12 +33,6 @@
     - [ ] implement one example
     - [ ] migrate all examples to use bindless textures
     - [ ] remove old way of doing things from the renderer
-
-- [ ] change the api to require passing things every frame
-  goal is something nice for a typed scripting language
-  - [ ] make it impossible to forget to write a required field
-  - [ ] allow both memcpy and encase writer patterns
-  - [ ] come up with a way to not need sort_storage_by
 
 - [ ] change the api of Game::setup to get a restricted SetupRenderer
   a wrapper similar to FrameRenderer; but it exposes only the methods used during setup
