@@ -210,4 +210,8 @@ impl ShaderAtlasEntry for Shader {
     fn pipeline_layout(&self) -> &ReflectedPipelineLayout {
         &self.reflection_json.pipeline_layout
     }
+
+    fn reflection_json(&self) -> &ReflectionJson {
+        &self.reflection_json
+    }
 }

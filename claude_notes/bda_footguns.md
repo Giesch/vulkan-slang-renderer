@@ -122,13 +122,16 @@ app-delivered counts (#8).
 
 ## Dev-loop
 
-### 14. Hot reload never revalidates layout
-Debug hot reload recompiles SPIR-V and swaps the pipeline
-(src/renderer.rs:2452-2623) but never compares the reloaded shader's
-reflected layout against the compile-time-generated Rust structs (whose
-layout asserts run only at Rust build time). Edit a shader's block layout →
-the running app writes old offsets into the new pipeline: silent garbage
-until rebuild.
+### 14. Hot reload never revalidates layout — **done**
+Debug hot reload recompiles SPIR-V and swaps the pipeline but now compares
+the freshly reflected interface against the build-time reflection embedded
+in the binary (`assert_shader_interface_unchanged`, called from both debug
+`create_from_atlas` variants): whole-reflection `serde_json::Value`
+equality. A successful recompile whose interface diverged from the
+generated Rust structs panics with a rebuild instruction instead of
+writing old offsets into the new pipeline. Compile errors remain
+non-fatal (old pipeline kept); the check is per-shader, so editing one
+shader's interface doesn't block reloads of untouched shaders.
 
 ## Structural fragilities (safe today by API-shape accident)
 

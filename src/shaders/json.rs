@@ -97,3 +97,26 @@ pub fn layout_bindings_from_pipeline_layout(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // hot reload compares embedded vs freshly-reflected layouts via Value
+    // equality (assert_shader_interface_unchanged); this guards against a
+    // future lossy serde attribute making that comparison flap
+    #[test]
+    fn reflection_value_roundtrip_is_stable() {
+        let raw = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/compiled/basic_triangle.json"
+        ));
+        let parsed: ReflectionJson = serde_json::from_str(raw).unwrap();
+        let reparsed: ReflectionJson =
+            serde_json::from_str(&serde_json::to_string(&parsed).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&parsed).unwrap(),
+            serde_json::to_value(&reparsed).unwrap()
+        );
+    }
+}

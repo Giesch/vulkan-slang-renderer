@@ -128,4 +128,8 @@ impl ComputeShaderAtlasEntry for Shader {
     fn workgroup_size(&self) -> [u32; 3] {
         self.reflection_json.workgroup_size
     }
+
+    fn reflection_json(&self) -> &ComputeReflectionJson {
+        &self.reflection_json
+    }
 }

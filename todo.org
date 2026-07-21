@@ -1,8 +1,35 @@
 #+title: Todo
 
 * Now
-- [X] get a better understanding of 3-buffer ping-pong for compute
-- [X] refactor/rename things to make it easier to follow/understand
+- [-] work through the issues in bda_footguns.md
+  then consider the api change below if necessary
+  - [ ] 1. potential skipped writes on storage buffers
+  - [ ] 2. stashing addresses
+  - [ ] 3. pipelined current-read race
+  - [ ] 4. potential skipped writes on uniform buffers
+  - [X] 5. implicit truncate
+    addressed with a debug assert
+  - [ ] 6. duplicate writes allowed
+  - [X] 7. sort_storage_by problems
+    removed entirely
+  - [ ] 8. partial writes with stale tails
+    count/data can desync - address with a slice type?
+    is there a way to not require it when it's passed out-of-band (in the draw call)
+  - [ ] 9. addresses in storage buffers
+  - [ ] 10. manual barrier discipline
+  - [ ] 11. same-slot read/write aliasing
+    aka borrow checker rules but for Addr<T>/ReadAddr<T>
+    get rid of copy, and make the conversion consume the addr
+  - [ ] 12. skipped dispatch with ping-pong compute buffers
+    need to prevent conditional writes, dispatches, etc
+    similar to 'rules of hooks'?
+  - [ ] 13. out-of-bounds reads/writes with BDAs
+  - [X] 14. hot reload doesn't re-validate layout
+  - [-] 15. all-slot writes and buffer drops
+    - writes can be limited to a SetupRenderer wrapper
+    - can we remove drops entirely?
+    - this is actually safe right now, because full Renderer methods are hidden
+      in the frame loop behind FrameRenderer
 
 - [ ] change the api to require passing things every frame
   goal is something nice for a typed scripting language
@@ -26,12 +53,6 @@
       this makes no difference for current examples,
       but the optimization does matter if you pass the pointer around to functions or similar
     - [X] migrate remaining examples to BDAs
-    - [X] remove the descriptor-based storage buffer path now that no example uses it
-      LayoutDescription::Storage, storage_buffer_handles plumbing, StorageBufferFrameStrategy
-      needs fixture rework (shaders/test std430_* and pointer_dual_context elicit StructuredBuffer codegen)
-        maybe we want to keep this around as an example for a WebGPU Slang-based renderer?
-        no; having dead code here will be a misleading problem for me and for models
-
   - [ ] support bindless textures using slang handles
     - [ ] add the feature to the renderer
     - [ ] implement one example

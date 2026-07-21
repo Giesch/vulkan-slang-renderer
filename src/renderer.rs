@@ -4730,6 +4730,30 @@ fn create_color_image(
     Ok((color_image, color_image_memory, color_image_view))
 }
 
+/// Hot reload swaps SPIR-V and pipeline layouts, but the Rust structs
+/// generated at build time (offsets, bindings, workgroup sizes) cannot be
+/// updated at runtime. If the reloaded shader's reflected interface changed,
+/// writing through the old structs would silently corrupt GPU data — fail
+/// loudly instead.
+#[cfg(debug_assertions)]
+fn assert_shader_interface_unchanged<T: serde::Serialize>(
+    embedded: &T,
+    fresh: &T,
+    source_file_name: &str,
+) {
+    let embedded = serde_json::to_value(embedded).expect("serialize embedded reflection");
+    let fresh = serde_json::to_value(fresh).expect("serialize fresh reflection");
+    if embedded != fresh {
+        panic!(
+            "shader interface changed: '{source_file_name}'\n\
+             The reloaded shader's reflected layout no longer matches the Rust \
+             structs generated at build time, so hot reload cannot apply this \
+             change safely.\n\
+             Run `just shaders` and rebuild (restart `just dev`)."
+        );
+    }
+}
+
 struct ShaderPipelineLayout {
     vertex_shader: PrecompiledShader,
     fragment_shader: PrecompiledShader,
@@ -4751,6 +4775,12 @@ impl ShaderPipelineLayout {
             fragment_shader,
             reflection_json,
         } = shaders::dev_compile_slang_shaders(shader.source_file_name())?;
+
+        assert_shader_interface_unchanged(
+            shader.reflection_json(),
+            &reflection_json,
+            shader.source_file_name(),
+        );
 
         let vertex_shader = PrecompiledShader {
             spv_bytes: vertex_shader.spv_bytes()?,
@@ -4811,6 +4841,12 @@ impl ComputeShaderPipelineLayout {
             compute_shader,
             reflection_json,
         } = shaders::dev_compile_slang_compute_shaders(shader.source_file_name())?;
+
+        assert_shader_interface_unchanged(
+            shader.reflection_json(),
+            &reflection_json,
+            shader.source_file_name(),
+        );
 
         let compute_shader = PrecompiledShader {
             spv_bytes: compute_shader.spv_bytes()?,

@@ -4,13 +4,16 @@ use ash::vk;
 
 use crate::renderer::LayoutDescription;
 
-use super::json::ReflectedPipelineLayout;
+use super::json::{ComputeReflectionJson, ReflectedPipelineLayout, ReflectionJson};
 
 pub trait ShaderAtlasEntry {
     // dev only
 
     // used in hot reload
     fn source_file_name(&self) -> &str;
+
+    // used in hot reload to detect interface changes that require a rebuild
+    fn reflection_json(&self) -> &ReflectionJson;
 
     // dev and release
 
@@ -39,6 +42,7 @@ pub struct PrecompiledShader {
 
 pub trait ComputeShaderAtlasEntry {
     fn source_file_name(&self) -> &str;
+    fn reflection_json(&self) -> &ComputeReflectionJson;
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
     fn precompiled_compute_shader(&self) -> PrecompiledShader;
     fn pipeline_layout(&self) -> &ReflectedPipelineLayout;

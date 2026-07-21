@@ -217,4 +217,8 @@ impl ShaderAtlasEntry for {{ shader_impl.shader_type_name }} {
     fn pipeline_layout(&self) -> &ReflectedPipelineLayout {
         &self.reflection_json.pipeline_layout
     }
+
+    fn reflection_json(&self) -> &ReflectionJson {
+        &self.reflection_json
+    }
 }

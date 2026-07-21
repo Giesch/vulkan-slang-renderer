@@ -3,7 +3,7 @@ use std::ffi::CString;
 use ash::vk;
 
 use crate::renderer::LayoutDescription;
-use crate::shaders::json::ReflectedPipelineLayout;
+use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout, ReflectionJson};
 
 pub struct PrecompiledShader {
     pub entry_point_name: CString,
@@ -22,6 +22,7 @@ pub trait ShaderAtlasEntry {
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
     fn precompiled_shaders(&self) -> PrecompiledShaders;
     fn pipeline_layout(&self) -> &ReflectedPipelineLayout;
+    fn reflection_json(&self) -> &ReflectionJson;
 }
 
 pub trait ComputeShaderAtlasEntry {
@@ -30,4 +31,5 @@ pub trait ComputeShaderAtlasEntry {
     fn precompiled_compute_shader(&self) -> PrecompiledShader;
     fn pipeline_layout(&self) -> &ReflectedPipelineLayout;
     fn workgroup_size(&self) -> [u32; 3];
+    fn reflection_json(&self) -> &ComputeReflectionJson;
 }
