@@ -9,6 +9,7 @@ pub mod particle;
 pub mod projection;
 pub mod ray_march_camera;
 pub mod dragon;
+pub mod multi_mesh;
 pub mod space_invaders;
 pub mod particle_render;
 pub mod koch_curve;
@@ -36,6 +37,7 @@ pub mod wc_divergence_compute;
 
 pub struct ShaderAtlas {
     pub dragon: dragon::Shader,
+    pub multi_mesh: multi_mesh::Shader,
     pub space_invaders: space_invaders::Shader,
     pub particle_render: particle_render::Shader,
     pub koch_curve: koch_curve::Shader,
@@ -65,6 +67,7 @@ impl ShaderAtlas {
     pub fn init() -> Self {
         Self {
             dragon: dragon::Shader::init(),
+            multi_mesh: multi_mesh::Shader::init(),
             space_invaders: space_invaders::Shader::init(),
             particle_render: particle_render::Shader::init(),
             koch_curve: koch_curve::Shader::init(),

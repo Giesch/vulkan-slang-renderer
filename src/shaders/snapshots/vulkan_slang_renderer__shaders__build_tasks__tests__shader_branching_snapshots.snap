@@ -14,6 +14,8 @@ gpu_picking_id.frag.spv: 8
 gpu_picking_id.vert.spv: 0
 koch_curve.frag.spv: 7
 koch_curve.vert.spv: 0
+multi_mesh.frag.spv: 0
+multi_mesh.vert.spv: 0
 paint_brush.comp.spv: 6
 paint_display.frag.spv: 8
 paint_display.vert.spv: 0

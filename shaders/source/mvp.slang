@@ -41,4 +41,19 @@ public struct MVPMatrices {
         let mvpMatrix = mul(this.model, mul(this.view, projection));
         return mul(position, mvpMatrix);
     }
+
+    // Rotate a direction (e.g. a normal) into world space by the model
+    // matrix, ignoring its translation (w = 0). Correct for rotation and
+    // uniform scale; a non-uniform scale would need the inverse-transpose
+    // of the model matrix instead.
+    [ForceInline]
+    public func rotateDirection(direction: float3) -> float3 {
+        let d = float4(direction, 0.0);
+
+        if (columnMajor) {
+            return mul(this.model, d).xyz;
+        }
+
+        return mul(d, this.model).xyz;
+    }
 };

@@ -346,15 +346,55 @@ correctness in the loop, the shared-mesh bind path, the legacy wrappers
 ## Recorded facts (fill in after gates pass)
 
 ```
-commit:
-final API line numbers:   PendingDrawCommand @ …, submit_draws @ …, create_mesh @ …
-snapshot churn:           new: …  changed: … (atlas index only)
-wrapper semantics:        append (queued + wrapper draw submit together) — confirmed
-empty-queue behavior:     …
-perturbation results:     87 → …, 91 → …, 93 → …
-hot-reload:               … pipelines recreated, reap at frame …
-sweep:                    …/… examples clean
-deviations discovered:    …
+commit:                   (pending — fill in hash when committed)
+final API line numbers:   PendingDrawCommand @ renderer.rs:5264, submit_draws @ 5413,
+                          create_mesh @ 981, queue_draw_indexed @ 5363,
+                          queue_draw_index_range @ 5372, queue_draw_vertex_count @ 5401,
+                          index_range_in_bounds @ 5488 (+ unit test), MeshHandle @ pipeline.rs:133,
+                          with_shared_mesh @ pipeline.rs:177
+snapshot churn:           new: multi_mesh.rs.snap, multi_mesh.json.snap
+                          changed: atlas-index snap (+3 lines) AND
+                          shader_branching_snapshots.snap (+2 lines — the per-.spv
+                          branch-count snapshot; additive, not anticipated by the plan)
+wrapper semantics:        append (queued + wrapper draw submit together) — confirmed;
+                          draw_vertex_count_with_picking debug_asserts an empty queue
+empty-queue behavior:     renders the clear color, runs stably, no validation output,
+                          clean exit with no VMA leak report
+perturbation results:     87 → black gap wedge in the disc (overlap with sector B
+                          z-masked, missing [105,108) loud); 89 → jagged rim spikes +
+                          z-fighting patch at the B/C boundary; 93 → debug_assert
+                          "index range [93, 93 + 18) out of bounds for pipeline
+                          multi_mesh.shader.slang (index count 108)".
+                          NOTE: the planned 91-shift case is wrong — sector C is the
+                          last range, so 91+18 > 108 hits the debug_assert, not
+                          spikes; 89 (in-bounds, non-triangle-aligned) is the spike
+                          case. Perturbation applied at queue time so the data
+                          validation doesn't preempt the frame-level detection.
+hot-reload:               3 pipelines recreated per edit event (2 events per sed
+                          write), rendering continued seconds after (reap window
+                          passed), no validation errors
+sweep:                    15/15 examples clean (particles + watercolor cover
+                          pipelined compute; gpu_picking covers the picking wrapper)
+deviations discovered:    - shader_branching_snapshots churn (above)
+                          - master-plan §6 link + §4.5 picking note already landed
+                            with the planning commit dfb3620; no doc edit needed
+                          - clean-exit/VMA verification needed a WM_DELETE_WINDOW
+                            close (timeout's SIGTERM skips Drop)
+                          - example restructured post-verification: DRAWS stores
+                            (count, pipeline) with first_index derived as a running
+                            sum (contiguity by construction); coverage is a const
+                            assert against INDEX_COUNT, plus one runtime assert
+                            tying INDEX_COUNT to the built mesh
+                          - example restructured again for per-shape model matrices:
+                            shapes baked at the origin, placement/animation in
+                            shape_models(); 5 pipelines (one per shape×color, since
+                            uniforms are per-pipeline) and 6 draws (cube split in
+                            two ranges — same pipeline queued twice, the Link
+                            multi-batch-per-material pattern); mvp.slang gained
+                            MVPMatrices.rotateDirection (w=0 model-matrix rotate,
+                            valid for rotation/uniform scale) so lighting tracks
+                            the animated model matrices; no reflection change, no
+                            new snapshot churn
 ```
 
 ## Out of scope for P4

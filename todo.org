@@ -24,6 +24,8 @@
     need to prevent conditional writes, dispatches, etc
     similar to 'rules of hooks'?
   - [ ] 13. out-of-bounds reads/writes with BDAs
+    make a shared slice/vec type to use instead of plain Addr types?
+    it would need to be generic over its internal Addr type
   - [X] 14. hot reload doesn't re-validate layout
   - [-] 15. all-slot writes and buffer drops
     - writes can be limited to a SetupRenderer wrapper
@@ -33,6 +35,7 @@
 
 - [ ] change the api to require passing things every frame
   goal is something nice for a typed scripting language
+  go back to adopting a FLAME-like render graph
   - [ ] start by addressing the footguns document one-by-one
     then see if the full API change is necessary
 
@@ -107,6 +110,7 @@
 - [ ] reconsider FLAME GPU-based render graph
   - find a strucutured solution for pipelined compute shader simulations
   - look for a potentially nicer way using BDAs and a slang helper module
+  - find a way to incoprorate gpu picking into this way of doing things
 
 - [ ] investigate whether static slang build includes spirv-opt or not
   ie, does a build of this renderer still depend on dynamic linking glslang?

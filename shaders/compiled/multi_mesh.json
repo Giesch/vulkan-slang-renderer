@@ -1,0 +1,191 @@
+{
+  "sourceFileName": "multi_mesh.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "MultiMeshParams",
+        "fields": [
+          {
+            "kind": "struct",
+            "fieldName": "mvp",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 192
+            },
+            "structType": {
+              "typeName": "MVPMatrices",
+              "fields": [
+                {
+                  "kind": "matrix",
+                  "fieldName": "model",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "matrix",
+                  "fieldName": "view",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 64,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "matrix",
+                  "fieldName": "proj",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 128,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "tint",
+            "binding": {
+              "kind": "uniform",
+              "offset": 192,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "vertex",
+        "binding": {
+          "kind": "varyingInput",
+          "index": 0,
+          "count": 2
+        },
+        "typeName": "Vertex",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 0,
+              "count": 1
+            },
+            "elementCount": 3,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "normal",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 1,
+              "count": 1
+            },
+            "elementCount": 3,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "fragVertex",
+        "binding": {
+          "kind": "varyingInput",
+          "index": 0,
+          "count": 1
+        },
+        "typeName": "FragVertex",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "semanticName": "SV_POSITION",
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "normal",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 0,
+              "count": 1
+            },
+            "elementCount": 3,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 208
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

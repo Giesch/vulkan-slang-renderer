@@ -5,6 +5,7 @@ pub mod gpu_picking;
 pub mod gpu_picking_common;
 pub mod gpu_picking_id;
 pub mod koch_curve;
+pub mod multi_mesh;
 pub mod mvp;
 pub mod paint_brush_compute;
 pub mod paint_display;
@@ -30,6 +31,7 @@ pub mod wc_update_velocity_compute;
 
 pub struct ShaderAtlas {
     pub dragon: dragon::Shader,
+    pub multi_mesh: multi_mesh::Shader,
     pub space_invaders: space_invaders::Shader,
     pub particle_render: particle_render::Shader,
     pub koch_curve: koch_curve::Shader,
@@ -59,6 +61,7 @@ impl ShaderAtlas {
     pub fn init() -> Self {
         Self {
             dragon: dragon::Shader::init(),
+            multi_mesh: multi_mesh::Shader::init(),
             space_invaders: space_invaders::Shader::init(),
             particle_render: particle_render::Shader::init(),
             koch_curve: koch_curve::Shader::init(),
