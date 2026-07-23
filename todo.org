@@ -57,6 +57,7 @@
       but the optimization does matter if you pass the pointer around to functions or similar
     - [X] migrate remaining examples to BDAs
   - [ ] support bindless textures using slang handles
+    potentially refer to render-graph/03_bindless.md
     - [ ] add the feature to the renderer
     - [ ] implement one example
     - [ ] migrate all examples to use bindless textures

@@ -1,5 +1,22 @@
 # FLAME-Inspired Render Graph
 
+> **STATUS: EXPLORATION — partially superseded by `04_design.md`.**
+>
+> **Carried over:** build-once-at-setup, automatic barrier insertion, dependencies
+> derived from resource usage, FLAME-style layering, the low-level/graph API split.
+>
+> **Superseded:**
+> - The `render_pass()`/`end_render_pass()` builder — the renderer is swapchain-only
+>   with a single terminal draw per frame; the graph's graphics story is one
+>   `.rendering()` section (see `04_design.md`).
+> - Generated `read_resources()`/`written_resources()` iterators — replaced by
+>   inspecting the handle lists the existing generated `pipeline_config()` already
+>   populates, plus declared buffer handles for BDA storage buffers (which are no
+>   longer descriptors and are invisible to binding-based tracking).
+> - Transient resources / memory aliasing — explicitly out of scope.
+>
+> The Frostbite comparison and open-questions sections remain useful background.
+
 ## Overview
 
 A high-level API for organizing compute and graphics shaders into a unified execution graph with explicit resource dependencies. Inspired by [FLAME GPU](https://flamegpu.com/), a framework for GPU-accelerated agent-based simulations that organizes CUDA kernels into layers with automatic synchronization.

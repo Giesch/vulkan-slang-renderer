@@ -1,5 +1,10 @@
 # Bindless Rendering: Vulkan and Metal
 
+> **STATUS: BACKGROUND — orthogonal to the render graph; not planned.** The
+> renderer went a different direction for buffers (BDA pointers in a param block
+> rather than descriptor arrays). Texture binding remains per-pipeline descriptors.
+> Kept as reference material.
+
 ## Overview
 
 Bindless rendering replaces per-draw resource binding with large descriptor arrays indexed dynamically at runtime. Both Vulkan and Metal support this pattern, with similar benefits and tradeoffs.

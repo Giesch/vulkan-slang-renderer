@@ -1,5 +1,14 @@
 # Compute Shader Support Implementation Plan
 
+> **STATUS: IMPLEMENTED (historical).** All 10 phases have landed: compute pipeline
+> creation, `dispatch()`, `memory_barrier()`, storage textures, and hot reload all
+> exist in the renderer today. Phase 1's `ResourceAccess` reflection is the
+> foundation the render graph reuses for dependency tracking. Note that storage
+> buffers have since moved off descriptors entirely (BDA migration — see
+> `04_design.md`), so the descriptor-centric parts of this doc no longer describe
+> the current binding model. Kept for historical context; see `04_design.md` for
+> the current design.
+
 ## Overview
 
 Add compute shader support to the Vulkan renderer, enabling GPU compute workloads alongside the existing graphics pipeline.

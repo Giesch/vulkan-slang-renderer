@@ -80,9 +80,10 @@ pub fn previous_addr<T, S: Domain>(&self, b: &GpuOnlyBufferHandle<T>) -> ReadAdd
 ```
 
 Bodies unchanged. Doc updates: `current_addr` explains the domain model (current slot is
-producer-domain-only); `enable_pipelined_compute` (:845-856) drops the "must use
-previous_addr" warning + TODO — now enforced by types (also fixes the stale
-`current_gpu_only_addr` method name in that comment). `Domain`/markers reach generated
+producer-domain-only); `enable_pipelined_compute` (`:853`) drops the "must use
+previous_addr" warning + TODO — now enforced by types (the stale
+`current_gpu_only_addr` name in that comment was fixed separately 2026-07).
+`Domain`/markers reach generated
 code via the existing `pub use addr::*;` (renderer.rs:44-45).
 
 ### 3. `src/shaders/build_tasks.rs` — domain threading + bans

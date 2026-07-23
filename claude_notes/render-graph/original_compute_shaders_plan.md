@@ -1,5 +1,11 @@
 # Compute Shader Support: Same-CB with Pipeline Barriers
 
+> **STATUS: IMPLEMENTED (historical).** Same-command-buffer compute with
+> `dispatch()`/`memory_barrier()` landed as planned. The command-buffer split this
+> doc deferred to "the render graph" landed independently as pipelined compute
+> (`Renderer::enable_pipelined_compute()`, `ComputePlacement::SeparateCommandBuffer`
+> with a compute timeline semaphore). See `04_design.md` for the current design.
+
 ## Context
 
 Add compute shader support using the same command buffer as graphics, with pipeline barriers for synchronization (Option A). This provides the primitives — `dispatch()` and `memory_barrier()` — that the future FLAME-inspired render graph (`claude_notes/render-graph/01_flame_render_graph.md`) will call internally.

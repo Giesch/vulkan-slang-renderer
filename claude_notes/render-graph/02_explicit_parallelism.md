@@ -1,5 +1,25 @@
 # Explicit Parallelism and Async Compute
 
+> **STATUS: EXPLORATION — §"Simulation-Focused Parallelism" adopted in modified
+> form by `04_design.md`.** The rest (Options A–D, hint-based scheduling, the A/B
+> profiling harness, the hardware survey) is background.
+>
+> **Already implemented in the renderer:** Pattern A (cross-frame
+> simulation/rendering overlap) exists today as `enable_pipelined_compute()` —
+> separate compute queue, timeline semaphore, graphics frame N waits on compute
+> N−1 — along with the 3-slot buffer ring and `previous_addr` machinery. The
+> graph's job is to *own* this split (`.simulation()`/`.rendering()` sections),
+> not to introduce it.
+>
+> **Modifications in `04_design.md`:**
+> - Build cadence is **build-once at setup** (this doc's simulation-focused section
+>   mandates per-frame rebuild); conditionals, loop trip counts, and parity move to
+>   execute-time parameters on a fixed structure.
+> - The ownership-based `&`/`&mut` Resources idea is superseded: the
+>   `Addr`/`ReadAddr`/`ImmutableAddr` pointer types plus the domain markers from
+>   `claude_notes/bda_footguns/03_pipelined_current_read_plan.md` and graph
+>   build-time checks cover the same hazards without making handles non-Copy.
+
 ## Overview
 
 This document explores API designs for expressing GPU parallelism in the render graph, specifically async compute - running compute work on a separate queue in parallel with graphics work.
