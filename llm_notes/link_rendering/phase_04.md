@@ -327,31 +327,37 @@ correctness in the loop, the shared-mesh bind path, the legacy wrappers
 
 ## Verification (exit checklist)
 
-- [ ] `just test` green: pre-existing per-shader snapshots byte-identical;
+- [X] `just test` green: pre-existing per-shader snapshots byte-identical;
       atlas-index snapshot diff is exactly the multi_mesh additions; 2 new
       snapshots accepted
-- [ ] Bounds-check helper unit tests green
-- [ ] `just lint` clean; `cargo build --examples` clean
-- [ ] Validation sweep clean over all examples (loop above)
-- [ ] multi_mesh renders correctly; perturbation test performed and reverted,
+- [X] Bounds-check helper unit tests green
+- [X] `just lint` clean; `cargo build --examples` clean
+- [X] Validation sweep clean over all examples (loop above)
+- [X] multi_mesh renders correctly; perturbation test performed and reverted,
       results recorded
-- [ ] Hot-reload multi-pipeline pass performed, clean
-- [ ] Empty-queue `submit_draws` behavior recorded
-- [ ] No VMA leak report on multi_mesh exit
-- [ ] No changes to existing examples or `Cargo.toml`; `git diff` on
+- [X] Hot-reload multi-pipeline pass performed, clean
+- [X] Empty-queue `submit_draws` behavior recorded
+- [X] No VMA leak report on multi_mesh exit
+- [X] No changes to existing examples or `Cargo.toml`; `git diff` on
       `src/generated/` is additive only
-- [ ] Master plan updated: §6 P4 row links here; §4.5 picking note added
-- [ ] Recorded facts filled in
+- [X] Master plan updated: §6 P4 row links here; §4.5 picking note added
+- [X] Recorded facts filled in
 
 ## Recorded facts (fill in after gates pass)
 
 ```
-commit:                   (pending — fill in hash when committed)
-final API line numbers:   PendingDrawCommand @ renderer.rs:5264, submit_draws @ 5413,
-                          create_mesh @ 981, queue_draw_indexed @ 5363,
-                          queue_draw_index_range @ 5372, queue_draw_vertex_count @ 5401,
-                          index_range_in_bounds @ 5488 (+ unit test), MeshHandle @ pipeline.rs:133,
-                          with_shared_mesh @ pipeline.rs:177
+commit:                   4621112 ("add queued multi-draw support")
+final API line numbers:   (as committed at 4621112, after the two example restructures
+                          noted below — the earlier draft's numbers were pre-restructure)
+                          PendingDrawCommand @ renderer.rs:5279, submit_draws @ 5438,
+                          create_mesh @ 981, queue_draw_indexed @ 5388,
+                          queue_draw_index_range @ 5397, queue_draw_vertex_count @ 5426,
+                          legacy wrappers @ 5442/5451, draw_vertex_count_with_picking @ 5461,
+                          index_range_in_bounds @ 5513 (+ unit tests @ 5533),
+                          record loop @ 1765, hot-reload dedup @ 2126,
+                          MeshHandle @ pipeline.rs:192, VertexPipelineConfig::SharedMesh
+                          @ pipeline.rs:183, with_shared_mesh @ pipeline.rs:236,
+                          PipelineStorage::get_by_index @ pipeline.rs:146
 snapshot churn:           new: multi_mesh.rs.snap, multi_mesh.json.snap
                           changed: atlas-index snap (+3 lines) AND
                           shader_branching_snapshots.snap (+2 lines — the per-.spv
@@ -377,7 +383,15 @@ sweep:                    15/15 examples clean (particles + watercolor cover
                           pipelined compute; gpu_picking covers the picking wrapper)
 deviations discovered:    - shader_branching_snapshots churn (above)
                           - master-plan §6 link + §4.5 picking note already landed
-                            with the planning commit dfb3620; no doc edit needed
+                            with the planning commit 56eaed8 ("planning link
+                            rendering phase 4"); no doc edit needed
+                          - type-erased indices are newtypes, not the plan's bare
+                            usize: GraphicsPipelineIndex for pipelines and MeshIndex
+                            for meshes (PendingDrawCommand, get_by_index,
+                            VertexPipelineConfig::SharedMesh all use them)
+                          - MeshHandle<V> shipped typed, as Step 3 decided; the
+                            master plan's §4.2 sketch still showed the untyped
+                            form and was corrected during P4 close-out
                           - clean-exit/VMA verification needed a WM_DELETE_WINDOW
                             close (timeout's SIGTERM skips Drop)
                           - example restructured post-verification: DRAWS stores

@@ -105,29 +105,47 @@ detail in the phase docs and their Recorded facts):
   automated gate everywhere; SuperBMD is a manual second opinion only
   (Blender DAE overlay), never load-bearing.
 
-**Renderer side** (line numbers as of `aaf479e`; post-BDA-migration —
-descriptor-based storage buffers no longer exist):
+**Renderer side** (line numbers as of `4621112`, i.e. **post-P4**;
+post-BDA-migration — descriptor-based storage buffers no longer exist):
 
-- One pipeline + one draw call per frame: `FrameRenderer` (src/renderer.rs:5162)
-  consumes itself in `draw_indexed`/`draw_vertex_count`; the bind+draw block in
-  `record_command_buffer` (1399) is src/renderer.rs:1692–1763. A queue pattern
-  already exists for compute (`pending_compute: Vec<PendingComputeCommand>`,
-  5147).
-- Hardcoded pipeline state in `create_graphics_pipeline` (src/renderer.rs:3275):
-  blend always SRC_ALPHA/ONE_MINUS_SRC_ALPHA ADD (3339–3344), color write mask
-  RGBA (3345), cull BACK + CCW (3327–3328), depth LESS + write always on
-  (3353–3358), stencil off. `PipelineConfig` (src/renderer/pipeline.rs:135)
-  exposes only `disable_depth_test`; `VertexPipelineConfig` is pipeline.rs:117.
+- **N draws per frame, one render pass** (P4): `FrameRenderer`
+  (src/renderer.rs:5297) accumulates `PendingDrawCommand`s via
+  `queue_draw_indexed` (5388) / `queue_draw_index_range` (5397) /
+  `queue_draw_vertex_count` (5426) and is consumed by the terminal
+  `submit_draws` (5438). The record loop is src/renderer.rs:1765, inside the
+  single `cmd_begin_rendering`/`cmd_end_rendering` of `record_command_buffer`
+  (1458). `draw_indexed`/`draw_vertex_count` (5442/5451) survive as
+  one-element-queue wrappers with append semantics; picking
+  (`draw_vertex_count_with_picking`, 5461) stays single-draw and
+  `debug_assert`s an empty queue (§4.5). Compute has the same shape
+  (`pending_compute: Vec<PendingComputeCommand>`).
+- **Shared meshes** (P4): `Renderer::create_mesh` (981) →
+  `MeshHandle<V>` (pipeline.rs:192) → `PipelineConfig::with_shared_mesh`
+  (pipeline.rs:236); the buffers live in `Renderer::meshes` and outlive the
+  pipelines that draw them (freed at teardown, not by `destroy_pipeline`).
+  `examples/multi_mesh.rs` is the worked example of the exact shape P6 needs.
+- Hardcoded pipeline state in `create_graphics_pipeline` (src/renderer.rs:3394):
+  blend always SRC_ALPHA/ONE_MINUS_SRC_ALPHA ADD (3457–3463), color write mask
+  RGBA (3464), cull BACK + CCW (3445–3446), depth LESS + write always on
+  (3473–3475), stencil off. `PipelineConfig` (src/renderer/pipeline.rs:208)
+  exposes only `disable_depth_test`; `VertexPipelineConfig` is pipeline.rs:180.
+  **This is what P5 §4.3 replaces.**
 - Textures: always `R8G8B8A8_SRGB`, full mip chain, REPEAT wrap, anisotropy on
-  (`create_texture` src/renderer.rs:3877, `create_texture_sampler` 4424). Only
-  filter (Linear/Nearest) is selectable.
-- Index buffers are u32-only; vertex/index buffers are owned per-pipeline.
+  (`create_texture` src/renderer.rs:3996, `create_texture_sampler` 4543). Only
+  filter (Linear/Nearest) is selectable. The pre-baked-mip path
+  (`create_texture_with_mips`, 520) already takes an explicit `vk::Format`.
+  **This is what P5 §4.4 replaces.**
+- Index buffers are u32-only; vertex/index buffers are owned per-pipeline
+  unless the pipeline points at a shared mesh.
 - Per-pipeline descriptor sets and uniform buffers are allocated at
   `create_pipeline` (a 3-slot pre-wait ring: `PRE_WAIT_RING_LEN =
   MAX_FRAMES_IN_FLIGHT + 1 = 3`); `Gpu::write_uniform` writes mapped memory per
   frame. So N materials = N pipelines, each with its own uniforms and
-  textures — no dynamic offsets needed.
-- Hot reload (`check_for_shader_recompile`, 2427):
+  textures — no dynamic offsets needed. Corollary proven by multi_mesh:
+  **uniforms are per-pipeline, not per-draw**, so every draw sharing a pipeline
+  shares its uniform values (fine for Link — one transform, N materials).
+- Hot reload (`check_for_shader_recompile`, 2530; index-based since P4, so it
+  recreates every queued graphics pipeline, not just one):
   `assert_shader_interface_unchanged` (added `6a8552f`) panics if a reloaded
   shader's reflected interface differs from the build-time-embedded reflection.
   Shader-body edits (TEV math) still hot-reload; changing `ToonLinkParams`'
@@ -433,22 +451,24 @@ impl<'f> FrameRenderer<'f> {
 ### 4.2 Shared meshes
 
 ```rust
-pub struct MeshHandle { index: usize }
+// as shipped in P4: the handle is typed, so a vertex-layout mismatch between
+// mesh and pipeline is a compile error (V is inferred at create_mesh)
+pub struct MeshHandle<V: VertexDescription> { index: MeshIndex, _phantom_data: PhantomData<V> }
 
 impl Renderer {
     pub fn create_mesh<V: VertexDescription + GPUWrite>(
-        &mut self, vertices: &[V], indices: &[u32]) -> anyhow::Result<MeshHandle>;
+        &mut self, vertices: &[V], indices: &[u32]) -> anyhow::Result<MeshHandle<V>>;
 }
 
-// src/renderer/pipeline.rs:114
+// src/renderer/pipeline.rs:181
 pub(super) enum VertexPipelineConfig {
     VertexAndIndexBuffers(VertexAndIndexBuffers),
-    SharedMesh(usize),      // index into Renderer::meshes
+    SharedMesh(MeshIndex),  // index into Renderer::meshes
     VertexCount,
 }
 
-impl<'t, V: VertexDescription, D: DrawCall> PipelineConfig<'t, V, D> {
-    pub fn with_shared_mesh(mut self, mesh: &MeshHandle) -> Self;  // replaces vertex_config
+impl<'t, V: VertexDescription> PipelineConfig<'t, V, DrawIndexed> {
+    pub fn with_shared_mesh(mut self, mesh: &MeshHandle<V>) -> Self;  // replaces vertex_config
 }
 ```
 
@@ -474,11 +494,17 @@ impl Default for RasterState { /* == today's hardcoded pipeline state */ }
 impl PipelineConfig<…> { pub fn with_raster_state(mut self, s: RasterState) -> Self; }
 ```
 
-- `create_graphics_pipeline` (3305) consumes `&RasterState` instead of scattered
-  hardcoded values; the picking pipeline passes its own fixed state.
-- `RendererPipeline.disable_depth_test` (pipeline.rs:111) is replaced by
+- `create_graphics_pipeline` (3394) consumes `&RasterState` instead of its
+  current `depth_test_enable: bool, blend_enable: bool` pair; the picking
+  pipeline passes its own fixed state. Three call sites: picking (1036),
+  `init_pipeline` (1240), hot-reload recreate (2613).
+- `RendererPipeline.disable_depth_test` (pipeline.rs:177) is replaced by
   `raster_state: RasterState` (hot-reload recreate path reads it). The
-  `disable_depth_test` builder field stays and maps to `depth_test: Disabled`.
+  `disable_depth_test` builder field **stays** on `PipelineConfig` /
+  `PipelineConfigBuilder` and maps to `depth_test: Disabled` — it is emitted by
+  `templates/shader_atlas_entry.rs.askama`, so removing it would rewrite every
+  generated file and ~20 snapshots. Detailed plan:
+  [`link_rendering/phase_05.md`](link_rendering/phase_05.md).
 
 ### 4.4 Texture options
 
@@ -498,11 +524,14 @@ impl Renderer {
 }
 ```
 
-- Plumbs through `create_texture_image`/`create_texture_sampler`
-  (3966/4008/4347): `R8G8B8A8_{SRGB|UNORM}`, `mip_levels = 1` + skip
+- Plumbs through `create_texture` (3996) / `create_texture_image` (4040) /
+  `create_texture_sampler` (4543): `R8G8B8A8_{SRGB|UNORM}` in place of the
+  `TEXTURE_IMAGE_FORMAT` const (3968), `mip_levels = 1` + skip
   `generate_mipmaps` when off, sampler address modes from wraps, anisotropy off
   when mipmaps are off. Existing `create_texture` becomes a wrapper with
-  today's defaults.
+  today's defaults. `format_block_info` (3985) already whitelists UNORM, and
+  the pre-baked-mip path already takes an explicit format, so only the
+  non-mips path needs the new plumbing.
 - P2's inventory showed **every** Link texture wants the same non-default
   options: `Unorm`, `ClampToEdge`, `mipmaps: false`, `Linear` filter — the
   ramps aren't special; §4.4 is load-bearing for all 44 textures.
@@ -558,8 +587,8 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P1** ✅ `6431f0a` | converter skeleton: `be.rs`, chunk walk, `--info` chunk table — detailed plan: [`link_rendering/phase_01.md`](link_rendering/phase_01.md) | internal invariants (chunk sizes sum to file size, 42 joints, cross-chunk counts agree); `--info` diffed against a gclib oracle (`just link-verify-p1`, zero-line diff); `BeReader` unit tests on synthetic buffers | 1 day |
 | **P2** ✅ `8a0a4af` | TEX1+BTI decode → PNGs (+ standalone `.bti` re-emit per entry); full MAT3 parse + `--dump-mat3` — detailed plan: [`link_rendering/phase_02.md`](link_rendering/phase_02.md) | **as run** (`just link-verify-p2`): gclib pixel-diff 44/44 zero differences; canonical MAT3 table zero-line diff vs a gclib oracle (SuperBMD demoted to manual backup); synthetic per-format tile snapshots (insta); ramp names confirmed; **TEV subset frozen** (see §3) | 2–3 days |
 | **P3** ✅ `7704292` | geometry: baked bind pose, strip→list, manifest v1 (full TEV materials), `--obj`+`.mtl` export — detailed plan: [`link_rendering/phase_03.md`](link_rendering/phase_03.md) | **`just link-verify-p3` green**: invBind identity (residual 0.0145) + weighted-identity (0.0077) hard checks; canonical geometry table **zero-diff** vs a gclib+struct-walk oracle; exactly 2,874 triangles; Blender pass partial (face orientation uniform red, rigid attachment + per-batch isolation OK). Stored-AABB cross-check dropped as redundant; full Blender pass outstanding | 3–4 days |
-| **P4** | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) — detailed plan: [`link_rendering/phase_04.md`](link_rendering/phase_04.md) | `just test` green (snapshots byte-identical); validation-clean sweep of **all** examples (`timeout 3 just dev <name>` loop); multi_mesh renders its sub-ranges with no gaps/overlaps | 2 days |
-| **P5** | renderer 4.3 + 4.4 (raster state, texture options); extend multi_mesh with per-state test objects | multi_mesh: cull-front object inside-out, opaque-vs-alpha blend, depth-write-off artifact on demand; wrap/filter quad (clamp/repeat × linear/nearest); sRGB-vs-UNORM gray-quad brightness check; same validation sweep | 1–2 days |
+| **P4** ✅ `4621112` | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) — detailed plan: [`link_rendering/phase_04.md`](link_rendering/phase_04.md) | **as run**: `just test` green (pre-existing per-shader snapshots byte-identical); `just lint` clean; validation sweep 15/15 examples; multi_mesh tiles its index buffer exactly, perturbation test confirms gaps/spikes/`debug_assert`; multi-pipeline hot reload clean; no VMA leak on exit | 2 days |
+| **P5** | renderer 4.3 + 4.4 (raster state, texture options); extend multi_mesh with per-state test objects — detailed plan: [`link_rendering/phase_05.md`](link_rendering/phase_05.md) | multi_mesh: cull-front object inside-out, opaque-vs-alpha blend, depth-write-off artifact on demand; wrap/filter quad (clamp/repeat × linear/nearest); sRGB-vs-UNORM gray-quad brightness check; same validation sweep | 1–2 days |
 | **P6** | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches | **uniform-array smoke test first** (`uint4[8]`, known pattern as colors); `just shaders`; `timeout 3 just dev toon_link`: correctly shaped Link, smooth normal gradients, silhouette vs noclip; culling off → then on (winding check), no validation errors | 1–2 days |
 | **P7** | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state | UV features vs noclip (face decals, eyes, belt buckle, tunic pattern); clean alpha-cutout edges on brows/lashes; no missing parts from per-material cull | 1 day |
 | **P8** | full TEV interpreter + lighting channel + SRTG ramp + gamma handling; subset gate final; single-material isolation debug key in the example | structured side-by-side vs noclip + golden Dolphin frames (`just link-dolphin-refs`, headless `.dff` replay) per feature (skin, tunic bands, hair highlight, eye whites); rotate light — terminator bands sweep and stay banded; isolate batch N for any wrong material; TEV semantic disputes adjudicated via FIFO analyzer (runtime BP/XF state) + software-renderer replay; optional CPU TEV reference evaluator if pixel-chasing gets hard | 3–5 days |
