@@ -616,7 +616,7 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P3** ✅ `7704292` | geometry: baked bind pose, strip→list, manifest v1 (full TEV materials), `--obj`+`.mtl` export — detailed plan: [`link_rendering/phase_03.md`](link_rendering/phase_03.md) | **`just link-verify-p3` green**: invBind identity (residual 0.0145) + weighted-identity (0.0077) hard checks; canonical geometry table **zero-diff** vs a gclib+struct-walk oracle; exactly 2,874 triangles; Blender pass partial (face orientation uniform red, rigid attachment + per-batch isolation OK). Stored-AABB cross-check dropped as redundant; full Blender pass outstanding | 3–4 days |
 | **P4** ✅ `4621112` | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) — detailed plan: [`link_rendering/phase_04.md`](link_rendering/phase_04.md) | **as run**: `just test` green (pre-existing per-shader snapshots byte-identical); `just lint` clean; validation sweep 15/15 examples; multi_mesh tiles its index buffer exactly, perturbation test confirms gaps/spikes/`debug_assert`; multi-pipeline hot reload clean; no VMA leak on exit | 2 days |
 | **P5** ✅ | renderer 4.3 + 4.4 (raster state, texture options); `examples/multi_mesh.rs` grew 12 view-space test panels (17 pipelines, 18 draws, 7 texture handles, 3 procedural images) — detailed plan: [`link_rendering/phase_05.md`](link_rendering/phase_05.md) | **as run**: `just test` green, snapshot churn exactly multi_mesh's `.rs`+`.json` (branching snapshot unmoved, no atlas-index change); `RasterState` default-equivalence + enum-mapping unit tests; `just lint` clean; validation sweep 15/15 (run twice — once with examples untouched); every test object shows its artifact, **all six fields perturbed and reverted**, each artifact vanishing; sRGB-vs-UNORM verified numerically (117 vs 172, linear ratio 2.32); hot reload keeps per-pipeline raster state; clean exit with no VMA leak, and the leak check itself validated by injecting one | 1–2 days |
-| **P6** | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches — detailed plan: [`link_rendering/phase_06.md`](link_rendering/phase_06.md) (Step 1's smoke test superseded by the vec4-array mini-phase `0d08a7d`) | `just shaders`; `timeout 3 just dev toon_link`: correctly shaped Link, smooth normal gradients, silhouette vs noclip; culling off → then on (winding check), no validation errors | 1–2 days |
+| **P6** ✅ | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches — detailed plan: [`link_rendering/phase_06.md`](link_rendering/phase_06.md) (Step 1's smoke test superseded by the vec4-array mini-phase `0d08a7d`) | **as run**: `just test` green (churn = toon_link additions only); correctly shaped Link over a full orbit, smooth normal gradients; **winding flipped in the converter** (risk #3: model was inside-out under manifest cull; one-line `link.idx.bin` sha256 update, `just link-verify-p3` green); all 24 isolation batches identified; UV mode clean; hot reload at 24-pipeline scale keeps raster state; validation sweep 16/16; no VMA leak on real close | 1–2 days |
 | **P7** | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state | UV features vs noclip (face decals, eyes, belt buckle, tunic pattern); clean alpha-cutout edges on brows/lashes; no missing parts from per-material cull | 1 day |
 | **P8** | full TEV interpreter + lighting channel + SRTG ramp + gamma handling; subset gate final; single-material isolation debug key in the example | structured side-by-side vs noclip + golden Dolphin frames (`just link-dolphin-refs`, headless `.dff` replay) per feature (skin, tunic bands, hair highlight, eye whites); rotate light — terminator bands sweep and stay banded; isolate batch N for any wrong material; TEV semantic disputes adjudicated via FIFO analyzer (runtime BP/XF state) + software-renderer replay; optional CPU TEV reference evaluator if pixel-chasing gets hard | 3–5 days |
 | **P9** | optional polish: `--casual` clothes; eye write-mask multi-pass; BCK-sampled pose | casual: P7-style UV checks; eye trick vs **Dolphin** (noclip may not implement it) | 2+ days |
@@ -647,11 +647,14 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
    positions/normals are f32; only UVs are fixed-point (s16, shift 8). The
    format table is still implemented generally and diffed via
    `--dump-geometry`.
-3. **Winding after Y-flip** — clip-space Y reflection flips winding vs GX's
-   convention. Mitigation: P6 runs with `cull: None`; once geometry is right,
-   enable Back and flip triangle order in the converter if inside-out. *P3
-   Blender read: uniform red = winding is consistent (not a patchwork bug), just
-   GX-native — the flip decision stays with P6.*
+3. ~~**Winding after Y-flip**~~ — *resolved in P6*: under manifest cull the
+   model rendered uniformly inside-out (eye decals and shield visible through
+   the head/torso), confirming GX winding does **not** survive the Y-flip.
+   Fixed where planned: `output.rs::build` swaps each triangle's last two
+   indices while concatenating per-shape lists (`pose.rs` stays GX-native);
+   exactly one golden-hash line (`link.idx.bin`) changed and
+   `just link-verify-p3` stayed green. Cull mapping stays literal
+   (`Cull_Back → Back`); full orbit shows no missing or inside-out geometry.
 4. ~~**Uniform array codegen**~~ — *resolved by the vec4-array mini-phase*
    (`0d08a7d`,
    [`link_rendering/vec4_array_support.md`](link_rendering/vec4_array_support.md)):

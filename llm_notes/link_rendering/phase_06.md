@@ -108,7 +108,8 @@ actively developed).
   8 materials** (eye/brow decal overlays) — mapped in Step 4.
 - `link.vtx.bin`: interleaved LE f32 pos[3] nrm[3] uv[2] = 32 bytes/vertex ×
   1754. `link.idx.bin`: LE u32 triangle list, 8622 indices = 2874 triangles,
-  **GX-native winding, not flipped** (P3 recorded fact). P3's OBJ AABB:
+  **GX-native winding, not flipped** (P3 recorded fact; *no longer true —
+  Step 5 flipped it in the converter, see Recorded facts*). P3's OBJ AABB:
   X 125.36, Y 124.06 (feet at Y ≈ 0), Z 89.49 model units — camera framing
   derives from this.
 - Winding-flip plumbing: strips→lists happens in `pose.rs::expand`
@@ -511,52 +512,96 @@ done; echo "sweep clean"
 
 ## Verification (exit checklist)
 
-- [ ] Step 1 smoke test executed; outcome in Recorded facts; master plan
-      risk #4 + §3 updated; no smoke-test residue
-- [ ] `just shaders` green; `just test` green; churn = toon_link additions only
-- [ ] `just lint`, `cargo build --examples` clean
-- [ ] toon_link bails helpfully without assets; loads via manifest counts
-      (not hardcoded); tiling/range asserts in place
-- [ ] 24 material pipelines, one shared mesh, 24 index-range draws in INF1
+- [x] ~~Step 1 smoke test executed~~ superseded by the vec4-array mini-phase;
+      risk #4 + §3 already reconciled; no smoke-test residue
+- [x] `just shaders` green; `just test` green; churn = toon_link additions only
+- [x] `just lint`, `cargo build --examples` clean
+- [x] toon_link bails helpfully without assets (exercised by renaming the
+      converted dir); loads via manifest counts (not hardcoded);
+      tiling/range asserts in place
+- [x] 24 material pipelines, one shared mesh, 24 index-range draws in INF1
       batch order
-- [ ] Correctly shaped Link, smooth normal gradients; silhouette vs noclip
-      recorded
-- [ ] Debug modes + batch isolation work; all 24 batches identified
-- [ ] z_test=false decals mapped to Always/no-write; behavior recorded
-- [ ] Winding settled: per-material cull on, nothing missing over a full
-      orbit; converter flip (if any) committed with single-line sha256
-      update and `just link-verify-p3` green
-- [ ] Validation sweep clean
-- [ ] Hot reload preserves per-material raster state across 24 pipelines
-- [ ] No VMA leak on real-close exit
-- [ ] No changes to templates, existing examples, `Cargo.toml`, or oracle
+- [x] Correctly shaped Link, smooth normal gradients; silhouette recorded
+      (noclip side-by-side deferred to P7 — see Recorded facts)
+- [x] Debug modes + batch isolation work; all 24 batches identified
+- [x] z_test=false decals mapped to Always/no-write; behavior recorded
+- [x] Winding settled: **flipped in the converter**; per-material cull on,
+      nothing missing over a full orbit; single-line sha256 update;
+      `just link-verify-p3` green
+- [x] Validation sweep clean (16/16)
+- [x] Hot reload preserves per-material raster state across 24 pipelines
+- [x] No VMA leak on real-close exit
+- [x] No changes to templates, existing examples, `Cargo.toml`, or oracle
       scripts
-- [ ] Master plan §6 P6 row ✅ + hash; risks #3/#4 updated
-- [ ] Recorded facts filled in
+- [x] Master plan §6 P6 row ✅ + hash; risks #3/#4 updated
+- [x] Recorded facts filled in
 
 ## Recorded facts (fill in after gates pass)
 
 ```
-commit:
+commit:                   (hash added in the follow-up docs commit)
 
-smoke test result:        (exact panic text / stage; float4 variant if run)
+smoke test result:        superseded by the vec4-array mini-phase (0d08a7d);
+                          not executed, no residue
 
-winding outcome:          (unchanged | flipped-in-converter; sha256 line before/after;
-                           link-verify-p3 result; Blender re-check note if done)
+winding outcome:          flipped-in-converter. Under manifest cull the model was
+                          uniformly inside-out (eye decal + face interior visible
+                          through the back of the head in profile; shield visible
+                          through the chest from the front) — no mixed/partial
+                          batches, consistent with P3's uniform Blender read.
+                          Fix in output.rs::build: chunks_exact(3) → [t0, t2, t1]
+                          while concatenating per-shape lists; pose.rs untouched.
+                          sha256 link.idx.bin 56deed19… → 753489b9…, only that
+                          line. just link-verify-p3 green post-flip (71 converter
+                          unit tests + canonical geometry table zero-diff + file
+                          invariant checks: invBind residual 1.45e-2, weighted
+                          dist 7.73e-3 — unchanged). Blender re-check not
+                          performed (screenshots decisive).
 
-silhouette vs noclip:     (angles used, verdict, proportion notes)
+silhouette vs noclip:     front, left profile, direct back, back-right + two
+                          bring-up angles captured (XWayland `import` grabs).
+                          Verdict: unmistakably Toon Link — head ~1/3 of height,
+                          long trailing hat, sideburns, pointed ears, tunic,
+                          belt buckle (podA), boots; T-pose. Live noclip
+                          side-by-side not performed (no browser in the loop);
+                          revisit alongside P7's per-feature UV checks.
 
-normal-gradient reading:  (smooth? seams? where?)
+normal-gradient reading:  smooth across all curved surfaces (head, arms, legs,
+                          hat); hard transitions only at real creases (hat brim,
+                          hair spikes, tunic hem). No patchwork seams → normal
+                          bake + rotateDirection path is correct.
 
-per-batch isolation map:  (any surprising batch; else "all 24 as expected")
+per-batch isolation map:  all 24 as expected, stepped E ×25 (wraps to 0) via an
+                          XTEST driver; stdout names matched the manifest
+                          (ear/ear(2..8) shared-record naming quirk included;
+                          eye/mayu decals are the 36-index micro-batches,
+                          podA = belt buckle, 72).
 
-z_test=false decal note:  (what the 8 Always/no-write decals actually did)
+z_test=false decal note:  the 8 eye/brow decals (eyeL/R, eyeL/RdamA/B → but
+                          drawn: eye + mayu families) under Always/no-write draw
+                          over whatever is behind them when not culled: under
+                          bring-up cull None the eye quad showed through the back
+                          of the head (predicted by plan risk #4); with
+                          per-material Back cull they only appear with the face,
+                          reading as flat quads floating on the head in normals
+                          mode. Nothing louder than expected; full depth/alpha
+                          treatment lands in P7.
 
-sweep:                    (N/N examples clean)
+sweep:                    16/16 examples clean (incl. toon_link; grep
+                          validation|VUID over `timeout 3 just dev`)
 
-hot reload / VMA:         (as observed)
+hot reload / VMA:         fragment-body edit (dim ×0.25) recompiled and applied
+                          live across all 24 pipelines, per-material cull
+                          preserved (back view stayed solid); revert clean.
+                          Real window close (WM_DELETE via Xlib) → exit 0, no
+                          VMA leak report.
 
-deviations discovered:    1. …
+deviations discovered:    1. eyeball + key gates were driven programmatically
+                          (SDL_VIDEODRIVER=x11 + python-Xlib XTEST + ImageMagick
+                          import) instead of by hand — screenshots reviewed.
+                          2. none in code: plan executed as written (generated
+                          params carry an explicit `_padding_0: [u8; 12]` tail,
+                          minor construction detail).
 ```
 
 ## Out of scope for P6

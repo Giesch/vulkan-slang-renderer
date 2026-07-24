@@ -20,6 +20,7 @@ pub mod serenity_crt;
 pub mod space_invaders;
 pub mod sprite_batch;
 pub mod suzanne;
+pub mod toon_link;
 pub mod wc_advect_and_transfer_pigment_compute;
 pub mod wc_capillary_flow_compute;
 pub mod wc_divergence_compute;
@@ -32,6 +33,7 @@ pub mod wc_update_velocity_compute;
 pub struct ShaderAtlas {
     pub dragon: dragon::Shader,
     pub multi_mesh: multi_mesh::Shader,
+    pub toon_link: toon_link::Shader,
     pub space_invaders: space_invaders::Shader,
     pub particle_render: particle_render::Shader,
     pub koch_curve: koch_curve::Shader,
@@ -62,6 +64,7 @@ impl ShaderAtlas {
         Self {
             dragon: dragon::Shader::init(),
             multi_mesh: multi_mesh::Shader::init(),
+            toon_link: toon_link::Shader::init(),
             space_invaders: space_invaders::Shader::init(),
             particle_render: particle_render::Shader::init(),
             koch_curve: koch_curve::Shader::init(),
