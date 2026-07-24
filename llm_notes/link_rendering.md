@@ -124,17 +124,17 @@ post-BDA-migration — descriptor-based storage buffers no longer exist):
   (pipeline.rs:236); the buffers live in `Renderer::meshes` and outlive the
   pipelines that draw them (freed at teardown, not by `destroy_pipeline`).
   `examples/multi_mesh.rs` is the worked example of the exact shape P6 needs.
-- Hardcoded pipeline state in `create_graphics_pipeline` (src/renderer.rs:3394):
-  blend always SRC_ALPHA/ONE_MINUS_SRC_ALPHA ADD (3457–3463), color write mask
-  RGBA (3464), cull BACK + CCW (3445–3446), depth LESS + write always on
-  (3473–3475), stencil off. `PipelineConfig` (src/renderer/pipeline.rs:208)
-  exposes only `disable_depth_test`; `VertexPipelineConfig` is pipeline.rs:180.
-  **This is what P5 §4.3 replaces.**
-- Textures: always `R8G8B8A8_SRGB`, full mip chain, REPEAT wrap, anisotropy on
-  (`create_texture` src/renderer.rs:3996, `create_texture_sampler` 4543). Only
-  filter (Linear/Nearest) is selectable. The pre-baked-mip path
-  (`create_texture_with_mips`, 520) already takes an explicit `vk::Format`.
-  **This is what P5 §4.4 replaces.**
+- **Per-pipeline raster state** (P5): every graphics pipeline carries a
+  `RasterState` (blend / cull / depth compare / depth write / color write mask),
+  set with `PipelineConfig::with_raster_state` and defaulting to the pre-P5
+  hardcoded state — see §4.3. Topology, polygon mode, front face (always CCW),
+  depth bias and stencil are still hardcoded in `create_graphics_pipeline`
+  (src/renderer.rs:3516).
+- **Per-texture options** (P5): `Renderer::create_texture_with_options` takes a
+  `TextureOptions` (filter / wrap u+v / mipmaps / color space); plain
+  `create_texture` is a wrapper preserving the old sRGB + full-mip-chain +
+  REPEAT + anisotropy defaults — see §4.4. So Link's `Unorm` + `ClampToEdge` +
+  `mipmaps: false` + `Linear` requirement is now expressible.
 - Index buffers are u32-only; vertex/index buffers are owned per-pipeline
   unless the pipeline points at a shared mesh.
 - Per-pipeline descriptor sets and uniform buffers are allocated at
@@ -478,10 +478,11 @@ impl<'t, V: VertexDescription> PipelineConfig<'t, V, DrawIndexed> {
   `vertices`/`indices` in `Resources`, then calls `.with_shared_mesh(&mesh)`.
   Document this pattern in the example.
 
-### 4.3 Raster state
+### 4.3 Raster state — **shipped in P5**
 
 ```rust
-#[derive(Clone, Copy)]
+// src/renderer/pipeline.rs:216 (re-exported by `pub use pipeline::*`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RasterState {
     pub blend: BlendMode,         // Alpha (today's behavior) | Opaque
     pub cull: CullMode,           // Back (default) | None | Front
@@ -489,26 +490,36 @@ pub struct RasterState {
     pub depth_write: bool,        // true
     pub color_write: [bool; 4],   // all true; exercised later by the eye trick
 }
-impl Default for RasterState { /* == today's hardcoded pipeline state */ }
+impl Default for RasterState { /* == the pre-P5 hardcoded pipeline state */ }
 
-impl PipelineConfig<…> { pub fn with_raster_state(mut self, s: RasterState) -> Self; }
+impl PipelineConfig<…> { pub fn with_raster_state(mut self, s: RasterState) -> Self; } // 309
 ```
 
-- `create_graphics_pipeline` (3394) consumes `&RasterState` instead of its
-  current `depth_test_enable: bool, blend_enable: bool` pair; the picking
-  pipeline passes its own fixed state. Three call sites: picking (1036),
-  `init_pipeline` (1240), hot-reload recreate (2613).
-- `RendererPipeline.disable_depth_test` (pipeline.rs:177) is replaced by
-  `raster_state: RasterState` (hot-reload recreate path reads it). The
-  `disable_depth_test` builder field **stays** on `PipelineConfig` /
-  `PipelineConfigBuilder` and maps to `depth_test: Disabled` — it is emitted by
-  `templates/shader_atlas_entry.rs.askama`, so removing it would rewrite every
-  generated file and ~20 snapshots. Detailed plan:
+- `create_graphics_pipeline` (3516) consumes `&RasterState` instead of the old
+  `depth_test_enable: bool, blend_enable: bool` pair, deriving each field
+  through greppable, unit-tested helpers (`vk_cull_mode` 3479,
+  `vk_depth_compare` 3489, `vk_color_write_mask` 3498). Three call sites:
+  picking (1060, its own literal — uint target, no depth attachment),
+  `init_pipeline` (1263), hot-reload recreate.
+- `RendererPipeline.disable_depth_test` was replaced by
+  `raster_state: RasterState` (pipeline.rs:177); the hot-reload recreate reads
+  it back, verified live. The `disable_depth_test` builder field **stays** on
+  `PipelineConfig` / `PipelineConfigBuilder` and wins over `depth_test` when
+  set — it is emitted by `templates/shader_atlas_entry.rs.askama`, so removing
+  it would rewrite every generated file and ~20 snapshots.
+- **`PipelineConfigBuilder` has no `raster_state` field** (deviation from the
+  phase plan): the template emits a complete struct literal, so `build()`
+  defaults the state and `with_raster_state` overrides it. This is what keeps
+  P5 snapshot-neutral outside `multi_mesh`.
+- `BlendMode::DstAlpha` deliberately does not exist yet; Link's one
+  destination-alpha material lands with the eye trick in P9.
+  Detailed plan and results:
   [`link_rendering/phase_05.md`](link_rendering/phase_05.md).
 
-### 4.4 Texture options
+### 4.4 Texture options — **shipped in P5**
 
 ```rust
+// src/renderer.rs:2893/2905/2914
 pub enum TextureWrap { Repeat, ClampToEdge, MirroredRepeat }
 pub enum TextureColorSpace { Srgb, Unorm }
 pub struct TextureOptions {
@@ -517,24 +528,34 @@ pub struct TextureOptions {
     pub mipmaps: bool,
     pub color_space: TextureColorSpace,
 }
+impl Default for TextureOptions { /* Linear, Repeat, Repeat, true, Srgb */ }
 
 impl Renderer {
-    pub fn create_texture_with_options(&mut self, name: impl Into<String>,
-        image: &image::DynamicImage, options: TextureOptions) -> TextureHandle;
+    pub fn create_texture_with_options(&mut self, name: impl Into<String>,   // 511
+        image: &image::DynamicImage, options: TextureOptions)
+        -> anyhow::Result<TextureHandle>;
 }
 ```
 
-- Plumbs through `create_texture` (3996) / `create_texture_image` (4040) /
-  `create_texture_sampler` (4543): `R8G8B8A8_{SRGB|UNORM}` in place of the
-  `TEXTURE_IMAGE_FORMAT` const (3968), `mip_levels = 1` + skip
-  `generate_mipmaps` when off, sampler address modes from wraps, anisotropy off
-  when mipmaps are off. Existing `create_texture` becomes a wrapper with
-  today's defaults. `format_block_info` (3985) already whitelists UNORM, and
-  the pre-baked-mip path already takes an explicit format, so only the
-  non-mips path needs the new plumbing.
+- Plumbs through `create_texture` (492, now a wrapper preserving today's
+  defaults for all seven existing call sites) / `create_texture_image` (4169) /
+  `create_texture_sampler` (4710): `texture_format` (4092) picks
+  `R8G8B8A8_{SRGB|UNORM}` in place of the old `TEXTURE_IMAGE_FORMAT` const,
+  `mip_levels = 1` when mipmaps are off, `vk_address_mode` (4702) maps the
+  wraps, and anisotropy plus `max_lod` are both derived from the same `mipmaps`
+  flag that sizes the image (risk #3). `create_texture_with_mips` keeps its
+  public signature, so `mipmaps: false` can never reach the pre-baked-mip path.
+- **Non-obvious:** `generate_mipmaps` also performs the final
+  TRANSFER_DST → SHADER_READ_ONLY layout transition, so the `mipmaps: false`
+  path has to do that transition explicitly or the image is left in the copy's
+  layout.
 - P2's inventory showed **every** Link texture wants the same non-default
   options: `Unorm`, `ClampToEdge`, `mipmaps: false`, `Linear` filter — the
   ramps aren't special; §4.4 is load-bearing for all 44 textures.
+- Color-space plumbing is numerically verified: a mid-gray (128) image sampled
+  `Srgb` vs `Unorm` renders at 117 vs 172 through the `B8G8R8A8_SRGB`
+  swapchain, a linear ratio of 2.32 == 0.502/0.2158. Note the **`Unorm` sample
+  is the brighter one** — the phase plan had this backwards.
 
 ### 4.5 Explicitly deferred
 
@@ -588,7 +609,7 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P2** ✅ `8a0a4af` | TEX1+BTI decode → PNGs (+ standalone `.bti` re-emit per entry); full MAT3 parse + `--dump-mat3` — detailed plan: [`link_rendering/phase_02.md`](link_rendering/phase_02.md) | **as run** (`just link-verify-p2`): gclib pixel-diff 44/44 zero differences; canonical MAT3 table zero-line diff vs a gclib oracle (SuperBMD demoted to manual backup); synthetic per-format tile snapshots (insta); ramp names confirmed; **TEV subset frozen** (see §3) | 2–3 days |
 | **P3** ✅ `7704292` | geometry: baked bind pose, strip→list, manifest v1 (full TEV materials), `--obj`+`.mtl` export — detailed plan: [`link_rendering/phase_03.md`](link_rendering/phase_03.md) | **`just link-verify-p3` green**: invBind identity (residual 0.0145) + weighted-identity (0.0077) hard checks; canonical geometry table **zero-diff** vs a gclib+struct-walk oracle; exactly 2,874 triangles; Blender pass partial (face orientation uniform red, rigid attachment + per-batch isolation OK). Stored-AABB cross-check dropped as redundant; full Blender pass outstanding | 3–4 days |
 | **P4** ✅ `4621112` | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) — detailed plan: [`link_rendering/phase_04.md`](link_rendering/phase_04.md) | **as run**: `just test` green (pre-existing per-shader snapshots byte-identical); `just lint` clean; validation sweep 15/15 examples; multi_mesh tiles its index buffer exactly, perturbation test confirms gaps/spikes/`debug_assert`; multi-pipeline hot reload clean; no VMA leak on exit | 2 days |
-| **P5** | renderer 4.3 + 4.4 (raster state, texture options); extend multi_mesh with per-state test objects — detailed plan: [`link_rendering/phase_05.md`](link_rendering/phase_05.md) | multi_mesh: cull-front object inside-out, opaque-vs-alpha blend, depth-write-off artifact on demand; wrap/filter quad (clamp/repeat × linear/nearest); sRGB-vs-UNORM gray-quad brightness check; same validation sweep | 1–2 days |
+| **P5** ✅ | renderer 4.3 + 4.4 (raster state, texture options); `examples/multi_mesh.rs` grew 12 view-space test panels (17 pipelines, 18 draws, 7 texture handles, 3 procedural images) — detailed plan: [`link_rendering/phase_05.md`](link_rendering/phase_05.md) | **as run**: `just test` green, snapshot churn exactly multi_mesh's `.rs`+`.json` (branching snapshot unmoved, no atlas-index change); `RasterState` default-equivalence + enum-mapping unit tests; `just lint` clean; validation sweep 15/15 (run twice — once with examples untouched); every test object shows its artifact, **all six fields perturbed and reverted**, each artifact vanishing; sRGB-vs-UNORM verified numerically (117 vs 172, linear ratio 2.32); hot reload keeps per-pipeline raster state; clean exit with no VMA leak, and the leak check itself validated by injecting one | 1–2 days |
 | **P6** | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches | **uniform-array smoke test first** (`uint4[8]`, known pattern as colors); `just shaders`; `timeout 3 just dev toon_link`: correctly shaped Link, smooth normal gradients, silhouette vs noclip; culling off → then on (winding check), no validation errors | 1–2 days |
 | **P7** | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state | UV features vs noclip (face decals, eyes, belt buckle, tunic pattern); clean alpha-cutout edges on brows/lashes; no missing parts from per-material cull | 1 day |
 | **P8** | full TEV interpreter + lighting channel + SRTG ramp + gamma handling; subset gate final; single-material isolation debug key in the example | structured side-by-side vs noclip + golden Dolphin frames (`just link-dolphin-refs`, headless `.dff` replay) per feature (skin, tunic bands, hair highlight, eye whites); rotate light — terminator bands sweep and stay banded; isolate batch N for any wrong material; TEV semantic disputes adjudicated via FIFO analyzer (runtime BP/XF state) + software-renderer replay; optional CPU TEV reference evaluator if pixel-chasing gets hard | 3–5 days |

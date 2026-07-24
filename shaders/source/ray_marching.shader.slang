@@ -88,7 +88,7 @@ struct RayMarchWorld : IRayMarchWorld {
 
     float minHitDistance = 0.001;
 
-    Optional<RayHit> closestShape(float3 pos) {
+    Optional<ClosestShape> closestShape(float3 pos) {
         let sphereRes = Sphere.closest(spheres, sphereCount, pos);
         let boxRes = BoxRect.closest(boxes, boxCount, pos);
 

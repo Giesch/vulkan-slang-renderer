@@ -7,8 +7,7 @@ import addr;
 public interface IRayMarchWorld {
     // NOTE: returning 'none' here would mean no shapes in the scene,
     // not no shape hit in the current step
-    // TODO: consider renaming 'RayHit' here? 'ClosestShape'?
-    Optional<RayHit> closestShape(float3 pos);
+    Optional<ClosestShape> closestShape(float3 pos);
 
     property float minHitDistance { get; }
 
@@ -21,13 +20,13 @@ public interface IRayMarchWorld {
     }
 }
 
-public struct RayHit {
+public struct ClosestShape {
     public float distance;
     public float3 objectColor;
 }
 
 public struct RayHitDistance {
-    public Optional<RayHit> rayHit;
+    public Optional<ClosestShape> rayHit;
     public float distance;
 }
 
@@ -120,7 +119,7 @@ func basicLighting<W>(
 // a generic 3D SDF
 public interface IShape {
     static RayHitDistance closest(ReadAddr<This> buffer, int count, float3 position) {
-        var rayHit: Optional<RayHit> = none;
+        var rayHit: Optional<ClosestShape> = none;
 
         for (int i = 0; i < count; i++) {
             let shape = buffer[i];
@@ -129,7 +128,7 @@ public interface IShape {
             let closestOfItsKind = rayHit.hasValue && shapeDistance < rayHit.value.distance;
             let firstOfItsKind = !rayHit.hasValue;
             if (closestOfItsKind || firstOfItsKind) {
-                rayHit = RayHit(shapeDistance, shape.color);
+                rayHit = ClosestShape(shapeDistance, shape.color);
             }
         }
 

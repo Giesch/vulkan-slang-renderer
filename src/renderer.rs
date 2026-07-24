@@ -487,11 +487,32 @@ impl Renderer {
         }
     }
 
+    /// Create an sRGB, mipmapped, REPEAT-wrapped texture — the long-standing
+    /// default. Use [`Self::create_texture_with_options`] to vary any of that.
     pub fn create_texture(
         &mut self,
         source_file_name: impl Into<String>,
         image: &image::DynamicImage,
         texture_filter: TextureFilter,
+    ) -> anyhow::Result<TextureHandle> {
+        self.create_texture_with_options(
+            source_file_name,
+            image,
+            TextureOptions {
+                filter: texture_filter,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Create a texture with explicit image and sampler options: filter, wrap
+    /// modes, whether to generate a mip chain, and whether the stored values
+    /// are sRGB-encoded or raw.
+    pub fn create_texture_with_options(
+        &mut self,
+        source_file_name: impl Into<String>,
+        image: &image::DynamicImage,
+        options: TextureOptions,
     ) -> anyhow::Result<TextureHandle> {
         let texture = create_texture(
             source_file_name.into(),
@@ -503,7 +524,7 @@ impl Renderer {
             self.physical_device_properties,
             self.command_pool,
             self.graphics_queue,
-            texture_filter,
+            options,
         )?;
 
         let handle = self.textures.add(texture);
@@ -627,7 +648,7 @@ impl Renderer {
         let sampler = create_texture_sampler(
             &self.device,
             self.physical_device_properties,
-            TextureFilter::Linear,
+            TextureOptions::default(),
         )?;
 
         let texture = texture::Texture {
@@ -1033,6 +1054,15 @@ impl Renderer {
 
         let picking_pipeline_layout =
             ShaderPipelineLayout::create_from_atlas(&self.device, &*picking_config.shader)?;
+        // picking renders ids into a uint target with no depth attachment, so
+        // blending is meaningless and the depth-stencil state is ignored
+        // entirely (depth_write is set false as the honest value)
+        let picking_raster_state = RasterState {
+            blend: BlendMode::Opaque,
+            depth_test: DepthCompare::Disabled,
+            depth_write: false,
+            ..Default::default()
+        };
         let picking_pipeline = create_graphics_pipeline(
             &self.device,
             picking::PICKING_FORMAT,
@@ -1041,8 +1071,7 @@ impl Renderer {
             &picking_pipeline_layout,
             &picking_config.shader.vertex_binding_descriptions(),
             &picking_config.shader.vertex_attribute_descriptions(),
-            false, // no depth test for picking
-            false, // no blending for uint render target
+            &picking_raster_state,
         )?;
 
         let layout_bindings = picking_config.shader.layout_bindings();
@@ -1077,7 +1106,7 @@ impl Renderer {
             descriptor_pool,
             descriptor_sets,
             shader: picking_config.shader,
-            disable_depth_test: true,
+            raster_state: picking_raster_state,
         };
 
         let handle = self.pipelines.add_picking(renderer_pipeline);
@@ -1237,6 +1266,14 @@ impl Renderer {
     ) -> anyhow::Result<RendererPipeline> {
         let pipeline_layout =
             ShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
+
+        // the older, coarser disable_depth_test flag (emitted by generated
+        // pipeline_config()) wins over the raster state's depth compare
+        let mut raster_state = config.raster_state;
+        if config.disable_depth_test {
+            raster_state.depth_test = DepthCompare::Disabled;
+        }
+
         let pipeline = create_graphics_pipeline(
             &self.device,
             self.image_format,
@@ -1245,8 +1282,7 @@ impl Renderer {
             &pipeline_layout,
             &config.shader.vertex_binding_descriptions(),
             &config.shader.vertex_attribute_descriptions(),
-            !config.disable_depth_test,
-            true,
+            &raster_state,
         )?;
 
         self.set_debug_name(
@@ -1345,7 +1381,7 @@ impl Renderer {
             descriptor_pool,
             descriptor_sets,
             shader: config.shader,
-            disable_depth_test: config.disable_depth_test,
+            raster_state,
         })
     }
 
@@ -2610,6 +2646,11 @@ impl Renderer {
             descriptor_set_layouts,
         ));
 
+        // rebuild with the state this pipeline was created with, not the
+        // default — otherwise a reloaded shader silently reverts to
+        // alpha-blend / back-cull / depth-less
+        let raster_state = render_pipeline_mut.raster_state;
+
         render_pipeline_mut.pipeline = create_graphics_pipeline(
             &self.device,
             self.image_format,
@@ -2618,8 +2659,7 @@ impl Renderer {
             &render_pipeline_mut.layout,
             &render_pipeline_mut.shader.vertex_binding_descriptions(),
             &render_pipeline_mut.shader.vertex_attribute_descriptions(),
-            !render_pipeline_mut.disable_depth_test,
-            true,
+            &raster_state,
         )?;
 
         info!("finished recompiling shaders");
@@ -2846,6 +2886,51 @@ impl Drop for Renderer {
 pub enum TextureFilter {
     Linear,
     Nearest,
+}
+
+/// How texture coordinates outside [0, 1] are resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureWrap {
+    Repeat,
+    ClampToEdge,
+    MirroredRepeat,
+}
+
+/// How the sampler interprets the texture's stored 8-bit values.
+///
+/// `Srgb` applies the sRGB→linear transfer on sample (the right choice for
+/// authored color images); `Unorm` hands the raw value to the shader, which is
+/// what fixed-function pipelines that do their own math on raw values need.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureColorSpace {
+    Srgb,
+    Unorm,
+}
+
+/// Image and sampler options for [`Renderer::create_texture_with_options`].
+/// [`TextureOptions::default()`] reproduces what [`Renderer::create_texture`]
+/// has always done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextureOptions {
+    pub filter: TextureFilter,
+    pub wrap_u: TextureWrap,
+    pub wrap_v: TextureWrap,
+    /// generate and sample a full mip chain; anisotropic filtering is enabled
+    /// with it, and disabled without it
+    pub mipmaps: bool,
+    pub color_space: TextureColorSpace,
+}
+
+impl Default for TextureOptions {
+    fn default() -> Self {
+        Self {
+            filter: TextureFilter::Linear,
+            wrap_u: TextureWrap::Repeat,
+            wrap_v: TextureWrap::Repeat,
+            mipmaps: true,
+            color_space: TextureColorSpace::Srgb,
+        }
+    }
 }
 
 fn get_required_layers() -> Vec<&'static std::ffi::CStr> {
@@ -3391,6 +3476,43 @@ fn read_shader_spv(shader_name: &str) -> Result<Vec<u32>, anyhow::Error> {
     Ok(vk_bytes)
 }
 
+fn vk_cull_mode(cull: CullMode) -> vk::CullModeFlags {
+    match cull {
+        CullMode::Back => vk::CullModeFlags::BACK,
+        CullMode::Front => vk::CullModeFlags::FRONT,
+        CullMode::None => vk::CullModeFlags::NONE,
+    }
+}
+
+/// (depth_test_enable, compare op). The compare op is ignored when the test is
+/// disabled; LESS is passed so the disabled case stays a pure no-op.
+fn vk_depth_compare(depth_test: DepthCompare) -> (bool, vk::CompareOp) {
+    match depth_test {
+        DepthCompare::Less => (true, vk::CompareOp::LESS),
+        DepthCompare::LessEqual => (true, vk::CompareOp::LESS_OR_EQUAL),
+        DepthCompare::Always => (true, vk::CompareOp::ALWAYS),
+        DepthCompare::Disabled => (false, vk::CompareOp::LESS),
+    }
+}
+
+fn vk_color_write_mask(color_write: [bool; 4]) -> vk::ColorComponentFlags {
+    let channels = [
+        vk::ColorComponentFlags::R,
+        vk::ColorComponentFlags::G,
+        vk::ColorComponentFlags::B,
+        vk::ColorComponentFlags::A,
+    ];
+
+    let mut mask = vk::ColorComponentFlags::empty();
+    for (&enabled, channel) in color_write.iter().zip(channels) {
+        if enabled {
+            mask |= channel;
+        }
+    }
+
+    mask
+}
+
 fn create_graphics_pipeline(
     device: &ash::Device,
     color_format: vk::Format,
@@ -3399,8 +3521,7 @@ fn create_graphics_pipeline(
     pipeline_layout: &ShaderPipelineLayout,
     vertex_binding_descriptions: &[vk::VertexInputBindingDescription],
     vertex_attribute_descriptions: &[vk::VertexInputAttributeDescription],
-    depth_test_enable: bool,
-    blend_enable: bool,
+    raster_state: &RasterState,
 ) -> Result<vk::Pipeline, anyhow::Error> {
     let vert_shader_spv = &pipeline_layout.vertex_shader.spv_bytes;
     let frag_shader_spv = &pipeline_layout.fragment_shader.spv_bytes;
@@ -3443,7 +3564,7 @@ fn create_graphics_pipeline(
         .rasterizer_discard_enable(false)
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::BACK)
+        .cull_mode(vk_cull_mode(raster_state.cull))
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .depth_bias_enable(false);
 
@@ -3454,14 +3575,14 @@ fn create_graphics_pipeline(
 
     // color blend per attached framebuffer
     let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
-        .blend_enable(blend_enable)
+        .blend_enable(raster_state.blend == BlendMode::Alpha)
         .color_blend_op(vk::BlendOp::ADD)
         .alpha_blend_op(vk::BlendOp::ADD)
         .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
         .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
         .src_alpha_blend_factor(vk::BlendFactor::SRC_ALPHA)
         .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-        .color_write_mask(vk::ColorComponentFlags::RGBA);
+        .color_write_mask(vk_color_write_mask(raster_state.color_write));
 
     let color_attachments = [color_blend_attachment];
     // global color blending
@@ -3469,10 +3590,11 @@ fn create_graphics_pipeline(
         .logic_op_enable(false)
         .attachments(&color_attachments);
 
+    let (depth_test_enable, depth_compare_op) = vk_depth_compare(raster_state.depth_test);
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
         .depth_test_enable(depth_test_enable)
-        .depth_write_enable(true)
-        .depth_compare_op(vk::CompareOp::LESS)
+        .depth_write_enable(raster_state.depth_write)
+        .depth_compare_op(depth_compare_op)
         .depth_bounds_test_enable(false)
         .stencil_test_enable(false);
 
@@ -3965,7 +4087,14 @@ fn create_descriptor_sets(
     Ok(descriptor_sets)
 }
 
-const TEXTURE_IMAGE_FORMAT: ash::vk::Format = ash::vk::Format::R8G8B8A8_SRGB;
+/// The single place a runtime-uploaded texture's format is decided. Both
+/// variants are 4 bytes per texel, so only the sampling transfer differs.
+fn texture_format(color_space: TextureColorSpace) -> vk::Format {
+    match color_space {
+        TextureColorSpace::Srgb => vk::Format::R8G8B8A8_SRGB,
+        TextureColorSpace::Unorm => vk::Format::R8G8B8A8_UNORM,
+    }
+}
 
 /// The memory layout of a texture format,
 /// in terms of the block unit used for size and alignment calculations.
@@ -4003,7 +4132,7 @@ fn create_texture(
     physical_device_properties: vk::PhysicalDeviceProperties,
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
-    texture_filter: TextureFilter,
+    options: TextureOptions,
 ) -> anyhow::Result<Texture> {
     let (texture_image, texture_image_memory, mip_levels) = create_texture_image(
         input_image,
@@ -4013,18 +4142,18 @@ fn create_texture(
         physical_device,
         command_pool,
         graphics_queue,
+        options,
     )?;
 
     let texture_image_view = create_image_view(
         device,
         texture_image,
-        TEXTURE_IMAGE_FORMAT,
+        texture_format(options.color_space),
         vk::ImageAspectFlags::COLOR,
         mip_levels,
     )?;
 
-    let texture_sampler =
-        create_texture_sampler(device, physical_device_properties, texture_filter)?;
+    let texture_sampler = create_texture_sampler(device, physical_device_properties, options)?;
 
     Ok(Texture {
         source_file_name,
@@ -4045,6 +4174,7 @@ fn create_texture_image(
     physical_device: vk::PhysicalDevice,
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
+    options: TextureOptions,
 ) -> Result<(vk::Image, vk_mem::Allocation, u32), anyhow::Error> {
     let bytes = image.to_rgba8().into_raw();
     debug_assert!(
@@ -4052,7 +4182,13 @@ fn create_texture_image(
         "expected rgba bytes size"
     );
 
-    let mip_levels = image.width().max(image.height()).ilog2() + 1;
+    let format = texture_format(options.color_space);
+
+    let mip_levels = if options.mipmaps {
+        image.width().max(image.height()).ilog2() + 1
+    } else {
+        1
+    };
 
     let buffer_size = bytes.len() as u64;
     let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
@@ -4069,7 +4205,7 @@ fn create_texture_image(
         .height(image.height());
     let image_options = ImageOptions {
         extent,
-        format: TEXTURE_IMAGE_FORMAT,
+        format,
         tiling: vk::ImageTiling::OPTIMAL,
         usage: vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::SAMPLED
@@ -4084,7 +4220,7 @@ fn create_texture_image(
         command_pool,
         graphics_queue,
         vk_image,
-        TEXTURE_IMAGE_FORMAT,
+        format,
         vk::ImageLayout::UNDEFINED,
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         mip_levels,
@@ -4112,17 +4248,33 @@ fn create_texture_image(
         &[region],
     )?;
 
-    generate_mipmaps(
-        device,
-        command_pool,
-        graphics_queue,
-        vk_image,
-        (extent.width as i32, extent.height as i32),
-        mip_levels,
-        instance,
-        physical_device,
-        TEXTURE_IMAGE_FORMAT,
-    )?;
+    if options.mipmaps {
+        // this also leaves every level in SHADER_READ_ONLY_OPTIMAL
+        generate_mipmaps(
+            device,
+            command_pool,
+            graphics_queue,
+            vk_image,
+            (extent.width as i32, extent.height as i32),
+            mip_levels,
+            instance,
+            physical_device,
+            format,
+        )?;
+    } else {
+        // no blits to do, but the single level still has to leave the copy's
+        // TRANSFER_DST_OPTIMAL layout
+        transition_image_layout(
+            device,
+            command_pool,
+            graphics_queue,
+            vk_image,
+            format,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            mip_levels,
+        )?;
+    }
 
     unsafe {
         allocator.destroy_buffer(staging_buffer, &mut staging_buffer_memory);
@@ -4178,8 +4330,15 @@ fn create_texture_from_mips(
         mip_levels,
     )?;
 
-    let texture_sampler =
-        create_texture_sampler(device, physical_device_properties, texture_filter)?;
+    // this path always uploads a mip chain, so only the filter varies
+    let texture_sampler = create_texture_sampler(
+        device,
+        physical_device_properties,
+        TextureOptions {
+            filter: texture_filter,
+            ..Default::default()
+        },
+    )?;
 
     Ok(Texture {
         source_file_name,
@@ -4540,23 +4699,43 @@ pub(super) fn create_image_view(
     Ok(image_view)
 }
 
+fn vk_address_mode(wrap: TextureWrap) -> vk::SamplerAddressMode {
+    match wrap {
+        TextureWrap::Repeat => vk::SamplerAddressMode::REPEAT,
+        TextureWrap::ClampToEdge => vk::SamplerAddressMode::CLAMP_TO_EDGE,
+        TextureWrap::MirroredRepeat => vk::SamplerAddressMode::MIRRORED_REPEAT,
+    }
+}
+
 fn create_texture_sampler(
     device: &ash::Device,
     physical_device_properties: vk::PhysicalDeviceProperties,
-    texture_filter: TextureFilter,
+    options: TextureOptions,
 ) -> Result<vk::Sampler, anyhow::Error> {
-    let filter = match texture_filter {
+    let filter = match options.filter {
         TextureFilter::Linear => vk::Filter::LINEAR,
         TextureFilter::Nearest => vk::Filter::NEAREST,
     };
-    let max_anisotropy = physical_device_properties.limits.max_sampler_anisotropy;
+    // anisotropy only means something with a mip chain to sample across
+    let max_anisotropy = if options.mipmaps {
+        physical_device_properties.limits.max_sampler_anisotropy
+    } else {
+        1.0
+    };
+    // the same flag that sized the image caps the LOD, so image and sampler
+    // can't disagree (a mismatch samples a level that isn't there)
+    let max_lod = if options.mipmaps {
+        vk::LOD_CLAMP_NONE
+    } else {
+        0.0
+    };
     let create_info = vk::SamplerCreateInfo::default()
         .mag_filter(filter)
         .min_filter(filter)
-        .address_mode_u(vk::SamplerAddressMode::REPEAT)
-        .address_mode_v(vk::SamplerAddressMode::REPEAT)
-        .address_mode_w(vk::SamplerAddressMode::REPEAT)
-        .anisotropy_enable(true)
+        .address_mode_u(vk_address_mode(options.wrap_u))
+        .address_mode_v(vk_address_mode(options.wrap_v))
+        .address_mode_w(vk_address_mode(options.wrap_u))
+        .anisotropy_enable(options.mipmaps)
         .max_anisotropy(max_anisotropy)
         .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
         .unnormalized_coordinates(false)
@@ -4565,7 +4744,7 @@ fn create_texture_sampler(
         .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
         .mip_lod_bias(0.0)
         .min_lod(0.0)
-        .max_lod(vk::LOD_CLAMP_NONE);
+        .max_lod(max_lod);
 
     let sampler = unsafe { device.create_sampler(&create_info, None)? };
 
@@ -5530,7 +5709,77 @@ struct PickingDrawConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::index_range_in_bounds;
+    use ash::vk;
+
+    use super::{
+        BlendMode, CullMode, DepthCompare, RasterState, index_range_in_bounds, vk_color_write_mask,
+        vk_cull_mode, vk_depth_compare,
+    };
+
+    #[test]
+    fn cull_mode_mapping() {
+        assert_eq!(vk_cull_mode(CullMode::Back), vk::CullModeFlags::BACK);
+        assert_eq!(vk_cull_mode(CullMode::Front), vk::CullModeFlags::FRONT);
+        assert_eq!(vk_cull_mode(CullMode::None), vk::CullModeFlags::NONE);
+    }
+
+    #[test]
+    fn depth_compare_mapping() {
+        assert_eq!(
+            vk_depth_compare(DepthCompare::Less),
+            (true, vk::CompareOp::LESS)
+        );
+        assert_eq!(
+            vk_depth_compare(DepthCompare::LessEqual),
+            (true, vk::CompareOp::LESS_OR_EQUAL)
+        );
+        assert_eq!(
+            vk_depth_compare(DepthCompare::Always),
+            (true, vk::CompareOp::ALWAYS)
+        );
+        // the compare op is ignored when the test is off
+        assert_eq!(vk_depth_compare(DepthCompare::Disabled).0, false);
+    }
+
+    #[test]
+    fn color_write_mask_mapping() {
+        assert_eq!(
+            vk_color_write_mask([true; 4]),
+            vk::ColorComponentFlags::RGBA
+        );
+        assert_eq!(
+            vk_color_write_mask([false; 4]),
+            vk::ColorComponentFlags::empty()
+        );
+        assert_eq!(
+            vk_color_write_mask([true, false, false, false]),
+            vk::ColorComponentFlags::R
+        );
+        // the mask is in RGBA order, so only alpha is off here
+        assert_eq!(
+            vk_color_write_mask([true, true, true, false]),
+            vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B
+        );
+    }
+
+    /// The default must reproduce the pipeline state that was hardcoded in
+    /// create_graphics_pipeline before raster state became configurable.
+    #[test]
+    fn raster_state_default_matches_original_hardcoded_pipeline() {
+        let default = RasterState::default();
+
+        assert_eq!(vk_cull_mode(default.cull), vk::CullModeFlags::BACK);
+        assert_eq!(default.blend, BlendMode::Alpha); // blend_enable(true)
+        assert_eq!(
+            vk_color_write_mask(default.color_write),
+            vk::ColorComponentFlags::RGBA
+        );
+        assert_eq!(
+            vk_depth_compare(default.depth_test),
+            (true, vk::CompareOp::LESS)
+        );
+        assert!(default.depth_write);
+    }
 
     #[test]
     fn index_range_bounds_check() {

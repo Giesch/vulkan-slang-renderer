@@ -174,7 +174,64 @@ pub(super) struct RendererPipeline {
     pub shader: Box<dyn ShaderAtlasEntry>,
 
     #[cfg_attr(not(debug_assertions), expect(unused))] // used only during hot reload
-    pub disable_depth_test: bool,
+    pub raster_state: RasterState,
+}
+
+/// How fragments are combined with what is already in the color attachment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlendMode {
+    /// SRC_ALPHA / ONE_MINUS_SRC_ALPHA with BlendOp::ADD, for color and alpha
+    Alpha,
+    /// blending disabled; the fragment's alpha is ignored
+    Opaque,
+}
+
+/// Which triangle facing is discarded. The front face is always
+/// counter-clockwise; `Front` exists mainly as a test affordance, since it
+/// renders a closed mesh inside-out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CullMode {
+    Back,
+    Front,
+    None,
+}
+
+/// The depth test's comparison, or no depth test at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepthCompare {
+    Less,
+    LessEqual,
+    Always,
+    /// No depth test. NOTE that Vulkan still honors depth writes when the test
+    /// is disabled, so `Disabled` with `depth_write: true` writes the depth
+    /// buffer unconditionally — pair it with `depth_write: false` unless that
+    /// is really what you want.
+    Disabled,
+}
+
+/// The fixed-function raster state a graphics pipeline is baked with.
+/// [`RasterState::default()`] reproduces the renderer's original hardcoded
+/// pipeline exactly, so leaving it alone is always a no-op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RasterState {
+    pub blend: BlendMode,
+    pub cull: CullMode,
+    pub depth_test: DepthCompare,
+    pub depth_write: bool,
+    /// per-channel color write mask, in RGBA order
+    pub color_write: [bool; 4],
+}
+
+impl Default for RasterState {
+    fn default() -> Self {
+        Self {
+            blend: BlendMode::Alpha,
+            cull: CullMode::Back,
+            depth_test: DepthCompare::Less,
+            depth_write: true,
+            color_write: [true; 4],
+        }
+    }
 }
 
 pub(super) enum VertexPipelineConfig {
@@ -212,6 +269,7 @@ pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall> {
     pub(super) texture_handles: Vec<&'t TextureHandle>,
     pub(super) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub(super) storage_texture_handles: Vec<&'t StorageTextureHandle>,
+    pub(super) raster_state: RasterState,
 
     pub disable_depth_test: bool,
 }
@@ -239,6 +297,21 @@ impl<'t, V: VertexDescription> PipelineConfig<'t, V, DrawIndexed> {
     }
 }
 
+impl<'t, V: VertexDescription, D: DrawCall> PipelineConfig<'t, V, D> {
+    /// Bake this pipeline with explicit fixed-function raster state instead of
+    /// [`RasterState::default()`] (which reproduces the renderer's original
+    /// hardcoded pipeline).
+    ///
+    /// NOTE the older, coarser `disable_depth_test` flag wins when it is set:
+    /// it forces [`DepthCompare::Disabled`] regardless of what is passed here.
+    /// To vary the depth test alongside other state, leave
+    /// `disable_depth_test` false and set `depth_test` directly.
+    pub fn with_raster_state(mut self, raster_state: RasterState) -> Self {
+        self.raster_state = raster_state;
+        self
+    }
+}
+
 pub struct PipelineConfigBuilder<'t, V: VertexDescription> {
     pub shader: Box<dyn ShaderAtlasEntry>,
     pub vertex_config: VertexConfig<V>,
@@ -259,6 +332,10 @@ impl<'t, V: VertexDescription> PipelineConfigBuilder<'t, V> {
             texture_handles: self.texture_handles,
             uniform_buffer_handles: self.uniform_buffer_handles,
             storage_texture_handles: self.storage_texture_handles,
+            // generated `pipeline_config()` builds this struct as a complete
+            // literal, so raster state is defaulted here and overridden with
+            // PipelineConfig::with_raster_state rather than being a field
+            raster_state: RasterState::default(),
             disable_depth_test: self.disable_depth_test,
         }
     }

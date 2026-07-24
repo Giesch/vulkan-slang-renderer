@@ -104,6 +104,10 @@
     - [ ] think about how to make mapped wrapper structs generalizable
     - [ ] add a feature that can handle the Addr types or a game-dev created slang type
 
+- [ ] get a better understanding of srgb vs unorm color spaces
+
+- [ ] migrate all examples to use the newer renderer apis and delete the dead ones
+  after getting to render graph?
 
 * Next
 - [ ] check if the different drop helpers for buffers are used/needed
@@ -585,7 +589,10 @@
 - [ ] figure out the right way to scale/upscale egui for a 4k monitor
   setting pixels_per point to 2, ignoring upscaling, breaks click event position
 
-- [ ] add a powershell script that loads .env file
+- [X] add a powershell script that loads .env file
+
+- [ ] look into splitting texture/image and texture sampler config/states
+  this can avoid creating a lot of duplicate samplers
 
 
 * Roc Questions

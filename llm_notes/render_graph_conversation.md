@@ -2,7 +2,7 @@
 
 A conversation exploring how the `bevy_render` crate works, with focus on the render graph, GPU synchronization, compute shaders, and related topics.
 
-Dan: This took place in the bevy repo, on latest main, on 2025-01-11.
+Dan: This took place in the bevy repo, on latest main, on 2026-01-11. Note that this predates Bevy's migration to a systems-based render graph.
 
 ---
 

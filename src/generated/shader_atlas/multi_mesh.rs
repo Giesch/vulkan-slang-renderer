@@ -39,6 +39,7 @@ const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 pub struct Vertex {
     pub position: glam::Vec3,
     pub normal: glam::Vec3,
+    pub uv0: glam::Vec2,
 }
 
 impl GPUWrite for Vertex {}
@@ -46,6 +47,7 @@ impl GPUWrite for Vertex {}
 pub struct Resources<'a> {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    pub texture: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<MultiMeshParams>,
 }
 
@@ -71,6 +73,11 @@ impl VertexDescription for Vertex {
                 .format(ash::vk::Format::R32G32B32_SFLOAT)
                 .binding(0)
                 .location(1),
+            ash::vk::VertexInputAttributeDescription::default()
+                .offset(std::mem::offset_of!(Vertex, uv0) as u32)
+                .format(ash::vk::Format::R32G32_SFLOAT)
+                .binding(0)
+                .location(2),
         ]
     }
 }
@@ -99,6 +106,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
+            resources.texture,
         ];
 
         #[rustfmt::skip]

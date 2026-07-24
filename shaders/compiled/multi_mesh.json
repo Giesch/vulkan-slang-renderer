@@ -79,6 +79,24 @@
               "kind": "scalar",
               "scalarType": "float32"
             }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "texture",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
           }
         ]
       }
@@ -94,7 +112,7 @@
         "binding": {
           "kind": "varyingInput",
           "index": 0,
-          "count": 2
+          "count": 3
         },
         "typeName": "Vertex",
         "fields": [
@@ -125,6 +143,20 @@
               "kind": "scalar",
               "scalarType": "float32"
             }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "uv0",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 2,
+              "count": 1
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
           }
         ]
       }
@@ -140,7 +172,7 @@
         "binding": {
           "kind": "varyingInput",
           "index": 0,
-          "count": 1
+          "count": 2
         },
         "typeName": "FragVertex",
         "fields": [
@@ -167,6 +199,20 @@
               "kind": "scalar",
               "scalarType": "float32"
             }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "uv0",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 1,
+              "count": 1
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
           }
         ]
       }
@@ -179,6 +225,13 @@
           {
             "binding": 0,
             "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 208
+          },
+          {
+            "binding": 1,
+            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 208
