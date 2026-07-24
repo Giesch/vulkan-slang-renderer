@@ -5,6 +5,7 @@ info:
 ---
 pub mod std140_vec3_padding;
 pub mod std430_vectors;
+pub mod std140_arrays;
 pub mod std430_nested_structs;
 pub mod std430_matrices;
 pub mod std430_vec3_padding;
@@ -15,6 +16,7 @@ pub mod pointer_pointee_layout;
 pub mod pointer_dual_context;
 pub mod std430_mixed_fields;
 pub mod std140_mixed_fields;
+pub mod std430_arrays;
 pub mod std140_vectors;
 pub mod std140_matrices;
 pub mod pointer_params_compute;
@@ -23,6 +25,7 @@ pub mod pointer_params_compute;
 pub struct ShaderAtlas {
     pub std140_vec3_padding: std140_vec3_padding::Shader,
     pub std430_vectors: std430_vectors::Shader,
+    pub std140_arrays: std140_arrays::Shader,
     pub std430_nested_structs: std430_nested_structs::Shader,
     pub std430_matrices: std430_matrices::Shader,
     pub std430_vec3_padding: std430_vec3_padding::Shader,
@@ -33,6 +36,7 @@ pub struct ShaderAtlas {
     pub pointer_dual_context: pointer_dual_context::Shader,
     pub std430_mixed_fields: std430_mixed_fields::Shader,
     pub std140_mixed_fields: std140_mixed_fields::Shader,
+    pub std430_arrays: std430_arrays::Shader,
     pub std140_vectors: std140_vectors::Shader,
     pub std140_matrices: std140_matrices::Shader,
     pub pointer_params_compute: pointer_params_compute::Shader,
@@ -43,6 +47,7 @@ impl ShaderAtlas {
         Self {
             std140_vec3_padding: std140_vec3_padding::Shader::init(),
             std430_vectors: std430_vectors::Shader::init(),
+            std140_arrays: std140_arrays::Shader::init(),
             std430_nested_structs: std430_nested_structs::Shader::init(),
             std430_matrices: std430_matrices::Shader::init(),
             std430_vec3_padding: std430_vec3_padding::Shader::init(),
@@ -53,6 +58,7 @@ impl ShaderAtlas {
             pointer_dual_context: pointer_dual_context::Shader::init(),
             std430_mixed_fields: std430_mixed_fields::Shader::init(),
             std140_mixed_fields: std140_mixed_fields::Shader::init(),
+            std430_arrays: std430_arrays::Shader::init(),
             std140_vectors: std140_vectors::Shader::init(),
             std140_matrices: std140_matrices::Shader::init(),
             pointer_params_compute: pointer_params_compute::Shader::init(),

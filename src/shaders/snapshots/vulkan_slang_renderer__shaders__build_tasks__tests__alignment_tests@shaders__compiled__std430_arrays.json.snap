@@ -1,0 +1,212 @@
+---
+source: src/shaders/build_tasks.rs
+info:
+  relative_path: shaders/compiled/std430_arrays.json
+---
+{
+  "sourceFileName": "std430_arrays.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "scalar",
+            "fieldName": "scale",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "items",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "ArrayPointee",
+              "fields": [
+                {
+                  "kind": "scalar",
+                  "fieldName": "lead",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "konst",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 64
+                  },
+                  "elementScalarType": "float32",
+                  "elementCount": 4,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "stages",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 80,
+                    "size": 128
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 8,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "wedge",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 208,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "offsets",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 224,
+                    "size": 48
+                  },
+                  "elementScalarType": "int32",
+                  "elementCount": 3,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "tail",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 272,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                },
+                {
+                  "kind": "struct",
+                  "fieldName": "nested",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 288,
+                    "size": 48
+                  },
+                  "structType": {
+                    "typeName": "PtrNested",
+                    "fields": [
+                      {
+                        "kind": "array",
+                        "fieldName": "inner",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 32
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 2,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "scalar",
+                        "fieldName": "pad",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 32,
+                          "size": 4
+                        },
+                        "scalarType": "float32"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "flags",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 336,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "uint32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "bias",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 352,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "int32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 368,
+            "access": "readWrite"
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": []
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}
