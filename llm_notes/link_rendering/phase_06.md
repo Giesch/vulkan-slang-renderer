@@ -539,7 +539,7 @@ done; echo "sweep clean"
 ## Recorded facts (fill in after gates pass)
 
 ```
-commit:                   (hash added in the follow-up docs commit)
+commit:                   9508563
 
 smoke test result:        superseded by the vec4-array mini-phase (0d08a7d);
                           not executed, no residue
