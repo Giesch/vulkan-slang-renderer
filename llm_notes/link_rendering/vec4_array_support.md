@@ -316,7 +316,7 @@ pattern value); no residue; full suite green.
 ## Recorded facts (fill in after gates pass)
 
 ```
-commit:                     (pending — this session's work, fill at commit)
+commit:                     0d08a7d
 
 slang stride API used:      TypeLayout::element_stride(ParameterCategory::Uniform)
                             (real accessor exists in the Giesch/slang-rs fork @ 40be816;
@@ -385,13 +385,14 @@ deviations discovered:
 - **2/3-component integer vectors** (`uint2`, `int3`, …) as bare fields —
   not needed; only the 4-component forms land.
 - **P8's actual `ToonLinkParams` migration** — this phase only makes the
-  master plan §3 flat layout *possible*; whether P8 uses it or keeps the BDA
-  decision recorded in [`phase_06.md`](phase_06.md) Step 1 is P8 planning's
-  call.
+  master plan §3 flat layout *possible*. *(Decided at landing: P8 uses the
+  flat-array layout; phase_06 Step 1's BDA decision is superseded — banner
+  added there.)*
 - **Planning-doc updates** ([`follow_up.md`](follow_up.md) §1's cost
-  estimate, master plan risk #4, phase_06's recorded decision) — explicitly
-  deferred per user instruction; reconcile them when this phase lands or at
-  P8 planning, whichever comes first.
+  estimate, master plan risk #4, phase_06's recorded decision) — deferred
+  during planning, *reconciled in the commit after `0d08a7d`* (risk #4
+  closed, §3 sketch confirmed as the P8 layout, follow_up §1 marked done,
+  phase_06 Step 1 superseded).
 
 ## Risks / open questions
 

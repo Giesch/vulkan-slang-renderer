@@ -8,9 +8,11 @@ original game's code and asset paths; this document plans the port into this
 renderer.
 
 Companion documents: [`link_rendering/risks.md`](link_rendering/risks.md)
-(expanded risk walkthrough) and
+(expanded risk walkthrough),
 [`link_rendering/tests.md`](link_rendering/tests.md) (per-phase correctness
-testing: external oracles + our own tests).
+testing: external oracles + our own tests), and
+[`link_rendering/follow_up.md`](link_rendering/follow_up.md) (deferred work
+with no landing phase, accepted limitations, verification debt).
 
 ## Settled decisions
 
@@ -341,9 +343,13 @@ Two committed, hand-written files:
 
 The shader is a **data-driven interpreter**: per-material TEV configuration
 arrives as uniform data built from the manifest. Uniform layout uses **flat
-`uint4`/`float4` arrays only** (codegen support for arrays-of-structs is
-unverified — see risks; fallback is an immutable BDA buffer read by pointer,
-`ImmutableAddr<T>`, proven via sprite_batch):
+`uint4`/`float4` arrays only** — supported by the codegen since the
+vec4-array mini-phase (`0d08a7d`,
+[`link_rendering/vec4_array_support.md`](link_rendering/vec4_array_support.md)):
+`float4[N]`/`uint4[N]`/`int4[N]` fields generate `[glam::Vec4|UVec4|IVec4; N]`
+with compile-time layout proofs, in both std140 and BDA-pointee contexts.
+The sketch below is therefore the P8 layout as written (the BDA fallback
+phase_06 Step 1 had decided on is superseded):
 
 ```slang
 struct ToonLinkParams {
@@ -610,7 +616,7 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P3** ✅ `7704292` | geometry: baked bind pose, strip→list, manifest v1 (full TEV materials), `--obj`+`.mtl` export — detailed plan: [`link_rendering/phase_03.md`](link_rendering/phase_03.md) | **`just link-verify-p3` green**: invBind identity (residual 0.0145) + weighted-identity (0.0077) hard checks; canonical geometry table **zero-diff** vs a gclib+struct-walk oracle; exactly 2,874 triangles; Blender pass partial (face orientation uniform red, rigid attachment + per-batch isolation OK). Stored-AABB cross-check dropped as redundant; full Blender pass outstanding | 3–4 days |
 | **P4** ✅ `4621112` | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) — detailed plan: [`link_rendering/phase_04.md`](link_rendering/phase_04.md) | **as run**: `just test` green (pre-existing per-shader snapshots byte-identical); `just lint` clean; validation sweep 15/15 examples; multi_mesh tiles its index buffer exactly, perturbation test confirms gaps/spikes/`debug_assert`; multi-pipeline hot reload clean; no VMA leak on exit | 2 days |
 | **P5** ✅ | renderer 4.3 + 4.4 (raster state, texture options); `examples/multi_mesh.rs` grew 12 view-space test panels (17 pipelines, 18 draws, 7 texture handles, 3 procedural images) — detailed plan: [`link_rendering/phase_05.md`](link_rendering/phase_05.md) | **as run**: `just test` green, snapshot churn exactly multi_mesh's `.rs`+`.json` (branching snapshot unmoved, no atlas-index change); `RasterState` default-equivalence + enum-mapping unit tests; `just lint` clean; validation sweep 15/15 (run twice — once with examples untouched); every test object shows its artifact, **all six fields perturbed and reverted**, each artifact vanishing; sRGB-vs-UNORM verified numerically (117 vs 172, linear ratio 2.32); hot reload keeps per-pipeline raster state; clean exit with no VMA leak, and the leak check itself validated by injecting one | 1–2 days |
-| **P6** | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches | **uniform-array smoke test first** (`uint4[8]`, known pattern as colors); `just shaders`; `timeout 3 just dev toon_link`: correctly shaped Link, smooth normal gradients, silhouette vs noclip; culling off → then on (winding check), no validation errors | 1–2 days |
+| **P6** | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches — detailed plan: [`link_rendering/phase_06.md`](link_rendering/phase_06.md) (Step 1's smoke test superseded by the vec4-array mini-phase `0d08a7d`) | `just shaders`; `timeout 3 just dev toon_link`: correctly shaped Link, smooth normal gradients, silhouette vs noclip; culling off → then on (winding check), no validation errors | 1–2 days |
 | **P7** | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state | UV features vs noclip (face decals, eyes, belt buckle, tunic pattern); clean alpha-cutout edges on brows/lashes; no missing parts from per-material cull | 1 day |
 | **P8** | full TEV interpreter + lighting channel + SRTG ramp + gamma handling; subset gate final; single-material isolation debug key in the example | structured side-by-side vs noclip + golden Dolphin frames (`just link-dolphin-refs`, headless `.dff` replay) per feature (skin, tunic bands, hair highlight, eye whites); rotate light — terminator bands sweep and stay banded; isolate batch N for any wrong material; TEV semantic disputes adjudicated via FIFO analyzer (runtime BP/XF state) + software-renderer replay; optional CPU TEV reference evaluator if pixel-chasing gets hard | 3–5 days |
 | **P9** | optional polish: `--casual` clothes; eye write-mask multi-pass; BCK-sampled pose | casual: P7-style UV checks; eye trick vs **Dolphin** (noclip may not implement it) | 2+ days |
@@ -646,12 +652,19 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
    enable Back and flip triangle order in the converter if inside-out. *P3
    Blender read: uniform red = winding is consistent (not a patchwork bug), just
    GX-native — the flip decision stays with P6.*
-4. **Uniform array codegen** — unverified that the shader atlas codegen handles
-   `uint4 foo[8]` uniform arrays. Mitigation: flat arrays only; smoke-test with
-   a throwaway shader early in P6; fallback: move the TEV param arrays into an
-   immutable BDA buffer read via `ImmutableAddr<T>` (sprite_batch-proven;
-   `StructuredBuffer` no longer exists post-BDA-migration). *(Still the top
-   open repo-local risk.)*
+4. ~~**Uniform array codegen**~~ — *resolved by the vec4-array mini-phase*
+   (`0d08a7d`,
+   [`link_rendering/vec4_array_support.md`](link_rendering/vec4_array_support.md)):
+   the codegen now supports `float4[N]`/`uint4[N]`/`int4[N]` array fields
+   (plus bare `uint4`/`int4` vectors and `ScalarType::Int32`) in std140
+   uniform and std430 BDA-pointee contexts, emitting `[glam::…; N]` with
+   compile-time offset/size proofs; anything outside that 16-byte-element
+   subset is a hard, actionable error instead of a `todo!`. Verified by
+   committed alignment-test shaders, the check_crate compile of the emitted
+   asserts, and a runtime pattern-band render. P8 uses the §3 flat-array
+   `ToonLinkParams` as sketched; the BDA fallback recorded in
+   [`link_rendering/phase_06.md`](link_rendering/phase_06.md) Step 1 is
+   superseded, and P6's planned smoke test is moot.
 5. ~~**SRTG texgen details**~~ — *resolved by the P2 dump*: SRTG sources
    COLOR0 with the identity matrix; no texture matrix on the ramp path. Two
    findings replace it: (a) 2 **non-identity texture matrices** exist
