@@ -1,0 +1,27 @@
+[package]
+name = "mltrs"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mltrs-renderer.workspace = true
+
+anyhow.workspace = true
+ash.workspace = true
+facet.workspace = true
+glam.workspace = true
+image.workspace = true
+ktx2.workspace = true
+log.workspace = true
+pretty_env_logger.workspace = true
+sdl3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# used only by the interim in-crate examples; these move to the example crates
+egui.workspace = true
+rodio.workspace = true
+tobj.workspace = true

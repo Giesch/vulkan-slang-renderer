@@ -1,0 +1,34 @@
+[package]
+name = "mltrs-cli"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+# lib + bin: the lib target name roots the insta snapshot prefix
+# (mltrs_cli__build_tasks__tests__*), and it lets a consumer drive codegen
+# from a build.rs. The binary itself is just `mltrs`.
+[lib]
+name = "mltrs_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mltrs"
+path = "src/main.rs"
+
+[dependencies]
+mltrs-renderer.workspace = true
+
+anyhow.workspace = true
+askama.workspace = true
+clap.workspace = true
+# used to compute the layout assertions the codegen emits
+glam.workspace = true
+heck.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+rspirv.workspace = true
+uuid.workspace = true

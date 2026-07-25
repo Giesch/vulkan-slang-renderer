@@ -1,0 +1,25 @@
+[package]
+name = "convert-link"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+# bin-only: keeping the target named `convert_link` preserves the existing
+# insta snapshot prefix (insta roots snapshot names at the target crate name)
+[[bin]]
+name = "convert_link"
+path = "src/main.rs"
+
+[dependencies]
+mltrs.workspace = true
+
+anyhow.workspace = true
+glam.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
