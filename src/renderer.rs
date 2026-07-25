@@ -2,6 +2,8 @@
 
 use std::collections::BTreeSet;
 use std::ffi::{CStr, CString, c_char};
+// only used by the hot-reload watch bookkeeping
+#[cfg(debug_assertions)]
 use std::path::PathBuf;
 
 use ash::vk;
