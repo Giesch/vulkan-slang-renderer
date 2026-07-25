@@ -406,9 +406,12 @@ impl ComputePipelineStorage {
     }
 }
 
+// NOTE these fields must stay `pub`: generated compute entries build this
+// struct literally, and after the workspace split that code lives in the
+// consumer's crate. `pub(crate)` here is E0451 at the consumer.
 pub struct ComputePipelineConfig<'t> {
-    pub(crate) shader: Box<dyn ComputeShaderAtlasEntry>,
-    pub(crate) texture_handles: Vec<&'t TextureHandle>,
-    pub(crate) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
-    pub(crate) storage_texture_handles: Vec<&'t StorageTextureHandle>,
+    pub shader: Box<dyn ComputeShaderAtlasEntry>,
+    pub texture_handles: Vec<&'t TextureHandle>,
+    pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
+    pub storage_texture_handles: Vec<&'t StorageTextureHandle>,
 }
