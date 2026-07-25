@@ -1,5 +1,5 @@
 ---
-source: src/shaders/build_tasks.rs
+source: crates/cli/src/build_tasks.rs
 info:
   relative_path: src/generated/shader_atlas/std430_arrays.rs
 ---
@@ -188,6 +188,10 @@ impl Shader {
 impl ShaderAtlasEntry for Shader {
     fn source_file_name(&self) -> &str {
         &self.reflection_json.source_file_name
+    }
+
+    fn shaders_source_dir(&self) -> &'static std::path::Path {
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source"))
     }
 
     fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {

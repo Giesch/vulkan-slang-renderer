@@ -25,7 +25,9 @@ use mltrs::renderer::{
     PipelineHandle, RasterState, Renderer, UniformBufferHandle,
 };
 
-use mltrs::generated::shader_atlas::toon_link::*;
+use crate::generated::shader_atlas::toon_link::*;
+
+mod generated;
 
 fn main() -> Result<(), anyhow::Error> {
     ToonLink::run()
@@ -91,7 +93,7 @@ impl BatchIndex {
 }
 
 fn converted_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/link/converted")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/link/converted")
 }
 
 fn load_manifest(dir: &Path) -> anyhow::Result<Manifest> {

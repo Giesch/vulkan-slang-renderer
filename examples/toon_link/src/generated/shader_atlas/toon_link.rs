@@ -1,6 +1,6 @@
 // GENERATED FILE (do not edit directly)
 
-//! generated from slang shader: depth_texture.shader.slang
+//! generated from slang shader: toon_link.shader.slang
 
 use std::ffi::CString;
 use std::io::Cursor;
@@ -22,28 +22,31 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
-pub struct DepthTextureParams {
+pub struct ToonLinkParams {
     pub mvp: MVPMatrices,
+    pub debug_mode: u32,
+    pub _padding_0: [u8; 12],
 }
 
-impl GPUWrite for DepthTextureParams {}
-const _: () = assert!(std::mem::size_of::<DepthTextureParams>() == 192);
-const _: () = assert!(std::mem::offset_of!(DepthTextureParams, mvp) == 0);
+impl GPUWrite for ToonLinkParams {}
+const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 208);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 192);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Vertex {
     pub position: glam::Vec3,
-    pub color: glam::Vec3,
-    pub tex_coord: glam::Vec2,
+    pub normal: glam::Vec3,
+    pub uv0: glam::Vec2,
 }
 
 impl GPUWrite for Vertex {}
 
 pub struct Resources<'a> {
-    pub texture: &'a TextureHandle,
-    pub params_buffer: &'a UniformBufferHandle<DepthTextureParams>,
+    pub params_buffer: &'a UniformBufferHandle<ToonLinkParams>,
 }
 
 impl VertexDescription for Vertex {
@@ -64,12 +67,12 @@ impl VertexDescription for Vertex {
                 .binding(0)
                 .location(0),
             ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, color) as u32)
+                .offset(std::mem::offset_of!(Vertex, normal) as u32)
                 .format(ash::vk::Format::R32G32B32_SFLOAT)
                 .binding(0)
                 .location(1),
             ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, tex_coord) as u32)
+                .offset(std::mem::offset_of!(Vertex, uv0) as u32)
                 .format(ash::vk::Format::R32G32_SFLOAT)
                 .binding(0)
                 .location(2),
@@ -85,7 +88,7 @@ impl Shader {
     pub fn init() -> Self {
         let json_str = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/depth_texture.json"
+            "/shaders/compiled/toon_link.json"
         ));
 
         let reflection_json: ReflectionJson = serde_json::from_str(json_str).unwrap();
@@ -101,7 +104,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.texture,
         ];
 
         #[rustfmt::skip]
@@ -150,7 +152,7 @@ impl Shader {
     fn vert_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/depth_texture.vert.spv"
+            "/shaders/compiled/toon_link.vert.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")
@@ -159,7 +161,7 @@ impl Shader {
     fn frag_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/depth_texture.frag.spv"
+            "/shaders/compiled/toon_link.frag.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")
