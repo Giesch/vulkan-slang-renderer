@@ -23,6 +23,11 @@ pub trait ShaderAtlasEntry {
     fn precompiled_shaders(&self) -> PrecompiledShaders;
     fn pipeline_layout(&self) -> &ReflectedPipelineLayout;
     fn reflection_json(&self) -> &ReflectionJson;
+
+    // dev only: the slang source dir this entry was generated from.
+    // Emitted by codegen as the generating crate's CARGO_MANIFEST_DIR, so hot
+    // reload finds sources even when the shader lives in a consumer crate.
+    fn shaders_source_dir(&self) -> &'static std::path::Path;
 }
 
 pub trait ComputeShaderAtlasEntry {
@@ -32,4 +37,9 @@ pub trait ComputeShaderAtlasEntry {
     fn pipeline_layout(&self) -> &ReflectedPipelineLayout;
     fn workgroup_size(&self) -> [u32; 3];
     fn reflection_json(&self) -> &ComputeReflectionJson;
+
+    // dev only: the slang source dir this entry was generated from.
+    // Emitted by codegen as the generating crate's CARGO_MANIFEST_DIR, so hot
+    // reload finds sources even when the shader lives in a consumer crate.
+    fn shaders_source_dir(&self) -> &'static std::path::Path;
 }

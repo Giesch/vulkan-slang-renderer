@@ -15,6 +15,11 @@ pub trait ShaderAtlasEntry {
     // used in hot reload to detect interface changes that require a rebuild
     fn reflection_json(&self) -> &ReflectionJson;
 
+    // dev only: the slang source dir this entry was generated from.
+    // Emitted by codegen as the generating crate's CARGO_MANIFEST_DIR, so hot
+    // reload finds sources even when the shader lives in a consumer crate.
+    fn shaders_source_dir(&self) -> &'static std::path::Path;
+
     // dev and release
 
     fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription>;
@@ -47,4 +52,9 @@ pub trait ComputeShaderAtlasEntry {
     fn precompiled_compute_shader(&self) -> PrecompiledShader;
     fn pipeline_layout(&self) -> &ReflectedPipelineLayout;
     fn workgroup_size(&self) -> [u32; 3];
+
+    // dev only: the slang source dir this entry was generated from.
+    // Emitted by codegen as the generating crate's CARGO_MANIFEST_DIR, so hot
+    // reload finds sources even when the shader lives in a consumer crate.
+    fn shaders_source_dir(&self) -> &'static std::path::Path;
 }

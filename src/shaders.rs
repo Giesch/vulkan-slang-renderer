@@ -121,9 +121,21 @@ fn prepare_reflected_shader(
     Ok(reflected_shader)
 }
 
+/// Recompiles a shader from source for hot reload. `search_path` comes from
+/// `ShaderAtlasEntry::shaders_source_dir`, so it points at the slang sources of
+/// whichever crate the shader was generated for.
 #[cfg(debug_assertions)]
-pub fn dev_compile_slang_shaders(source_file_name: &str) -> anyhow::Result<ReflectedShader> {
-    prepare_reflected_shader(source_file_name, "shaders/source")
+pub fn dev_compile_slang_shaders(
+    source_file_name: &str,
+    search_path: &std::path::Path,
+) -> anyhow::Result<ReflectedShader> {
+    use anyhow::Context as _;
+
+    let search_path = search_path
+        .to_str()
+        .with_context(|| format!("shader source dir is not valid UTF-8: {search_path:?}"))?;
+
+    prepare_reflected_shader(source_file_name, search_path)
 }
 
 fn prepare_reflected_compute_shader(
@@ -197,11 +209,19 @@ fn prepare_reflected_compute_shader(
     })
 }
 
+/// Compute equivalent of [`dev_compile_slang_shaders`].
 #[cfg(debug_assertions)]
 pub fn dev_compile_slang_compute_shaders(
     source_file_name: &str,
+    search_path: &std::path::Path,
 ) -> anyhow::Result<ReflectedComputeShader> {
-    prepare_reflected_compute_shader(source_file_name, "shaders/source")
+    use anyhow::Context as _;
+
+    let search_path = search_path
+        .to_str()
+        .with_context(|| format!("shader source dir is not valid UTF-8: {search_path:?}"))?;
+
+    prepare_reflected_compute_shader(source_file_name, search_path)
 }
 
 pub fn reflect_shared_module_types(
