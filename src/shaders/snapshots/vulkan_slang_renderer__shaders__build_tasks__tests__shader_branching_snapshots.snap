@@ -41,8 +41,6 @@ wc_capillary_flow.comp.spv: 4
 wc_divergence.comp.spv: 2
 wc_flow_outward.comp.spv: 2
 wc_gaussian_blur.comp.spv: 4
-wc_move_pigment.comp.spv: 3
 wc_pressure_jacobi.comp.spv: 2
 wc_project_velocity.comp.spv: 2
-wc_transfer_pigment.comp.spv: 5
 wc_update_velocity.comp.spv: 2
