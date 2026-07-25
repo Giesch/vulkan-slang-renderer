@@ -1481,6 +1481,15 @@ mod tests {
 
     use crate::util::manifest_path;
 
+    /// Snapshots the full codegen output for a curated corpus of slang sources.
+    ///
+    /// The corpus is deliberately small but covers every codegen path: a shader
+    /// with vertex buffers (basic_triangle), a vertex-less fullscreen shader
+    /// (sdf_2d), a compute shader sharing a module with a graphics shader
+    /// (particles + particle_render + particle), and cross-module imports
+    /// (gpu_picking -> gpu_picking_common -> addr, ray_march_camera ->
+    /// projection). Adding every real shader here would be double maintenance
+    /// for no extra coverage.
     // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
     #[cfg(not(windows))]
     #[test]
@@ -1491,7 +1500,7 @@ mod tests {
         let config = Config {
             generate_rust_source: true,
             rust_source_dir: tmp_dir_path.join("src"),
-            shaders_source_dir: manifest_path(["shaders", "source"]),
+            shaders_source_dir: manifest_path(["crates", "cli", "fixtures", "shaders"]),
             compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
         };
 
