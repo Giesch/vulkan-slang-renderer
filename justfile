@@ -14,14 +14,14 @@ check:
 # run dev build with shader hot reload
 [unix]
 dev example="basic_triangle":
-    cargo run -p mltrs --example {{example}}
+    cargo run -p {{example}}
 
 # run dev build with shader hot reload
 [windows]
 dev example="basic_triangle":
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      cargo run -p mltrs --example {{example}}; \
+      cargo run -p {{example}}; \
     }
 
 
@@ -29,7 +29,7 @@ dev example="basic_triangle":
 [unix]
 shader-debug example="viking_room":
     RUST_LOG=info VK_LAYER_PRINTF_ONLY_PRESET=1 \
-      cargo run -p mltrs --example {{example}}
+      cargo run -p {{example}}
 
 # run with shader printf and vk validation layers at 'info'
 [windows]
@@ -38,37 +38,68 @@ shader-debug example="viking_room":
       . ./scripts/load-env.ps1; \
       $env:RUST_LOG='info'; \
       $env:VK_LAYER_PRINTF_ONLY_PRESET='1'; \
-      cargo run -p mltrs --example {{example}}; \
+      cargo run -p {{example}}; \
     }
 
 # run a release build
 release example="basic_triangle": shaders
-    cargo run --release -p mltrs --example {{example}}
+    cargo run --release -p {{example}}
 
 
-# write precompiled shader bytecode, json metadata, and generated rust source to disk
+# regenerate spirv, reflection json and rust bindings for one example, or all
 [unix]
-shaders:
-    cargo run -p mltrs-cli -- shaders compile --crate-dir crates/mltrs --import-root crate
+shaders example="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{example}}" = "all" ]; then
+        for d in examples/*/; do cargo run -q -p mltrs-cli -- shaders compile --crate-dir "$d"; done
+    else
+        cargo run -q -p mltrs-cli -- shaders compile --crate-dir "examples/{{example}}"
+    fi
     cargo fmt
 
-# write precompiled shader bytecode, json metadata, and generated rust source to disk
+# regenerate spirv, reflection json and rust bindings for one example, or all
 [windows]
-shaders:
+shaders example="all":
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      cargo run -p mltrs-cli -- shaders compile --crate-dir crates/mltrs --import-root crate; \
+      if ('{{example}}' -eq 'all') { \
+        Get-ChildItem -Directory examples | ForEach-Object { \
+          cargo run -q -p mltrs-cli -- shaders compile --crate-dir $_.FullName; \
+        } \
+      } else { \
+        cargo run -q -p mltrs-cli -- shaders compile --crate-dir "examples/{{example}}"; \
+      } \
       cargo fmt; \
+    }
+
+# re-sync the vendored engine slang modules into every example
+[unix]
+vendor-shaders:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for d in examples/*/; do
+        cargo run -q -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force
+    done
+
+# re-sync the vendored engine slang modules into every example
+[windows]
+vendor-shaders:
+    pwsh -Command { \
+      . ./scripts/load-env.ps1; \
+      Get-ChildItem -Directory examples | ForEach-Object { \
+        cargo run -q -p mltrs-cli -- shaders init --dir "$($_.FullName)/shaders/source" --force; \
+      } \
     }
 
 # generate watercolor paper height map texture
 paper-texture:
-    cargo run -p mltrs --bin generate_paper_texture --release
+    cargo run -p watercolor --bin generate_paper_texture --release
 
 # export space invaders aseprite files as one sprite sheet
 [unix]
 sprites:
-    cd crates/mltrs/textures/space_invaders && aseprite --batch *.aseprite \
+    cd examples/space_invaders/textures/space_invaders && aseprite --batch *.aseprite \
         --sheet sprite_sheet.png \
         --data sprite_sheet.json \
         --filename-format "{title} {frame}" \
@@ -101,7 +132,7 @@ setup-precommit:
 
 # lint and test for git pre-commit hook
 pre-commit: shaders && lint test
-    git add crates/mltrs/shaders/compiled crates/mltrs/src/generated
+    git add examples/*/shaders/compiled examples/*/src/generated
 
 # get the slang git submodule and its submodules
 init-submodules:
@@ -143,7 +174,7 @@ clean-slang:
 # write *.beats.json assets based on automatically extracted timestamps
 [unix]
 beats:
-    ./scripts/extract_beats.py './crates/mltrs/audio/'
+    ./scripts/extract_beats.py './examples/sdf_2d/audio/'
 
 
 # extract Link assets from the tww disc image (needs ../tww; override with TWW_DIR)

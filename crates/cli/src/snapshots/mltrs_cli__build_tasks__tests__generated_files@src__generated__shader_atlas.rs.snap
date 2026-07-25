@@ -1,5 +1,5 @@
 ---
-source: src/shaders/build_tasks.rs
+source: crates/cli/src/build_tasks.rs
 info:
   relative_path: src/generated/shader_atlas.rs
 ---
@@ -15,6 +15,9 @@ pub mod gpu_picking;
 pub mod particles_compute;
 
 
+// a convenience aggregate; consumers may instead construct the per-shader
+// `Shader::init()` types directly, so an unused atlas is not a defect
+#[allow(dead_code)]
 pub struct ShaderAtlas {
     pub particle_render: particle_render::Shader,
     pub sdf_2d: sdf_2d::Shader,
@@ -23,6 +26,7 @@ pub struct ShaderAtlas {
     pub particles_compute: particles_compute::Shader,
 }
 
+#[allow(dead_code)]
 impl ShaderAtlas {
     pub fn init() -> Self {
         Self {

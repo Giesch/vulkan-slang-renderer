@@ -12,8 +12,4 @@ pub mod ktx;
 pub mod model_manifest;
 pub mod util;
 
-// interim: this crate still owns the examples' shaders until each example
-// becomes its own crate
-pub mod generated;
-
 pub use game::*;

@@ -611,6 +611,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
+name = "depth_texture"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dispatch2"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -618,6 +631,19 @@ checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.11.0",
  "objc2",
+]
+
+[[package]]
+name = "dragon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -980,6 +1006,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpu_picking"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "half"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1206,6 +1245,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "koch_curve"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kqueue"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1384,11 +1436,9 @@ dependencies = [
  "log",
  "mltrs-renderer",
  "pretty_env_logger",
- "rodio",
  "sdl3",
  "serde",
  "serde_json",
- "tobj",
 ]
 
 [[package]]
@@ -1437,6 +1487,20 @@ checksum = "1cc7d85f3d741164e8972ad355e26ac6e51b20fcae5f911c7da8f2d8bbbb3f33"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "multi_mesh"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "image",
+ "mltrs",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1733,6 +1797,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "particles"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1982,6 +2059,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ray_marching"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rayon"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2123,6 +2213,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "sdf_2d"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "rodio",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sdl3"
 version = "0.14.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2249,6 +2353,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serenity_crt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "shader-slang"
 version = "0.1.0"
 source = "git+https://github.com/Giesch/slang-rs.git?branch=main#40be8169f2a8a2ebe501cacabfd056a88054dc3f"
@@ -2299,6 +2416,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
+name = "space_invaders"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "spirv"
 version = "0.3.0+sdk-1.3.268.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2308,10 +2438,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprite_batch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "sdl3",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "suzanne"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+ "tobj",
+]
 
 [[package]]
 name = "symphonia"
@@ -2702,6 +2860,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "viking_room"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+ "tobj",
+]
+
+[[package]]
 name = "vk-mem"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2859,6 +3031,20 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "watercolor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "facet",
+ "glam",
+ "image",
+ "mltrs",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

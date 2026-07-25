@@ -30,3 +30,52 @@ just build-slang # build slang from source (this will take a while)
 just dev # run the default triangle example
 ```
 
+## layout
+
+This is a cargo workspace:
+
+| path | package | what |
+|---|---|---|
+| `crates/renderer` | `mltrs-renderer` | Vulkan engine, slang compilation, reflection types |
+| `crates/mltrs` | `mltrs` | what consumers depend on: the `Game` trait, app loop, asset helpers |
+| `crates/cli` | `mltrs-cli` | slang → Rust codegen; the binary is named `mltrs` |
+| `crates/convert-link` | `convert-link` | unrelated Wind Waker asset converter |
+| `examples/<name>` | `<name>` | one crate per example |
+
+Each example is a standalone crate that depends on `mltrs` the same way an outside
+project would, and owns its own `shaders/source`, `shaders/compiled`, `src/generated`
+and assets. They are the first consumers of the workflow below.
+
+## using mltrs in your own project
+
+```sh
+cargo add mltrs                # path or git dependency for now
+cargo add ash serde serde_json glam   # named directly by the generated bindings
+
+cargo install --path crates/cli   # provides the `mltrs` binary
+
+mltrs shaders init             # seeds shaders/source with the engine slang modules
+# write shaders/source/my_game.shader.slang
+mltrs shaders compile          # -> shaders/compiled/ + src/generated/
+```
+
+Then in `src/main.rs`:
+
+```rust
+mod generated;
+
+use generated::shader_atlas::ShaderAtlas;
+use mltrs::game::Game;
+
+fn main() -> anyhow::Result<()> {
+    MyGame::run()
+}
+```
+
+`shaders/source` and `shaders/compiled` are conventions relative to your crate root;
+override them with `--source-dir` / `--compiled-dir` / `--rust-dir` if you need to.
+Generated code finds its data through `env!("CARGO_MANIFEST_DIR")`, which expands in
+*your* crate, so shader hot reload works out of the box in debug builds.
+
+`examples/basic_triangle` is the smallest complete example of this layout.
+

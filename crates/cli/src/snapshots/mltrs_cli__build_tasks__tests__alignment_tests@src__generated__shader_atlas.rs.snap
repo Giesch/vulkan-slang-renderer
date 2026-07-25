@@ -1,5 +1,5 @@
 ---
-source: src/shaders/build_tasks.rs
+source: crates/cli/src/build_tasks.rs
 info:
   relative_path: src/generated/shader_atlas.rs
 ---
@@ -22,6 +22,9 @@ pub mod std140_matrices;
 pub mod pointer_params_compute;
 
 
+// a convenience aggregate; consumers may instead construct the per-shader
+// `Shader::init()` types directly, so an unused atlas is not a defect
+#[allow(dead_code)]
 pub struct ShaderAtlas {
     pub std140_vec3_padding: std140_vec3_padding::Shader,
     pub std430_vectors: std430_vectors::Shader,
@@ -42,6 +45,7 @@ pub struct ShaderAtlas {
     pub pointer_params_compute: pointer_params_compute::Shader,
 }
 
+#[allow(dead_code)]
 impl ShaderAtlas {
     pub fn init() -> Self {
         Self {

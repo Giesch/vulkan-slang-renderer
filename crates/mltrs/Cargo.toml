@@ -11,6 +11,8 @@ mltrs-renderer.workspace = true
 
 anyhow.workspace = true
 ash.workspace = true
+# RuntimeGame::draw_edit_ui takes an egui::Context
+egui.workspace = true
 facet.workspace = true
 glam.workspace = true
 image.workspace = true
@@ -20,8 +22,3 @@ pretty_env_logger.workspace = true
 sdl3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-
-# used only by the interim in-crate examples; these move to the example crates
-egui.workspace = true
-rodio.workspace = true
-tobj.workspace = true

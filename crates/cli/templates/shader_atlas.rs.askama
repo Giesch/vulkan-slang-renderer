@@ -8,6 +8,9 @@ pub mod {{ module_name }};
 pub mod {{ module_name }};
 {%~ endfor +%}
 
+// a convenience aggregate; consumers may instead construct the per-shader
+// `Shader::init()` types directly, so an unused atlas is not a defect
+#[allow(dead_code)]
 pub struct ShaderAtlas {
 {%- for (field_name, type_prefix) in entries +%}
     pub {{ field_name }}: {{type_prefix}}Shader,
@@ -17,6 +20,7 @@ pub struct ShaderAtlas {
 {%- endfor +%}
 }
 
+#[allow(dead_code)]
 impl ShaderAtlas {
     pub fn init() -> Self {
         Self {
