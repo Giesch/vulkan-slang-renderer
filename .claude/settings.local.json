@@ -3,6 +3,7 @@
     "allow": [
       "Read(//home/danknutson/Projects/tww/**)",
       "Bash(ls:*)",
+      "Bash(ls *)",
       "Bash(cat:*)",
       "Bash(grep:*)",
       "Bash(find:*)",
