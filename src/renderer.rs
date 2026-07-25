@@ -2,8 +2,6 @@
 
 use std::collections::BTreeSet;
 use std::ffi::{CStr, CString, c_char};
-use std::fs::File;
-use std::io::BufReader;
 use std::path::PathBuf;
 
 use ash::vk;
@@ -3500,24 +3498,6 @@ fn create_swapchain_image_views(
     }
 
     Ok(swapchain_image_views)
-}
-
-/// usage: read_shader_spv("triangle.vert.spv");
-#[expect(unused)]
-fn read_shader_spv(shader_name: &str) -> Result<Vec<u32>, anyhow::Error> {
-    let shader_path: PathBuf = [
-        env!("CARGO_MANIFEST_DIR"),
-        "shaders",
-        "compiled",
-        shader_name,
-    ]
-    .iter()
-    .collect();
-
-    let mut spv_file = BufReader::new(File::open(&shader_path)?);
-    let vk_bytes = ash::util::read_spv(&mut spv_file)?;
-
-    Ok(vk_bytes)
 }
 
 fn vk_cull_mode(cull: CullMode) -> vk::CullModeFlags {

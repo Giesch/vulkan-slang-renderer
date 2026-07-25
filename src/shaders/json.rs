@@ -107,10 +107,10 @@ mod tests {
     // future lossy serde attribute making that comparison flap
     #[test]
     fn reflection_value_roundtrip_is_stable() {
-        let raw = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/basic_triangle.json"
-        ));
+        // a pinned copy of a real reflection document. refresh with:
+        //   cp examples/basic_triangle/shaders/compiled/basic_triangle.json \
+        //      crates/renderer/src/shaders/json/testdata/basic_triangle_reflection.json
+        let raw = include_str!("json/testdata/basic_triangle_reflection.json");
         let parsed: ReflectionJson = serde_json::from_str(raw).unwrap();
         let reparsed: ReflectionJson =
             serde_json::from_str(&serde_json::to_string(&parsed).unwrap()).unwrap();

@@ -2068,10 +2068,29 @@ float4 fragMain() : SV_Target {
             .count()
     }
 
+    /// Tracks branch counts in emitted SPIR-V, so a slang upgrade or a codegen
+    /// change that suddenly makes shaders branchier is visible in review.
+    ///
+    /// Compiles the fixture corpus rather than reading a committed compiled
+    /// dir: once examples own their shaders there is no single such directory,
+    /// and a committed .spv blob would go stale silently.
     #[cfg(not(windows))]
     #[test]
     fn shader_branching_snapshots() {
-        let compiled_dir = manifest_path(["shaders", "compiled"]);
+        let tmp_prefix = format!("shader-test-{}", uuid::Uuid::new_v4());
+        let tmp_dir_path = std::env::temp_dir().join(tmp_prefix);
+
+        let config = Config {
+            generate_rust_source: false,
+            rust_source_dir: tmp_dir_path.join("src"),
+            shaders_source_dir: manifest_path(["crates", "cli", "fixtures", "shaders"]),
+            compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
+            import_root: "crate".into(),
+        };
+        let compiled_dir = config.compiled_shaders_dir.clone();
+
+        write_precompiled_shaders(config).unwrap();
+
         let mut entries: Vec<_> = std::fs::read_dir(&compiled_dir)
             .expect("Failed to read compiled shaders directory")
             .filter_map(|e| e.ok())
@@ -2086,6 +2105,8 @@ float4 fragMain() : SV_Target {
             let name = entry.file_name();
             summary.push_str(&format!("{}: {}\n", name.to_string_lossy(), count));
         }
+
+        std::fs::remove_dir_all(&tmp_dir_path).ok();
 
         insta::assert_snapshot!(summary);
     }
