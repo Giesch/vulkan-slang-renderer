@@ -16,6 +16,7 @@ pub fn main() {
         rust_source_dir: manifest_path(["src"]),
         shaders_source_dir: manifest_path(["shaders", "source"]),
         compiled_shaders_dir: manifest_path(["shaders", "compiled"]),
+        import_root: "crate".into(),
     };
 
     build_tasks::write_precompiled_shaders(config).unwrap();
