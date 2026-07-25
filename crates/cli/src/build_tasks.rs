@@ -78,6 +78,15 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         })
         .collect();
 
+    // Bail before writing or pruning anything. Besides being a better error,
+    // this is the guard against --crate-dir pointing somewhere unintended.
+    if slang_file_names.is_empty() && compute_slang_file_names.is_empty() {
+        anyhow::bail!(
+            "no *{SHADER_FILE_SUFFIX} or *{COMPUTE_SHADER_FILE_SUFFIX} files in {}",
+            config.shaders_source_dir.display()
+        );
+    }
+
     // Build type→module map from shared slang modules
     let type_to_module = reflect_slang_module_types(&config.shaders_source_dir);
 
@@ -86,6 +95,7 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
     // Pass 1: Compile all shaders, write SPIR-V/JSON, collect intermediate build data
     let mut graphics_data: Vec<GraphicsShaderData> = vec![];
     let mut compute_data: Vec<ComputeShaderData> = vec![];
+    let mut written_compiled: BTreeSet<std::ffi::OsString> = BTreeSet::new();
 
     for slang_file_name in &slang_file_names {
         let ReflectedShader {
@@ -103,18 +113,21 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             config.compiled_shaders_dir.join(&reflection_json_file_name),
             reflection_json_str,
         )?;
+        written_compiled.insert(reflection_json_file_name.into());
 
         let spv_vert_file_name = source_file_name.replace(SHADER_FILE_SUFFIX, ".vert.spv");
         std::fs::write(
             config.compiled_shaders_dir.join(&spv_vert_file_name),
             vertex_shader.shader_bytecode.as_slice(),
         )?;
+        written_compiled.insert(spv_vert_file_name.into());
 
         let spv_frag_file_name = source_file_name.replace(SHADER_FILE_SUFFIX, ".frag.spv");
         std::fs::write(
             config.compiled_shaders_dir.join(&spv_frag_file_name),
             fragment_shader.shader_bytecode.as_slice(),
         )?;
+        written_compiled.insert(spv_frag_file_name.into());
 
         if config.generate_rust_source {
             graphics_data.push(collect_graphics_shader_data(
@@ -140,12 +153,14 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             config.compiled_shaders_dir.join(&reflection_json_file_name),
             reflection_json_str,
         )?;
+        written_compiled.insert(reflection_json_file_name.into());
 
         let spv_comp_file_name = source_file_name.replace(COMPUTE_SHADER_FILE_SUFFIX, ".comp.spv");
         std::fs::write(
             config.compiled_shaders_dir.join(&spv_comp_file_name),
             compute_shader.shader_bytecode.as_slice(),
         )?;
+        written_compiled.insert(spv_comp_file_name.into());
 
         if config.generate_rust_source {
             compute_data.push(collect_compute_shader_data(
@@ -214,6 +229,64 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         for source_file in &generated_source_files {
             write_generated_file(&config, source_file)?;
         }
+
+        let shader_atlas_dir = config
+            .rust_source_dir
+            .join(relative_path(["generated", "shader_atlas"]));
+        let written_rust: BTreeSet<std::ffi::OsString> = generated_source_files
+            .iter()
+            .filter(|f| f.relative_path.parent() == Some(Path::new("generated/shader_atlas")))
+            .filter_map(|f| f.relative_path.file_name().map(|n| n.to_os_string()))
+            .collect();
+
+        prune_stale_outputs(&shader_atlas_dir, &written_rust, |name| {
+            name.ends_with(".rs")
+        })?;
+    }
+
+    prune_stale_outputs(&config.compiled_shaders_dir, &written_compiled, |name| {
+        COMPILED_SUFFIXES.iter().any(|s| name.ends_with(s))
+    })?;
+
+    Ok(())
+}
+
+/// Output file shapes owned by this tool. Anything else in the compiled dir is
+/// someone else's and is left alone.
+const COMPILED_SUFFIXES: [&str; 4] = [".vert.spv", ".frag.spv", ".comp.spv", ".json"];
+
+/// Deletes files this tool owns that it did not write this run, so a deleted
+/// shader doesn't leave behind stale spir-v or a stale generated module.
+///
+/// Runs *after* a successful write, never before: a mid-run slang error must
+/// not leave the tree emptied. Only regular files, only direct children, and
+/// only names matching `is_generated_name`, so a README, a .gitkeep, or
+/// hand-written code elsewhere under src/generated is never touched.
+fn prune_stale_outputs(
+    dir: &Path,
+    written: &BTreeSet<std::ffi::OsString>,
+    is_generated_name: impl Fn(&str) -> bool,
+) -> anyhow::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        if !is_generated_name(name) || written.contains(&file_name) {
+            continue;
+        }
+
+        println!("removing stale output: {}", entry.path().display());
+        std::fs::remove_file(entry.path())?;
     }
 
     Ok(())
