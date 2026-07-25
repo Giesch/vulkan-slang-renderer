@@ -5,6 +5,7 @@ use glam::Vec2;
 
 use vulkan_slang_renderer::editor::Slider;
 use vulkan_slang_renderer::game::{Game, Input, MouseButton};
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, TextureFilter,
     UniformBufferHandle,
@@ -52,7 +53,7 @@ impl Game for KochCurve {
         Self: Sized,
     {
         const IMAGE_FILE_NAME: &str = "istockphoto-uffizi-blurred-612x612.jpg";
-        let image = load_image(IMAGE_FILE_NAME)?;
+        let image = load_image(manifest_path!["textures", IMAGE_FILE_NAME])?;
         let cube_map = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
 
         let params_buffer = renderer.create_uniform_buffer::<KochCurveParams>()?;

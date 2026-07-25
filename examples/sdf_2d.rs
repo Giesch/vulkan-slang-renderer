@@ -11,7 +11,7 @@ use vulkan_slang_renderer::generated::shader_atlas::sdf_2d::*;
 
 use rodio::MixerDeviceSink;
 use std::io::BufReader;
-use vulkan_slang_renderer::util::manifest_path;
+use vulkan_slang_renderer::manifest_path;
 
 #[derive(Debug, Deserialize)]
 struct BeatsData {
@@ -51,8 +51,10 @@ impl Game for SDF2D {
     {
         let start_time = Instant::now();
 
-        let beats: BeatsData =
-            serde_json::from_str(&std::fs::read_to_string("audio/alias_abandon.beats.json")?)?;
+        let beats: BeatsData = serde_json::from_str(&std::fs::read_to_string(manifest_path![
+            "audio",
+            "alias_abandon.beats.json"
+        ])?)?;
 
         let params_buffer = renderer.create_uniform_buffer::<SDF2DParams>()?;
         let resources = Resources {
@@ -66,7 +68,7 @@ impl Game for SDF2D {
         let mut device_sink = rodio::DeviceSinkBuilder::open_default_sink()?;
         device_sink.log_on_drop(false);
         let mixer = device_sink.mixer();
-        let audio_path = manifest_path(["audio", "alias_abandon.flac"]);
+        let audio_path = manifest_path!["audio", "alias_abandon.flac"];
         let file = std::fs::File::open(&audio_path)?;
         let sink = rodio::play(mixer, BufReader::new(file))?;
         sink.set_volume(0.5);

@@ -10,6 +10,7 @@ use vulkan_slang_renderer::renderer::{
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
 use vulkan_slang_renderer::generated::shader_atlas::serenity_crt::*;
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::util::load_image;
 
 fn main() -> Result<(), anyhow::Error> {
@@ -56,7 +57,11 @@ impl Game for SerenityCRT {
         Self: Sized,
     {
         let image_name = "serenity_crt/castlevania_pixel_art.png";
-        let pixel_art_image = load_image(image_name)?;
+        let pixel_art_image = load_image(manifest_path![
+            "textures",
+            "serenity_crt",
+            "castlevania_pixel_art.png"
+        ])?;
         let texture =
             renderer.create_texture(image_name, &pixel_art_image, TextureFilter::Nearest)?;
 

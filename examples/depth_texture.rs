@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use glam::{Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::Game;
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
     UniformBufferHandle,
@@ -89,7 +90,7 @@ impl Game for DepthTextureGame {
         Self: Sized,
     {
         const IMAGE_FILE_NAME: &str = "texture.jpg";
-        let image = load_image(IMAGE_FILE_NAME)?;
+        let image = load_image(manifest_path!["textures", IMAGE_FILE_NAME])?;
 
         let shader_atlas = ShaderAtlas::init();
         let shader = shader_atlas.depth_texture;

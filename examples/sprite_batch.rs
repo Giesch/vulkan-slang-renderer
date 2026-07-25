@@ -16,6 +16,7 @@ use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
 use vulkan_slang_renderer::editor::Label;
 use vulkan_slang_renderer::game::{Game, MaxMSAASamples};
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, Renderer,
     TextureFilter, UniformBufferHandle,
@@ -74,7 +75,7 @@ impl Game for SpriteBatch {
         let sprites_buffer = renderer.create_immutable_buffer::<Sprite>(sprites.len() as u32)?;
 
         let image_file_name = "ravioli_atlas.bmp";
-        let image = load_image(image_file_name)?;
+        let image = load_image(manifest_path!["textures", image_file_name])?;
         let texture = renderer.create_texture(image_file_name, &image, TextureFilter::Nearest)?;
 
         let resources = Resources {

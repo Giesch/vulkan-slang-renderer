@@ -1,9 +1,9 @@
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use glam::{Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::Game;
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
     UniformBufferHandle,
@@ -29,9 +29,7 @@ impl VikingRoom {
     // From unknownue's rust version of the vulkan tutorial
     // https://github.com/unknownue/vulkan-tutorial-rust/blob/master/src/tutorials/27_model_loading.rs
     fn load_vertices() -> anyhow::Result<(Vec<Vertex>, Vec<u32>)> {
-        let file_path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "models", "viking_room.obj"]
-            .iter()
-            .collect();
+        let file_path = manifest_path!["models", "viking_room.obj"];
 
         let (mut models, _materials) = tobj::load_obj(file_path, &tobj::GPU_LOAD_OPTIONS)?;
 
@@ -87,7 +85,7 @@ impl Game for VikingRoom {
         let (vertices, indices) = Self::load_vertices()?;
 
         const IMAGE_FILE_NAME: &str = "viking_room.png";
-        let image = load_image(IMAGE_FILE_NAME)?;
+        let image = load_image(manifest_path!["textures", IMAGE_FILE_NAME])?;
 
         let shader_atlas = ShaderAtlas::init();
         let shader = shader_atlas.depth_texture;

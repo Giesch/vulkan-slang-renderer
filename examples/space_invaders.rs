@@ -4,11 +4,12 @@ use std::time::Duration;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use vulkan_slang_renderer::game::*;
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
     TextureFilter, TextureHandle, UniformBufferHandle,
 };
-use vulkan_slang_renderer::util::{load_image, manifest_path};
+use vulkan_slang_renderer::util::load_image;
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
 use vulkan_slang_renderer::generated::shader_atlas::space_invaders::*;
@@ -619,7 +620,7 @@ fn flag_enabled(sprite: &Sprite, flag: u32) -> bool {
 
 fn load_texture(renderer: &mut Renderer, file_name: &str) -> anyhow::Result<TextureHandle> {
     let asset_name = format!("space_invaders/{file_name}");
-    let image = load_image(&asset_name)?;
+    let image = load_image(manifest_path!["textures", "space_invaders", file_name])?;
 
     let texture = renderer.create_texture(asset_name, &image, TextureFilter::Nearest)?;
 
@@ -629,7 +630,7 @@ fn load_texture(renderer: &mut Renderer, file_name: &str) -> anyhow::Result<Text
 // Aseprite integration
 
 fn load_sprite_atlas() -> anyhow::Result<SpriteAtlas> {
-    let sprite_atlas_path = manifest_path(["textures", "space_invaders", "sprite_sheet.json"]);
+    let sprite_atlas_path = manifest_path!["textures", "space_invaders", "sprite_sheet.json"];
 
     let sprite_atlas_json = std::fs::read_to_string(&sprite_atlas_path)?;
     let sprite_atlas: SpriteAtlas = serde_json::from_str(&sprite_atlas_json)?;
