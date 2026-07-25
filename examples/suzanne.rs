@@ -103,14 +103,14 @@ impl Game for Suzanne {
 
         let params_buffer = renderer.create_uniform_buffer::<SuzanneParams>()?;
         let resources = Resources {
-            vertices,
-            indices,
             texture0: &textures[0],
             texture1: &textures[1],
             texture2: &textures[2],
             params_buffer: &params_buffer,
         };
-        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline_config = shader
+            .pipeline_config(resources)
+            .with_vertices(vertices, indices);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         let start_time = Instant::now();

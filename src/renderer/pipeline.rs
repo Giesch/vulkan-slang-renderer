@@ -285,12 +285,22 @@ pub enum VertexConfig<V> {
     // use a basic cmd_draw call passing a vertex count, with no vertex or index buffers,
     // and so no Vertex type
     VertexCount,
+    // no vertex data supplied yet: what the generated pipeline_config() leaves
+    // behind for an indexed shader, until with_vertices or with_shared_mesh
+    // fills it in. Never reaches pipeline creation.
+    Unset,
 }
 
 impl<'t, V: VertexDescription> PipelineConfig<'t, V, DrawIndexed> {
+    /// Draw from vertex and index buffers owned by this pipeline. Mutually
+    /// exclusive with [`Self::with_shared_mesh`] — whichever is called last wins.
+    pub fn with_vertices(mut self, vertices: Vec<V>, indices: Vec<u32>) -> Self {
+        self.vertex_config = VertexConfig::VertexAndIndexBuffers(vertices, indices);
+        self
+    }
+
     /// Draw from a shared mesh instead of per-pipeline vertex/index buffers.
-    /// Replaces any vertex/index data already in the config (the generated
-    /// `pipeline_config(resources)` can be given empty vecs).
+    /// Replaces any vertex/index data already in the config.
     pub fn with_shared_mesh(mut self, mesh: &MeshHandle<V>) -> Self {
         self.vertex_config = VertexConfig::SharedMesh(mesh.index);
         self

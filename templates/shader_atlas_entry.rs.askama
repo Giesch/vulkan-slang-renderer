@@ -118,8 +118,8 @@ impl {{ shader_impl.shader_type_name }} {
 {%- endfor +%}
         ];
 {%+ if shader_impl.vertex_type_name.is_some() +%}
-        let vertex_config =
-            VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
+        // vertex data comes from PipelineConfig::with_vertices or with_shared_mesh
+        let vertex_config = VertexConfig::Unset;
 {%~ else +%}
         let vertex_config = VertexConfig::VertexCount;
 {%~ endif +%}

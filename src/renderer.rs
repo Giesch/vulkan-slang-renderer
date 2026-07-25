@@ -1294,7 +1294,7 @@ impl Renderer {
             VertexConfig::VertexAndIndexBuffers(vertices, indices) => {
                 if vertices.is_empty() || indices.is_empty() {
                     anyhow::bail!(
-                        "pipeline for {} has empty vertex data — did you mean `.with_shared_mesh()`?",
+                        "pipeline for {} was given empty vertex data by `.with_vertices()`",
                         config.shader.source_file_name()
                     );
                 }
@@ -1331,6 +1331,11 @@ impl Renderer {
             VertexConfig::SharedMesh(mesh_index) => VertexPipelineConfig::SharedMesh(*mesh_index),
 
             VertexConfig::VertexCount => VertexPipelineConfig::VertexCount,
+
+            VertexConfig::Unset => anyhow::bail!(
+                "pipeline for {} has no vertex data — call `.with_vertices()` or `.with_shared_mesh()`",
+                config.shader.source_file_name()
+            ),
         };
 
         let layout_bindings = config.shader.layout_bindings();
@@ -5738,7 +5743,7 @@ mod tests {
             (true, vk::CompareOp::ALWAYS)
         );
         // the compare op is ignored when the test is off
-        assert_eq!(vk_depth_compare(DepthCompare::Disabled).0, false);
+        assert!(!vk_depth_compare(DepthCompare::Disabled).0);
     }
 
     #[test]

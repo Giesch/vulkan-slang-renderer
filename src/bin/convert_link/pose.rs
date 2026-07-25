@@ -471,7 +471,7 @@ mod tests {
         let jnt1 = Jnt1 {
             joints: vec![joint("j", [0, 0x4000, 0], [0.0, 0.0, 0.0])],
         };
-        let world = joint_world_matrices(&jnt1, &vec![None], &vec![0]);
+        let world = joint_world_matrices(&jnt1, &[None], &[0]);
         let inv = world[0].inverse();
         let residual = world[0] * inv - Mat4::IDENTITY;
         assert!(mat4_max_abs(&residual) < 1e-4);

@@ -61,6 +61,12 @@ actively developed).
   The generated `pipeline_config(resources)` takes empty `vertices`/`indices`
   vecs when a shared mesh follows — the exact pattern of
   `examples/multi_mesh.rs` (the worked example for everything in this phase).
+  **Update (2026-07-24, post-P6)**: those two fields were removed from the
+  generated `Resources` struct — it now carries descriptor bindings only, and
+  vertex data is a builder step (`.with_vertices(v, i)` or
+  `.with_shared_mesh(&mesh)`). Shared-mesh consumers pass no vertex data at
+  all. The P6 code sketches below still show the empty-vec form as it was
+  written; both examples were migrated with the refactor.
 - `FrameRenderer::queue_draw_index_range(&pipeline, first_index, index_count)`;
   the same pipeline may be queued multiple times; terminal
   `submit_draws(self, gpu_update)` writes every pipeline's uniforms in one
@@ -379,6 +385,8 @@ Setup tail: per material — `create_uniform_buffer::<ToonLinkParams>()`,
 .with_raster_state(raster_state(material)?)`, `create_pipeline`. Store
 `Vec<(PipelineHandle<DrawIndexed>, UniformBufferHandle<ToonLinkParams>)>`
 indexed by material slot.
+*(Post-P6: `Resources { params_buffer: &buf }` — the empty vecs are gone, see
+the §"Draw / mesh / pipeline APIs" update.)*
 
 Draw + camera (P3 AABB: Link is 124.06 units tall, feet at Y ≈ 0; scale 0.01
 → 1.24 units):
@@ -406,6 +414,21 @@ renderer.submit_draws(|gpu| {
 })
 ```
 
+**Update (2026-07-24, post-P6)** — the shipped loop is the same shape with two
+index spaces now newtyped, because cl.bdl maps batches to material slots as a
+*permutation*, not identity (batch 1 → slot 17), so mixing them silently drew
+the wrong material:
+
+- `isolate: Option<BatchIndex>`, compared against `BatchIndex::from_raw(i)`;
+  Q/E use `BatchIndex::{FIRST, next, prev}`.
+- material lookup goes through `MaterialSlot::from_manifest(batch.material)`,
+  the single conversion point from the manifest's raw `u16`, then
+  `self.pipeline(slot)` / `self.material(slot)`.
+
+The sketch's bare `mvp` (no `.clone()`) is also literally correct again: the
+shipped code needed `mvp.clone()` until generated GPU-layout structs gained
+`Copy`.
+
 **Debug controls** (`Game::input`; keys per traits.rs:184):
 
 | key | action |
@@ -419,7 +442,9 @@ On isolation change, print `batch {i}: shape {shape} material {slot} "{name}"
 part of P8's "single-material isolation debug key" forward (decided in
 planning — ~20 lines of CPU-side queue filtering, and Step 5's triage wants
 it). Isolation must live in *queueing*, not a uniform — uniforms are
-per-pipeline.
+per-pipeline. *(Post-P6: `setup` also prints this control table plus the
+batch/material/vertex counts on startup, so the keys are discoverable without
+reading the source.)*
 
 **Gate:** `timeout 3 just dev toon_link` with `CULL_OVERRIDE =
 Some(CullMode::None)` shows a recognizable, correctly proportioned Link in
@@ -475,7 +500,9 @@ flat arrays stand; no BDA rewrite.)
 
 - Insta gate: snapshot churn is exactly Step 2's additions; every
   pre-existing per-shader snapshot byte-identical.
-- `cargo check --all`, `cargo build --examples`, `just lint` clean.
+- `cargo check --all-targets`, `cargo build --examples`, `just lint` clean.
+  (`--all-targets`, not `--all`: the latter means "all workspace members" and
+  silently skips examples. `just lint` was given the same flag post-P6.)
 - If the converter changed: `just link-verify-p3` + converter unit tests
   green.
 

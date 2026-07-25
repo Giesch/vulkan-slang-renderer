@@ -480,9 +480,12 @@ impl<'t, V: VertexDescription> PipelineConfig<'t, V, DrawIndexed> {
 
 - `Renderer` gains `meshes: Vec<VertexAndIndexBuffers>`, destroyed at renderer
   teardown. `destroy_pipeline` must not free shared buffers.
-- Generated `pipeline_config(resources)` is untouched: the example passes empty
-  `vertices`/`indices` in `Resources`, then calls `.with_shared_mesh(&mesh)`.
-  Document this pattern in the example.
+- Generated `Resources` carries descriptor bindings only; vertex data is a
+  builder step, so the example calls `.pipeline_config(resources)` followed by
+  `.with_shared_mesh(&mesh)` and supplies no vertices at all. (Pipelines that
+  own their buffers use `.with_vertices(vertices, indices)` instead — this
+  replaced an earlier design where `Resources` had `vertices`/`indices` fields
+  that shared-mesh consumers had to fill with empty vecs.)
 
 ### 4.3 Raster state — **shipped in P5**
 

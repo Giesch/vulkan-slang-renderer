@@ -24,7 +24,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct ArrayData {
     pub lead: f32,
@@ -62,7 +62,7 @@ const _: () = assert!(std::mem::size_of::<glam::UVec4>() == 16);
 const _: () = assert!(std::mem::offset_of!(ArrayData, bias) == 352);
 const _: () = assert!(std::mem::size_of::<glam::IVec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Nested {
     pub inner: [glam::UVec4; 2],

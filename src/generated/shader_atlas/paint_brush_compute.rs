@@ -16,7 +16,7 @@ use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct BrushParams {
     pub point_count: u32,
@@ -51,7 +51,7 @@ const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 const _: () = assert!(std::mem::offset_of!(BrushParams, stroke_points) == 72);
 const _: () = assert!(std::mem::size_of::<ReadAddr<StrokePoint>>() == 8);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(8))]
 pub struct StrokePoint {
     pub position: glam::Vec2,

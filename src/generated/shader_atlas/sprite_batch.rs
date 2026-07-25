@@ -20,7 +20,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct SpriteBatchParams {
     pub sprites: ImmutableAddr<Sprite>,
@@ -35,7 +35,7 @@ const _: () = assert!(std::mem::size_of::<ImmutableAddr<Sprite>>() == 8);
 const _: () = assert!(std::mem::offset_of!(SpriteBatchParams, projection) == 16);
 const _: () = assert!(std::mem::size_of::<Projection>() == 64);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Sprite {
     pub position: glam::Vec3,

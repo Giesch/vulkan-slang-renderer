@@ -20,7 +20,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct SuzanneParams {
     pub mvp: MVPMatrices,
@@ -35,7 +35,7 @@ const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(SuzanneParams, time) == 192);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Vertex {
     pub position: glam::Vec3,
@@ -46,8 +46,6 @@ pub struct Vertex {
 impl GPUWrite for Vertex {}
 
 pub struct Resources<'a> {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
     pub texture0: &'a TextureHandle,
     pub texture1: &'a TextureHandle,
     pub texture2: &'a TextureHandle,
@@ -123,8 +121,8 @@ impl Shader {
         let storage_texture_handles = vec![
         ];
 
-        let vertex_config =
-            VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
+        // vertex data comes from PipelineConfig::with_vertices or with_shared_mesh
+        let vertex_config = VertexConfig::Unset;
 
         PipelineConfigBuilder {
             shader: Box::new(self),

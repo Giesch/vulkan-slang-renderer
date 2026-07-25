@@ -100,7 +100,7 @@ mod tests {
         let idx_off = count_off + 2; // 2 envelopes: counts [2,1]
         let wgt_off = idx_off + 3 * 2; // 3 total influences (u16)
         let inv_off = wgt_off + 3 * 4; // 3 weights (f32)
-        let total = inv_off + 1 * MTX_SIZE; // one joint
+        let total = inv_off + MTX_SIZE; // one joint
 
         let mut d = vec![0u8; hdr];
         d[8..10].copy_from_slice(&2u16.to_be_bytes()); // count

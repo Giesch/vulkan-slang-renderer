@@ -19,7 +19,7 @@ use anyhow::Context;
 use glam::{Mat3, Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::{Game, Input, Key};
-use vulkan_slang_renderer::model_manifest::{Manifest, MaterialEntry};
+use vulkan_slang_renderer::model_manifest::{Batch, Manifest, MaterialEntry};
 use vulkan_slang_renderer::renderer::{
     BlendMode, CullMode, DepthCompare, DrawError, DrawIndexed, FrameRenderer, MeshHandle,
     PipelineHandle, RasterState, Renderer, UniformBufferHandle,
@@ -41,6 +41,54 @@ const MODEL_SCALE: f32 = 0.01;
 
 /// `link.vtx.bin` is interleaved little-endian f32: pos[3] nrm[3] uv0[2].
 const VERTEX_STRIDE: usize = 32;
+
+/// Index into `Manifest::materials`, and by construction into
+/// [`ToonLink::pipelines`] (one pipeline is baked per material slot, in slot
+/// order).
+///
+/// Deliberately *not* interchangeable with [`BatchIndex`]. cl.bdl's batches
+/// reference material slots in a **permuted** order — batch 1 uses slot 17,
+/// batch 2 uses slot 18 — so while both spaces happen to be 24 long and the
+/// mapping is a bijection, using one where the other belongs silently draws the
+/// wrong material. Mixing them is now a compile error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct MaterialSlot(usize);
+
+impl MaterialSlot {
+    /// The only place a raw `Batch::material` becomes a slot.
+    fn from_manifest(material: u16) -> Self {
+        Self(material as usize)
+    }
+
+    fn raw(self) -> usize {
+        self.0
+    }
+}
+
+/// Index into `Manifest::batches`, in INF1 draw order. This is what the Q/E
+/// isolation walks — batches, not material slots (see [`MaterialSlot`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct BatchIndex(usize);
+
+impl BatchIndex {
+    const FIRST: Self = Self(0);
+
+    fn from_raw(index: usize) -> Self {
+        Self(index)
+    }
+
+    fn raw(self) -> usize {
+        self.0
+    }
+
+    fn next(self, count: usize) -> Self {
+        Self((self.0 + 1) % count)
+    }
+
+    fn prev(self, count: usize) -> Self {
+        Self((self.0 + count - 1) % count)
+    }
+}
 
 fn converted_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/link/converted")
@@ -126,26 +174,40 @@ pub struct ToonLink {
     manifest: Manifest,
     #[allow(unused)]
     mesh: MeshHandle<Vertex>,
-    // indexed by material slot; batches reference slots 1:1 in cl.bdl
+    /// One per material slot, in `MaterialSlot` order — index with
+    /// [`Self::pipeline`], never with a [`BatchIndex`].
     pipelines: Vec<(
         PipelineHandle<DrawIndexed>,
         UniformBufferHandle<ToonLinkParams>,
     )>,
     debug_mode: u32,
-    isolate: Option<usize>,
+    isolate: Option<BatchIndex>,
 }
 
 impl ToonLink {
+    fn batch(&self, index: BatchIndex) -> &Batch {
+        &self.manifest.batches[index.raw()]
+    }
+
+    fn material(&self, slot: MaterialSlot) -> &MaterialEntry {
+        &self.manifest.materials[slot.raw()]
+    }
+
+    fn pipeline(&self, slot: MaterialSlot) -> &PipelineHandle<DrawIndexed> {
+        &self.pipelines[slot.raw()].0
+    }
+
     fn print_isolation(&self) {
         match self.isolate {
-            Some(i) => {
-                let batch = &self.manifest.batches[i];
-                let material = &self.manifest.materials[batch.material as usize];
+            Some(index) => {
+                let batch = self.batch(index);
+                let slot = MaterialSlot::from_manifest(batch.material);
                 println!(
-                    "batch {i}: shape {} material {} {:?} [{}..+{}]",
+                    "batch {}: shape {} material {} {:?} [{}..+{}]",
+                    index.raw(),
                     batch.shape,
-                    batch.material,
-                    material.name,
+                    slot.raw(),
+                    self.material(slot).name,
                     batch.first_index,
                     batch.index_count
                 );
@@ -195,7 +257,7 @@ impl Game for ToonLink {
                 batch.first_index
             );
             anyhow::ensure!(
-                (batch.material as usize) < manifest.materials.len(),
+                MaterialSlot::from_manifest(batch.material).raw() < manifest.materials.len(),
                 "batch {i} references material {} of {}",
                 batch.material,
                 manifest.materials.len()
@@ -210,12 +272,11 @@ impl Game for ToonLink {
 
         let mesh = renderer.create_mesh(&vertices, &indices)?;
 
+        // push order defines MaterialSlot: pipelines[slot] is materials[slot]
         let mut pipelines = vec![];
         for material in &manifest.materials {
             let params_buffer = renderer.create_uniform_buffer::<ToonLinkParams>()?;
             let resources = Resources {
-                vertices: vec![],
-                indices: vec![],
                 params_buffer: &params_buffer,
             };
             let pipeline_config = Shader::init()
@@ -225,6 +286,18 @@ impl Game for ToonLink {
             let pipeline = renderer.create_pipeline(pipeline_config)?;
             pipelines.push((pipeline, params_buffer));
         }
+
+        // keep in sync with the module doc comment
+        println!(
+            "toon_link: {} batches, {} materials, {} vertices\n\
+             controls:\n\
+             \x20 Num1 / Num2  debug mode: normals-as-color / UV-as-color\n\
+             \x20 Q / E        isolate previous / next batch\n\
+             \x20 Space        clear isolation, draw all batches",
+            manifest.batches.len(),
+            manifest.materials.len(),
+            manifest.buffers.vertex_count,
+        );
 
         Ok(Self {
             start_time: Instant::now(),
@@ -248,10 +321,13 @@ impl Game for ToonLink {
 
         // one index-range draw per batch, in INF1 (manifest) order
         for (i, batch) in self.manifest.batches.iter().enumerate() {
-            if self.isolate.is_some_and(|only| only != i) {
+            if self
+                .isolate
+                .is_some_and(|only| only != BatchIndex::from_raw(i))
+            {
                 continue;
             }
-            let (pipeline, _) = &self.pipelines[batch.material as usize];
+            let pipeline = self.pipeline(MaterialSlot::from_manifest(batch.material));
             renderer.queue_draw_index_range(pipeline, batch.first_index, batch.index_count);
         }
 
@@ -262,7 +338,7 @@ impl Game for ToonLink {
                 gpu.write_uniform(
                     params_buffer,
                     ToonLinkParams {
-                        mvp: mvp.clone(),
+                        mvp,
                         debug_mode,
                         _padding_0: [0; 12],
                     },
@@ -281,15 +357,15 @@ impl Game for ToonLink {
             Key::Num2 => self.debug_mode = 1,
             Key::Q => {
                 self.isolate = Some(match self.isolate {
-                    None => 0,
-                    Some(i) => (i + batch_count - 1) % batch_count,
+                    None => BatchIndex::FIRST,
+                    Some(index) => index.prev(batch_count),
                 });
                 self.print_isolation();
             }
             Key::E => {
                 self.isolate = Some(match self.isolate {
-                    None => 0,
-                    Some(i) => (i + 1) % batch_count,
+                    None => BatchIndex::FIRST,
+                    Some(index) => index.next(batch_count),
                 });
                 self.print_isolation();
             }

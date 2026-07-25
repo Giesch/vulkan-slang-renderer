@@ -20,7 +20,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct DepthTextureParams {
     pub mvp: MVPMatrices,
@@ -31,7 +31,7 @@ const _: () = assert!(std::mem::size_of::<DepthTextureParams>() == 192);
 const _: () = assert!(std::mem::offset_of!(DepthTextureParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Vertex {
     pub position: glam::Vec3,
@@ -42,8 +42,6 @@ pub struct Vertex {
 impl GPUWrite for Vertex {}
 
 pub struct Resources<'a> {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
     pub texture: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<DepthTextureParams>,
 }
@@ -115,8 +113,8 @@ impl Shader {
         let storage_texture_handles = vec![
         ];
 
-        let vertex_config =
-            VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
+        // vertex data comes from PipelineConfig::with_vertices or with_shared_mesh
+        let vertex_config = VertexConfig::Unset;
 
         PipelineConfigBuilder {
             shader: Box::new(self),

@@ -587,6 +587,40 @@ pub fn reflect_compute_entry_point(
     })
 }
 
+fn param_binding(param: &slang::reflection::VariableLayout) -> Option<Binding> {
+    let category = param.category().unwrap();
+
+    let offset = param.offset(category);
+    let size = param.type_layout().unwrap().size(category);
+
+    match category {
+        slang::ParameterCategory::Uniform => {
+            Some(Binding::Uniform(OffsetSizeBinding { offset, size }))
+        }
+
+        slang::ParameterCategory::DescriptorTableSlot => {
+            Some(Binding::DescriptorTableSlot(IndexCountBinding {
+                index: offset,
+                count: size,
+            }))
+        }
+        slang::ParameterCategory::VaryingInput => Some(Binding::VaryingInput(IndexCountBinding {
+            index: offset,
+            count: size,
+        })),
+        slang::ParameterCategory::ConstantBuffer => {
+            Some(Binding::ConstantBuffer(IndexCountBinding {
+                index: offset,
+                count: size,
+            }))
+        }
+
+        slang::ParameterCategory::None => None,
+
+        c => todo!("param category not handled: {c:?}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,39 +693,5 @@ mod tests {
                 "rejection message must point at the alternatives: {message}"
             );
         }
-    }
-}
-
-fn param_binding(param: &slang::reflection::VariableLayout) -> Option<Binding> {
-    let category = param.category().unwrap();
-
-    let offset = param.offset(category);
-    let size = param.type_layout().unwrap().size(category);
-
-    match category {
-        slang::ParameterCategory::Uniform => {
-            Some(Binding::Uniform(OffsetSizeBinding { offset, size }))
-        }
-
-        slang::ParameterCategory::DescriptorTableSlot => {
-            Some(Binding::DescriptorTableSlot(IndexCountBinding {
-                index: offset,
-                count: size,
-            }))
-        }
-        slang::ParameterCategory::VaryingInput => Some(Binding::VaryingInput(IndexCountBinding {
-            index: offset,
-            count: size,
-        })),
-        slang::ParameterCategory::ConstantBuffer => {
-            Some(Binding::ConstantBuffer(IndexCountBinding {
-                index: offset,
-                count: size,
-            }))
-        }
-
-        slang::ParameterCategory::None => None,
-
-        c => todo!("param category not handled: {c:?}"),
     }
 }

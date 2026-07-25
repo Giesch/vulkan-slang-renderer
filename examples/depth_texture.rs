@@ -97,12 +97,12 @@ impl Game for DepthTextureGame {
         let texture = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
         let params_buffer = renderer.create_uniform_buffer::<DepthTextureParams>()?;
         let resources = Resources {
-            vertices: VERTICES.to_vec(),
-            indices: INDICES.to_vec(),
             texture: &texture,
             params_buffer: &params_buffer,
         };
-        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline_config = shader
+            .pipeline_config(resources)
+            .with_vertices(VERTICES.to_vec(), INDICES.to_vec());
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         let start_time = Instant::now();

@@ -24,7 +24,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
     pub scale: f32,
@@ -43,7 +43,7 @@ const _: () = assert!(std::mem::size_of::<Addr<HostileData>>() == 8);
 const _: () = assert!(std::mem::offset_of!(Params, post) == 16);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct HostileData {
     pub a: glam::Vec3,
@@ -78,7 +78,7 @@ const _: () = assert!(std::mem::size_of::<InnerB>() == 16);
 const _: () = assert!(std::mem::offset_of!(HostileData, f) == 104);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(8))]
 pub struct InnerB {
     pub p: glam::Vec2,
@@ -93,7 +93,7 @@ const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 const _: () = assert!(std::mem::offset_of!(InnerB, q) == 8);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct InnerA {
     pub x: f32,

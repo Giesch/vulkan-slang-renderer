@@ -19,7 +19,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct DisplayParams {
     pub texel_size: glam::Vec2,
@@ -76,7 +76,7 @@ const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
 const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment11) == 384);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct PigmentKM {
     pub absorption: glam::Vec3,

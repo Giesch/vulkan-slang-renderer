@@ -263,26 +263,10 @@ fn collect_graphics_shader_data(
     let mut struct_defs = vec![];
     let mut vertex_impl_blocks = vec![];
 
-    let has_vertex_struct = reflection_json
-        .vertex_entry_point
-        .parameters
-        .iter()
-        .any(|param| matches!(param, EntryPointParameter::Struct(_)));
-
-    let mut required_resources = if has_vertex_struct {
-        vec![
-            RequiredResource {
-                field_name: "vertices".to_string(),
-                resource_type: RequiredResourceType::VertexBuffer,
-            },
-            RequiredResource {
-                field_name: "indices".to_string(),
-                resource_type: RequiredResourceType::IndexBuffer,
-            },
-        ]
-    } else {
-        vec![]
-    };
+    // NOTE vertex/index data is not a Resources field: whether a pipeline owns
+    // its buffers or borrows a shared mesh is a call-site decision, made with
+    // PipelineConfig::with_vertices / with_shared_mesh.
+    let mut required_resources = vec![];
 
     let mut vertex_type_name = None;
     for vert_param in &reflection_json.vertex_entry_point.parameters {
@@ -306,7 +290,9 @@ fn collect_graphics_shader_data(
                     type_name: struct_param.type_name.to_string(),
                     source_module: None,
                     fields: generated_fields,
-                    trait_derives: vec!["Debug", "Clone", "Serialize"],
+                    // GPU-layout structs are plain old data (scalars, glam types, fixed
+                    // arrays, padding, other generated structs), so Copy always holds
+                    trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
                     alignment: Some(Alignment::Std140),
                     expected_size: None,
                 };
@@ -356,7 +342,9 @@ fn collect_graphics_shader_data(
             type_name: type_name.to_string(),
             source_module: None,
             fields: param_block_fields,
-            trait_derives: vec!["Debug", "Clone", "Serialize"],
+            // GPU-layout structs are plain old data (scalars, glam types, fixed
+            // arrays, padding, other generated structs), so Copy always holds
+            trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
             alignment: Some(Alignment::Std140),
             expected_size: Some(expected_size),
         });
@@ -377,13 +365,6 @@ fn collect_graphics_shader_data(
         .iter()
         .map(|r| {
             let type_name = match &r.resource_type {
-                RequiredResourceType::VertexBuffer => {
-                    let vertex_type_name = vertex_type_name
-                        .as_ref()
-                        .expect("no struct parameter for vertex entry point");
-                    format!("Vec<{vertex_type_name}>")
-                }
-                RequiredResourceType::IndexBuffer => "Vec<u32>".to_string(),
                 RequiredResourceType::Texture => "&'a TextureHandle".to_string(),
                 RequiredResourceType::UniformBuffer(element_type_name) => {
                     format!("&'a UniformBufferHandle<{element_type_name}>")
@@ -415,8 +396,6 @@ fn collect_graphics_shader_data(
     let mut resources_storage_texture_fields: Vec<String> = vec![];
     for res in &required_resources {
         match res.resource_type {
-            RequiredResourceType::VertexBuffer => {}
-            RequiredResourceType::IndexBuffer => {}
             RequiredResourceType::Texture => {
                 resources_texture_fields.push(res.field_name.clone());
             }
@@ -585,7 +564,9 @@ fn collect_compute_shader_data(
             type_name: type_name.to_string(),
             source_module: None,
             fields: param_block_fields,
-            trait_derives: vec!["Debug", "Clone", "Serialize"],
+            // GPU-layout structs are plain old data (scalars, glam types, fixed
+            // arrays, padding, other generated structs), so Copy always holds
+            trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
             alignment: Some(Alignment::Std140),
             expected_size: Some(expected_size),
         });
@@ -606,9 +587,6 @@ fn collect_compute_shader_data(
         .iter()
         .map(|r| {
             let type_name = match &r.resource_type {
-                RequiredResourceType::VertexBuffer | RequiredResourceType::IndexBuffer => {
-                    unreachable!("compute shaders don't have vertex/index buffers")
-                }
                 RequiredResourceType::Texture => "&'a TextureHandle".to_string(),
                 RequiredResourceType::UniformBuffer(element_type_name) => {
                     format!("&'a UniformBufferHandle<{element_type_name}>")
@@ -640,7 +618,6 @@ fn collect_compute_shader_data(
     let mut resources_storage_texture_fields: Vec<String> = vec![];
     for res in &required_resources {
         match res.resource_type {
-            RequiredResourceType::VertexBuffer | RequiredResourceType::IndexBuffer => {}
             RequiredResourceType::Texture => {
                 resources_texture_fields.push(res.field_name.clone());
             }
@@ -888,7 +865,9 @@ fn gather_struct_defs(
                     type_name: ptr.pointee_type.type_name.clone(),
                     source_module: None,
                     fields,
-                    trait_derives: vec!["Debug", "Clone", "Serialize"],
+                    // GPU-layout structs are plain old data (scalars, glam types, fixed
+                    // arrays, padding, other generated structs), so Copy always holds
+                    trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
                     alignment: Some(Alignment::Std430 { struct_alignment }),
                     expected_size: Some(expected_size),
                 },
@@ -968,7 +947,9 @@ fn gather_struct_defs(
                 type_name: type_name.clone(),
                 source_module: None,
                 fields: generated_sub_fields,
-                trait_derives: vec!["Debug", "Clone", "Serialize"],
+                // GPU-layout structs are plain old data (scalars, glam types, fixed
+                // arrays, padding, other generated structs), so Copy always holds
+                trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
                 alignment: nested_alignment,
                 expected_size,
             };
@@ -1170,8 +1151,6 @@ struct RequiredResource {
 }
 
 enum RequiredResourceType {
-    VertexBuffer,
-    IndexBuffer,
     Texture,
     StorageTexture2D,
     UniformBuffer(String),

@@ -99,10 +99,8 @@ impl Game for KochCurve {
                 }
             }
 
-            Input::MouseMotion { x, y } => {
-                if self.mouse_down {
-                    self.mouse_position = Vec2::new(x, y);
-                }
+            Input::MouseMotion { x, y } if self.mouse_down => {
+                self.mouse_position = Vec2::new(x, y);
             }
 
             _ => {}
@@ -113,7 +111,7 @@ impl Game for KochCurve {
         let time = (Instant::now() - self.start_time).as_secs_f32();
 
         let resolution = renderer.window_resolution();
-        let mut mouse = self.mouse_position.clone();
+        let mut mouse = self.mouse_position;
         mouse.y = resolution.y - mouse.y;
 
         let params = KochCurveParams {

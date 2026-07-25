@@ -9,7 +9,7 @@ use crate::renderer::gpu_write::GPUWrite;
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct MVPMatrices {
     pub model: glam::Mat4,

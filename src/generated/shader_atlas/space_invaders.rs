@@ -20,7 +20,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct SpaceInvadersParams {
     pub projection: Projection,
@@ -37,7 +37,7 @@ const _: () = assert!(std::mem::size_of::<ReadAddr<Sprite>>() == 8);
 const _: () = assert!(std::mem::offset_of!(SpaceInvadersParams, debug_boxes) == 72);
 const _: () = assert!(std::mem::size_of::<ReadAddr<DebugBox>>() == 8);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct DebugBox {
     pub color: glam::Vec4,
@@ -54,7 +54,7 @@ const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 const _: () = assert!(std::mem::offset_of!(DebugBox, size) == 24);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Sprite {
     pub scale: glam::Vec2,
