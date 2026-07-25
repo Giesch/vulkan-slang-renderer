@@ -246,6 +246,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "basic_triangle"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "glam",
+ "mltrs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

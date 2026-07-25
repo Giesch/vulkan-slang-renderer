@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "examples/*"]
 # check_crate is a compile-check fixture with its own lockfile; slang is the
 # upstream submodule
 exclude = ["crates/cli/fixtures/check_crate", "slang"]

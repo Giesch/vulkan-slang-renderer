@@ -1,4 +1,3 @@
-pub mod basic_triangle;
 pub mod depth_texture;
 pub mod dragon;
 pub mod gpu_picking;
@@ -39,7 +38,6 @@ pub struct ShaderAtlas {
     pub koch_curve: koch_curve::Shader,
     pub serenity_crt: serenity_crt::Shader,
     pub sdf_2d: sdf_2d::Shader,
-    pub basic_triangle: basic_triangle::Shader,
     pub gpu_picking: gpu_picking::Shader,
     pub suzanne: suzanne::Shader,
     pub ray_marching: ray_marching::Shader,
@@ -70,7 +68,6 @@ impl ShaderAtlas {
             koch_curve: koch_curve::Shader::init(),
             serenity_crt: serenity_crt::Shader::init(),
             sdf_2d: sdf_2d::Shader::init(),
-            basic_triangle: basic_triangle::Shader::init(),
             gpu_picking: gpu_picking::Shader::init(),
             suzanne: suzanne::Shader::init(),
             ray_marching: ray_marching::Shader::init(),

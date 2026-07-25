@@ -10,12 +10,12 @@ use ash::vk;
 use serde::Serialize;
 
 pub use super::mvp::MVPMatrices;
-use crate::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
-use crate::renderer::vertex_description::{NoVertex, VertexDescription};
-use crate::renderer::*;
-use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
-use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
+use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
+use mltrs::renderer::*;
+use mltrs::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
+use mltrs::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);

@@ -5,8 +5,10 @@ use mltrs::renderer::{
     DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
 };
 
-use mltrs::generated::shader_atlas::ShaderAtlas;
-use mltrs::generated::shader_atlas::basic_triangle::*;
+use crate::generated::shader_atlas::ShaderAtlas;
+use crate::generated::shader_atlas::basic_triangle::*;
+
+mod generated;
 
 fn main() -> Result<(), anyhow::Error> {
     BasicTriangle::run()
