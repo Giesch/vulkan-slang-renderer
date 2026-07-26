@@ -450,6 +450,10 @@ deviations discovered:    1. `BatchIndex::raw` takes `self` by value, so
                              the committed order. Sorting the read_dir results
                              would make this deterministic — worth a follow-up,
                              out of scope for P7.
+                             **Fixed 2026-07-26** — the read_dir walks are now
+                             sorted and the atlas snapshots re-recorded; see
+                             `follow_up.md` §5b. This entry stands as the
+                             discovery record.
                           3. Environment setup needed before anything built:
                              libasound2-dev + libvulkan-dev, the slang
                              submodule, and a from-source slang build

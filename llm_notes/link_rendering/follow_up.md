@@ -191,7 +191,53 @@ trivially to uniform arrays.
   warns is the easiest thing in the phase to get backwards, and it is
   currently only reasoned about. (phase_07 Recorded facts.)
 
-## 5b. Codegen determinism
+## 5b. ~~Codegen determinism~~ — DONE
+
+**Landed 2026-07-26** as its own commit (`<hash>`). What shipped:
+
+- The two copy-pasted `read_dir` walks became one sorted helper,
+  `collect_slang_file_names(dir, suffix)` (src/shaders/build_tasks.rs:34), used
+  for both the `.shader.slang` and `.compute.slang` lists.
+- Three more unsorted iterations in the same file, found while fixing the two the
+  entry named: `reflect_slang_module_types`'s shared-module list (the one with
+  behavioral consequences — see below), the `alignment_tests` check-crate
+  `mod.rs` generation, and `field_size_tripwire`'s `mismatches` accumulation
+  (nondeterministic *failure messages*). `shader_branching_snapshots` already
+  sorted; that was the idiom followed.
+- Regression guard: `slang_file_names_are_sorted` asserts the helper's output is
+  sorted and non-empty (a bare `is_sorted()` would pass vacuously on an empty
+  vec).
+- Churn was exactly as predicted: `src/generated/shader_atlas.rs` plus the two
+  `shader_atlas.rs` snapshots, all three verified **pure line reorderings** by
+  comparing the sorted added/removed line sets rather than by eyeballing the
+  diff. No other generated file or compiled artifact changed, which is itself
+  evidence the rest of the codegen was already order-independent.
+- Also confirmed: `just shaders` run twice is now byte-identical, and the atlas
+  field order matches a sorted listing of `shaders/source/`.
+
+One detail the original entry didn't have, and the reason this took diagnosing in
+P7: of the two things it named, only the **struct fields** were visibly affected in
+the committed file. rustfmt's `reorder_modules` (on by default) re-sorts the
+`pub mod` lines after generation, so `src/generated/shader_atlas.rs` always looked
+tidy while `init()` and the struct body were scrambled. The snapshots are taken
+*pre-rustfmt*, so they saw the raw order for both — hence a snapshot that
+disagreed with a committed file that looked fine.
+
+Transitive win beyond what the entry described: sorting the shader list also
+pins struct *declaration* order inside generated shared-module files, since
+`collect_shared_modules` pushes into each module's `Vec` in shader-iteration
+order (the `BTreeMap` there only made the module keys deterministic).
+
+**Consequence — the fix relocated a hazard rather than removing it.** Sorting
+`reflect_slang_module_types` makes deterministic a map that resolves struct names
+by *silent last-write-wins* (`src/shaders.rs:247`). The winner is now
+reproducible but arbitrary ("whichever module name sorts last"). No collision
+exists in `shaders/source/` today, so nothing is wrong right now — but the
+silent-overwrite is worth fixing on its own terms, and is filed as
+[`../tech_debt.md`](../tech_debt.md) §4 with the in-repo precedent for how
+(`collect_shared_modules` already panics loudly on the analogous case).
+
+Original entry preserved below.
 
 - **The generated shader atlas is filesystem-order dependent.**
   `write_precompiled_shaders` (src/shaders/build_tasks.rs:28, and the

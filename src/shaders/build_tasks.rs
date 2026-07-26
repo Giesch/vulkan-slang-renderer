@@ -24,34 +24,33 @@ pub struct Config {
 const SHADER_FILE_SUFFIX: &str = ".shader.slang";
 const COMPUTE_SHADER_FILE_SUFFIX: &str = ".compute.slang";
 
-pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
-    let slang_file_names: Vec<_> = std::fs::read_dir(&config.shaders_source_dir)?
+/// Collect the names of the `.slang` files in `dir` whose name ends with `suffix`.
+///
+/// The result is sorted: `read_dir` yields entries in filesystem order, which
+/// differs between machines and between two states of the same directory, and
+/// this order reaches the generated `shader_atlas.rs` (module list, `ShaderAtlas`
+/// fields, `init()` body). Sorting keeps generated output a pure function of the
+/// source tree so a snapshot diff always means a real change.
+fn collect_slang_file_names(dir: &Path, suffix: &str) -> anyhow::Result<Vec<String>> {
+    let mut file_names: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|entry_res| entry_res.ok())
         .map(|dir_entry| dir_entry.path())
-        .filter(|path| {
-            let file_name = path.file_name().unwrap().to_str().unwrap();
-            file_name.ends_with(SHADER_FILE_SUFFIX)
-        })
         .filter_map(|path| {
             path.file_name()
                 .and_then(|os_str| os_str.to_str())
                 .map(|s| s.to_string())
         })
+        .filter(|file_name| file_name.ends_with(suffix))
         .collect();
+    file_names.sort();
+    Ok(file_names)
+}
 
-    let compute_slang_file_names: Vec<_> = std::fs::read_dir(&config.shaders_source_dir)?
-        .filter_map(|entry_res| entry_res.ok())
-        .map(|dir_entry| dir_entry.path())
-        .filter(|path| {
-            let file_name = path.file_name().unwrap().to_str().unwrap();
-            file_name.ends_with(COMPUTE_SHADER_FILE_SUFFIX)
-        })
-        .filter_map(|path| {
-            path.file_name()
-                .and_then(|os_str| os_str.to_str())
-                .map(|s| s.to_string())
-        })
-        .collect();
+pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
+    let slang_file_names =
+        collect_slang_file_names(&config.shaders_source_dir, SHADER_FILE_SUFFIX)?;
+    let compute_slang_file_names =
+        collect_slang_file_names(&config.shaders_source_dir, COMPUTE_SHADER_FILE_SUFFIX)?;
 
     // Build type→module map from shared slang modules
     let type_to_module = reflect_slang_module_types(&config.shaders_source_dir);
@@ -1341,6 +1340,8 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
         module_names.push(module_name);
     }
 
+    module_names.sort();
+
     let search_path = shaders_source_dir.to_str().unwrap();
     let module_name_refs: Vec<&str> = module_names.iter().map(|s| s.as_str()).collect();
     super::reflect_shared_module_types(&module_name_refs, search_path)
@@ -1490,6 +1491,28 @@ mod tests {
 
     use crate::util::manifest_path;
 
+    /// Shader discovery must be sorted, not in `read_dir` order: that order reaches
+    /// the generated `shader_atlas.rs` and its snapshots, so an unsorted walk makes
+    /// them fail spuriously on a pristine tree.
+    #[test]
+    fn slang_file_names_are_sorted() {
+        let source_dir = manifest_path(["shaders", "source"]);
+
+        for suffix in [SHADER_FILE_SUFFIX, COMPUTE_SHADER_FILE_SUFFIX] {
+            let file_names = collect_slang_file_names(&source_dir, suffix).unwrap();
+
+            assert!(
+                !file_names.is_empty(),
+                "no '{suffix}' files found in {source_dir:?} — the sort assertion \
+                 below would pass vacuously",
+            );
+            assert!(
+                file_names.is_sorted(),
+                "'{suffix}' files came back unsorted: {file_names:?}",
+            );
+        }
+    }
+
     // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
     #[cfg(not(windows))]
     #[test]
@@ -1552,8 +1575,12 @@ mod tests {
             // Copy .rs files and build mod.rs
             let mut mod_contents = String::new();
             let shader_atlas_dir = tmp_dir_path.join("src/generated/shader_atlas");
-            for entry in std::fs::read_dir(&shader_atlas_dir).unwrap() {
-                let entry = entry.unwrap();
+            let mut atlas_entries: Vec<_> = std::fs::read_dir(&shader_atlas_dir)
+                .unwrap()
+                .map(|entry| entry.unwrap())
+                .collect();
+            atlas_entries.sort_by_key(|entry| entry.file_name());
+            for entry in atlas_entries {
                 if entry.path().extension() == Some(std::ffi::OsStr::new("rs")) {
                     let filename = entry.file_name();
                     std::fs::copy(entry.path(), check_crate_src.join(&filename)).unwrap();
@@ -1768,6 +1795,8 @@ mod tests {
                 check_field_sizes(&block.element_type.fields, &context, &mut mismatches);
             }
         }
+
+        mismatches.sort();
 
         assert!(
             mismatches.is_empty(),
