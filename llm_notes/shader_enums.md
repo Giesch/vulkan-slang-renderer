@@ -427,7 +427,9 @@ tags in §1 and ship only `uint`/`int`. Decide before P3; P0–P2 are unaffected
   `paint_display` `.rs` and `.json` snapshots changing in P5. Every other snapshot must stay
   byte-identical.
 
-## 9. Migrate `paint_display`
+## 9. Migration targets
+
+### `paint_display`
 
 Once the pipeline works, change `shaders/source/paint_display.shader.slang`:
 
@@ -437,6 +439,29 @@ Once the pipeline works, change `shaders/source/paint_display.shader.slang`:
 
 and update the Rust callers to pass `DebugView::WetAreaMask` instead of a literal. The GPU bytes are
 unchanged, so the watercolor example must render identically.
+
+### `toon_link`
+
+`shaders/source/toon_link.shader.slang` is the shader this feature is really for. It carries raw GX
+codes as bare `uint`s, with hand-written comments (`:19-23`) doing the work a type would do. Two
+enums to add:
+
+- **`DebugMode`** — replaces `uint debugMode` (`:28`), switched on at `:110`. Cases per the comment
+  at `:23`: `Albedo = 0`, `WorldNormals = 1`, `Uv0 = 2`, `AlbedoAlpha = 3`. A plain scalar enum
+  field in a std140 ParameterBlock; needs nothing beyond §1 and §3, so it can migrate as soon as
+  P1 lands.
+- **`GXCompare`** — the GX comparison codes documented at `:19-21` and switched on in `gxCompare`
+  (`:54-65`): `Never = 0`, `Less = 1`, `Equal = 2`, `Lequal = 3`, `Greater = 4`, `Nequal = 5`,
+  `Gequal = 6`, `Always = 7`. **Not a drop-in.** The codes live in components `.x` / `.z` of
+  `uint4 alphaCompare` (`:21`), and an enum cannot type a vector component. Reshaping that field —
+  so the two compares and their two reference values become named fields rather than `xyzw` — is a
+  prerequisite, and is not part of this document's work.
+
+The CPU-side payoff is the concrete reason to want both. `examples/toon_link.rs:113-160` hand-rolls
+an `AlphaCompareCodes` struct plus a `compare_code()` string→code mapping that the generated
+`TryFrom` would replace. That is also where raw manifest bytes must be *validated* rather than cast:
+the codes come from MAT3 as untrusted integers, so they have to go through `TryFrom`, never a
+`transmute` or `as` — see the UB note in §11.
 
 ## 10. Phases & verification
 

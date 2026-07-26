@@ -189,14 +189,15 @@ fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<Vertex>
         bytes.len()
     );
     let f = |b: &[u8], i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
-    Ok(bytes
+    let vertices = bytes
         .chunks_exact(VERTEX_STRIDE)
         .map(|v| Vertex {
             position: Vec3::new(f(v, 0), f(v, 1), f(v, 2)),
             normal: Vec3::new(f(v, 3), f(v, 4), f(v, 5)),
             uv0: Vec2::new(f(v, 6), f(v, 7)),
         })
-        .collect())
+        .collect();
+    Ok(vertices)
 }
 
 fn load_indices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<u32>> {
@@ -208,14 +209,13 @@ fn load_indices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<u32>> {
         expected_count,
         bytes.len()
     );
-    Ok(bytes
+    let indicies = bytes
         .chunks_exact(4)
         .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-        .collect())
+        .collect();
+    Ok(indicies)
 }
 
-/// Sampler/image options from the manifest strings, each mapped explicitly with
-/// a bail on anything unrecognized.
 fn texture_options(entry: &TextureEntry) -> anyhow::Result<TextureOptions> {
     let wrap = |name: &str| -> anyhow::Result<TextureWrap> {
         Ok(match name {
@@ -454,7 +454,6 @@ impl Game for ToonLink {
         let dir = converted_dir();
         let manifest = load_manifest(&dir)?;
 
-        // sized by the manifest's own counts, not hardcoded expectations
         let vertices = load_vertices(
             &dir.join(&manifest.buffers.vertices),
             manifest.buffers.vertex_count,
@@ -464,7 +463,6 @@ impl Game for ToonLink {
             manifest.buffers.index_count,
         )?;
 
-        // honesty checks on the converter's own invariants
         anyhow::ensure!(indices.len() % 3 == 0, "index count not a triangle list");
         let max_index = indices.iter().copied().max().unwrap_or(0);
         anyhow::ensure!(
@@ -506,16 +504,12 @@ impl Game for ToonLink {
 
         let mesh = renderer.create_mesh(&vertices, &indices)?;
 
-        // Every texture (and the dummy) must exist before the pipeline loop:
-        // create_texture_with_options takes &mut Renderer while Resources holds
-        // &TextureHandle. Same shape as examples/multi_mesh.rs.
         let textures = load_textures(renderer, &dir, &manifest)?;
-        // 1×1 white for texmap slots a material doesn't use; same options as the
-        // real textures (Unorm, ClampToEdge, no mips, Linear).
-        let dummy_image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([255; 4])));
-        let dummy = renderer.create_texture_with_options(
-            "toon_link_dummy_white",
-            &dummy_image,
+        let white_square_image =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([255; 4])));
+        let white_square = renderer.create_texture_with_options(
+            "toon_link_white_square",
+            &white_square_image,
             TextureOptions {
                 filter: TextureFilter::Linear,
                 wrap_u: TextureWrap::ClampToEdge,
@@ -531,8 +525,8 @@ impl Game for ToonLink {
         for material in &manifest.materials {
             let params_buffer = renderer.create_uniform_buffer::<ToonLinkParams>()?;
             let resources = Resources {
-                tex0: resolve_texmap(material, 0, &textures, &dummy),
-                tex1: resolve_texmap(material, 1, &textures, &dummy),
+                tex0: resolve_texmap(material, 0, &textures, &white_square),
+                tex1: resolve_texmap(material, 1, &textures, &white_square),
                 params_buffer: &params_buffer,
             };
             let pipeline_config = Shader::init()
@@ -544,8 +538,8 @@ impl Game for ToonLink {
             alpha_compares.push(alpha_compare_codes(material)?);
         }
 
-        // J3D two-pass order: opaque batches (INF1 order) then translucent
-        // (INF1 order). Only observable now that blending is real.
+        // J3D two-pass order: opaque batches and then translucent ones,
+        // both in INF1 scene graph order.
         let mut opaque = vec![];
         let mut translucent = vec![];
         for (i, batch) in manifest.batches.iter().enumerate() {
@@ -557,7 +551,7 @@ impl Game for ToonLink {
         }
         let draw_order: Vec<BatchIndex> = opaque.iter().chain(&translucent).copied().collect();
 
-        // keep in sync with the module doc comment
+        // NOTE keep in sync with the module doc comment
         println!(
             "toon_link: {} batches, {} materials, {} vertices\n\
              draw order (batch idx): {:?}\n\
@@ -625,12 +619,14 @@ impl Game for ToonLink {
         let Input::KeyDown(key) = input else {
             return;
         };
+
         let batch_count = self.manifest.batches.len();
         match key {
             Key::Num1 => self.debug_mode = 0,
             Key::Num2 => self.debug_mode = 1,
             Key::Num3 => self.debug_mode = 2,
             Key::Num4 => self.debug_mode = 3,
+
             Key::Q => {
                 self.isolate = Some(match self.isolate {
                     None => BatchIndex::FIRST,
@@ -645,10 +641,12 @@ impl Game for ToonLink {
                 });
                 self.print_isolation();
             }
+
             Key::Space => {
                 self.isolate = None;
                 self.print_isolation();
             }
+
             _ => {}
         }
     }
