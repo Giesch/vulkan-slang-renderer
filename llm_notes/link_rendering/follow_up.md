@@ -182,6 +182,30 @@ trivially to uniform arrays.
   (gitignored, disc-image-derived); the example bails without them, so the
   validation sweep's toon_link line only means something on a machine where
   `just convert-link` has run. (phase_06 risk #6.)
+- **P7's runtime gates were never run** — the phase was implemented in a
+  headless container (no video device, no converted assets), so the
+  textured render, UV-vs-noclip comparison, alpha-cutout edges, draw-order
+  and `depth_write` effects, validation sweep, hot reload and VMA check are
+  all outstanding. Highest-value one is the **numeric gamma check**: it is
+  the designated gate for the sRGB transfer *direction*, which the plan
+  warns is the easiest thing in the phase to get backwards, and it is
+  currently only reasoned about. (phase_07 Recorded facts.)
+
+## 5b. Codegen determinism
+
+- **The generated shader atlas is filesystem-order dependent.**
+  `write_precompiled_shaders` (src/shaders/build_tasks.rs:28, and the
+  compute list at :42) collects `.slang` sources straight from
+  `std::fs::read_dir` with no sort, so `src/generated/shader_atlas.rs`
+  emits its `pub mod` / struct-field lines in whatever order the
+  filesystem hands back. That order differs between machines — and even
+  between two states of the same directory — which makes the
+  `generated_files` and `alignment_tests` snapshots for
+  `src/generated/shader_atlas.rs` fail spuriously with a pure-reordering
+  diff, on a pristine tree, with no source change at all. Sorting the
+  `read_dir` results would make it deterministic. Discovered in P7, where
+  it had to be diagnosed and worked around (the atlas snapshots were
+  discarded rather than accepted) to tell real churn from noise.
 
 ## 6. Doc reconciliation
 

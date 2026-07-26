@@ -1,14 +1,17 @@
-//! Renders Toon Link from The Wind Waker — P6 of the link rendering plan
+//! Renders Toon Link from The Wind Waker — P7 of the link rendering plan
 //! (`llm_notes/link_rendering.md`): all 24 batches drawn from one shared mesh
-//! through 24 per-material pipelines, with a v0 debug fragment shader
-//! (world-space normals as color, UVs as a second mode). Textures, TEV and
-//! lighting are later phases.
+//! through 24 per-material pipelines, now with the model's **real albedo
+//! textures**, alpha-cutout brows/lashes, complete per-material raster state
+//! (cull + the exact `Less_Equal` depth func + honest `z_write` + blend), a
+//! J3D opaque-before-translucent draw order, and gamma-correct output. TEV
+//! stages, the lighting channel and ramp sampling are P8; `tex1` is bound but
+//! never read.
 //!
 //! Requires converted assets on disk (gitignored — you need the disc image):
 //! `just extract-link && just convert-link`.
 //!
 //! Controls:
-//! - Num1 / Num2: normals-as-color / UV-as-color debug mode
+//! - Num1 / Num2 / Num3 / Num4: albedo / world-normals / uv0 / alpha-as-gray
 //! - Q / E: isolate previous / next batch (prints which one to stdout)
 //! - Space: clear isolation, draw all batches
 
@@ -16,13 +19,15 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::Context;
-use glam::{Mat3, Mat4, Vec2, Vec3};
+use glam::{Mat3, Mat4, UVec4, Vec2, Vec3};
+use image::{DynamicImage, ImageReader, Rgba, RgbaImage};
 
 use vulkan_slang_renderer::game::{Game, Input, Key};
-use vulkan_slang_renderer::model_manifest::{Batch, Manifest, MaterialEntry};
+use vulkan_slang_renderer::model_manifest::{Batch, Manifest, MaterialEntry, TextureEntry};
 use vulkan_slang_renderer::renderer::{
     BlendMode, CullMode, DepthCompare, DrawError, DrawIndexed, FrameRenderer, MeshHandle,
-    PipelineHandle, RasterState, Renderer, UniformBufferHandle,
+    PipelineHandle, RasterState, Renderer, TextureColorSpace, TextureFilter, TextureHandle,
+    TextureOptions, TextureWrap, UniformBufferHandle,
 };
 
 use vulkan_slang_renderer::generated::shader_atlas::toon_link::*;
@@ -90,6 +95,73 @@ impl BatchIndex {
     }
 }
 
+/// J3D pixel-engine mode, reduced to the two-pass ordering key P7 needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeMode {
+    Opaque,
+    Translucent,
+}
+
+fn pe_mode(material: &MaterialEntry) -> anyhow::Result<PeMode> {
+    match material.pe_mode.as_str() {
+        "Opaque" => Ok(PeMode::Opaque),
+        "Translucent" => Ok(PeMode::Translucent),
+        other => anyhow::bail!("unmapped pe_mode {other:?} on material {:?}", material.name),
+    }
+}
+
+/// GX alpha-compare state as the raw codes the shader's `switch`es expect:
+/// `[comp0, ref0, comp1, ref1]` plus the combiner op.
+#[derive(Debug, Clone, Copy)]
+struct AlphaCompareCodes {
+    compare: UVec4,
+    op: u32,
+}
+
+fn compare_code(name: &str) -> anyhow::Result<u32> {
+    Ok(match name {
+        "Never" => 0,
+        "Less" => 1,
+        "Equal" => 2,
+        "Less_Equal" => 3,
+        "Greater" => 4,
+        "Not_Equal" => 5,
+        "Greater_Equal" => 6,
+        "Always" => 7,
+        other => anyhow::bail!("unmapped GX compare {other:?}"),
+    })
+}
+
+fn alpha_op_code(name: &str) -> anyhow::Result<u32> {
+    Ok(match name {
+        "AND" => 0,
+        "OR" => 1,
+        "XOR" => 2,
+        "XNOR" => 3,
+        other => anyhow::bail!("unmapped GX alpha op {other:?}"),
+    })
+}
+
+fn alpha_compare_codes(material: &MaterialEntry) -> anyhow::Result<AlphaCompareCodes> {
+    // No record → GX's default "Always OR Always", a no-op that keeps every
+    // fragment.
+    let Some(ac) = &material.alpha_compare else {
+        return Ok(AlphaCompareCodes {
+            compare: UVec4::new(7, 0, 7, 0),
+            op: 1,
+        });
+    };
+    Ok(AlphaCompareCodes {
+        compare: UVec4::new(
+            compare_code(&ac.comp0)?,
+            ac.ref0 as u32,
+            compare_code(&ac.comp1)?,
+            ac.ref1 as u32,
+        ),
+        op: alpha_op_code(&ac.op)?,
+    })
+}
+
 fn converted_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/link/converted")
 }
@@ -142,6 +214,100 @@ fn load_indices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<u32>> {
         .collect())
 }
 
+/// Sampler/image options from the manifest strings, each mapped explicitly with
+/// a bail on anything unrecognized.
+fn texture_options(entry: &TextureEntry) -> anyhow::Result<TextureOptions> {
+    let wrap = |name: &str| -> anyhow::Result<TextureWrap> {
+        Ok(match name {
+            "ClampToEdge" => TextureWrap::ClampToEdge,
+            "Repeat" => TextureWrap::Repeat,
+            "MirroredRepeat" => TextureWrap::MirroredRepeat,
+            other => anyhow::bail!("unmapped GX wrap mode {other:?}"),
+        })
+    };
+    let filter = match entry.filter.as_str() {
+        "Linear" => TextureFilter::Linear,
+        "Nearest" => TextureFilter::Nearest,
+        other => anyhow::bail!("unmapped GX texture filter {other:?}"),
+    };
+    Ok(TextureOptions {
+        filter,
+        wrap_u: wrap(&entry.wrap_u)?,
+        wrap_v: wrap(&entry.wrap_v)?,
+        mipmaps: entry.mipmaps,
+        // Hardcoded Unorm on purpose: GX has no sRGB anywhere (master plan §3),
+        // so the stored texels are raw values the shader consumes directly (the
+        // fragment shader applies its own sRGB decode to survive the _SRGB color
+        // target). `Unorm` looks like a mistake here without that context.
+        color_space: TextureColorSpace::Unorm,
+    })
+}
+
+/// One texture per manifest index, but only the entries some material's
+/// `texmaps` actually references are loaded (7 of 41). The other 34 are BTP
+/// eye/brow animation frames, unreachable without BTP (see follow_up.md);
+/// loading them would quietly claim we understand them. Unreferenced slots stay
+/// `None`.
+fn load_textures(
+    renderer: &mut Renderer,
+    dir: &Path,
+    manifest: &Manifest,
+) -> anyhow::Result<Vec<Option<TextureHandle>>> {
+    let mut referenced = vec![false; manifest.textures.len()];
+    for material in &manifest.materials {
+        for texmap in material.texmaps.iter().flatten() {
+            referenced[*texmap as usize] = true;
+        }
+    }
+
+    let mut textures: Vec<Option<TextureHandle>> = Vec::with_capacity(manifest.textures.len());
+    let mut loaded = 0;
+    for (i, entry) in manifest.textures.iter().enumerate() {
+        if !referenced[i] {
+            textures.push(None);
+            continue;
+        }
+        // util::load_image hardcodes the textures/ dir, so read directly;
+        // entry.file is manifest-relative.
+        let image = ImageReader::open(dir.join(&entry.file))
+            .with_context(|| format!("opening texture {}", entry.file))?
+            .decode()
+            .with_context(|| format!("decoding texture {}", entry.file))?;
+        let handle = renderer.create_texture_with_options(
+            entry.file.clone(),
+            &image,
+            texture_options(entry)?,
+        )?;
+        textures.push(Some(handle));
+        loaded += 1;
+    }
+
+    println!(
+        "toon_link: loaded {loaded} of {} textures ({} unreferenced BTP frames skipped)",
+        manifest.textures.len(),
+        manifest.textures.len() - loaded,
+    );
+
+    Ok(textures)
+}
+
+/// The texture bound into shader slot `slot` for `material`: the referenced
+/// albedo/ramp if the material has a texmap there, otherwise the 1×1 dummy.
+fn resolve_texmap<'a>(
+    material: &MaterialEntry,
+    slot: usize,
+    textures: &'a [Option<TextureHandle>],
+    dummy: &'a TextureHandle,
+) -> &'a TextureHandle {
+    material
+        .texmaps
+        .get(slot)
+        .copied()
+        .flatten()
+        .and_then(|index| textures[index as usize].as_ref())
+        .unwrap_or(dummy)
+}
+
 fn raster_state(material: &MaterialEntry) -> anyhow::Result<RasterState> {
     let cull = match CULL_OVERRIDE {
         Some(cull) => cull,
@@ -152,21 +318,71 @@ fn raster_state(material: &MaterialEntry) -> anyhow::Result<RasterState> {
             other => anyhow::bail!("unmapped GX cull mode {other:?}"),
         },
     };
-    // Deliberately partial mapping: blend modes, alpha compare and the exact
-    // Less_Equal depth function are P7. GX disables depth writes whenever the
-    // compare is off, hence the paired Always/no-write.
-    let (depth_test, depth_write) = if material.z_test {
-        (DepthCompare::Less, true)
+
+    // Depth test: honor z_func exactly when the test is enabled, else pass
+    // unconditionally. All 24 materials are Less_Equal in practice (this makes
+    // P6's `Less` placeholder correct).
+    let depth_test = if material.z_test {
+        match material.z_func.as_str() {
+            "Less_Equal" => DepthCompare::LessEqual,
+            "Less" => DepthCompare::Less,
+            "Always" => DepthCompare::Always,
+            other => anyhow::bail!(
+                "unmapped GX depth func {other:?} on material {:?}",
+                material.name
+            ),
+        }
     } else {
-        (DepthCompare::Always, false)
+        DepthCompare::Always
     };
+
+    // Honor z_write directly rather than tying it to z_test (P6 did the latter,
+    // which forced the four *damA eye/brow decals to write depth; not writing is
+    // what lets those layered decals composite at all).
+    let depth_write = material.z_write;
+
     Ok(RasterState {
-        blend: BlendMode::Opaque,
+        blend: blend_mode(material)?,
         cull,
         depth_test,
         depth_write,
         ..Default::default()
     })
+}
+
+fn blend_mode(material: &MaterialEntry) -> anyhow::Result<BlendMode> {
+    // No blend record → blending off.
+    let Some(blend) = &material.blend else {
+        return Ok(BlendMode::Opaque);
+    };
+    // "None_" disables blending regardless of the factors.
+    if blend.mode == "None_" {
+        return Ok(BlendMode::Opaque);
+    }
+    if blend.mode == "Blend" {
+        match (blend.src.as_str(), blend.dst.as_str()) {
+            ("Source_Alpha", "Inverse_Source_Alpha") => return Ok(BlendMode::Alpha),
+            // GX's dst-alpha blend, dst_alpha·src + (1−dst_alpha)·dst, reduces
+            // *exactly* to src wherever the framebuffer alpha is 1 — and it is 1
+            // at these pixels today: the clear is alpha 1.0, every opaque albedo
+            // is alpha-255, and the four dst-alpha materials (eyeL/eyeR/mayuL/
+            // mayuR) are the first translucent batches drawn, before anything
+            // writes a non-1 alpha over the face. So Opaque is exact here.
+            // PRECONDITION: a new albedo with alpha<255, a different draw order,
+            // or --casual textures silently break this; real BlendMode::DstAlpha
+            // lands with the eye write-mask pass in P9. See phase_07.md
+            // decision 2 / risk 3.
+            ("Destination_Alpha", "Inverse_Destination_Alpha") => return Ok(BlendMode::Opaque),
+            _ => {}
+        }
+    }
+    anyhow::bail!(
+        "unmapped blend mode {:?} (src {:?}, dst {:?}) on material {:?}",
+        blend.mode,
+        blend.src,
+        blend.dst,
+        material.name
+    )
 }
 
 pub struct ToonLink {
@@ -180,6 +396,13 @@ pub struct ToonLink {
         PipelineHandle<DrawIndexed>,
         UniformBufferHandle<ToonLinkParams>,
     )>,
+    /// Per-material alpha-compare codes, in `MaterialSlot` order (parallel to
+    /// `pipelines`).
+    alpha_compares: Vec<AlphaCompareCodes>,
+    /// Batches partitioned opaque-before-translucent, INF1 order within each
+    /// group (J3D two-pass draw ordering). Walked by `draw` instead of the raw
+    /// manifest order.
+    draw_order: Vec<BatchIndex>,
     debug_mode: u32,
     isolate: Option<BatchIndex>,
 }
@@ -270,13 +493,46 @@ impl Game for ToonLink {
             manifest.buffers.index_count
         );
 
+        // P7 binds exactly two texmap slots; a future model that uses a third
+        // should say so loudly rather than have its texture silently dropped
+        // (decision 1).
+        for material in &manifest.materials {
+            anyhow::ensure!(
+                material.texmaps.iter().skip(2).all(Option::is_none),
+                "material {:?} uses a texmap slot >= 2; P7 binds only slots 0 and 1",
+                material.name
+            );
+        }
+
         let mesh = renderer.create_mesh(&vertices, &indices)?;
+
+        // Every texture (and the dummy) must exist before the pipeline loop:
+        // create_texture_with_options takes &mut Renderer while Resources holds
+        // &TextureHandle. Same shape as examples/multi_mesh.rs.
+        let textures = load_textures(renderer, &dir, &manifest)?;
+        // 1×1 white for texmap slots a material doesn't use; same options as the
+        // real textures (Unorm, ClampToEdge, no mips, Linear).
+        let dummy_image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([255; 4])));
+        let dummy = renderer.create_texture_with_options(
+            "toon_link_dummy_white",
+            &dummy_image,
+            TextureOptions {
+                filter: TextureFilter::Linear,
+                wrap_u: TextureWrap::ClampToEdge,
+                wrap_v: TextureWrap::ClampToEdge,
+                mipmaps: false,
+                color_space: TextureColorSpace::Unorm,
+            },
+        )?;
 
         // push order defines MaterialSlot: pipelines[slot] is materials[slot]
         let mut pipelines = vec![];
+        let mut alpha_compares = vec![];
         for material in &manifest.materials {
             let params_buffer = renderer.create_uniform_buffer::<ToonLinkParams>()?;
             let resources = Resources {
+                tex0: resolve_texmap(material, 0, &textures, &dummy),
+                tex1: resolve_texmap(material, 1, &textures, &dummy),
                 params_buffer: &params_buffer,
             };
             let pipeline_config = Shader::init()
@@ -285,18 +541,34 @@ impl Game for ToonLink {
                 .with_raster_state(raster_state(material)?);
             let pipeline = renderer.create_pipeline(pipeline_config)?;
             pipelines.push((pipeline, params_buffer));
+            alpha_compares.push(alpha_compare_codes(material)?);
         }
+
+        // J3D two-pass order: opaque batches (INF1 order) then translucent
+        // (INF1 order). Only observable now that blending is real.
+        let mut opaque = vec![];
+        let mut translucent = vec![];
+        for (i, batch) in manifest.batches.iter().enumerate() {
+            let material = &manifest.materials[MaterialSlot::from_manifest(batch.material).raw()];
+            match pe_mode(material)? {
+                PeMode::Opaque => opaque.push(BatchIndex::from_raw(i)),
+                PeMode::Translucent => translucent.push(BatchIndex::from_raw(i)),
+            }
+        }
+        let draw_order: Vec<BatchIndex> = opaque.iter().chain(&translucent).copied().collect();
 
         // keep in sync with the module doc comment
         println!(
             "toon_link: {} batches, {} materials, {} vertices\n\
+             draw order (batch idx): {:?}\n\
              controls:\n\
-             \x20 Num1 / Num2  debug mode: normals-as-color / UV-as-color\n\
-             \x20 Q / E        isolate previous / next batch\n\
-             \x20 Space        clear isolation, draw all batches",
+             \x20 Num1 / Num2 / Num3 / Num4  albedo / normals / uv0 / alpha-gray\n\
+             \x20 Q / E                      isolate previous / next batch\n\
+             \x20 Space                      clear isolation, draw all batches",
             manifest.batches.len(),
             manifest.materials.len(),
             manifest.buffers.vertex_count,
+            draw_order.iter().map(|b| b.raw()).collect::<Vec<_>>(),
         );
 
         Ok(Self {
@@ -304,6 +576,8 @@ impl Game for ToonLink {
             manifest,
             mesh,
             pipelines,
+            alpha_compares,
+            draw_order,
             debug_mode: 0,
             isolate: None,
         })
@@ -319,14 +593,12 @@ impl Game for ToonLink {
         let view = Mat4::look_at_rh(eye, target, Vec3::Y);
         let proj = Mat4::perspective_rh(45f32.to_radians(), renderer.aspect_ratio(), 0.1, 20.0);
 
-        // one index-range draw per batch, in INF1 (manifest) order
-        for (i, batch) in self.manifest.batches.iter().enumerate() {
-            if self
-                .isolate
-                .is_some_and(|only| only != BatchIndex::from_raw(i))
-            {
+        // one index-range draw per batch, in opaque-before-translucent order
+        for &index in &self.draw_order {
+            if self.isolate.is_some_and(|only| only != index) {
                 continue;
             }
+            let batch = self.batch(index);
             let pipeline = self.pipeline(MaterialSlot::from_manifest(batch.material));
             renderer.queue_draw_index_range(pipeline, batch.first_index, batch.index_count);
         }
@@ -334,13 +606,15 @@ impl Game for ToonLink {
         let mvp = MVPMatrices { model, view, proj };
         let debug_mode = self.debug_mode;
         renderer.submit_draws(|gpu| {
-            for (_, params_buffer) in self.pipelines.iter_mut() {
+            for ((_, params_buffer), codes) in self.pipelines.iter_mut().zip(&self.alpha_compares) {
                 gpu.write_uniform(
                     params_buffer,
                     ToonLinkParams {
                         mvp,
+                        alpha_compare: codes.compare,
+                        alpha_compare_op: codes.op,
                         debug_mode,
-                        _padding_0: [0; 12],
+                        _padding_0: [0; 8],
                     },
                 );
             }
@@ -355,6 +629,8 @@ impl Game for ToonLink {
         match key {
             Key::Num1 => self.debug_mode = 0,
             Key::Num2 => self.debug_mode = 1,
+            Key::Num3 => self.debug_mode = 2,
+            Key::Num4 => self.debug_mode = 3,
             Key::Q => {
                 self.isolate = Some(match self.isolate {
                     None => BatchIndex::FIRST,

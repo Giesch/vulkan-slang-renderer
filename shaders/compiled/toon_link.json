@@ -8,6 +8,42 @@
         "typeName": "ToonLinkParams",
         "fields": [
           {
+            "kind": "resource",
+            "fieldName": "tex0",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 1,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "fieldName": "tex1",
+            "binding": {
+              "kind": "descriptorTableSlot",
+              "index": 2,
+              "count": 1
+            },
+            "resourceShape": "texture2D",
+            "resultType": {
+              "kind": "vector",
+              "elementCount": 4,
+              "elementType": {
+                "kind": "scalar",
+                "scalarType": "float32"
+              }
+            }
+          },
+          {
             "kind": "struct",
             "fieldName": "mvp",
             "binding": {
@@ -67,11 +103,35 @@
             }
           },
           {
+            "kind": "vector",
+            "fieldName": "alphaCompare",
+            "binding": {
+              "kind": "uniform",
+              "offset": 192,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "uint32"
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "alphaCompareOp",
+            "binding": {
+              "kind": "uniform",
+              "offset": 208,
+              "size": 4
+            },
+            "scalarType": "uint32"
+          },
+          {
             "kind": "scalar",
             "fieldName": "debugMode",
             "binding": {
               "kind": "uniform",
-              "offset": 192,
+              "offset": 212,
               "size": 4
             },
             "scalarType": "uint32"
@@ -205,7 +265,21 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 208
+            "size": 224
+          },
+          {
+            "binding": 1,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 224
+          },
+          {
+            "binding": 2,
+            "descriptorType": "combinedTextureSampler",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 224
           }
         ]
       }

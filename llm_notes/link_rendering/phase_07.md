@@ -333,47 +333,129 @@ done; echo "sweep clean"
 
 ## Verification (exit checklist)
 
-- [ ] `just shaders` green; `just test` green; churn = `toon_link` only
-- [ ] `cargo check --all-targets`, `just lint`, `cargo fmt` clean
-- [ ] `scripts/link_converted.sha256` and the whole converter untouched
-- [ ] 7 referenced textures + 1 dummy loaded; `texmaps[2..]` assert in place
-- [ ] `tex0` sampled with raw `uv0`; `tex1` bound but unread
-- [ ] Alpha compare implemented in full (8 compares × 4 ops) and discarding
-- [ ] `raster_state()` maps cull, `z_func`, `z_write` and all four blend
+Static / code gates — **done**:
+
+- [x] `just shaders` green; `just test` churn = `toon_link` only (the two
+      `shader_atlas.rs` atlas-order failures are pre-existing on this machine
+      and unrelated — see Recorded facts deviation 2)
+- [x] `cargo check --all-targets`, `just lint` (debug + release), `cargo fmt` clean
+- [x] `scripts/link_converted.sha256` and the whole converter untouched
+- [x] Texture loader populates only texmap-referenced entries + 1×1 white
+      dummy; `texmaps[2..]` assert in place
+- [x] `tex0` sampled with raw `uv0`; `tex1` bound but unread
+- [x] Alpha compare implemented in full (8 compares × 4 ops) and discarding
+- [x] `raster_state()` maps cull, `z_func`, `z_write` and all four blend
       configurations, bailing on anything unmapped
-- [ ] Draw order partitions opaque before translucent, INF1 order within
-- [ ] Debug keys Num1–4 + Q/E/Space work; legend and module doc updated
+- [x] Draw order partitions opaque before translucent, INF1 order within
+- [x] Debug keys Num1–4 + Q/E/Space wired; legend and module doc updated
+- [x] Recorded facts filled in
+
+Runtime / visual gates — **NOT RUN** (headless container, no video device, no
+converted assets; must be run on a real machine before P7 is done):
+
+- [ ] 7 referenced textures + 1 dummy actually load
 - [ ] UV features check out against noclip; cutout edges clean; nothing missing
-- [ ] Gamma verified **numerically** against the source PNG
+- [ ] Gamma verified **numerically** against the source PNG — *the gate for the
+      transfer direction; the shader's decode direction is reasoned, not measured*
+- [ ] Draw-order and `depth_write` effects observed
 - [ ] Validation sweep clean (16/16)
 - [ ] Hot reload preserves per-material raster state; no VMA leak on real close
-- [ ] Master plan §6 P7 row ✅ + hash; §4.3 dst-alpha note refined
-- [ ] Recorded facts filled in
+- [ ] Master plan §6 P7 row ✅ + hash (deliberately **not** marked ✅ yet)
 
-## Recorded facts (fill in after gates pass)
+## Recorded facts
+
+**Implementation landed; every runtime/visual gate is still outstanding.** The
+code was written and all *static* gates pass, but it was implemented in a
+headless container with **no video device** (`Error: No available video device`
+from SDL — every example bails, not just `toon_link`) and **without the
+converted assets** (machine-local, gitignored, needs the disc image — risk 5).
+So nothing below that requires a window or `assets/link/converted/` has been
+observed. Those checks must be run on a machine with a GPU and converted assets
+before P7 can be called done.
 
 ```
-commit:
+commit:                   (this commit; branch claude/link-rendering-phase-7-2k9d5z)
 
-texture load:             (count loaded / skipped; any surprises in the PNGs)
+static gates:             PASS. shaders regenerated; churn confined to
+                          toon_link (.slang, .json, both .spv, generated
+                          toon_link.rs, and 3 snapshots: toon_link.rs,
+                          toon_link.json, shader_branching). cargo check
+                          --all-targets clean; clippy --all-targets clean in
+                          both debug and release; cargo fmt clean;
+                          scripts/link_converted.sha256 untouched (no converter
+                          change).
 
-uv / noclip per-feature:  (face decals, eye placement, belt buckle, tunic)
+reflection (verified):    ToonLinkParams 208 → 224 bytes; alphaCompare at
+                          offset 192 (uint4), alphaCompareOp at 208,
+                          debugMode at 212, _padding_0 [u8; 8]. Resources
+                          gained tex0/tex1 at descriptor slots 1 and 2 ahead
+                          of the uniform buffer, matching the paint_display
+                          convention. toon_link.frag.spv branch count 1 → 7
+                          (the two compare/op switches, the debug switch and
+                          the discard).
 
-alpha cutout:             (brow + lash edge quality; halos?)
+texture load:             NOT RUN — no assets on this machine. Code loads only
+                          texmap-referenced entries and prints
+                          "loaded N of M textures (K unreferenced BTP frames
+                          skipped)"; expect 7 of 41 per the measured facts.
 
-gamma check:              (screenshot RGB vs source texel RGB, per channel)
+uv / noclip per-feature:  NOT RUN (headless, no assets).
 
-draw-order effect:        (what visibly changed vs INF1 order)
+alpha cutout:             NOT RUN (headless, no assets).
 
-depth_write fix effect:   (what the 4 *damA materials look like now)
+gamma check:              NOT RUN — and this is the one that most needs
+                          running, since it is the gate for Step 1's transfer
+                          direction and the plan explicitly says not to
+                          eyeball it. The shader applies sRGB *decode*
+                          (c <= 0.04045 ? c/12.92 : pow((c+0.055)/1.055, 2.4))
+                          to RGB only, reasoning that the _SRGB color target
+                          encodes on store so the two cancel. That reasoning
+                          is unverified against a real screenshot.
 
-eye/brow decal stacking:  (how muddled; which batches overlap)
+draw-order effect:        NOT RUN. The partition is implemented and printed at
+                          startup; per the measured INF1 sequence it should
+                          move exactly batches 16 and 23 (the two opaque `ear`
+                          batches) ahead of the translucent group.
 
-sweep:
+depth_write fix effect:   NOT RUN. raster_state now honors z_write directly,
+                          which should flip eyeLdamA/eyeRdamA/mayuLdamA/
+                          mayuRdamA from writing depth to not writing it.
 
-hot reload / VMA:
+eye/brow decal stacking:  NOT RUN (expected muddled per risk 1 — a
+                          missing-BTP artifact, not a P7 bug).
 
-deviations discovered:
+sweep:                    NOT RUN — no video device, so the validation sweep
+                          is meaningless here (every example bails at SDL
+                          init, before Vulkan).
+
+hot reload / VMA:         NOT RUN (headless).
+
+deviations discovered:    1. `BatchIndex::raw` takes `self` by value, so
+                             `.map(BatchIndex::raw)` over `iter()` does not
+                             typecheck; used a closure.
+                          2. **Pre-existing, unrelated snapshot failure on
+                             this machine**: `generated_files` and
+                             `alignment_tests` both fail on the
+                             `src/generated/shader_atlas.rs` snapshot because
+                             `write_precompiled_shaders` builds the atlas from
+                             `std::fs::read_dir` (build_tasks.rs:28) without
+                             sorting, so the module order follows filesystem
+                             order and differs from the committer's. Verified
+                             pre-existing by stashing every P7 change and
+                             re-running on a pristine tree — both still fail,
+                             with a pure-reordering diff (every line present on
+                             both sides). Those two atlas `.snap.new` files
+                             were therefore **discarded, not accepted**, and
+                             `src/generated/shader_atlas.rs` was reverted to
+                             the committed order. Sorting the read_dir results
+                             would make this deterministic — worth a follow-up,
+                             out of scope for P7.
+                          3. Environment setup needed before anything built:
+                             libasound2-dev + libvulkan-dev, the slang
+                             submodule, and a from-source slang build
+                             configured with -DSLANG_ENABLE_SLANG_RHI=OFF
+                             (slang-rhi's CMake tries to fetch OptiX and fails
+                             behind the proxy).
 ```
 
 ## Out of scope for P7
