@@ -31,6 +31,12 @@ Ordered by value: §1 and §2 fix real latent bugs, §3–§6 fix
 time-to-first-build, §7 unlocks a class of verification that was previously
 assumed to need a GPU.
 
+**§7 has since been prototyped and adversarially tested** — faults were
+injected on purpose to confirm the sweep notices them, which turned up four
+ways it can silently pass a broken example, a correction to what the existing
+docs say about `timeout` and `Drop`, and one real pre-existing renderer bug
+(`sprite_batch`, §7.5). The other sections remain plan-only.
+
 ---
 
 ## 1. The generated shader atlas is filesystem-order dependent
@@ -206,8 +212,12 @@ each discovered by a build failing partway through a long compile:
 | `libvulkan-dev` | link step | `rust-lld: error: unable to find library -lvulkan` |
 | `ninja-build` | slang's cmake preset | preset configure fails |
 
-Plus, for headless verification (§7): `mesa-vulkan-drivers` (lavapipe ICD) and
-`vulkan-validationlayers`.
+Plus, for headless verification (§7): `mesa-vulkan-drivers` (the lavapipe ICD),
+`vulkan-validationlayers` (without it the renderer bails outright —
+`missing required layer: VK_LAYER_KHRONOS_validation`), and optionally
+`vulkan-tools` for `vulkaninfo` when triaging a driver-limit question. §7.1
+also needs a null ALSA default in `~/.asoundrc`, since `sdf_2d` opens an audio
+device.
 
 **The fix.** Document them in README's setup section, split into "to build" and
 "to run headless". Add a `just install-deps-debian` (or a
@@ -270,16 +280,16 @@ the first mention. Low effort; mostly a documentation accuracy fix.
 
 ---
 
-## 7. Headless example runs — **proven working, worth wiring up**
+## 7. Headless example runs — **implemented and proven, including its failure modes**
 
 [`offscreen_testing.md`](offscreen_testing.md) designs `just headless-all` (a
 validation sweep under a software driver) and argues correctly that no cloud
-GPU is needed. It is marked "design, not yet implemented." **The driver stack
-it needs is now confirmed to work**, which removes the main unknown.
+GPU is needed. It is marked "design, not yet implemented." The driver stack it
+needs now works, the sweep has been prototyped
+(`scripts/headless-sweep.sh`), and — the point of this section — it has been
+**tested by deliberately breaking things and checking that it notices**.
 
-Starting point on this container: every example died at SDL init with
-`Error: No available video device`, so §P7's entire validation sweep was
-recorded as un-runnable. Walking it forward:
+### 7.1 Getting a window-less example to run at all
 
 | step | result |
 |---|---|
@@ -289,31 +299,141 @@ recorded as un-runnable. Walking it forward:
 | + `mesa-vulkan-drivers` (lavapipe ICD) | `missing required layer: VK_LAYER_KHRONOS_validation` |
 | + `vulkan-validationlayers` | **runs clean** |
 
-Final confirmed invocation:
+One more environment dependency, found by the sweep rather than by reading:
+**`sdf_2d` initializes audio** (rodio/cpal) and aborts on a machine with no
+sound card — `Failed to get the config for the given device`. It is the only
+example that does. A null ALSA default (`pcm.!default { type null }` in
+`~/.asoundrc`) fixes it; it is a container-setup item, not a code bug.
 
-```sh
-SDL_VIDEODRIVER=offscreen \
-VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
-timeout 15 cargo run --example basic_triangle
+### 7.2 Does it actually catch errors? Yes — at all three points in the lifecycle
+
+Three faults were injected behind an `INJECT_FAULT` env var, chosen to land at
+different times, since "when does the error happen" is the axis a
+timeout-based sweep is most likely to be blind to. Injected into two of four
+examples per run, to check the sweep blames the right ones.
+
+| injected fault | VUID | when it fires | caught? |
+|---|---|---|---|
+| zero-size buffer at device init | `VUID-VkBufferCreateInfo-size-00912` | once, before frame 1 | ✅ 1 line |
+| viewport width `1e9` in command recording | `VUID-VkViewport-width-01771` | every frame | ✅ ~478 lines |
+| skipped `destroy_image_view` in `Drop` | `VUID-vkDestroyDevice-device-05137` | teardown only | ✅ 1 line |
+
+In every run the two uninjected examples reported `ok`. No false positives, no
+false negatives, and a **single** error occurring once before the first frame
+is not lost in the noise.
+
+### 7.3 Four ways the sweep silently passes a broken example
+
+These are the reason the sweep must **own** its environment rather than
+inherit it. Each was confirmed by running an injected fault and watching the
+detection go to zero.
+
+1. **An inherited `RUST_LOG` that names another module hides everything.**
+   With the viewport fault active: `RUST_LOG=my_other_crate=debug` → **0**
+   validation lines. `RUST_LOG=off` → **0**. The example is visibly broken and
+   the sweep says `ok`. Note `.env` sets `RUST_LOG`, so with direnv active the
+   sweep would inherit whatever a developer last put there.
+2. **`RUST_LOG` unset drops WARNING-severity validation.** A probe logging at
+   all three levels with `RUST_LOG` unset emits only `PROBE_ERROR_LEVEL` —
+   env_logger's default keeps `error!` and nothing else. The debug callback
+   routes `Severity::WARNING → warn!` (`renderer/debug.rs:35`), so every
+   warning-severity and PERFORMANCE-type message is invisible by default.
+   `RUST_LOG=warn` restores them (verified: error + warn both appear).
+   **The sweep must set `RUST_LOG` explicitly, at `warn` or lower.**
+3. **`--release` validates nothing.** `ENABLE_VALIDATION` is
+   `cfg!(debug_assertions)` (`renderer.rs:61`). A release sweep with the
+   viewport fault active reports **0** validation lines and a clean pass.
+4. **`SIGKILL`, or disabling SDL's signal handlers, hides teardown errors.**
+   See 7.4 — this one also corrects a claim in the existing docs.
+
+Also: **the exit code is not a signal.** Every run above — clean, one error,
+478 errors — exited **124**. The debug callback returns `vk::FALSE`, so nothing
+propagates. Detection must grep the log. (Exit codes are still worth checking
+for the *separate* case of a crash or an early bail; `toon_link` correctly
+exits 1 with its "run `just convert-link`" message, which the sweep reports
+distinctly from a validation failure.)
+
+### 7.4 Correction: `timeout` does **not** skip `Drop`
+
+`offscreen_testing.md` states that "`timeout` SIGKILLs the process, so
+`drain_gpu()` and `Drop for Renderer` never run", and
+[`link_rendering/phase_07.md`](link_rendering/phase_07.md)'s test plan repeats
+it ("`timeout`'s SIGTERM skips `Drop`, so the leak check needs a manual
+close"). Both are wrong, and it matters because it is the stated reason
+teardown leaks supposedly can't be automated.
+
+Measured, with the leaked-image-view fault active:
+
+| invocation | exit | teardown VUID seen |
+|---|---|---|
+| `timeout -s TERM` (the default) | 124 | **yes** |
+| `timeout -s KILL` | 137 | no |
+| `timeout -s TERM` + `SDL_NO_SIGNAL_HANDLERS=1` | 124 | no |
+
+`timeout` sends **SIGTERM**, not SIGKILL, and SDL installs a handler that
+converts SIGTERM into an `SDL_QUIT` event — so the event loop exits normally,
+`Drop` runs, and `vkDestroyDevice` reports leaked objects. That makes the
+`tech_debt.md` §1 leak class **automatable today**, with no clean-exit
+machinery to build.
+
+The dependency is real but fragile: it holds only while SDL's signal handlers
+are left enabled. The sweep should `unset SDL_NO_SIGNAL_HANDLERS` and say why,
+and the two docs above should be corrected.
+
+### 7.5 The first full sweep found a real bug
+
+Running the sweep over all 16 examples on a clean tree: 14 `ok`, `toon_link`
+exits 1 on its missing assets (expected), and **`sprite_batch` emits 55
+validation errors** —
+
+```
+VUID-VkRenderingAttachmentInfo-imageView-06861
+vkCmdBeginRendering(): pRenderingInfo->pColorAttachments[0].imageView must not
+have a VK_SAMPLE_COUNT_1_BIT when resolveMode is VK_RESOLVE_MODE_AVERAGE_BIT
 ```
 
-`basic_triangle` ran the full timeout (exit 124), renderer initialized with the
-debug-utils callback live, **zero validation errors**. So examples are runnable,
-and validation *is* observable, in a plain container with no GPU.
+Not an artifact of the injection work — reproduced after `git checkout` of the
+injected file, with no `INJECT_FAULT` code present in the tree.
 
-**The fix.** Implement `offscreen_testing.md`'s sweep now that its premise is
-confirmed: a recipe that sets the three environment variables, runs each
-example under a timeout, and fails on any validation output. Note the design
-doc's point that `timeout`'s signal skips `Drop`, so a leak-checking variant
-needs a clean-exit path rather than a kill — that part is unchanged by this
-finding.
+**Root cause.** `record_command_buffer` sets
+`.resolve_mode(vk::ResolveModeFlags::AVERAGE)` **unconditionally**
+(`renderer.rs:1781`), but `get_max_usable_sample_count` (`renderer.rs:5011`)
+falls back to `TYPE_1` when the requested count isn't in
+`framebuffer_color_sample_counts & framebuffer_depth_sample_counts`. One sample
+plus a resolve is a spec violation.
 
-**Out of scope here:** golden images. `offscreen_testing.md` is explicit that
-lavapipe does not solve image comparison against frames blessed on real
-hardware, and nothing found this session changes that.
+`sprite_batch` is the only example that requests a non-default level
+(`MaxMSAASamples::Max2`), and `Max2`'s descending option list is `[TYPE_2]`
+alone — so if 2× isn't supported there is no fallback but 1×. lavapipe reports
+`SAMPLE_COUNT_1_BIT | SAMPLE_COUNT_4_BIT` and **not** 2×, which is exactly the
+case. Other examples use the default and land on 4×, so they never hit it.
 
-**Gate.** `just headless-all` runs every example and exits nonzero if any
-emits validation output — demonstrated by deliberately introducing one.
+This is a **genuine latent renderer bug in the MSAA fallback path**, not a
+lavapipe quirk: it fires on any device that doesn't support the requested
+sample count. It has simply been invisible because the dev GPU supports 2×.
+The fix is to set `resolve_mode` to `NONE` (and drop the resolve attachment)
+when `msaa_samples == TYPE_1`. Belongs in `tech_debt.md` as its own entry.
+
+It is also a fair illustration of the one caveat: **a software driver's limits
+differ from a real GPU's.** Here that difference surfaced a real bug in an
+untested path, which is the good outcome; the same mechanism could equally
+produce a `FAIL` that doesn't reproduce on the dev machine. Triage a sweep
+failure by reading the VUID before assuming either.
+
+### 7.6 What to implement
+
+`scripts/headless-sweep.sh` is a working prototype and encodes all four
+controls from 7.3 with comments explaining why each is there. Remaining work is
+to wire it to `just headless-all`, decide whether `sprite_batch` is fixed or
+temporarily allow-listed so the sweep can go green, and document the container
+packages from §4.
+
+**Out of scope:** golden images. `offscreen_testing.md` is explicit that
+lavapipe does not solve comparison against frames blessed on real hardware, and
+nothing here changes that.
+
+**Gate.** `just headless-all` exits 0 on a clean tree and nonzero when any of
+the three faults from 7.2 is reintroduced.
 
 ---
 
