@@ -96,10 +96,7 @@ impl Shader {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config(
-        self,
-        resources: Resources<'_>,
-    ) -> PipelineConfig<'_, Vertex, DrawIndexed> {
+    pub fn pipeline_config(self, resources: Resources<'_>) -> IndexedPipelineConfig<'_, Vertex> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -116,18 +113,14 @@ impl Shader {
         let storage_texture_handles = vec![
         ];
 
-        // vertex data comes from PipelineConfig::with_vertices or with_shared_mesh
-        let vertex_config = VertexConfig::Unset;
-
         PipelineConfigBuilder {
             shader: Box::new(self),
-            vertex_config,
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
             disable_depth_test: false,
         }
-        .build()
+        .build_indexed()
     }
 
     fn vert_entry_point_name(&self) -> CString {

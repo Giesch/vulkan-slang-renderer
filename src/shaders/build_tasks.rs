@@ -518,16 +518,25 @@ struct GeneratedShaderImpl {
 }
 
 impl GeneratedShaderImpl {
-    fn draw_call(&self) -> &str {
-        if self.vertex_type_name.is_some() {
-            "DrawIndexed"
-        } else {
-            "DrawVertexCount"
+    /// What `pipeline_config()` returns. An indexed shader hands back an
+    /// `IndexedPipelineConfig`, which is not yet a `PipelineConfig`: the caller
+    /// has to pick a vertex source first. A shader with no vertex input is
+    /// already complete.
+    fn config_return_type(&self) -> String {
+        match &self.vertex_type_name {
+            Some(vertex_type_name) => format!("IndexedPipelineConfig<'_, {vertex_type_name}>"),
+            None => "PipelineConfig<'_, NoVertex, DrawVertexCount>".to_string(),
         }
     }
 
-    fn vertex_type_or_never(&self) -> &str {
-        self.vertex_type_name.as_deref().unwrap_or("NoVertex")
+    /// The matching `PipelineConfigBuilder` terminal call. Must stay in sync
+    /// with [`Self::config_return_type`] — both key off `vertex_type_name`.
+    fn build_method(&self) -> &str {
+        if self.vertex_type_name.is_some() {
+            "build_indexed"
+        } else {
+            "build_vertex_count"
+        }
     }
 }
 

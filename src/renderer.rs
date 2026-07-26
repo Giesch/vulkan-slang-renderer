@@ -1264,6 +1264,17 @@ impl Renderer {
         &mut self,
         config: PipelineConfig<V, D>,
     ) -> anyhow::Result<RendererPipeline> {
+        // checked up front so the bail happens before create_graphics_pipeline
+        // below allocates a vk::Pipeline we would then have to leak
+        if let VertexConfig::VertexAndIndexBuffers(vertices, indices) = &config.vertex_config
+            && (vertices.is_empty() || indices.is_empty())
+        {
+            anyhow::bail!(
+                "pipeline for {} was given empty vertex data by `.with_vertices()`",
+                config.shader.source_file_name()
+            );
+        }
+
         let pipeline_layout =
             ShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
 
@@ -1292,13 +1303,6 @@ impl Renderer {
 
         let vertex_pipeline_config = match &config.vertex_config {
             VertexConfig::VertexAndIndexBuffers(vertices, indices) => {
-                if vertices.is_empty() || indices.is_empty() {
-                    anyhow::bail!(
-                        "pipeline for {} was given empty vertex data by `.with_vertices()`",
-                        config.shader.source_file_name()
-                    );
-                }
-
                 let (vertex_buffer, vertex_buffer_memory) = create_vertex_buffer(
                     &self.allocator,
                     &self.device,
@@ -1331,11 +1335,6 @@ impl Renderer {
             VertexConfig::SharedMesh(mesh_index) => VertexPipelineConfig::SharedMesh(*mesh_index),
 
             VertexConfig::VertexCount => VertexPipelineConfig::VertexCount,
-
-            VertexConfig::Unset => anyhow::bail!(
-                "pipeline for {} has no vertex data — call `.with_vertices()` or `.with_shared_mesh()`",
-                config.shader.source_file_name()
-            ),
         };
 
         let layout_bindings = config.shader.layout_bindings();
@@ -5547,11 +5546,13 @@ impl<'f> FrameRenderer<'f> {
     ///
     /// Requires the pipeline's `VertexPipelineConfig` to be an indexed variant
     /// (`VertexAndIndexBuffers` or `SharedMesh`); panics if given a `VertexCount`
-    /// (non-indexed) pipeline. The `PipelineHandle<DrawIndexed>` marker is meant
-    /// to uphold this, but the marker-to-config correspondence is established by
-    /// generated shader code (see `PipelineConfigBuilder::build` in pipeline.rs),
-    /// not enforced by the type-erased `PipelineStorage` — so callers must only
-    /// reach this with a genuinely indexed pipeline.
+    /// (non-indexed) pipeline. `PipelineHandle<DrawIndexed>` upholds this at the
+    /// config layer: `DrawIndexed` is only reachable through
+    /// `IndexedPipelineConfig::with_vertices`/`with_shared_mesh`, and
+    /// `build_vertex_count` only ever yields `DrawVertexCount` (see pipeline.rs).
+    /// `PipelineStorage` is still type-erased, though, so a handle minted with
+    /// the wrong marker would slip through — callers must only reach this with a
+    /// genuinely indexed pipeline.
     fn whole_index_count(&self, pipeline_handle: &PipelineHandle<DrawIndexed>) -> u32 {
         match &self
             .renderer

@@ -120,17 +120,14 @@ impl Shader {
         let storage_texture_handles = vec![
         ];
 
-        let vertex_config = VertexConfig::VertexCount;
-
         PipelineConfigBuilder {
             shader: Box::new(self),
-            vertex_config,
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
             disable_depth_test: false,
         }
-        .build()
+        .build_vertex_count()
     }
 
     fn vert_entry_point_name(&self) -> CString {
