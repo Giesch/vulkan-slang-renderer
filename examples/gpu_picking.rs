@@ -107,7 +107,7 @@ impl Game for GpuPicking {
             mouse_position,
             |gpu| {
                 let picking_params = GpuPickingParams {
-                    camera: camera.clone(),
+                    camera,
                     picked_object_id: picked_id,
                     cube_count: self.cubes.len() as u32,
                     cubes: gpu.addr(&self.cubes_buffer).into(),
@@ -116,7 +116,7 @@ impl Game for GpuPicking {
                 gpu.write_storage(&mut self.cubes_buffer, &self.cubes);
 
                 let picking_id_params = gpu_picking_id::GpuPickingIdParams {
-                    camera: camera.clone(),
+                    camera,
                     cube_count: self.cubes.len() as u32,
                     _padding_0: Default::default(),
                     cubes: gpu.addr(&self.cubes_buffer).into(),

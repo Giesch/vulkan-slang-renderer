@@ -263,26 +263,10 @@ fn collect_graphics_shader_data(
     let mut struct_defs = vec![];
     let mut vertex_impl_blocks = vec![];
 
-    let has_vertex_struct = reflection_json
-        .vertex_entry_point
-        .parameters
-        .iter()
-        .any(|param| matches!(param, EntryPointParameter::Struct(_)));
-
-    let mut required_resources = if has_vertex_struct {
-        vec![
-            RequiredResource {
-                field_name: "vertices".to_string(),
-                resource_type: RequiredResourceType::VertexBuffer,
-            },
-            RequiredResource {
-                field_name: "indices".to_string(),
-                resource_type: RequiredResourceType::IndexBuffer,
-            },
-        ]
-    } else {
-        vec![]
-    };
+    // NOTE vertex/index data is not a Resources field: whether a pipeline owns
+    // its buffers or borrows a shared mesh is a call-site decision, made with
+    // PipelineConfig::with_vertices / with_shared_mesh.
+    let mut required_resources = vec![];
 
     let mut vertex_type_name = None;
     for vert_param in &reflection_json.vertex_entry_point.parameters {
@@ -306,7 +290,9 @@ fn collect_graphics_shader_data(
                     type_name: struct_param.type_name.to_string(),
                     source_module: None,
                     fields: generated_fields,
-                    trait_derives: vec!["Debug", "Clone", "Serialize"],
+                    // GPU-layout structs are plain old data (scalars, glam types, fixed
+                    // arrays, padding, other generated structs), so Copy always holds
+                    trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
                     alignment: Some(Alignment::Std140),
                     expected_size: None,
                 };
@@ -356,7 +342,9 @@ fn collect_graphics_shader_data(
             type_name: type_name.to_string(),
             source_module: None,
             fields: param_block_fields,
-            trait_derives: vec!["Debug", "Clone", "Serialize"],
+            // GPU-layout structs are plain old data (scalars, glam types, fixed
+            // arrays, padding, other generated structs), so Copy always holds
+            trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
             alignment: Some(Alignment::Std140),
             expected_size: Some(expected_size),
         });
@@ -377,13 +365,6 @@ fn collect_graphics_shader_data(
         .iter()
         .map(|r| {
             let type_name = match &r.resource_type {
-                RequiredResourceType::VertexBuffer => {
-                    let vertex_type_name = vertex_type_name
-                        .as_ref()
-                        .expect("no struct parameter for vertex entry point");
-                    format!("Vec<{vertex_type_name}>")
-                }
-                RequiredResourceType::IndexBuffer => "Vec<u32>".to_string(),
                 RequiredResourceType::Texture => "&'a TextureHandle".to_string(),
                 RequiredResourceType::UniformBuffer(element_type_name) => {
                     format!("&'a UniformBufferHandle<{element_type_name}>")
@@ -415,8 +396,6 @@ fn collect_graphics_shader_data(
     let mut resources_storage_texture_fields: Vec<String> = vec![];
     for res in &required_resources {
         match res.resource_type {
-            RequiredResourceType::VertexBuffer => {}
-            RequiredResourceType::IndexBuffer => {}
             RequiredResourceType::Texture => {
                 resources_texture_fields.push(res.field_name.clone());
             }
@@ -539,16 +518,25 @@ struct GeneratedShaderImpl {
 }
 
 impl GeneratedShaderImpl {
-    fn draw_call(&self) -> &str {
-        if self.vertex_type_name.is_some() {
-            "DrawIndexed"
-        } else {
-            "DrawVertexCount"
+    /// What `pipeline_config()` returns. An indexed shader hands back an
+    /// `IndexedPipelineConfig`, which is not yet a `PipelineConfig`: the caller
+    /// has to pick a vertex source first. A shader with no vertex input is
+    /// already complete.
+    fn config_return_type(&self) -> String {
+        match &self.vertex_type_name {
+            Some(vertex_type_name) => format!("IndexedPipelineConfig<'_, {vertex_type_name}>"),
+            None => "PipelineConfig<'_, NoVertex, DrawVertexCount>".to_string(),
         }
     }
 
-    fn vertex_type_or_never(&self) -> &str {
-        self.vertex_type_name.as_deref().unwrap_or("NoVertex")
+    /// The matching `PipelineConfigBuilder` terminal call. Must stay in sync
+    /// with [`Self::config_return_type`] — both key off `vertex_type_name`.
+    fn build_method(&self) -> &str {
+        if self.vertex_type_name.is_some() {
+            "build_indexed"
+        } else {
+            "build_vertex_count"
+        }
     }
 }
 
@@ -585,7 +573,9 @@ fn collect_compute_shader_data(
             type_name: type_name.to_string(),
             source_module: None,
             fields: param_block_fields,
-            trait_derives: vec!["Debug", "Clone", "Serialize"],
+            // GPU-layout structs are plain old data (scalars, glam types, fixed
+            // arrays, padding, other generated structs), so Copy always holds
+            trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
             alignment: Some(Alignment::Std140),
             expected_size: Some(expected_size),
         });
@@ -606,9 +596,6 @@ fn collect_compute_shader_data(
         .iter()
         .map(|r| {
             let type_name = match &r.resource_type {
-                RequiredResourceType::VertexBuffer | RequiredResourceType::IndexBuffer => {
-                    unreachable!("compute shaders don't have vertex/index buffers")
-                }
                 RequiredResourceType::Texture => "&'a TextureHandle".to_string(),
                 RequiredResourceType::UniformBuffer(element_type_name) => {
                     format!("&'a UniformBufferHandle<{element_type_name}>")
@@ -640,7 +627,6 @@ fn collect_compute_shader_data(
     let mut resources_storage_texture_fields: Vec<String> = vec![];
     for res in &required_resources {
         match res.resource_type {
-            RequiredResourceType::VertexBuffer | RequiredResourceType::IndexBuffer => {}
             RequiredResourceType::Texture => {
                 resources_texture_fields.push(res.field_name.clone());
             }
@@ -856,6 +842,7 @@ fn gather_struct_defs(
         StructField::Scalar(scalar) => {
             let field_type = match scalar.scalar_type {
                 ScalarType::Float32 => "f32",
+                ScalarType::Int32 => "i32",
                 ScalarType::Uint32 => "u32",
                 ScalarType::Uint64 => "u64",
             };
@@ -887,7 +874,9 @@ fn gather_struct_defs(
                     type_name: ptr.pointee_type.type_name.clone(),
                     source_module: None,
                     fields,
-                    trait_derives: vec!["Debug", "Clone", "Serialize"],
+                    // GPU-layout structs are plain old data (scalars, glam types, fixed
+                    // arrays, padding, other generated structs), so Copy always holds
+                    trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
                     alignment: Some(Alignment::Std430 { struct_alignment }),
                     expected_size: Some(expected_size),
                 },
@@ -907,10 +896,15 @@ fn gather_struct_defs(
         StructField::Vector(VectorStructField::Semantic(_)) => None,
         StructField::Vector(VectorStructField::Bound(vector)) => {
             let VectorElementType::Scalar(element_type) = &vector.element_type;
+            // Integer vectors are 4-component only: 2/3-component integer
+            // vectors aren't needed and UVec3-style types have the same
+            // vec3 padding trap as Vec3 without the existing precedent.
             let field_type = match (element_type.scalar_type, vector.element_count) {
                 (ScalarType::Float32, 4) => "glam::Vec4",
                 (ScalarType::Float32, 3) => "glam::Vec3",
                 (ScalarType::Float32, 2) => "glam::Vec2",
+                (ScalarType::Uint32, 4) => "glam::UVec4",
+                (ScalarType::Int32, 4) => "glam::IVec4",
                 (t, c) => panic!("vector not supported: type: {t:?}, count: {c}"),
             };
 
@@ -962,7 +956,9 @@ fn gather_struct_defs(
                 type_name: type_name.clone(),
                 source_module: None,
                 fields: generated_sub_fields,
-                trait_derives: vec!["Debug", "Clone", "Serialize"],
+                // GPU-layout structs are plain old data (scalars, glam types, fixed
+                // arrays, padding, other generated structs), so Copy always holds
+                trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
                 alignment: nested_alignment,
                 expected_size,
             };
@@ -997,6 +993,20 @@ fn gather_struct_defs(
             Some(GeneratedStructFieldDefinition::new(
                 matrix.field_name.to_snake_case(),
                 field_type.to_string(),
+            ))
+        }
+
+        StructField::Array(array) => {
+            let element_type = match array.element_scalar_type {
+                ScalarType::Float32 => "glam::Vec4",
+                ScalarType::Int32 => "glam::IVec4",
+                ScalarType::Uint32 => "glam::UVec4",
+                ScalarType::Uint64 => unreachable!("rejected by the array reflection gate"),
+            };
+
+            Some(GeneratedStructFieldDefinition::new(
+                array.field_name.to_snake_case(),
+                format!("[{element_type}; {}]", array.element_count),
             ))
         }
     }
@@ -1150,8 +1160,6 @@ struct RequiredResource {
 }
 
 enum RequiredResourceType {
-    VertexBuffer,
-    IndexBuffer,
     Texture,
     StorageTexture2D,
     UniformBuffer(String),
@@ -1166,6 +1174,7 @@ fn field_offset_size(field: &StructField) -> Option<(usize, usize)> {
         StructField::Matrix(m) => Some(&m.binding),
         StructField::Struct(s) => Some(&s.binding),
         StructField::Pointer(p) => Some(&p.binding),
+        StructField::Array(a) => Some(&a.binding),
         StructField::Resource(_) => None,
     };
 
@@ -1175,11 +1184,23 @@ fn field_offset_size(field: &StructField) -> Option<(usize, usize)> {
     })
 }
 
+/// Parses an emitted Rust array type string `"[T; N]"` into `(T, N)`.
+fn parse_array_type(type_name: &str) -> Option<(&str, usize)> {
+    let inner = type_name.strip_prefix('[')?.strip_suffix(']')?;
+    let (element, count) = inner.rsplit_once("; ")?;
+    Some((element, count.trim().parse().ok()?))
+}
+
 /// Returns the alignment for a given Rust type name.
 /// These rules are the same for both std140 and std430 for basic types.
 fn field_alignment(type_name: &str) -> usize {
+    // arrays share their element's alignment in both std140 and std430
+    if let Some((element, _count)) = parse_array_type(type_name) {
+        return field_alignment(element);
+    }
+
     match type_name {
-        "glam::Vec4" | "glam::Mat4" => 16,
+        "glam::Vec4" | "glam::UVec4" | "glam::IVec4" | "glam::Mat4" => 16,
         "glam::Vec3" => 16, // vec3 has 16-byte alignment in both std140 and std430
         "glam::Vec2" | "u64" => 8,
         "f32" | "u32" | "i32" => 4,
@@ -1203,13 +1224,24 @@ fn align_to(offset: usize, alignment: usize) -> usize {
 /// struct types (whose #[repr(C, align(N))] matches their GPU alignment by
 /// construction, so their reflected offsets are always placeable).
 fn rust_type_alignment(type_name: &str) -> Option<usize> {
+    if let Some((element, _count)) = parse_array_type(type_name) {
+        return rust_type_alignment(element);
+    }
+
     Some(match type_name {
         "f32" => std::mem::align_of::<f32>(),
+        "i32" => std::mem::align_of::<i32>(),
         "u32" => std::mem::align_of::<u32>(),
         "u64" => std::mem::align_of::<u64>(),
         "glam::Vec2" => std::mem::align_of::<glam::Vec2>(),
         "glam::Vec3" => std::mem::align_of::<glam::Vec3>(),
         "glam::Vec4" => std::mem::align_of::<glam::Vec4>(),
+        // UVec4/IVec4 are repr(C) align-4 (no SIMD), unlike Vec4's align-16;
+        // that's fine — 4 divides every 16-multiple offset, and exact placement
+        // is proven by the emitted offset_of! asserts, which is also why the
+        // generated-file preamble's align_of assert stays Vec4-only.
+        "glam::UVec4" => std::mem::align_of::<glam::UVec4>(),
+        "glam::IVec4" => std::mem::align_of::<glam::IVec4>(),
         "glam::Mat4" => std::mem::align_of::<glam::Mat4>(),
         // Addr<T> / ReadAddr<T> / ImmutableAddr<T> are repr(transparent) over u64 for every T
         s if s.starts_with("Addr<")
@@ -1596,16 +1628,43 @@ mod tests {
         gather_struct_defs(&field, &mut Vec::new(), None);
     }
 
+    #[test]
+    fn parse_array_type_round_trips_emitted_arrays() {
+        assert_eq!(
+            parse_array_type("[glam::UVec4; 8]"),
+            Some(("glam::UVec4", 8))
+        );
+        assert_eq!(parse_array_type("[glam::Vec4; 4]"), Some(("glam::Vec4", 4)));
+        assert_eq!(parse_array_type("glam::Vec4"), None);
+        assert_eq!(parse_array_type("[glam::Vec4]"), None);
+    }
+
+    #[test]
+    fn array_fields_use_element_alignment_and_size() {
+        assert_eq!(field_alignment("[glam::IVec4; 3]"), 16);
+        assert_eq!(rust_type_alignment("[glam::Vec4; 4]"), Some(16));
+        assert_eq!(rust_type_alignment("[glam::UVec4; 8]"), Some(4));
+        assert_eq!(rust_size_of("[glam::UVec4; 8]"), Some(128));
+        assert_eq!(rust_size_of("[glam::Vec4; 4]"), Some(64));
+    }
+
     /// Returns the size of the Rust type the codegen emits for a given type name,
     /// or None for generated struct types (whose interiors are checked field-by-field).
     fn rust_size_of(rust_type_name: &str) -> Option<usize> {
+        if let Some((element, count)) = parse_array_type(rust_type_name) {
+            return rust_size_of(element).map(|element_size| element_size * count);
+        }
+
         let size = match rust_type_name {
             "f32" => std::mem::size_of::<f32>(),
+            "i32" => std::mem::size_of::<i32>(),
             "u32" => std::mem::size_of::<u32>(),
             "u64" => std::mem::size_of::<u64>(),
             "glam::Vec2" => std::mem::size_of::<glam::Vec2>(),
             "glam::Vec3" => std::mem::size_of::<glam::Vec3>(),
             "glam::Vec4" => std::mem::size_of::<glam::Vec4>(),
+            "glam::UVec4" => std::mem::size_of::<glam::UVec4>(),
+            "glam::IVec4" => std::mem::size_of::<glam::IVec4>(),
             "glam::Mat2" => std::mem::size_of::<glam::Mat2>(),
             "glam::Mat3" => std::mem::size_of::<glam::Mat3>(),
             "glam::Mat4" => std::mem::size_of::<glam::Mat4>(),
@@ -1639,7 +1698,10 @@ mod tests {
                     check_field_sizes(&ptr.pointee_type.fields, &pointee_context, mismatches);
                 }
 
-                StructField::Scalar(_) | StructField::Vector(_) | StructField::Matrix(_) => {}
+                StructField::Scalar(_)
+                | StructField::Vector(_)
+                | StructField::Matrix(_)
+                | StructField::Array(_) => {}
             }
 
             let Some((_offset, reflected_size)) = field_offset_size(field) else {

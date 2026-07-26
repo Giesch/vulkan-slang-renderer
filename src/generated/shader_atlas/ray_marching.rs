@@ -21,7 +21,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct RayMarchingParams {
     pub camera: RayMarchCamera,
@@ -51,7 +51,7 @@ const _: () = assert!(std::mem::size_of::<ReadAddr<Sphere>>() == 8);
 const _: () = assert!(std::mem::offset_of!(RayMarchingParams, boxes) == 120);
 const _: () = assert!(std::mem::size_of::<ReadAddr<BoxRect>>() == 8);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct BoxRect {
     pub transform: Projection,
@@ -70,7 +70,7 @@ const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 const _: () = assert!(std::mem::offset_of!(BoxRect, color) == 80);
 const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Sphere {
     pub center: glam::Vec3,
@@ -127,17 +127,14 @@ impl Shader {
         let storage_texture_handles = vec![
         ];
 
-        let vertex_config = VertexConfig::VertexCount;
-
         PipelineConfigBuilder {
             shader: Box::new(self),
-            vertex_config,
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
             disable_depth_test: false,
         }
-        .build()
+        .build_vertex_count()
     }
 
     fn vert_entry_point_name(&self) -> CString {

@@ -20,7 +20,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct MultiMeshParams {
     pub mvp: MVPMatrices,
@@ -34,7 +34,7 @@ const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(MultiMeshParams, tint) == 192);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Vertex {
     pub position: glam::Vec3,
@@ -45,8 +45,6 @@ pub struct Vertex {
 impl GPUWrite for Vertex {}
 
 pub struct Resources<'a> {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
     pub texture: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<MultiMeshParams>,
 }
@@ -98,10 +96,7 @@ impl Shader {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config(
-        self,
-        resources: Resources<'_>,
-    ) -> PipelineConfig<'_, Vertex, DrawIndexed> {
+    pub fn pipeline_config(self, resources: Resources<'_>) -> IndexedPipelineConfig<'_, Vertex> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -118,18 +113,14 @@ impl Shader {
         let storage_texture_handles = vec![
         ];
 
-        let vertex_config =
-            VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
-
         PipelineConfigBuilder {
             shader: Box::new(self),
-            vertex_config,
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
             disable_depth_test: false,
         }
-        .build()
+        .build_indexed()
     }
 
     fn vert_entry_point_name(&self) -> CString {

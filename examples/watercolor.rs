@@ -58,7 +58,7 @@ const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
 /// higher = less divergence & more accurate water pressure
 /// must be even for correctness when reading pressure in later stages
 const JACOBI_ITERATIONS: u32 = 2;
-const _: () = assert!(JACOBI_ITERATIONS % 2 == 0);
+const _: () = assert!(JACOBI_ITERATIONS.is_multiple_of(2));
 
 // Simulation parameters
 const DT: f32 = 0.5;
@@ -206,8 +206,8 @@ struct Watercolor {
 /// Compute the number of workgroups needed to cover the canvas for a given shader's workgroup size.
 fn workgroups(wg_size: [u32; 3]) -> (u32, u32) {
     (
-        (CANVAS_WIDTH + wg_size[0] - 1) / wg_size[0],
-        (CANVAS_HEIGHT + wg_size[1] - 1) / wg_size[1],
+        CANVAS_WIDTH.div_ceil(wg_size[0]),
+        CANVAS_HEIGHT.div_ceil(wg_size[1]),
     )
 }
 

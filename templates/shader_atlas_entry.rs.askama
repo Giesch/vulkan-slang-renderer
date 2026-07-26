@@ -94,7 +94,7 @@ impl {{ shader_impl.shader_type_name }} {
     pub fn pipeline_config(
         self,
         resources: Resources<'_>,
-    ) -> PipelineConfig<'_, {{ shader_impl.vertex_type_or_never() }}, {{ shader_impl.draw_call() }}> {
+    ) -> {{ shader_impl.config_return_type() }} {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -117,21 +117,15 @@ impl {{ shader_impl.shader_type_name }} {
             resources.{{ texture_field }},
 {%- endfor +%}
         ];
-{%+ if shader_impl.vertex_type_name.is_some() +%}
-        let vertex_config =
-            VertexConfig::VertexAndIndexBuffers(resources.vertices, resources.indices);
-{%~ else +%}
-        let vertex_config = VertexConfig::VertexCount;
-{%~ endif +%}
+
         PipelineConfigBuilder {
             shader: Box::new(self),
-            vertex_config,
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
             disable_depth_test: false,
         }
-        .build()
+        .{{ shader_impl.build_method() }}()
     }
 
     fn vert_entry_point_name(&self) -> CString {

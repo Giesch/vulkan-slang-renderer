@@ -95,12 +95,12 @@ impl Game for VikingRoom {
         let texture = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
         let params_buffer = renderer.create_uniform_buffer::<DepthTextureParams>()?;
         let resources = Resources {
-            vertices,
-            indices,
             texture: &texture,
             params_buffer: &params_buffer,
         };
-        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline_config = shader
+            .pipeline_config(resources)
+            .with_vertices(vertices, indices);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         let start_time = Instant::now();

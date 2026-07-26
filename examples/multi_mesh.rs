@@ -349,8 +349,7 @@ impl Game for MultiMesh {
         // ties INDEX_COUNT (which DRAWS provably covers) to the actual mesh
         assert_eq!(indices.len(), INDEX_COUNT as usize);
 
-        // one shared mesh; each pipeline gets empty vertex/index vecs in its
-        // Resources and is pointed at the mesh with .with_shared_mesh()
+        // one shared mesh; every pipeline is pointed at it with .with_shared_mesh()
         let mesh = renderer.create_mesh(&vertices, &indices)?;
 
         let textures = create_textures(renderer)?;
@@ -362,8 +361,6 @@ impl Game for MultiMesh {
         for spec in &specs {
             let params_buffer = renderer.create_uniform_buffer::<MultiMeshParams>()?;
             let resources = Resources {
-                vertices: vec![],
-                indices: vec![],
                 texture: &textures[spec.texture],
                 params_buffer: &params_buffer,
             };
@@ -506,7 +503,7 @@ fn checker_image() -> DynamicImage {
     const CELL: u32 = TEXTURE_SIZE / 2;
 
     let image = RgbaImage::from_fn(TEXTURE_SIZE, TEXTURE_SIZE, |x, y| {
-        if (x / CELL + y / CELL) % 2 == 0 {
+        if (x / CELL + y / CELL).is_multiple_of(2) {
             Rgba([245, 245, 245, 255])
         } else {
             Rgba([20, 20, 60, 255])

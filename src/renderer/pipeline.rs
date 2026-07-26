@@ -4,7 +4,7 @@ use ash::vk;
 
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, ShaderAtlasEntry};
 
-use super::vertex_description::VertexDescription;
+use super::vertex_description::{NoVertex, VertexDescription};
 use super::{
     ComputeShaderPipelineLayout, RawUniformBufferHandle, ShaderPipelineLayout,
     StorageTextureHandle, TextureHandle,
@@ -274,8 +274,10 @@ pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall> {
     pub disable_depth_test: bool,
 }
 
-/// which type of draw call to use, and the necessary data for it
-pub enum VertexConfig<V> {
+/// which type of draw call to use, and the necessary data for it. Every variant
+/// is a fully specified vertex source: an indexed shader's config cannot exist
+/// without one (see [`IndexedPipelineConfig`]), so there is no "unset" state.
+pub(super) enum VertexConfig<V> {
     // use a cmd_draw_indexed call, with prepared vertex and index buffers,
     // and an associated Vertex type
     VertexAndIndexBuffers(Vec<V>, Vec<u32>),
@@ -287,13 +289,58 @@ pub enum VertexConfig<V> {
     VertexCount,
 }
 
-impl<'t, V: VertexDescription> PipelineConfig<'t, V, DrawIndexed> {
+/// The config for an indexed shader that has not been given a vertex source
+/// yet. Generated `pipeline_config()` returns this rather than a
+/// [`PipelineConfig`]; [`Self::with_vertices`] and [`Self::with_shared_mesh`]
+/// are the only ways to reach a `PipelineConfig`, and
+/// `Renderer::create_pipeline` accepts nothing else. That makes "indexed
+/// pipeline with no vertex data" unrepresentable instead of a runtime error.
+pub struct IndexedPipelineConfig<'t, V: VertexDescription> {
+    shader: Box<dyn ShaderAtlasEntry>,
+    texture_handles: Vec<&'t TextureHandle>,
+    uniform_buffer_handles: Vec<RawUniformBufferHandle>,
+    storage_texture_handles: Vec<&'t StorageTextureHandle>,
+    raster_state: RasterState,
+    _vertex: PhantomData<V>,
+
+    pub disable_depth_test: bool,
+}
+
+impl<'t, V: VertexDescription> IndexedPipelineConfig<'t, V> {
+    /// Draw from vertex and index buffers owned by this pipeline.
+    pub fn with_vertices(
+        self,
+        vertices: Vec<V>,
+        indices: Vec<u32>,
+    ) -> PipelineConfig<'t, V, DrawIndexed> {
+        self.into_config(VertexConfig::VertexAndIndexBuffers(vertices, indices))
+    }
+
     /// Draw from a shared mesh instead of per-pipeline vertex/index buffers.
-    /// Replaces any vertex/index data already in the config (the generated
-    /// `pipeline_config(resources)` can be given empty vecs).
-    pub fn with_shared_mesh(mut self, mesh: &MeshHandle<V>) -> Self {
-        self.vertex_config = VertexConfig::SharedMesh(mesh.index);
+    pub fn with_shared_mesh(self, mesh: &MeshHandle<V>) -> PipelineConfig<'t, V, DrawIndexed> {
+        self.into_config(VertexConfig::SharedMesh(mesh.index))
+    }
+
+    /// Bake this pipeline with explicit fixed-function raster state. Callable
+    /// either side of the vertex source — see
+    /// [`PipelineConfig::with_raster_state`] for the `disable_depth_test`
+    /// interaction.
+    pub fn with_raster_state(mut self, raster_state: RasterState) -> Self {
+        self.raster_state = raster_state;
         self
+    }
+
+    fn into_config(self, vertex_config: VertexConfig<V>) -> PipelineConfig<'t, V, DrawIndexed> {
+        PipelineConfig {
+            shader: self.shader,
+            vertex_config,
+            _draw_call: PhantomData,
+            texture_handles: self.texture_handles,
+            uniform_buffer_handles: self.uniform_buffer_handles,
+            storage_texture_handles: self.storage_texture_handles,
+            raster_state: self.raster_state,
+            disable_depth_test: self.disable_depth_test,
+        }
     }
 }
 
@@ -312,9 +359,11 @@ impl<'t, V: VertexDescription, D: DrawCall> PipelineConfig<'t, V, D> {
     }
 }
 
-pub struct PipelineConfigBuilder<'t, V: VertexDescription> {
+/// The fields every graphics pipeline config shares. Which terminal method is
+/// called — [`Self::build_indexed`] or [`Self::build_vertex_count`] — decides
+/// both the vertex type and the draw-call kind, so the two cannot disagree.
+pub struct PipelineConfigBuilder<'t> {
     pub shader: Box<dyn ShaderAtlasEntry>,
-    pub vertex_config: VertexConfig<V>,
     pub texture_handles: Vec<&'t TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub storage_texture_handles: Vec<&'t StorageTextureHandle>,
@@ -322,19 +371,37 @@ pub struct PipelineConfigBuilder<'t, V: VertexDescription> {
     pub disable_depth_test: bool,
 }
 
-impl<'t, V: VertexDescription> PipelineConfigBuilder<'t, V> {
-    // NOTE this inferred generic relies on the correctness of generated code
-    pub fn build<D: DrawCall>(self) -> PipelineConfig<'t, V, D> {
-        PipelineConfig {
+impl<'t> PipelineConfigBuilder<'t> {
+    /// Terminal call for a shader whose vertex entry point takes a vertex
+    /// struct. The caller must still choose a vertex source before this can
+    /// become a `PipelineConfig`. `V` is inferred from the generated
+    /// `pipeline_config()`'s declared return type.
+    pub fn build_indexed<V: VertexDescription>(self) -> IndexedPipelineConfig<'t, V> {
+        IndexedPipelineConfig {
             shader: self.shader,
-            vertex_config: self.vertex_config,
-            _draw_call: PhantomData,
             texture_handles: self.texture_handles,
             uniform_buffer_handles: self.uniform_buffer_handles,
             storage_texture_handles: self.storage_texture_handles,
             // generated `pipeline_config()` builds this struct as a complete
             // literal, so raster state is defaulted here and overridden with
-            // PipelineConfig::with_raster_state rather than being a field
+            // with_raster_state rather than being a field
+            raster_state: RasterState::default(),
+            _vertex: PhantomData,
+            disable_depth_test: self.disable_depth_test,
+        }
+    }
+
+    /// Terminal call for a shader with no vertex input. Fully concrete: the
+    /// vertex-type/draw-call pairing is a signature guarantee here rather than
+    /// a codegen convention.
+    pub fn build_vertex_count(self) -> PipelineConfig<'t, NoVertex, DrawVertexCount> {
+        PipelineConfig {
+            shader: self.shader,
+            vertex_config: VertexConfig::VertexCount,
+            _draw_call: PhantomData,
+            texture_handles: self.texture_handles,
+            uniform_buffer_handles: self.uniform_buffer_handles,
+            storage_texture_handles: self.storage_texture_handles,
             raster_state: RasterState::default(),
             disable_depth_test: self.disable_depth_test,
         }

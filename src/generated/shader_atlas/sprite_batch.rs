@@ -20,7 +20,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct SpriteBatchParams {
     pub sprites: ImmutableAddr<Sprite>,
@@ -35,7 +35,7 @@ const _: () = assert!(std::mem::size_of::<ImmutableAddr<Sprite>>() == 8);
 const _: () = assert!(std::mem::offset_of!(SpriteBatchParams, projection) == 16);
 const _: () = assert!(std::mem::size_of::<Projection>() == 64);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Sprite {
     pub position: glam::Vec3,
@@ -111,17 +111,14 @@ impl Shader {
         let storage_texture_handles = vec![
         ];
 
-        let vertex_config = VertexConfig::VertexCount;
-
         PipelineConfigBuilder {
             shader: Box::new(self),
-            vertex_config,
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
             disable_depth_test: false,
         }
-        .build()
+        .build_vertex_count()
     }
 
     fn vert_entry_point_name(&self) -> CString {

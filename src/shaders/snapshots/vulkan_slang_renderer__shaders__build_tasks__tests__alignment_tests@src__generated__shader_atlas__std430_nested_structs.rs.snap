@@ -24,7 +24,7 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
     pub data: Addr<OuterData>,
@@ -36,7 +36,7 @@ const _: () = assert!(std::mem::size_of::<Params>() == 16);
 const _: () = assert!(std::mem::offset_of!(Params, data) == 0);
 const _: () = assert!(std::mem::size_of::<Addr<OuterData>>() == 8);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct OuterData {
     pub x: f32,
@@ -55,7 +55,7 @@ const _: () = assert!(std::mem::size_of::<InnerData>() == 16);
 const _: () = assert!(std::mem::offset_of!(OuterData, y) == 24);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(8))]
 pub struct InnerData {
     pub a: f32,
@@ -111,17 +111,14 @@ impl Shader {
         let storage_texture_handles = vec![
         ];
 
-        let vertex_config = VertexConfig::VertexCount;
-
         PipelineConfigBuilder {
             shader: Box::new(self),
-            vertex_config,
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
             disable_depth_test: false,
         }
-        .build()
+        .build_vertex_count()
     }
 
     fn vert_entry_point_name(&self) -> CString {

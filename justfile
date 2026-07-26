@@ -86,9 +86,12 @@ insta:
 
 
 # lint in debug and release, with warnings denied
+# NOTE --all-targets is required to cover examples, benches and test cfg code;
+# plain `cargo clippy` checks the lib and bins only, so example-only breakage
+# slips through (same trap applies to `cargo check`)
 lint:
-    cargo clippy -- -D warnings
-    cargo clippy --release -- -D warnings
+    cargo clippy --all-targets -- -D warnings
+    cargo clippy --all-targets --release -- -D warnings
 
 
 # set up git pre-commit hook

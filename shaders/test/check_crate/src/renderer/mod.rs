@@ -29,14 +29,10 @@ impl DrawCall for DrawVertexCount {}
 
 pub struct LayoutDescription;
 
-pub enum VertexConfig<V> {
-    VertexAndIndexBuffers(Vec<V>, Vec<u32>),
-    VertexCount,
-}
+pub struct IndexedPipelineConfig<'a, V>(PhantomData<(&'a (), V)>);
 
-pub struct PipelineConfigBuilder<'a, V> {
+pub struct PipelineConfigBuilder<'a> {
     pub shader: Box<dyn crate::shaders::atlas::ShaderAtlasEntry>,
-    pub vertex_config: VertexConfig<V>,
     pub texture_handles: Vec<&'a TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub storage_texture_handles: Vec<&'a StorageTextureHandle>,
@@ -50,8 +46,12 @@ pub struct ComputePipelineConfig<'a> {
     pub storage_texture_handles: Vec<&'a StorageTextureHandle>,
 }
 
-impl<'a, V> PipelineConfigBuilder<'a, V> {
-    pub fn build<D: DrawCall>(self) -> PipelineConfig<'a, V, D> {
+impl<'a> PipelineConfigBuilder<'a> {
+    pub fn build_indexed<V>(self) -> IndexedPipelineConfig<'a, V> {
+        IndexedPipelineConfig(PhantomData)
+    }
+
+    pub fn build_vertex_count(self) -> PipelineConfig<'a, NoVertex, DrawVertexCount> {
         PipelineConfig(PhantomData)
     }
 }

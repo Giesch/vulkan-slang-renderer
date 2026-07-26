@@ -88,7 +88,7 @@ impl Game for Particles {
         self.last_frame = now;
 
         let workgroup_size = particles_compute::WORKGROUP_SIZE[0];
-        let workgroup_count = (NUM_PARTICLES + workgroup_size - 1) / workgroup_size;
+        let workgroup_count = NUM_PARTICLES.div_ceil(workgroup_size);
 
         // Dispatch compute shader
         renderer.dispatch(&self.compute_pipeline, workgroup_count, 1, 1);

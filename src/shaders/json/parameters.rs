@@ -88,6 +88,7 @@ pub enum StructField {
     Matrix(MatrixStructField),
     Resource(ResourceStructField),
     Pointer(PointerStructField),
+    Array(ArrayStructField),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -220,6 +221,21 @@ pub struct StructFieldType {
     pub fields: Vec<StructField>,
 }
 
+/// A fixed-length array field. Restricted to 16-byte vector elements
+/// (float4/int4/uint4), the only element types whose stride equals their size
+/// in both std140 and std430 — so a contiguous Rust array matches the GPU
+/// layout exactly, with no inter-element padding to model.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArrayStructField {
+    pub field_name: String,
+    pub binding: Binding,
+    pub element_scalar_type: ScalarType,
+    pub element_count: usize,
+    /// reflected element stride; the reflection gate guarantees 16
+    pub element_stride: usize,
+}
+
 /// A physical-storage-buffer pointer field (slang `Ptr<T, ..., Std430DataLayout>`).
 /// 8 bytes of uniform data holding a buffer device address; consumes no
 /// descriptor slot. The pointee fields carry std430 offsets.
@@ -266,6 +282,7 @@ pub struct ScalarVectorElementType {
 #[serde(rename_all = "camelCase")]
 pub enum ScalarType {
     Float32,
+    Int32,
     Uint32,
     Uint64,
 }

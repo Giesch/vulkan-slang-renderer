@@ -34,6 +34,8 @@ sprite_batch.frag.spv: 0
 sprite_batch.vert.spv: 0
 suzanne.frag.spv: 2
 suzanne.vert.spv: 0
+toon_link.frag.spv: 1
+toon_link.vert.spv: 0
 wc_advect_and_transfer_pigment.comp.spv: 15
 wc_capillary_flow.comp.spv: 4
 wc_divergence.comp.spv: 2

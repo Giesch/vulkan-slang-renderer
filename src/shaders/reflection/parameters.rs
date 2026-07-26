@@ -408,6 +408,46 @@ fn reflect_struct_fields(
                 })
             }
 
+            slang::TypeKind::Array => {
+                let Some(field_binding @ Binding::Uniform(_)) = binding else {
+                    anyhow::bail!(
+                        "array field '{field_name}': arrays are only supported in \
+                        uniform/pointee struct fields"
+                    );
+                };
+
+                let element_count = field_type_layout
+                    .element_count()
+                    .expect("array field without element count");
+                let element_type_layout = field_type_layout.element_type_layout().unwrap();
+                let element_stride =
+                    field_type_layout.element_stride(slang::ParameterCategory::Uniform);
+
+                let element_kind = element_type_layout.kind();
+                let component_count = element_type_layout.element_count().unwrap_or(0);
+                let element_scalar_type = element_type_layout
+                    .element_type_layout()
+                    .and_then(|l| l.scalar_type())
+                    .map(scalar_from_slang);
+
+                validate_array_element(
+                    &field_name,
+                    element_kind,
+                    component_count,
+                    element_scalar_type,
+                    element_stride,
+                )?;
+
+                StructField::Array(ArrayStructField {
+                    field_name,
+                    binding: field_binding,
+                    element_scalar_type: element_scalar_type
+                        .expect("validated as a vector element"),
+                    element_count,
+                    element_stride,
+                })
+            }
+
             k => todo!("field type layout kind not handled: {k:?}"),
         };
 
@@ -425,8 +465,39 @@ fn slang_base_shape(shape_with_flags: slang::ResourceShape) -> slang::ResourceSh
     unsafe { std::mem::transmute(base_shape) }
 }
 
+/// Only 16-byte vector elements (float4/int4/uint4) have stride == size in
+/// BOTH std140 and std430; every other element type would need stride-aware
+/// padding the codegen doesn't model (std140 rounds float[N]/float2[N]/
+/// float3[N] strides up to 16, and struct elements get struct-size rounding).
+fn validate_array_element(
+    field_name: &str,
+    element_kind: slang::TypeKind,
+    component_count: usize,
+    scalar_type: Option<ScalarType>,
+    reflected_stride: usize,
+) -> anyhow::Result<()> {
+    let supported_element = element_kind == slang::TypeKind::Vector
+        && component_count == 4
+        && matches!(
+            scalar_type,
+            Some(ScalarType::Float32 | ScalarType::Int32 | ScalarType::Uint32)
+        );
+
+    if !supported_element || reflected_stride != 16 {
+        anyhow::bail!(
+            "array field '{field_name}': only float4/int4/uint4 element arrays are \
+            supported (16-byte stride); got element kind {element_kind:?} with \
+            {component_count} components, scalar type {scalar_type:?}, stride \
+            {reflected_stride}; use a BDA buffer of flat structs, or named fields"
+        );
+    }
+
+    Ok(())
+}
+
 fn scalar_from_slang(scalar: slang::ScalarType) -> ScalarType {
     match scalar {
+        slang::ScalarType::Int32 => ScalarType::Int32,
         slang::ScalarType::Uint32 => ScalarType::Uint32,
         slang::ScalarType::Uint64 => ScalarType::Uint64,
         slang::ScalarType::Float32 => ScalarType::Float32,
@@ -547,5 +618,80 @@ fn param_binding(param: &slang::reflection::VariableLayout) -> Option<Binding> {
         slang::ParameterCategory::None => None,
 
         c => todo!("param category not handled: {c:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vec4_array_elements_are_accepted() {
+        for scalar in [ScalarType::Float32, ScalarType::Int32, ScalarType::Uint32] {
+            validate_array_element("ok", slang::TypeKind::Vector, 4, Some(scalar), 16)
+                .expect("float4/int4/uint4 elements with stride 16 must be accepted");
+        }
+    }
+
+    #[test]
+    fn non_vec4_array_elements_are_rejected() {
+        let rejected = [
+            // scalar elements: float[N] (std140 rounds the stride up to 16)
+            ("bad", slang::TypeKind::Scalar, 0, None, 16),
+            // small vector elements: float2[N] / float3[N]
+            (
+                "bad",
+                slang::TypeKind::Vector,
+                2,
+                Some(ScalarType::Float32),
+                16,
+            ),
+            (
+                "bad",
+                slang::TypeKind::Vector,
+                3,
+                Some(ScalarType::Float32),
+                16,
+            ),
+            // unsupported element scalar type
+            (
+                "bad",
+                slang::TypeKind::Vector,
+                4,
+                Some(ScalarType::Uint64),
+                32,
+            ),
+            // struct elements (struct-size stride rounding)
+            ("bad", slang::TypeKind::Struct, 0, None, 32),
+            // a 16-byte vector whose reflected stride still disagrees
+            (
+                "bad",
+                slang::TypeKind::Vector,
+                4,
+                Some(ScalarType::Float32),
+                32,
+            ),
+        ];
+
+        for (name, kind, components, scalar, stride) in rejected {
+            let err = validate_array_element(name, kind, components, scalar, stride).expect_err(
+                &format!(
+                    "must reject element kind {kind:?}, {components} components, \
+                    scalar {scalar:?}, stride {stride}"
+                ),
+            );
+
+            let message = err.to_string();
+            assert!(
+                message.contains(
+                    "array field 'bad': only float4/int4/uint4 element arrays are supported"
+                ),
+                "unexpected rejection message: {message}"
+            );
+            assert!(
+                message.contains("use a BDA buffer of flat structs, or named fields"),
+                "rejection message must point at the alternatives: {message}"
+            );
+        }
     }
 }

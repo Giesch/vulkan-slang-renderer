@@ -38,7 +38,16 @@ pub fn build(model: &Model, baked: &BakedModel) -> Converted {
     for &(material, shape) in &model.inf1.draw {
         let shape_indices = &baked.indices_per_shape[shape as usize];
         let first_index = indices.len() as u32;
-        indices.extend_from_slice(shape_indices);
+        // GX front faces are clockwise; after the renderer's clip-space Y-flip
+        // they come out counter-clockwise-culled, i.e. inside-out (P6 winding
+        // check, master plan risk #3). Swap each triangle's last two indices so
+        // Vulkan-side CullMode::Back keeps GX-front faces. pose.rs stays
+        // GX-native by design — its strip tests document file semantics.
+        indices.extend(
+            shape_indices
+                .chunks_exact(3)
+                .flat_map(|t| [t[0], t[2], t[1]]),
+        );
         batches.push(mm::Batch {
             material,
             shape,

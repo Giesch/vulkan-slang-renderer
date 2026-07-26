@@ -31,13 +31,13 @@ impl Game for BasicTriangle {
         let uniform_buffer = renderer.create_uniform_buffer::<MVPMatrices>()?;
 
         let resources = Resources {
-            vertices: VERTICES.to_vec(),
-            indices: INDICES.to_vec(),
             matrices_buffer: &uniform_buffer,
         };
 
         let shader = ShaderAtlas::init().basic_triangle;
-        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline_config = shader
+            .pipeline_config(resources)
+            .with_vertices(VERTICES.to_vec(), INDICES.to_vec());
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         Ok(Self {

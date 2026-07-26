@@ -439,7 +439,7 @@ mod tests {
             image_byte_len(ImageFormat::Cmpr, 160, 96),
             160 / 8 * (96 / 8) * 32
         );
-        assert_eq!(image_byte_len(ImageFormat::I4, 256, 8), 32 * 1 * 32);
+        assert_eq!(image_byte_len(ImageFormat::I4, 256, 8), 32 * 32);
         assert_eq!(image_byte_len(ImageFormat::Rgb565, 5, 3), 2 * 32);
         assert_eq!(image_byte_len(ImageFormat::Ia8, 96, 96), 24 * 24 * 32);
     }
