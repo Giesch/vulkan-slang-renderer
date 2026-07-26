@@ -1,6 +1,15 @@
 #+title: Todo
 
 * Now
+- [ ] problems/issues for side-agent PRs
+  - [ ] triple-buffering problems
+  - [ ] testing without opening a window
+    write to a texture? will this catch validation errors?
+    might be worth it anyway
+  - [ ] pick up tech_debt.md tasks
+  - [ ] roc platform (after render graph)
+  - [ ] BDA slices; then sparse sets?
+
 - [-] work through the issues in bda_footguns.md
   then consider the api change below if necessary
   - [ ] 1. potential skipped writes on storage buffers

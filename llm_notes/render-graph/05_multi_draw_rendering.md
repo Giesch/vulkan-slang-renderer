@@ -12,6 +12,11 @@
 > **Depends on:** 04 Phase 2 (core graph) for the `.rendering()` builder substrate; a
 > descriptor-indexing device-feature enable (§6); and real push-constant support (§5) —
 > both new renderer work, deliberately accepted for a nicer API.
+>
+> **§§1–12 are not settled.** A 2026-07 design review found eight synchronization holes
+> across 04 and this doc — a wrong slot-count formula, a runtime-variable quantity that
+> several build-time precomputations assume static, and a silently-deleted hazard-tracking
+> fallback. Read **§13** before implementing any phase.
 
 ## Motivation — what 04 leaves unsolved
 
@@ -431,3 +436,176 @@ Phases B–D are independent of 04's compute work and can proceed in parallel.
 - **`link_rendering.md`** — `toon_link` is the validating real scene (§7, §10); its manifest
   `batches`/`materials`/`textures` map directly onto sections, immutable material BDAs, and
   bindless handles.
+
+---
+
+## 13. Open synchronization holes (design review)
+
+> Recorded 2026-07 against the renderer at commit `fd06085`. **Most of these belong to
+> `04_design.md`, not to this doc** — they are collected here because this is the newest
+> document and no phase of either design should start without them. Each entry back-
+> references `04 §N` where it applies. Nothing here is fixed; all of it is owed.
+
+Ordered by severity. Sub-numbers are stable references — cite them, don't renumber.
+
+### 13.1 Buffers are excluded from graph-managed rotation
+
+**Claim:** 04's parity groups and rotations make ping-pong the graph's problem, not the app's.
+
+**Reality:** `GraphPingPong` (04 §2) covers storage *textures* only. 04 §5 leaves BDA buffers
+on the app-declared `graph::Write::{Storage, Current, Previous}` enum over the existing
+3-slot handles, minting "via the existing `Gpu` methods". Three consequences:
+
+- `StorageBufferHandle` still mints `Addr<T>` — GPU-**writable** — over an allocation that
+  rotates every frame (`Gpu::addr`, `src/renderer.rs:5401`; `create_storage_buffers_per_frame`,
+  `:882-916`). A compute shader that writes through it cannot see those writes next frame:
+  frame N+1 binds a physically different `VkBuffer` holding whatever was there `PRE_WAIT_RING_LEN`
+  executes ago. Only `GpuOnlyBufferHandle` + `previous_addr` (`:5423`) escapes this, and only
+  for strict full-rewrite ping-pong.
+- **Hazard-identity mismatch (the dangerous one).** 04 §6 keys the last-writer table on the
+  *handle*; the actual memory identity is `(handle, ring_slot)`. A write recorded at slot N
+  and a read at slot N+1 look *ordered* to the graph while touching different allocations —
+  so the graph will certify a dependency that does not exist. That is strictly worse than
+  today, where the app at least knows it is hand-rolling.
+- No `Persistent` variant. In-place GPU-owned state — accumulators, atomic counters,
+  append/free lists, spatial hashes — stays unexpressible, as does 05 §4's "static material
+  data" (which pays 3x memory and a per-frame address mint for data that never changes).
+
+**Owed:** a non-ringed, GPU-owned buffer resource — one allocation, stable address, seeded at
+setup. This needs *no new synchronization*: compute submits are already strictly serialized
+frame-to-frame on `compute_timeline` (`renderer.rs:2257-2262` pipelined, `:2371-2385`
+combined), so the ring is the only thing preventing it. Alternatively extend rotation to
+buffers so the graph owns it. Either way, hazard-table identity must become per-slot.
+
+### 13.2 `ExtraSlot` sizing is wrong past one advance per frame
+
+**Claim:** 04 §2 and §8 — "3 slots at one advance/frame, 4 at two".
+
+**Reality:** let `R` = slots, `A` = advances per execute, `M` = `MAX_FRAMES_IN_FLIGHT`.
+Frame N+2 submits only after `frame_timeline >= N` (host wait, `renderer.rs:2221-2226`), so
+graphics N has retired before compute N+2 is ever submitted. The writers that can overlap
+graphics N are therefore compute N and compute N+1 — and compute N only in `PreviousFrame`
+mode, since `SameFrame` orders it ahead.
+
+- `PreviousFrame` — graphics N reads `base_N - 1`; overlapping writers cover
+  `base_N .. base_N + 2A - 1`. Need **`R >= A*M + 1`**.
+- `SameFrame` / `SyncWait` — graphics N reads `base_N + A - 1`; only compute N+1 overlaps.
+  Need **`R >= A*(M-1) + 1`**.
+
+| A | `PreviousFrame` | 04 says | `SameFrame` | 04 implies |
+|---|---|---|---|---|
+| 1 | 3 | 3 — ok | 2 | 2 — ok |
+| 2 | **5** | 4 — **wrong** | **3** | "no memory cost" — **wrong** |
+
+Two things the design never states and must: every hardcoded 3/4 silently assumes `M = 2`, so
+raising `MAX_FRAMES_IN_FLIGHT` invalidates the whole document; and `PRE_WAIT_RING_LEN = M + 1`
+(`renderer.rs:69-74`) is simply the `A = 1` instance of the same formula.
+
+### 13.3 Advance count is runtime-variable; 04 §4/§6/§8 precompute against a static one
+
+**Claim:** 04 §7 — a disabled node "skips its dispatch but keeps its barriers … every
+precomputed downstream schedule stays valid regardless of enable state".
+
+**Reality:** `.optional()` and `run.iterations()` both change `A`. Three build-time artifacts
+depend on `A` being fixed:
+
+- `reachable_states(g)` (04 §4) — a frame that advances fewer times lands on a base position
+  no variant was ever instantiated for.
+- The per-frame-start barrier schedules (04 §6).
+- The `ExtraSlot` slot count (04 §8, and 13.2 above).
+
+04 §10 already says the opposite of §7 — "a node that advances a rotation must still run its
+copy when disabled, or the group must not advance". **Resolve in favor of §10.** Separately,
+a disabled advancing node leaves its target slot holding content from `R` executes ago while
+the last-writer table still credits it — the same class of bug as `previous_addr` with a
+skipped dispatch in today's renderer.
+
+**Watercolor hits this immediately**, so the validating example cannot be ported until it is
+resolved: the brush is the `.optional()` node (`examples/watercolor.rs:945-950`) *and* it
+advances `sim`.
+
+**Owed:** a hard build-time rule that a group's per-frame advance count is enable- and
+iteration-independent (either `.optional()` may not advance a rotation, or a disabled
+advancing node compiles to a copy pass). For `repeat`, the loop group's advance count *is*
+`iterations`, so downstream variant keys and barrier schedules must be indexed by
+`iterations mod R` as well as by frame-start state — 04 §6's "simulate the node sequence once
+per reachable frame-start state" is under-specified as written.
+
+### 13.4 `SyncWait` is declared per-resource but costs the whole frame
+
+04 §8 puts `CrossFrameMode` on the ping-pong, but `SyncWait` is implemented as a submit-level
+semaphore wait (graphics N waits compute N). Selecting it for a single resource serializes the
+entire `.simulation()` section against graphics — the exact overlap the section exists to
+create. A knob whose table entry reads "no memory cost" while silently costing all pipelining
+is a footgun.
+
+**Owed:** move the sync mode to graph scope, or document the frame-wide effect in the §8 table
+and have `build()` warn when `SyncWait` is mixed with `ExtraSlot` resources.
+
+### 13.5 The frame stream is never analyzed
+
+04 §8 examines only the pipelined-queue boundary. After Phase 0.5
+(`watercolor_race_fixes.md`), frame-stream compute for execute N+1 is recorded at the top of
+graphics CB N+1 — a **separate submit** from graphics N on the same queue, with no semaphore
+between them (the host wait at frame N+1 is only `frame_timeline >= N-1`). Vulkan permits
+those submissions to overlap, so frame-stream compute N+1 can write a storage texture that
+graphics N is still sampling. The bound is `A*(M-1) + 1`, as in 13.2.
+
+Dormant under 04 v1 (no compute in `.rendering()`), and live the moment 04 §2's post-v1
+relaxation lands. **Owed:** extend §8's static check to frame-stream writers and state the
+frame-stream slot formula.
+
+### 13.6 §8 of this doc deletes the automatic half of 04's hazard model
+
+04 §6's headline property is "descriptor-bound images: fully automatic, zero codegen
+changes", derived from the handle vectors `pipeline_config` already populates
+(`src/renderer/pipeline.rs:139-141`), with `storage_texture_as_sampled` aliasing giving
+storage↔sampled tracking for free (`renderer.rs:614-637`).
+
+§8 above removes textures from `texture_handles` entirely. That path does not fail loudly —
+it returns an empty handle list, which the analysis reads as "no hazards". §11 acknowledges
+the added declaration burden but not that the automatic fallback is gone.
+
+Also unreconciled at the API level: 04 §8's declaration verb for a rendering-section read of
+simulation output is `cross_frame_sampled(&pp)`, which lives on a resources closure. §3's draw
+nodes have no resources closure — only `.push(|d| …)` with `d.texture(&handle)`. **There is
+currently no spelling for "this draw samples simulation output."**
+
+**Owed:** a `d.cross_frame_texture(&pp)` (or equivalent) in §3/§4, and push-block codegen that
+makes the *undeclared* spelling impossible rather than merely discouraged — a forgotten
+declaration is a silent race with no build-time signal.
+
+### 13.7 Bindless slot lifetime
+
+§11's "Slot lifetime is renderer-owned, freed at teardown like `TextureStorage` today" is
+wrong on both halves: `drop_texture` exists (`renderer.rs:569`), and egui frees textures
+every frame through a `MAX_FRAMES_IN_FLIGHT`-deferred ring (`src/renderer/egui.rs:18, 54,
+118`). A slot freed and recycled while an in-flight command buffer's push block still
+references it samples the wrong image.
+
+**Owed:** specify recycling deferred by at least `MAX_FRAMES_IN_FLIGHT` frames — the egui
+`pending_free_textures` pattern is the model — or state that bindless slots are never
+recycled and keep egui textures off the global array.
+
+### 13.8 Smaller items
+
+- **§4's "static data uploads once"** cites `sprite_batch.rs:144`, which in fact writes
+  **every frame**. Uploading once requires `Renderer::write_immutable_all_frames`
+  (`renderer.rs:930`) *and* still minting `current_immutable_addr` per ring slot each frame.
+  A naive setup-time `write_immutable` seeds 1 of 3 slots — two bad frames at startup, then
+  correct forever, which is exactly the failure mode nobody catches. Subsumed if 13.1's
+  non-ringed buffer lands.
+- **§6's "draws need no barriers between them"** holds for attachments, but not if a fragment
+  shader writes a BDA that a later draw in the same list reads — and that dependency cannot be
+  barriered inside a render pass. Owed: a build-time rule forbidding a rendering-section node
+  from writing a BDA resource read by a later node in the same section.
+- **Hot reload vs precomputed schedules.** 04 §6 precomputes barrier schedules at build;
+  `check_for_shader_recompile` (`renderer.rs:2571`) rebuilds pipelines at runtime. A reloaded
+  shader whose texture bindings changed leaves those schedules stale. 04 Phase 1 flags the
+  pipeline-rebuild risk but not the hazard-reanalysis one.
+- **The "dedicated compute queue" is same-family.** It is queue index 1 of the *graphics*
+  family (`renderer.rs:325-327`), which is precisely why every barrier can use
+  `QUEUE_FAMILY_IGNORED` and why buffers and images are `SharingMode::EXCLUSIVE` (`:3866`,
+  `:4506`). Correct today, but both documents discuss cross-queue work as though the family
+  choice were open. Record same-family as a graph precondition: a distinct compute family
+  would require queue-family ownership transfers throughout.
