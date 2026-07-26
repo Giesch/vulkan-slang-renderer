@@ -12,12 +12,12 @@
 #
 # Container packages required (see build_reproducibility.md §4):
 #   mesa-vulkan-drivers vulkan-validationlayers libvulkan-dev
-# and, because sdf_2d opens an audio device, a null ALSA default in ~/.asoundrc:
-#   pcm.!default { type null }
-#   ctl.!default { type null }
+# No audio package is needed; sdf_2d degrades to silent playback.
 #
 # Verified to catch injected faults at all three points in the lifecycle
 # (device init, per-frame command recording, and teardown) — see §7.2.
+# If you change this script, re-check that it still DETECTS a fault: a sweep
+# that has silently stopped working looks exactly like a passing one.
 
 set -u
 cd "$(dirname "$0")/.."
@@ -51,6 +51,12 @@ unset SDL_NO_SIGNAL_HANDLERS
 
 : "${SWEEP_TIMEOUT:=10}"
 : "${SWEEP_LOG_DIR:=/tmp/sweep-logs}"
+# Examples that cannot run on a machine without machine-local assets.
+# toon_link needs assets/link/converted, which are gitignored and derived from
+# a Wind Waker disc image (llm_notes/link_rendering/follow_up.md) -- it bails
+# with a helpful message anywhere else. Set SWEEP_SKIP= to sweep it anyway on
+# a machine where `just convert-link` has been run.
+: "${SWEEP_SKIP:=toon_link}"
 mkdir -p "$SWEEP_LOG_DIR"
 
 if [ "$#" -gt 0 ]; then
@@ -59,12 +65,35 @@ else
   mapfile -t examples < <(ls examples/*.rs | xargs -n1 basename | sed 's/\.rs$//')
 fi
 
+# Build FIRST, untimed, and run the binaries directly below.
+#
+# `timeout N cargo run` times the compile as well as the run. On a cold build
+# the timeout expires during compilation: cargo is killed, exit code is 124 --
+# indistinguishable from "the example ran for its whole window" -- and the log
+# is empty. Every example then reports ok and the whole sweep is vacuous. This
+# is easy to hit, since any source edit immediately before a sweep triggers it.
+echo "building examples..."
+if ! cargo build --examples; then
+  echo "FAIL: examples did not build" >&2
+  exit 1
+fi
+
 fail=0
 for e in "${examples[@]}"; do
-  log="$SWEEP_LOG_DIR/$e.log"
+  case " $SWEEP_SKIP " in *" $e "*) echo "skip: $e (needs machine-local assets)"; continue ;; esac
 
-  # SIGTERM (timeout's default) on purpose -- see note 3 above.
-  timeout -s TERM "$SWEEP_TIMEOUT" cargo run --quiet --example "$e" >"$log" 2>&1
+  log="$SWEEP_LOG_DIR/$e.log"
+  bin="target/debug/examples/$e"
+
+  if [ ! -x "$bin" ]; then
+    echo "FAIL(no binary): $e"
+    fail=1
+    continue
+  fi
+
+  # SIGTERM (timeout's default) on purpose -- see note 3 above. Timing the
+  # binary rather than `cargo run` keeps the compile out of the budget.
+  timeout -s TERM "$SWEEP_TIMEOUT" "./$bin" >"$log" 2>&1
   code=$?
 
   # The debug callback returns VK_FALSE, so the process exits 0 even with

@@ -31,11 +31,13 @@ Ordered by value: §1 and §2 fix real latent bugs, §3–§6 fix
 time-to-first-build, §7 unlocks a class of verification that was previously
 assumed to need a GPU.
 
-**§7 has since been prototyped and adversarially tested** — faults were
-injected on purpose to confirm the sweep notices them, which turned up four
-ways it can silently pass a broken example, a correction to what the existing
-docs say about `timeout` and `Drop`, and one real pre-existing renderer bug
-(`sprite_batch`, §7.5). The other sections remain plan-only.
+**§7 has since been prototyped, adversarially tested, and is green** — faults
+were injected on purpose to confirm the sweep notices them, which turned up
+five ways it can silently pass a broken example, a correction to what the
+existing docs say about `timeout` and `Drop`, and one real pre-existing
+renderer bug. That bug (`sprite_batch`'s MSAA fallback, §7.5) and the
+`sdf_2d` audio abort (§7.1) are **both fixed in this PR**, so the full sweep
+now exits 0. §1–§6 remain plan-only.
 
 ---
 
@@ -215,9 +217,8 @@ each discovered by a build failing partway through a long compile:
 Plus, for headless verification (§7): `mesa-vulkan-drivers` (the lavapipe ICD),
 `vulkan-validationlayers` (without it the renderer bails outright —
 `missing required layer: VK_LAYER_KHRONOS_validation`), and optionally
-`vulkan-tools` for `vulkaninfo` when triaging a driver-limit question. §7.1
-also needs a null ALSA default in `~/.asoundrc`, since `sdf_2d` opens an audio
-device.
+`vulkan-tools` for `vulkaninfo` when triaging a driver-limit question. No audio
+package is needed: `sdf_2d`'s missing-device abort was fixed in code (§7.1).
 
 **The fix.** Document them in README's setup section, split into "to build" and
 "to run headless". Add a `just install-deps-debian` (or a
@@ -299,11 +300,21 @@ needs now works, the sweep has been prototyped
 | + `mesa-vulkan-drivers` (lavapipe ICD) | `missing required layer: VK_LAYER_KHRONOS_validation` |
 | + `vulkan-validationlayers` | **runs clean** |
 
-One more environment dependency, found by the sweep rather than by reading:
-**`sdf_2d` initializes audio** (rodio/cpal) and aborts on a machine with no
-sound card — `Failed to get the config for the given device`. It is the only
-example that does. A null ALSA default (`pcm.!default { type null }` in
-`~/.asoundrc`) fixes it; it is a container-setup item, not a code bug.
+One more dependency, found by the sweep rather than by reading: **`sdf_2d`
+initializes audio** (rodio/cpal) and aborted on a machine with no sound card —
+`Failed to get the config for the given device`. It is the only example that
+does.
+
+**Fixed in this PR.** The audio there is playback only: the visuals are driven
+by `beats` (a JSON of timestamps) plus elapsed time, and the stream is held in
+a field purely to keep it alive (`#[expect(unused)]`). So a missing output
+device is now non-fatal — `start_audio()` returns `Result`, `setup` degrades to
+`None`, and the example prints `sdf_2d: no audio (...); rendering silently` and
+renders normally. Verified with no `~/.asoundrc` and no sound card present.
+
+That message uses `eprintln!` rather than `log::warn!` on purpose: per 7.3.2, a
+`warn!` would be invisible with `RUST_LOG` unset, which is exactly the
+configuration of the machines that take this path.
 
 ### 7.2 Does it actually catch errors? Yes — at all three points in the lifecycle
 
@@ -322,7 +333,7 @@ In every run the two uninjected examples reported `ok`. No false positives, no
 false negatives, and a **single** error occurring once before the first frame
 is not lost in the noise.
 
-### 7.3 Four ways the sweep silently passes a broken example
+### 7.3 Five ways the sweep silently passes a broken example
 
 These are the reason the sweep must **own** its environment rather than
 inherit it. Each was confirmed by running an injected fault and watching the
@@ -345,6 +356,20 @@ detection go to zero.
    viewport fault active reports **0** validation lines and a clean pass.
 4. **`SIGKILL`, or disabling SDL's signal handlers, hides teardown errors.**
    See 7.4 — this one also corrects a claim in the existing docs.
+5. **`timeout N cargo run` times the *compile* as well as the run**, and this
+   one makes the entire sweep vacuous rather than hiding a single example. On a
+   cold build the timeout expires during compilation; cargo is killed with exit
+   **124** — indistinguishable from "the example ran its whole window" — and
+   the log is empty. Every example reports `ok` and the sweep exits 0.
+   Hit for real while verifying the fixes below: one `touch src/renderer.rs`
+   before a sweep was enough, and 16/16 reported `ok` with 16 empty logs.
+   The script therefore runs `cargo build --examples` up front, fails loudly if
+   that build fails, and then times `target/debug/examples/<name>` directly so
+   the budget covers execution only.
+
+   Note the general shape of 1–5: **an empty log and a green sweep look
+   identical to a clean pass.** Every one of these was a case where the signal
+   never reached the log, not a case where detection misread it.
 
 Also: **the exit code is not a signal.** Every run above — clean, one error,
 478 errors — exited **124**. The debug callback returns `vk::FALSE`, so nothing
@@ -411,8 +436,25 @@ case. Other examples use the default and land on 4×, so they never hit it.
 This is a **genuine latent renderer bug in the MSAA fallback path**, not a
 lavapipe quirk: it fires on any device that doesn't support the requested
 sample count. It has simply been invisible because the dev GPU supports 2×.
-The fix is to set `resolve_mode` to `NONE` (and drop the resolve attachment)
-when `msaa_samples == TYPE_1`. Belongs in `tech_debt.md` as its own entry.
+
+**Fixed in this PR.** With one sample there is nothing to resolve, so
+`record_command_buffer` now renders straight into
+`resolve_image_views[flight_slot]` — which the upscale blit reads either way —
+with `store_op: STORE` and no resolve attachment at all. The multisampled path
+is byte-for-byte what it was.
+
+Worth noting for review: **on a GPU that supports 2× MSAA this changes
+nothing.** `sprite_batch` keeps taking the multisampled branch there, so the
+new branch is dead code on the dev machine and only activates where the
+requested count is unavailable. Both branches are exercised by the sweep on
+this container — `sprite_batch` at 1× and every other example at 4× — and all
+are validation-clean.
+
+Caveat on the verification: this confirms the path is **spec-clean**, not that
+the pixels are right, since the sweep has no golden images (§7.6). The
+reasoning for correctness is that the blit's source image is now written
+directly with `STORE` instead of receiving an undefined resolve, which is
+strictly better-defined than what it replaced.
 
 It is also a fair illustration of the one caveat: **a software driver's limits
 differ from a real GPU's.** Here that difference surfaced a real bug in an
@@ -422,11 +464,30 @@ failure by reading the VUID before assuming either.
 
 ### 7.6 What to implement
 
-`scripts/headless-sweep.sh` is a working prototype and encodes all four
-controls from 7.3 with comments explaining why each is there. Remaining work is
-to wire it to `just headless-all`, decide whether `sprite_batch` is fixed or
-temporarily allow-listed so the sweep can go green, and document the container
-packages from §4.
+`scripts/headless-sweep.sh` is a working prototype encoding all five controls
+from 7.3, each with a comment saying why it is there. **The full sweep is
+green**: 15 `ok`, 1 skip, exit 0.
+
+The skip is `toon_link`, via a `SWEEP_SKIP` list. It cannot run anywhere
+without `assets/link/converted`, which is gitignored and disc-image-derived
+(`link_rendering/follow_up.md`), and it bails with a helpful message rather
+than crashing. `SWEEP_SKIP=` sweeps it anyway on a machine where
+`just convert-link` has been run.
+
+Remaining work:
+
+- wire the script to `just headless-all`;
+- document the container packages from §4 (and drop the `~/.asoundrc` step,
+  now unnecessary — see 7.1);
+- correct the `timeout`/`Drop` claim in `offscreen_testing.md` and
+  `link_rendering/phase_07.md` (7.4);
+- decide whether the sweep belongs in CI. It needs no GPU, so the only real
+  cost is build time.
+
+Re-validated after all of the above: with the viewport fault reintroduced, the
+sweep still fails both examples it is pointed at. Worth repeating whenever the
+script changes — a sweep that has quietly stopped detecting anything is
+indistinguishable from a healthy one.
 
 **Out of scope:** golden images. `offscreen_testing.md` is explicit that
 lavapipe does not solve comparison against frames blessed on real hardware, and
