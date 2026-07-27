@@ -6,6 +6,7 @@ pub mod ktx;
 pub mod model_manifest;
 pub mod renderer;
 pub mod shaders;
+pub mod tev_pack;
 pub mod util;
 
 #[cfg(debug_assertions)]

@@ -615,9 +615,16 @@ frame.
   the ambient: it comes from the manifest, `[50,50,50,50]` on all 24
   materials, and `lit_mask` is 3, so **two** lights are needed. Replacing the
   light seeds with exact `dKy_tevstr_c` values read from emulated RAM is now
-  an optional follow-up, not a P8 gate — see risk #8.)* Fed into
+  an optional follow-up, not a P8 gate — see risk #8.)* ~~Fed into
   `reg[0]`/konst slots the way `setLightTevColorType` does (C0 = light color,
-  K0/K1 = ambient; see `../tww/src/d/d_kankyo.cpp`). Then queue one
+  K0/K1 = ambient; see `../tww/src/d/d_kankyo.cpp`).~~ **Superseded by P8 as
+  built**: the TEV register and konst colors come from the manifest verbatim,
+  and the light direction/color are separate uniforms feeding a real GX color
+  channel — which is what the hardware does and what noclip does. Overwriting
+  C0/K0/K1 from the environment is a *game* behavior layered on top, and
+  emulating it would mean inventing values we have not measured. It stays
+  un-implemented, and it is one of the two candidate explanations for P8's
+  overly-warm lit band (see phase_08's Recorded facts). Then queue one
   `queue_draw_index_range` per batch — INF1 order in P6, and from P7 a stable
   partition of it into opaque-then-translucent by `pe_mode` (J3D's two-pass
   rule; INF1 order is preserved within each group) — and finish with
@@ -639,8 +646,8 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P4** ✅ `4621112` | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) — detailed plan: [`link_rendering/phase_04.md`](link_rendering/phase_04.md) | **as run**: `just test` green (pre-existing per-shader snapshots byte-identical); `just lint` clean; validation sweep 15/15 examples; multi_mesh tiles its index buffer exactly, perturbation test confirms gaps/spikes/`debug_assert`; multi-pipeline hot reload clean; no VMA leak on exit | 2 days |
 | **P5** ✅ | renderer 4.3 + 4.4 (raster state, texture options); `examples/multi_mesh.rs` grew 12 view-space test panels (17 pipelines, 18 draws, 7 texture handles, 3 procedural images) — detailed plan: [`link_rendering/phase_05.md`](link_rendering/phase_05.md) | **as run**: `just test` green, snapshot churn exactly multi_mesh's `.rs`+`.json` (branching snapshot unmoved, no atlas-index change); `RasterState` default-equivalence + enum-mapping unit tests; `just lint` clean; validation sweep 15/15 (run twice — once with examples untouched); every test object shows its artifact, **all six fields perturbed and reverted**, each artifact vanishing; sRGB-vs-UNORM verified numerically (117 vs 172, linear ratio 2.32); hot reload keeps per-pipeline raster state; clean exit with no VMA leak, and the leak check itself validated by injecting one | 1–2 days |
 | **P6** ✅ `9508563` | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches — detailed plan: [`link_rendering/phase_06.md`](link_rendering/phase_06.md) (Step 1's smoke test superseded by the vec4-array mini-phase `0d08a7d`) | **as run**: `just test` green (churn = toon_link additions only); correctly shaped Link over a full orbit, smooth normal gradients; **winding flipped in the converter** (risk #3: model was inside-out under manifest cull; one-line `link.idx.bin` sha256 update, `just link-verify-p3` green); all 24 isolation batches identified; UV mode clean; hot reload at 24-pipeline scale keeps raster state; validation sweep 16/16; no VMA leak on real close | 1–2 days |
-| **P7** 🚧 code landed, **unverified** | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state; plus `pe_mode` draw ordering and inverse-sRGB output (pulled forward from P8) — detailed plan: [`link_rendering/phase_07.md`](link_rendering/phase_07.md) | **static gates pass** (shader + bindings regenerated, churn confined to `toon_link`, `cargo check --all-targets` / clippy debug+release / fmt clean, converter and golden hashes untouched). **Every runtime gate is still outstanding**: written in a headless container with no video device and no converted assets, so UV features vs noclip, alpha-cutout edges, per-material cull, and especially the **numeric** gamma check (the gate for the sRGB transfer direction) have not been observed. Run these before marking ✅ | 1 day |
-| **P8** | full TEV interpreter (`shaders/source/tev.slang`) + lighting channel + SRTG ramp + pupil texture matrices; the subset gate lands as `src/bin/convert_link/tev_ir.rs`; `src/tev_pack.rs` + expanded debug modes and light controls in the example — detailed plan: [`link_rendering/phase_08.md`](link_rendering/phase_08.md) | structured side-by-side vs noclip per feature (skin, tunic bands, hair highlight, eye whites); rotate light — terminator bands sweep and stay banded, and only the 12 lit materials respond; isolate batch N for any wrong material and diff its equations against `mat3_dump.txt`; converter gate + `tev_pack` unit tests + `COLOR0`/SRTG-texcoord debug modes as the emulator-free cross-checks. **Dolphin is explicitly not P8's oracle** — the `.dff`/FIFO/software-renderer suite is an optional escalation in [`link_rendering/follow_up.md`](link_rendering/follow_up.md) §5, so risks #6 and #8 ship reasoned rather than measured | 3–5 days |
+| **P7** ✅ `f415612` (runtime gates run 2026-07-27) | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state; plus `pe_mode` draw ordering and inverse-sRGB output (pulled forward from P8) — detailed plan: [`link_rendering/phase_07.md`](link_rendering/phase_07.md) | **as run**: static gates green; then every runtime gate re-run at the start of P8 on a real GPU with assets present, needing **no code change**. 7 of 41 textures load; **gamma verified numerically — 0 LSB on four distinct colors** (on-screen tunic `(90,178,74)` byte-identical to the source PNG's dominant color; the two wrong transfer directions would be 674 and 9290 squared-distance off), so the sRGB direction is now measured rather than reasoned; draw order relocates batches 16 and 23 exactly as predicted; cull correct front and back; sweep 16/16 with the validation layer confirmed loaded; hot reload = 24 pipelines recompiled with raster state intact; clean close via a real `WM_DELETE_WINDOW` → exit 0, no VMA leak. **One gate blocked, not failed**: the opaque black rectangle around each eye/brow is traced to `eyeLdamB`-style materials (`Always` compare + `None_` blend + an all-`(0,0,0,0)` texture) — i.e. missing BTP plus P9's deferred `DstAlpha` pass, not a P7 defect. The formal per-feature noclip side-by-side is folded into P8's | 1 day |
+| **P8** 🚧 landed, **noclip comparison outstanding** | full TEV interpreter (`shaders/source/tev.slang`) + lighting channel + SRTG ramp + pupil texture matrices; the subset gate lands as `src/bin/convert_link/tev_ir.rs`; `src/tev_pack.rs` + expanded debug modes and light controls in the example; plus a Step 0b that moved the 14 TEV/texgen GX enums into the library so `tev_pack` can parse them and print `mat3_dump`-identical equations — detailed plan: [`link_rendering/phase_08.md`](link_rendering/phase_08.md) | **as run**: gate accepts 24/24 with the golden hashes byte-identical and `link-verify-p2`/`-p3` green; `TevParams` 1328 B / `ToonLinkParams` 1552 B with no padding and the descriptor shape unchanged (P7 decision 1 paying off); 16 `tev_pack` unit tests incl. the register shift and `ear` end-to-end; **cel bands render and stay banded** — one screen region measured at (45,89,37) shadow vs (250,255,74) lit as the light rotates, and the white leggings' shadow band at exactly (128,128,128) = REG0, which is the direct confirmation of the `reg_colors` shift; **all 24 materials' equations diffed against `mat3_dump.txt` mechanically, 0 mismatches**; mode 4 smooth (499 values), mode 5 reads (193,190,0) confirming the SRTG r≈g; sweep 16/16, hot reload 24 pipelines, clean close with no VMA leak. **Outstanding**: the per-feature noclip side-by-side, mode 0 vs mode 8, and the pupil-direction toggle — plus one honest finding, that the lit band is strongly yellow because stage 2's warm konst saturates across the whole lit region (traced, not tuned away). **Dolphin is explicitly not P8's oracle** — risks #6 and #8 ship reasoned rather than measured | 3–5 days |
 | **P9** | optional polish: `--casual` clothes; eye write-mask multi-pass; BCK-sampled pose | casual: P7-style UV checks; eye trick vs **Dolphin** (noclip may not implement it) | 2+ days |
 
 Rough total: ~3 weeks of focused work. Once a converter phase's output is
@@ -690,7 +697,14 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
    `ToonLinkParams` as sketched; the BDA fallback recorded in
    [`link_rendering/phase_06.md`](link_rendering/phase_06.md) Step 1 is
    superseded, and P6's planned smoke test is moot.
-5. ~~**SRTG texgen details**~~ — *resolved by the P2 dump*: SRTG sources
+5. ~~**SRTG texgen details**~~ — *resolved by the P2 dump*, and the remaining
+   read-semantics question closed in P8 by **decoding the ramp**: the 256×256
+   `ZBtoonEX` is separable (R varies only with u, G only with v, B = 0), with a
+   sharp step at ≈0.49 in each axis, so the `(color.r, color.g)` read is exactly
+   right and stage 0's RRR and stage 2's GGG swizzles read the two axes
+   independently. Confirmed at runtime by debug mode 5. The consequence handed
+   to risk #8: with a near-neutral light r ≈ g, so both axes saturate together
+   and stage 2's warm highlight covers the whole lit band. SRTG sources
    COLOR0 with the identity matrix; no texture matrix on the ramp path. Two
    findings replace it: (a) 2 **non-identity texture matrices** exist
    (TEXMTX1 on one MTX2x4 texgen) — small, but in scope now; *P7 pinned them
@@ -700,10 +714,13 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
    tables** are used by 12 materials (channel broadcasts) and must be in the
    interpreter — see §3.
 6. **S10 register semantics** — TEV intermediates are signed 10-bit, clamped
-   per-stage only when the clamp bit is set. Respect the clamp bit always
-   (*2 real stages run with it off*); add explicit range clamps only if
-   banding artifacts appear. Low risk: all ops are ADD/scale-1, so values
-   stay near range.
+   per-stage only when the clamp bit is set. *P8 sharpened this: clearing the
+   clamp bit does **not** mean "no clamp", it means clamp to the S10 register
+   range, so `tev.slang` uses `clamp(v, -1024/255, 1023/255)` in that branch,
+   matching noclip.* Respect the clamp bit always (*2 real stages run with it
+   off — eyeL/eyeR stage 1, on both halves*). **Still unmeasured**: no
+   software-renderer capture was taken, so this is reasoned. Low practical risk:
+   all ops are ADD/scale-1 and the unclamped stage's values stay inside [0,1].
 7. ~~**Fog**~~ — *resolved*: declared LINEAR but disabled on all 24
    materials; the warn-and-force-off path never fires.
 8. **Lighting values** — exact daytime `dKy_tevstr_c` values are buried in
@@ -715,3 +732,15 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
    could be our TEV math *or* our light seeds, and nothing in the phase can
    tell them apart — so adjudicate on band *structure*, which the seeds do not
    affect, not band *color*, which they do.
+   *P8 as built made this concrete, and the seeds are now constrained rather
+   than free: the ramp's terminator sits at ≈0.49 and the manifest's ambient is
+   a fixed 50/255 ≈ 0.196, so `illum = 0.196 + Σ max(N·L,0)·color` has to
+   straddle 0.49 or there are no bands at all. Light 0 ships at ≈0.75 luminance
+   with a ≈0.22 fill. The visible residue is that the lit band comes out
+   strongly **yellow**: stage 2 adds `konst1 = (160,90,0)` weighted by the
+   ramp's G channel, and because the ramp's two axes step at nearly the same
+   value and our light is near-neutral, G saturates wherever R does, so the warm
+   add covers the entire lit band. Either our light is brighter/more neutral
+   than the game's, or `setLightTevColorType` overwrites K1 per frame (see the
+   §5 note). Resolving it needs the noclip comparison or this risk's ground
+   truth — no konst or register value was tuned to hide it.*

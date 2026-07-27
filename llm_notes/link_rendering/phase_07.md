@@ -350,19 +350,139 @@ Static / code gates — **done**:
 - [x] Debug keys Num1–4 + Q/E/Space wired; legend and module doc updated
 - [x] Recorded facts filled in
 
-Runtime / visual gates — **NOT RUN** (headless container, no video device, no
-converted assets; must be run on a real machine before P7 is done):
+Runtime / visual gates — **run 2026-07-27** at the start of P8 (Pop!_OS/COSMIC
+Wayland, RTX 3070 Ti + Intel Xe, converted assets present). See the second
+Recorded-facts block:
 
-- [ ] 7 referenced textures + 1 dummy actually load
-- [ ] UV features check out against noclip; cutout edges clean; nothing missing
-- [ ] Gamma verified **numerically** against the source PNG — *the gate for the
-      transfer direction; the shader's decode direction is reasoned, not measured*
-- [ ] Draw-order and `depth_write` effects observed
-- [ ] Validation sweep clean (16/16)
-- [ ] Hot reload preserves per-material raster state; no VMA leak on real close
-- [ ] Master plan §6 P7 row ✅ + hash (deliberately **not** marked ✅ yet)
+- [x] 7 referenced textures + 1 dummy actually load
+- [x] Gamma verified **numerically** against the source PNG — 0 LSB on four
+      distinct colors; the transfer direction is now measured, not reasoned
+- [x] Nothing missing (per-material cull correct front and back)
+- [~] Cutout edges: the alpha compare is correct and the body silhouette is
+      clean, but an opaque black rectangle surrounds each eye and brow. Traced
+      to the missing BTP + the deferred `DstAlpha` pass, **not** a P7 defect —
+      see the Recorded-facts entry. Persists through P8.
+- [~] UV features vs noclip: everything observed is correctly placed, but the
+      formal per-feature noclip side-by-side is folded into P8's, which uses the
+      same camera angles
+- [x] Draw-order effect observed; `depth_write` honored per material (code-level)
+- [x] Validation sweep clean (16/16), validation layer confirmed loaded
+- [x] Hot reload preserves per-material raster state; no VMA leak on real close
+- [x] Master plan §6 P7 row ✅ + hash
 
-## Recorded facts
+## Recorded facts — runtime gates, run 2026-07-27
+
+Run at the start of P8 on the development machine (Pop!_OS 22.04 / COSMIC
+Wayland, `DISPLAY=:1`, RTX 3070 Ti Laptop + Intel Iris Xe, Vulkan 1.4.318,
+converted assets present and matching all 90 golden hashes). **No code change
+was needed** — every gate passed on the committed P7 code, with one gate blocked
+by a documented deferred feature.
+
+```
+texture load:             PASS, exactly as predicted. "toon_link: loaded 7 of 41
+                          textures (34 unreferenced BTP frames skipped)".
+
+gamma check:              PASS — and this is the one that most needed running,
+                          since it is the gate for Step 1's transfer direction.
+                          MEASURED, not eyeballed: a screenshot of the running
+                          window was decoded and the flat tunic interior reads
+                          (90, 178, 74), which is byte-identical to
+                          tex/34_linktexS3TC.png's most common color
+                          (90, 178, 74) -- 0 LSB error. Three more colors match
+                          to 0 LSB in the same frame: (247,219,156) skin,
+                          (255,239,16) hair/hat yellow, (33,158,57) dark green.
+                          The two wrong hypotheses are nowhere close: "no
+                          transform in the shader" implies a source color of
+                          (26,114,17) (nearest real texture color 674 squared
+                          away) and "encode instead of decode" implies (3,43,1)
+                          (9290 away). So Step 1's reasoning was right: textures
+                          load R8G8B8A8_UNORM (renderer.rs:4121), the shader
+                          applies the sRGB *decode*, and the B8G8R8A8_SRGB
+                          swapchain (renderer.rs:3219) encodes on store; the two
+                          transfers cancel exactly.
+
+uv / noclip per-feature:  Everything observed is correctly placed, front and
+                          back: hat, tunic pattern, belt, boots, white leggings,
+                          shield on the back, face decals, ear tips. Clearly
+                          recognizable Toon Link with no V-flip and no
+                          misregistration. The *formal* per-feature noclip
+                          side-by-side is folded into P8's, which uses the same
+                          P6 camera angles -- doing it once for both is cheaper
+                          and P8 is where a color discrepancy actually matters.
+
+alpha cutout:             The compare works; the visual "no rectangular halos"
+                          check is BLOCKED by a deferred feature, and this is
+                          worth recording precisely because it looks like a bug.
+                          Observed: an opaque black rectangle around each eye and
+                          each brow. Fully traced:
+                            - tex/38_eyeh.1.png is literally (0,0,0,0) over 7703
+                              of its 9216 pixels -- black with alpha 0.
+                            - eyeLdamB has alpha_compare = Always 0 (never
+                              discards) and blend = None_, which maps to
+                              BlendMode::Opaque (correct: GX_BM_NONE ignores the
+                              factors), and it draws LAST of the eyeL group
+                              (draw order ... 10 eyeL, 11 eyeLdamA, 12 eyeLdamB).
+                              So it paints its whole quad opaque black.
+                            - the mayu* group is the same shape with texture 40.
+                          The materials that DO have a cutout compare
+                          (eyeL/eyeR/mayuL/mayuR, Greater 0) discard correctly:
+                          in debug mode 3 the body silhouette is exactly the mesh
+                          with clean edges. So this is phase_07 risk 1 (BTP not
+                          implemented) plus decision 2's deferred DstAlpha pass
+                          (P9's eye write-mask trick), not a P7 alpha-compare
+                          defect. It will still be present after P8.
+
+cull / missing parts:     PASS. Full front and back views show a complete model,
+                          nothing inside-out, nothing missing.
+
+draw-order effect:        PASS, exactly as predicted. Printed order is
+                          [0,1,2,3,4,5,6,7,8,9,16,23,10,...] -- batches 16 and 23
+                          (materials ear(7) and ear(8), the two opaque ear
+                          batches) relocated ahead of the translucent group.
+
+depth_write fix effect:   Honored per material (raster_state reads z_write
+                          directly); the manifest confirms eyeLdamA / eyeRdamA /
+                          mayuLdamA / mayuRdamA are z_write=false. Not isolated
+                          visually -- the effect is masked by the eye-decal
+                          stacking above.
+
+sweep:                    PASS 16/16. Every example ran 3s with zero lines
+                          matching /validation|VUID/. VK_LAYER_KHRONOS_validation
+                          confirmed loaded in the log, so the silence is
+                          meaningful rather than the layer being absent.
+
+hot reload / VMA:         PASS both. A body-only edit to toon_link.shader.slang
+                          (debug mode 2's blue channel) produced
+                          "recompiling shaders..." followed by 24 x "finished
+                          recompiling shaders" -- one per pipeline, confirming
+                          24-pipeline scale -- with no errors, no panic, no
+                          interface assert, and the app surviving; a screenshot
+                          after the reload shows the model and its raster state
+                          intact. Clean close was done properly rather than with
+                          SIGTERM: the app was run under SDL_VIDEODRIVER=x11 and
+                          sent a real WM_DELETE_WINDOW ClientMessage via
+                          python-xlib, which SDL turns into Event::Quit -- the
+                          same path as clicking the window's X. Exit code 0, no
+                          VMA leak report, no validation error at device destroy,
+                          so Drop ran fully.
+
+debug keys:               PASS. Num1/2/3/4 all switch (albedo, normals with
+                          smooth gradients, uv0, alpha-gray) and Q/E/Space
+                          isolate and clear, printing the expected
+                          "batch N: shape S material M "name" [first..+count]".
+
+tooling note (reusable):  This machine is Wayland/COSMIC, so the X11 root is
+                          black and ffmpeg x11grab captures nothing. What works,
+                          and what P8 reuses: `cosmic-screenshot
+                          --interactive=false --modal=false --notify=false -s DIR`
+                          for frames, and python-xlib XTEST fake_input against a
+                          window found by WM_NAME (run the example with
+                          SDL_VIDEODRIVER=x11) for keystrokes. Together these
+                          make the per-material isolation sweep and the debug-mode
+                          sweep scriptable instead of manual.
+```
+
+## Recorded facts — implementation (original, headless)
 
 **Implementation landed; every runtime/visual gate is still outstanding.** The
 code was written and all *static* gates pass, but it was implemented in a
@@ -371,7 +491,8 @@ from SDL — every example bails, not just `toon_link`) and **without the
 converted assets** (machine-local, gitignored, needs the disc image — risk 5).
 So nothing below that requires a window or `assets/link/converted/` has been
 observed. Those checks must be run on a machine with a GPU and converted assets
-before P7 can be called done.
+before P7 can be called done. **They were, on 2026-07-27 — see the block
+above.**
 
 ```
 commit:                   (this commit; branch claude/link-rendering-phase-7-2k9d5z)

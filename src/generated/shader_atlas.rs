@@ -20,6 +20,7 @@ pub mod serenity_crt;
 pub mod space_invaders;
 pub mod sprite_batch;
 pub mod suzanne;
+pub mod tev;
 pub mod toon_link;
 pub mod wc_advect_and_transfer_pigment_compute;
 pub mod wc_capillary_flow_compute;

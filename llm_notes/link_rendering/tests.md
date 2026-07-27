@@ -269,6 +269,19 @@ the S10 clamp edge cases (risk #6) and the exact `dKy_tevstr_c` light values
   isolation — batches and material slots are bijective — so a wrong material is
   inspected alone rather than through overdraw. P8 adds the stage equations to
   the printout for direct comparison against `mat3_dump.txt`.
+  *As run, this became fully mechanical rather than a per-material eyeball: the
+  window is driven through all 24 batches with synthetic keypresses, the
+  printouts captured from stdout, and each material's equation / order / texgen
+  lines diffed against the matching block of `mat3_dump.txt` — 24 compared, 0
+  mismatched. Comparing **printouts** is what makes this reliable; see the
+  screenshot caveat in [`follow_up.md`](follow_up.md) §5.*
+- **`mat3_dump.txt` is not a complete oracle for the konst path.** It renders
+  every konst input as a bare `KONST`, so it cannot distinguish K0 from K3_A —
+  which is exactly where phase_08's own worked example was wrong. The isolation
+  printout therefore annotates each stage with the *resolved* `kcsel`/`kasel`
+  and the swap-table contents, and `tev_pack`'s `ear_end_to_end` test asserts
+  the selectors rather than the resulting values (the two konst colors involved
+  are both white, so only the selector distinguishes them).
 - **Internal cross-checks that need no emulator**: the converter's subset gate
   (`tev_ir.rs`), the `tev_pack` unit tests, and the debug modes that expose
   `COLOR0` and the SRTG texcoord before the final image is judged.

@@ -8,6 +8,7 @@ pub mod mvp;
 pub mod particle;
 pub mod projection;
 pub mod ray_march_camera;
+pub mod tev;
 pub mod basic_triangle;
 pub mod depth_texture;
 pub mod dragon;
