@@ -1131,11 +1131,60 @@ struct GeneratedFile {
     content: String,
 }
 
+/// Format generated rust source by piping it through `rustfmt`.
+///
+/// This has to happen at generation time rather than as a separate pass over
+/// `src/generated/`: the snapshot tests generate into a temp dir and snapshot
+/// exactly what was written, so anything that only formats `src/generated/`
+/// (the `cargo fmt` in `just shaders`) leaves the snapshots showing source no
+/// compiler ever sees. Formatting here puts both paths through the same code,
+/// so a snapshot is byte-identical to the committed file.
+///
+/// The edition is passed explicitly rather than left to rustfmt.toml discovery,
+/// which is relative to the current directory; it must match the `edition` in
+/// rustfmt.toml.
+fn rustfmt_source(source: &str) -> anyhow::Result<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("rustfmt")
+        .args(["--edition", "2024", "--emit", "stdout"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| {
+            // A silent fallback to unformatted output would reintroduce exactly
+            // the two-different-formattings problem this function exists to
+            // remove, so a missing rustfmt is fatal.
+            anyhow::anyhow!(
+                "failed to run rustfmt to format generated source ({err}); \
+                 install it with `rustup component add rustfmt`"
+            )
+        })?;
+
+    child
+        .stdin
+        .take()
+        .expect("rustfmt stdin was piped")
+        .write_all(source.as_bytes())?;
+
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "rustfmt rejected generated source:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    Ok(String::from_utf8(output.stdout)?)
+}
+
 fn write_generated_file(config: &Config, source_file: &GeneratedFile) -> anyhow::Result<()> {
     let absolute_path = config.rust_source_dir.join(&source_file.relative_path);
 
     std::fs::create_dir_all(absolute_path.parent().unwrap())?;
-    std::fs::write(&absolute_path, &source_file.content)?;
+    std::fs::write(&absolute_path, rustfmt_source(&source_file.content)?)?;
 
     Ok(())
 }

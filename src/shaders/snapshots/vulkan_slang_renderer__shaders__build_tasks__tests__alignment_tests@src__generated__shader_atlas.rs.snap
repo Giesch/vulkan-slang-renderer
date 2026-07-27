@@ -4,6 +4,7 @@ info:
   relative_path: src/generated/shader_atlas.rs
 ---
 pub mod pointer_dual_context;
+pub mod pointer_params_compute;
 pub mod pointer_pointee_layout;
 pub mod std140_arrays;
 pub mod std140_matrices;
@@ -19,8 +20,6 @@ pub mod std430_nested_structs;
 pub mod std430_scalars;
 pub mod std430_vec3_padding;
 pub mod std430_vectors;
-pub mod pointer_params_compute;
-
 
 pub struct ShaderAtlas {
     pub pointer_dual_context: pointer_dual_context::Shader,

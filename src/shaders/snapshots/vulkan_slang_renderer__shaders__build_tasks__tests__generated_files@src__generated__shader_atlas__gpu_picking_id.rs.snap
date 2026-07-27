@@ -14,14 +14,14 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+pub use super::gpu_picking_common::Cube;
+pub use super::ray_march_camera::RayMarchCamera;
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
-pub use super::gpu_picking_common::{Cube};
-pub use super::ray_march_camera::{RayMarchCamera};
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
@@ -47,8 +47,6 @@ const _: () = assert!(std::mem::size_of::<ReadAddr<Cube>>() == 8);
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<GpuPickingIdParams>,
 }
-
-
 
 pub struct Shader {
     pub reflection_json: ReflectionJson,

@@ -82,8 +82,6 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<SerenityCRTParams>,
 }
 
-
-
 pub struct Shader {
     pub reflection_json: ReflectionJson,
 }

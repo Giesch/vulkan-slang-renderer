@@ -9,8 +9,8 @@ info:
 
 use serde::Serialize;
 
+use super::projection::Projection;
 use crate::renderer::gpu_write::GPUWrite;
-use super::projection::{Projection};
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);

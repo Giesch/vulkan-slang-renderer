@@ -14,13 +14,13 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+pub use super::mvp::MVPMatrices;
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
 use crate::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
-pub use super::mvp::{MVPMatrices};
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
@@ -104,10 +104,7 @@ impl Shader {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config(
-        self,
-        resources: Resources<'_>,
-    ) -> IndexedPipelineConfig<'_, Vertex> {
+    pub fn pipeline_config(self, resources: Resources<'_>) -> IndexedPipelineConfig<'_, Vertex> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
