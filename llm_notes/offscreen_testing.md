@@ -1,8 +1,26 @@
 # Offscreen testing: validation errors and golden images
 
-Status: **design, 2026-07-25. Not yet implemented.** Code references verified
+Status: **design, 2026-07-25. Partly implemented.** Code references verified
 against `link-phase-07-plan` @ 6b1868c. Measurements (driver capabilities,
 session type) taken on Dan's laptop on the same date.
+
+**What now exists.** The validation half — a sweep that runs every example
+under lavapipe and fails on validation output — ships as
+`scripts/headless-sweep.sh`, wired to `just headless-all`, and found a real
+renderer bug on its first full run. It is a *shell* harness: no
+`HeadlessConfig`, no counters, no frame limit, no virtual clock, no capture.
+It also does not use Xvfb — `SDL_VIDEODRIVER=offscreen` needs no X server at
+all — and it greps the log rather than reading an exit code, for the reason
+given in §2 below. See [`build_reproducibility.md`](build_reproducibility.md)
+§7 for what it does, what it deliberately owns about its environment, and how
+it was adversarially tested. Everything else in this note — §§1, 3-8, and all
+golden-image work — is still design.
+
+**Correction (2026-07-27) to point 2 below:** `timeout` sends **SIGTERM**, not
+SIGKILL, and SDL converts it into an `SDL_QUIT` event, so the event loop exits
+normally and `Drop` *does* run — measured three ways in
+[`build_reproducibility.md`](build_reproducibility.md) §7.4. Teardown leaks are
+therefore automatable today, provided `SDL_NO_SIGNAL_HANDLERS` stays unset.
 
 Companion documents: [`tech_debt.md`](tech_debt.md) — its §1 catalogues the
 teardown-time object leaks that produce validation errors at
@@ -20,9 +38,10 @@ Today the only way to check an example for Vulkan validation errors is
 problems:
 
 1. It opens a window on the dev machine.
-2. `timeout` SIGKILLs the process, so `drain_gpu()` (`src/app.rs:62`) and
-   `Drop for Renderer` (`src/renderer.rs:2782`) never run — and teardown is
-   precisely where the `tech_debt.md` §1 leaks report themselves.
+2. ~~`timeout` SIGKILLs the process, so `drain_gpu()` (`src/app.rs:62`) and
+   `Drop for Renderer` (`src/renderer.rs:2782`) never run~~ — **wrong, see the
+   correction below**; teardown is where the `tech_debt.md` §1 leaks report
+   themselves, and it does run.
 3. **There is no signal.** `vulkan_debug_utils_callback`
    (`src/renderer/debug.rs:14-49`) only calls `log::error!` and returns
    `vk::FALSE`. A run with 500 validation errors exits 0. Catching them means
@@ -220,9 +239,13 @@ check fires. It returns `Err`, which gives exit code 1 from `main()` with
 and generally real. `VKR_HEADLESS_ALLOW_WARNINGS=1` is the escape hatch,
 needed because lavapipe may emit warnings NVIDIA doesn't.
 
-**Known trap:** `get_max_usable_sample_count` (`:5001`) falls through to
-`TYPE_1` with a comment noting it triggers a validation error. Never pin
-`VKR_HEADLESS_MSAA=2` under lavapipe, which lacks 2× — see §9.
+**Known trap, since fixed:** `get_max_usable_sample_count` falls through to
+`TYPE_1` when the requested count is unsupported, and `record_command_buffer`
+used to resolve unconditionally from it — a validation error, which the sweep
+duly found (`build_reproducibility.md` §7.5). The single-sample path now skips
+the resolve attachment entirely, so pinning `VKR_HEADLESS_MSAA=2` under
+lavapipe, which lacks 2×, is merely a silent downgrade to 1× rather than an
+error — still not what you want for a comparison. See §9.
 
 ---
 

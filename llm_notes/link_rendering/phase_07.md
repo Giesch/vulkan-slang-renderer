@@ -328,8 +328,14 @@ done; echo "sweep clean"
 6. **Hot reload** — a fragment-body edit recompiles across all 24 pipelines
    with per-material raster state preserved (P6 proved this at 24-pipeline
    scale; re-confirm now that textures are bound).
-7. Clean exit via a real window close, **no VMA leak report** (`timeout`'s
-   SIGTERM skips `Drop`, so the leak check needs a manual close).
+7. Clean exit via a real window close, **no VMA leak report**.
+
+   > **Correction (2026-07-27).** `timeout`'s SIGTERM does *not* skip `Drop`:
+   > SDL's signal handler converts it into `SDL_QUIT`, the event loop exits
+   > normally, and teardown runs — measured in
+   > [`../build_reproducibility.md`](../build_reproducibility.md) §7.4. A
+   > manual close is not required; `SDL_NO_SIGNAL_HANDLERS=1` and `-s KILL`
+   > are what skip `Drop`.
 
 ## Verification (exit checklist)
 
