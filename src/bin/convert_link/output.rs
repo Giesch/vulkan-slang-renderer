@@ -2,9 +2,10 @@
 //! parsed `bmd::Model` and baked `pose::BakedModel` into
 //! `vulkan_slang_renderer::model_manifest` types plus `link.{vtx,idx,skin}.bin`.
 //!
-//! Enum→value mapping: renderer-facing raster state serializes as the GX
-//! `Display` names; TEV interpreter fields serialize as the raw GX byte values
-//! (`enum as u8`) the P6 shader packs into `uint4` uniforms.
+//! Enum→value mapping: renderer-facing raster state moves across as the shared
+//! `model_manifest` GX enums (which serialize as the canonical GX names); TEV
+//! interpreter fields serialize as the raw GX byte values (`enum as u8`) the P6
+//! shader packs into `uint4` uniforms.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -14,6 +15,7 @@ use vulkan_slang_renderer::model_manifest as mm;
 
 use crate::bmd::Model;
 use crate::bmd::mat3::{self, Material};
+use crate::gx::types::{CompareType, CullMode};
 use crate::pose::BakedModel;
 
 /// The two ramp name-prefixes the game injects at runtime (`setToonTex`):
@@ -109,9 +111,9 @@ fn build_textures(model: &Model) -> Vec<mm::TextureEntry> {
             mm::TextureEntry {
                 name: e.name.clone(),
                 file,
-                wrap_u: h.wrap_s.to_string(),
-                wrap_v: h.wrap_t.to_string(),
-                filter: h.min_filter.to_string(),
+                wrap_u: h.wrap_s,
+                wrap_v: h.wrap_t,
+                filter: h.min_filter,
                 mipmaps: h.mipmap_count > 1,
                 runtime_substitution: substitution,
             }
@@ -136,29 +138,23 @@ fn material_entry(name: &str, record: u16, m: &Material) -> mm::MaterialEntry {
     mm::MaterialEntry {
         name: name.to_string(),
         record,
-        pe_mode: m.pe_mode.to_string(),
-        cull: m
-            .cull_mode
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "Cull_Back".into()),
+        pe_mode: m.pe_mode,
+        cull: m.cull_mode.unwrap_or(CullMode::Back),
         z_test: z.as_ref().map(|z| z.test).unwrap_or(true),
-        z_func: z
-            .as_ref()
-            .map(|z| z.func.to_string())
-            .unwrap_or_else(|| "Less_Equal".into()),
+        z_func: z.as_ref().map(|z| z.func).unwrap_or(CompareType::LessEqual),
         z_write: z.as_ref().map(|z| z.write).unwrap_or(true),
         z_compare_early: m.z_compare_loc.unwrap_or(true),
         blend: m.blend.as_ref().map(|b| mm::BlendState {
-            mode: b.mode.to_string(),
-            src: b.src.to_string(),
-            dst: b.dst.to_string(),
-            logic: b.logic.to_string(),
+            mode: b.mode,
+            src: b.src,
+            dst: b.dst,
+            logic: b.logic,
         }),
         alpha_compare: m.alpha_compare.as_ref().map(|a| mm::AlphaCompareState {
-            comp0: a.comp0.to_string(),
+            comp0: a.comp0,
             ref0: a.ref0,
-            op: a.op.to_string(),
-            comp1: a.comp1.to_string(),
+            op: a.op,
+            comp1: a.comp1,
             ref1: a.ref1,
         }),
         dither: m.dither.unwrap_or(false),
@@ -230,10 +226,10 @@ fn material_entry(name: &str, record: u16, m: &Material) -> mm::MaterialEntry {
             .flatten()
             .map(|c| mm::ChannelState {
                 lighting_enabled: c.lighting_enabled,
-                mat_src: c.mat_src.to_string(),
-                amb_src: c.amb_src.to_string(),
-                diffuse: c.diffuse.to_string(),
-                attenuation: c.attenuation.to_string(),
+                mat_src: c.mat_src,
+                amb_src: c.amb_src,
+                diffuse: c.diffuse,
+                attenuation: c.attenuation,
                 lit_mask: c.lit_mask,
             })
             .collect(),

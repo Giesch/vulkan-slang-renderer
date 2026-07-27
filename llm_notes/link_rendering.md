@@ -339,7 +339,10 @@ Two committed, hand-written files:
   `{ float3 position; float3 normal; float2 uv0; }` (cl.bdl has no vertex
   colors or second UV — rasterized color comes from the register-sourced
   lighting channel), `ParameterBlock` with one `ToonLinkParams` uniform +
-  4 × `Sampler2D` (tex0..tex3; unused slots bound to a 1×1 white dummy).
+  ~~4~~ **2** × `Sampler2D` (tex0/tex1; the unused slot bound to a 1×1 white
+  dummy). *(P7 measured the actual surface: no material uses more than two
+  texmaps, always slots 0 and 1 — see
+  [`link_rendering/phase_07.md`](link_rendering/phase_07.md) decision 1.)*
 
 The shader is a **data-driven interpreter**: per-material TEV configuration
 arrives as uniform data built from the manifest. Uniform layout uses **flat
@@ -520,8 +523,15 @@ impl PipelineConfig<…> { pub fn with_raster_state(mut self, s: RasterState) ->
   phase plan): the template emits a complete struct literal, so `build()`
   defaults the state and `with_raster_state` overrides it. This is what keeps
   P5 snapshot-neutral outside `multi_mesh`.
-- `BlendMode::DstAlpha` deliberately does not exist yet; Link's one
-  destination-alpha material lands with the eye trick in P9.
+- `BlendMode::DstAlpha` deliberately does not exist yet; Link's
+  destination-alpha materials land with the eye trick in P9. *(Refined by P7's
+  measurement: there are **4** of them — `eyeL`, `eyeR`, `mayuL`, `mayuR` —
+  not one, and P7 maps them to `Opaque`, which is numerically exact while the
+  framebuffer alpha at those pixels is 1. It is: the clear is alpha 1.0, every
+  opaque albedo is alpha-255 at every texel, and those four are the first
+  translucent batches drawn. See
+  [`link_rendering/phase_07.md`](link_rendering/phase_07.md) decision 2 and
+  risk 3.)*
   Detailed plan and results:
   [`link_rendering/phase_05.md`](link_rendering/phase_05.md).
 
@@ -601,7 +611,9 @@ frame.
   (dolphin-memory-engine + tww symbols, see tests.md); fed into
   `reg[0]`/konst slots the way `setLightTevColorType` does (C0 = light color,
   K0/K1 = ambient; see `../tww/src/d/d_kankyo.cpp`). Then queue one
-  `queue_draw_index_range` per batch in manifest order and finish with
+  `queue_draw_index_range` per batch — INF1 order in P6, and from P7 a stable
+  partition of it into opaque-then-translucent by `pe_mode` (J3D's two-pass
+  rule; INF1 order is preserved within each group) — and finish with
   `submit_draws(|gpu| { /* write all per-material uniforms */ })`.
 
 ## 6. Phases & verification
@@ -620,7 +632,7 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P4** ✅ `4621112` | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) — detailed plan: [`link_rendering/phase_04.md`](link_rendering/phase_04.md) | **as run**: `just test` green (pre-existing per-shader snapshots byte-identical); `just lint` clean; validation sweep 15/15 examples; multi_mesh tiles its index buffer exactly, perturbation test confirms gaps/spikes/`debug_assert`; multi-pipeline hot reload clean; no VMA leak on exit | 2 days |
 | **P5** ✅ | renderer 4.3 + 4.4 (raster state, texture options); `examples/multi_mesh.rs` grew 12 view-space test panels (17 pipelines, 18 draws, 7 texture handles, 3 procedural images) — detailed plan: [`link_rendering/phase_05.md`](link_rendering/phase_05.md) | **as run**: `just test` green, snapshot churn exactly multi_mesh's `.rs`+`.json` (branching snapshot unmoved, no atlas-index change); `RasterState` default-equivalence + enum-mapping unit tests; `just lint` clean; validation sweep 15/15 (run twice — once with examples untouched); every test object shows its artifact, **all six fields perturbed and reverted**, each artifact vanishing; sRGB-vs-UNORM verified numerically (117 vs 172, linear ratio 2.32); hot reload keeps per-pipeline raster state; clean exit with no VMA leak, and the leak check itself validated by injecting one | 1–2 days |
 | **P6** ✅ `9508563` | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches — detailed plan: [`link_rendering/phase_06.md`](link_rendering/phase_06.md) (Step 1's smoke test superseded by the vec4-array mini-phase `0d08a7d`) | **as run**: `just test` green (churn = toon_link additions only); correctly shaped Link over a full orbit, smooth normal gradients; **winding flipped in the converter** (risk #3: model was inside-out under manifest cull; one-line `link.idx.bin` sha256 update, `just link-verify-p3` green); all 24 isolation batches identified; UV mode clean; hot reload at 24-pipeline scale keeps raster state; validation sweep 16/16; no VMA leak on real close | 1–2 days |
-| **P7** | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state | UV features vs noclip (face decals, eyes, belt buckle, tunic pattern); clean alpha-cutout edges on brows/lashes; no missing parts from per-material cull | 1 day |
+| **P7** 🚧 code landed, **unverified** | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state; plus `pe_mode` draw ordering and inverse-sRGB output (pulled forward from P8) — detailed plan: [`link_rendering/phase_07.md`](link_rendering/phase_07.md) | **static gates pass** (shader + bindings regenerated, churn confined to `toon_link`, `cargo check --all-targets` / clippy debug+release / fmt clean, converter and golden hashes untouched). **Every runtime gate is still outstanding**: written in a headless container with no video device and no converted assets, so UV features vs noclip, alpha-cutout edges, per-material cull, and especially the **numeric** gamma check (the gate for the sRGB transfer direction) have not been observed. Run these before marking ✅ | 1 day |
 | **P8** | full TEV interpreter + lighting channel + SRTG ramp + gamma handling; subset gate final; single-material isolation debug key in the example | structured side-by-side vs noclip + golden Dolphin frames (`just link-dolphin-refs`, headless `.dff` replay) per feature (skin, tunic bands, hair highlight, eye whites); rotate light — terminator bands sweep and stay banded; isolate batch N for any wrong material; TEV semantic disputes adjudicated via FIFO analyzer (runtime BP/XF state) + software-renderer replay; optional CPU TEV reference evaluator if pixel-chasing gets hard | 3–5 days |
 | **P9** | optional polish: `--casual` clothes; eye write-mask multi-pass; BCK-sampled pose | casual: P7-style UV checks; eye trick vs **Dolphin** (noclip may not implement it) | 2+ days |
 
@@ -674,7 +686,10 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
 5. ~~**SRTG texgen details**~~ — *resolved by the P2 dump*: SRTG sources
    COLOR0 with the identity matrix; no texture matrix on the ramp path. Two
    findings replace it: (a) 2 **non-identity texture matrices** exist
-   (TEXMTX1 on one MTX2x4 texgen) — small, but in scope now; (b) **swap
+   (TEXMTX1 on one MTX2x4 texgen) — small, but in scope now; *P7 pinned them
+   down: they are `eyeL`/`eyeR`'s **texcoord 1** (the `hitomi` pupil), so
+   nothing before P8 evaluates them, and every material's texcoord 0 is the
+   plain identity `MTX2x4 · TEX0 · GX_IDENTITY`*; (b) **swap
    tables** are used by 12 materials (channel broadcasts) and must be in the
    interpreter — see §3.
 6. **S10 register semantics** — TEV intermediates are signed 10-bit, clamped

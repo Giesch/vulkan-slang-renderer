@@ -4,52 +4,20 @@
 //! ../tww/include/dolphin/gx/GXEnum.h; canonical `Display` spellings are the
 //! shared vocabulary of the MAT3 diff gate (scripts/link_mat3_table.py prints
 //! the same names from gclib's enums).
+//!
+//! The enums the manifest serializes (`CullMode`, `CompareType`, the blend and
+//! channel state, texture wrap/filter, …) are defined in the library's
+//! `model_manifest` alongside the schema that carries them, and re-exported here
+//! so every `crate::gx::types::` path names the same type either way. What stays
+//! below is everything the manifest never carries: the BMD/BTI parsing
+//! vocabulary.
 
-use std::fmt;
+use vulkan_slang_renderer::gx_enum;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GxEnumError {
-    pub kind: &'static str,
-    pub value: u32,
-}
-
-impl fmt::Display for GxEnumError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid {} value {:#x}", self.kind, self.value)
-    }
-}
-
-impl std::error::Error for GxEnumError {}
-
-/// Declares a GX enum with `TryFrom<u8>` and a canonical `Display` string
-/// (the exact spelling the MAT3 oracle prints for the same value).
-macro_rules! gx_enum {
-    ($(#[$meta:meta])* $name:ident { $($variant:ident = $val:literal => $canon:literal,)+ }) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub enum $name {
-            $($variant = $val,)+
-        }
-
-        impl TryFrom<u8> for $name {
-            type Error = GxEnumError;
-            fn try_from(value: u8) -> Result<Self, Self::Error> {
-                match value {
-                    $($val => Ok(Self::$variant),)+
-                    _ => Err(GxEnumError { kind: stringify!($name), value: value as u32 }),
-                }
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(match self {
-                    $(Self::$variant => $canon,)+
-                })
-            }
-        }
-    };
-}
+pub use vulkan_slang_renderer::model_manifest::{
+    AlphaOp, AttenuationFunction, BlendFactor, BlendMode, ColorSrc, CompareType, CullMode,
+    DiffuseFunction, FilterMode, GxEnumError, LogicOp, PixelEngineMode, WrapMode,
+};
 
 gx_enum! {
     /// GXTexFmt / file-format byte of ResTIMG (GXEnum.h:357–370, 455–457)
@@ -74,142 +42,6 @@ gx_enum! {
         Ia8 = 0x0 => "IA8",
         Rgb565 = 0x1 => "RGB565",
         Rgb5a3 = 0x2 => "RGB5A3",
-    }
-}
-
-gx_enum! {
-    /// GXTexWrapMode (GXEnum.h:432–434)
-    WrapMode {
-        Clamp = 0x0 => "ClampToEdge",
-        Repeat = 0x1 => "Repeat",
-        Mirror = 0x2 => "MirroredRepeat",
-    }
-}
-
-gx_enum! {
-    /// GXTexFilter (GXEnum.h:439–444)
-    FilterMode {
-        Nearest = 0x0 => "Nearest",
-        Linear = 0x1 => "Linear",
-        NearestMipNearest = 0x2 => "NearestMipmapNearest",
-        LinearMipNearest = 0x3 => "LinearMipmapNearest",
-        NearestMipLinear = 0x4 => "NearestMipmapLinear",
-        LinearMipLinear = 0x5 => "LinearMipmapLinear",
-    }
-}
-
-gx_enum! {
-    /// J3D material pixel-engine mode (gclib PixelEngineMode)
-    PixelEngineMode {
-        Opaque = 0x1 => "Opaque",
-        AlphaTest = 0x2 => "Alpha_Test",
-        Translucent = 0x4 => "Translucent",
-    }
-}
-
-gx_enum! {
-    /// GXCullMode (GXEnum.h:17–20); stored as u32 in MAT3's list
-    CullMode {
-        None = 0x0 => "Cull_None",
-        Front = 0x1 => "Cull_Front",
-        Back = 0x2 => "Cull_Back",
-        All = 0x3 => "Cull_All",
-    }
-}
-
-gx_enum! {
-    /// GXCompare (GXEnum.h:466–473)
-    CompareType {
-        Never = 0x0 => "Never",
-        Less = 0x1 => "Less",
-        Equal = 0x2 => "Equal",
-        LessEqual = 0x3 => "Less_Equal",
-        Greater = 0x4 => "Greater",
-        NotEqual = 0x5 => "Not_Equal",
-        GreaterEqual = 0x6 => "Greater_Equal",
-        Always = 0x7 => "Always",
-    }
-}
-
-gx_enum! {
-    /// GXAlphaOp (GXEnum.h:477–480)
-    AlphaOp {
-        And = 0x0 => "AND",
-        Or = 0x1 => "OR",
-        Xor = 0x2 => "XOR",
-        Xnor = 0x3 => "XNOR",
-    }
-}
-
-gx_enum! {
-    /// GXColorSrc (GXEnum.h:92–93)
-    ColorSrc {
-        Register = 0x0 => "Register",
-        Vertex = 0x1 => "Vertex",
-    }
-}
-
-gx_enum! {
-    /// GXDiffuseFn (GXEnum.h:110–112)
-    DiffuseFunction {
-        None = 0x0 => "None_",
-        Signed = 0x1 => "Signed",
-        Clamp = 0x2 => "Clamp",
-    }
-}
-
-gx_enum! {
-    /// GXAttnFn (GXEnum.h:116–118)
-    AttenuationFunction {
-        Specular = 0x0 => "Specular",
-        Spot = 0x1 => "Spot",
-        None = 0x2 => "None_",
-    }
-}
-
-gx_enum! {
-    /// GXBlendMode (GXEnum.h:147–150)
-    BlendMode {
-        None = 0x0 => "None_",
-        Blend = 0x1 => "Blend",
-        Logic = 0x2 => "Logic",
-        Subtract = 0x3 => "Subtract",
-    }
-}
-
-gx_enum! {
-    /// GXBlendFactor (GXEnum.h:155–164); src/dst-color aliases share values
-    BlendFactor {
-        Zero = 0x0 => "Zero",
-        One = 0x1 => "One",
-        SourceColor = 0x2 => "Source_Color",
-        InverseSourceColor = 0x3 => "Inverse_Source_Color",
-        SourceAlpha = 0x4 => "Source_Alpha",
-        InverseSourceAlpha = 0x5 => "Inverse_Source_Alpha",
-        DestinationAlpha = 0x6 => "Destination_Alpha",
-        InverseDestinationAlpha = 0x7 => "Inverse_Destination_Alpha",
-    }
-}
-
-gx_enum! {
-    /// GXLogicOp (GXEnum.h:168–183)
-    LogicOp {
-        Clear = 0x0 => "CLEAR",
-        And = 0x1 => "AND",
-        RevAnd = 0x2 => "REV_AND",
-        Copy = 0x3 => "COPY",
-        InvAnd = 0x4 => "INV_AND",
-        Noop = 0x5 => "NOOP",
-        Xor = 0x6 => "XOR",
-        Or = 0x7 => "OR",
-        Nor = 0x8 => "NOR",
-        Equiv = 0x9 => "EQUIV",
-        Inv = 0xA => "INV",
-        RevOr = 0xB => "REV_OR",
-        InvCopy = 0xC => "INV_COPY",
-        InvOr = 0xD => "INV_OR",
-        Nand = 0xE => "NAND",
-        Set = 0xF => "SET",
     }
 }
 

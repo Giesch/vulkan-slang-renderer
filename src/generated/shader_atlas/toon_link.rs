@@ -24,15 +24,21 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[repr(C, align(16))]
 pub struct ToonLinkParams {
     pub mvp: MVPMatrices,
+    pub alpha_compare: glam::UVec4,
+    pub alpha_compare_op: u32,
     pub debug_mode: u32,
-    pub _padding_0: [u8; 12],
+    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for ToonLinkParams {}
-const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 208);
+const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 224);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
-const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 192);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare) == 192);
+const _: () = assert!(std::mem::size_of::<glam::UVec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare_op) == 208);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 212);
 const _: () = assert!(std::mem::size_of::<u32>() == 4);
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -46,6 +52,8 @@ pub struct Vertex {
 impl GPUWrite for Vertex {}
 
 pub struct Resources<'a> {
+    pub tex0: &'a TextureHandle,
+    pub tex1: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<ToonLinkParams>,
 }
 
@@ -101,6 +109,8 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
+            resources.tex0,
+            resources.tex1,
         ];
 
         #[rustfmt::skip]

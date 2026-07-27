@@ -12,6 +12,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 1. [Vulkan objects leak when an init function fails partway](#1-vulkan-objects-leak-when-an-init-function-fails-partway) — cleanup debt, diagnostic cost
 2. [Dangling pipeline when a hot reload's `create_graphics_pipeline` fails](#2-dangling-pipeline-when-a-hot-reloads-create_graphics_pipeline-fails) — **correctness bug**, debug builds only
 3. [Remove the legacy `disable_depth_test` flag](#3-remove-the-legacy-disable_depth_test-flag) — carries a **behavior-change trap**, see §3.1
+4. [Duplicate struct names across shared slang modules resolve by silent last-write-wins](#4-duplicate-struct-names-across-shared-slang-modules-resolve-by-silent-last-write-wins) — latent **silent-wrong-output** hazard in codegen
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -201,3 +202,84 @@ review the diff shape once and then `cargo insta test --accept`. Verify with
 `timeout 3 just dev sprite_batch` and `space_invaders` — the failure mode to
 watch for is sprites vanishing or z-fighting, which would mean the depth state
 didn't actually carry over.
+
+## 4. Duplicate struct names across shared slang modules resolve by silent last-write-wins
+
+**The problem.** The codegen resolves Slang struct names through a single flat
+namespace with no qualification by module. `reflect_shared_module_types`
+(`src/shaders.rs:207-253`) walks every shared (non-shader) `.slang` module and
+records each struct it declares:
+
+```rust
+let mut type_to_module: HashMap<String, String> = HashMap::new();
+for &module_name in module_names {
+    // ...
+    type_to_module.insert(name.to_string(), module_name.to_string());   // :247
+}
+```
+
+The key is the bare struct name. If two shared modules declare the same struct
+name, the second `insert` silently overwrites the first — no warning, no error.
+That map is not cosmetic: `tag_source_modules` (`src/shaders/build_tasks.rs:1347`)
+uses it to set each definition's `source_module`, which decides **which
+`src/generated/shader_atlas/<module>.rs` owns the generated type** and which
+`use` line every consuming shader emits. So a name collision silently relocates a
+generated type, and the shader that "lost" gets a `use` pointing at the other
+module's definition of a same-named but potentially differently-laid-out struct.
+
+**Why it's tolerable today.** No collision exists. The 11 shared modules in
+`shaders/source/` declare 10 struct names, all distinct: `ClosestShape` and
+`RayHitDistance` (`ray_march`), `Cube` / `FragInput` / `RayMarchHit`
+(`gpu_picking_common`), `FullscreenPosition` (`fullscreen_triangle`),
+`MVPMatrices` (`mvp`), `Particle` (`particle`), `Projection` (`projection`),
+`RayMarchCamera` (`ray_march_camera`). The remaining modules (`addr`,
+`dragon_curve`, `super_sample`, `watercolor_common`) declare no structs.
+
+Note what changed and what didn't when the codegen was made
+order-independent (`link_rendering/follow_up.md` §5b): `reflect_slang_module_types`
+now sorts its module list, so the collision *winner* is at least reproducible
+across machines. But reproducible is not correct — the rule is now "whichever
+module name sorts last," which nobody would choose on purpose and which will read
+as a bug the first time someone hits it. Sorting removed the
+machine-to-machine variation that would have made this *undebuggable*; it did
+not remove the hazard.
+
+**The in-repo precedent for the fix.** One level down, the analogous case is
+already handled the right way. `collect_shared_modules`
+(`src/shaders/build_tasks.rs:1368-1397`) panics when the same shared type turns up
+with an incompatible layout in two shaders, and its comment says exactly why:
+
+```rust
+// a shared type must have the same layout in every shader
+// that uses it; first-definition-wins would silently drop
+// one of two diverging layouts
+```
+
+§4 is that same principle applied one level up, at module-level name collisions.
+It also matches the policy the vec4-array mini-phase settled on
+(`link_rendering/follow_up.md` §1): support the honest subset, hard actionable
+error otherwise.
+
+**Fix.** Cheap — `HashMap::insert` already returns the displaced value, so detect
+the collision instead of discarding it:
+
+```rust
+if let Some(prev_module) = type_to_module.insert(name.to_string(), module_name.to_string())
+    && prev_module != module_name
+{
+    anyhow::bail!(
+        "struct '{name}' is declared in two shared slang modules \
+         ('{prev_module}' and '{module_name}'); generated types are keyed by \
+         bare struct name, so rename one",
+    );
+}
+```
+
+The function already returns `anyhow::Result`, so this needs no signature change.
+
+**Done means.** Two shared modules declaring the same struct name fail
+`just shaders` with a message naming the type and both modules. Coverage wrinkle:
+this case **cannot** live in `shaders/test/` as an atlas fixture, because a
+fixture that fails would break `alignment_tests` for every other case in the
+directory. It needs a unit test that writes two colliding modules into a temp dir
+and calls `reflect_shared_module_types` directly.
