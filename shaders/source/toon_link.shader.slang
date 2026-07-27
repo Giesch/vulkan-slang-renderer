@@ -4,6 +4,13 @@ module toon_link;
 
 import mvp;
 
+enum DebugMode : uint {
+    Albedo = 0,
+    WorldNormals = 1,
+    Uv0 = 2,
+    AlbedoAlpha = 3,
+}
+
 ParameterBlock<ToonLinkParams> params;
 
 struct ToonLinkParams {
@@ -20,12 +27,10 @@ struct ToonLinkParams {
     //            GREATER 4, NEQUAL 5, GEQUAL 6, ALWAYS 7
     uint4 alphaCompare;      // comp0, ref0, comp1, ref1
     uint  alphaCompareOp;    // GXAlphaOp: AND 0, OR 1, XOR 2, XNOR 3
-    // 0 albedo, 1 world normals, 2 uv0, 3 albedo alpha as gray
-    //
     // NOTE: changing this struct's shape while `just dev` runs trips
     // assert_shader_interface_unchanged — body edits hot-reload, shape
     // edits need `just shaders` + a restart.
-    uint  debugMode;
+    DebugMode debugMode;
 }
 
 struct Vertex {
@@ -108,20 +113,20 @@ float4 fragMain(FragVertex fragVertex) : SV_TARGET {
 
     float3 color;
     switch (params.debugMode) {
-    case 1:
+    case DebugMode.WorldNormals:
         // world-space normals as color (the P6 diagnostic)
         color = normalize(fragVertex.normal) * 0.5 + 0.5;
         break;
-    case 2:
+    case DebugMode.Uv0:
         // uv0: red = u, green = v
         color = float3(fragVertex.uv0, 0.0);
         break;
-    case 3:
+    case DebugMode.AlbedoAlpha:
         // albedo alpha as grayscale — the cutout mask, before the discard
         color = float3(texel.a);
         break;
     default:
-        // albedo (mode 0)
+        // DebugMode.Albedo
         color = texel.rgb;
         break;
     }

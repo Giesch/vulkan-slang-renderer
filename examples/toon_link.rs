@@ -390,7 +390,7 @@ pub struct ToonLink {
     /// group (J3D two-pass draw ordering). Walked by `draw` instead of the raw
     /// manifest order.
     draw_order: Vec<BatchIndex>,
-    debug_mode: u32,
+    debug_mode: DebugMode,
     isolate: Option<BatchIndex>,
 }
 
@@ -559,7 +559,7 @@ impl Game for ToonLink {
             pipelines,
             alpha_compares,
             draw_order,
-            debug_mode: 0,
+            debug_mode: DebugMode::Albedo,
             isolate: None,
         })
     }
@@ -609,10 +609,10 @@ impl Game for ToonLink {
 
         let batch_count = self.manifest.batches.len();
         match key {
-            Key::Num1 => self.debug_mode = 0,
-            Key::Num2 => self.debug_mode = 1,
-            Key::Num3 => self.debug_mode = 2,
-            Key::Num4 => self.debug_mode = 3,
+            Key::Num1 => self.debug_mode = DebugMode::Albedo,
+            Key::Num2 => self.debug_mode = DebugMode::WorldNormals,
+            Key::Num3 => self.debug_mode = DebugMode::Uv0,
+            Key::Num4 => self.debug_mode = DebugMode::AlbedoAlpha,
 
             Key::Q => {
                 self.isolate = Some(match self.isolate {
