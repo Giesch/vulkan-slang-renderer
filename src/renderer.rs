@@ -1752,16 +1752,38 @@ impl Renderer {
         };
 
         // MSAA color renders at msaa_samples and resolves into this frame's resolve
-        // image; only the resolved output is consumed (by the upscale blit)
+        // image; only the resolved output is consumed (by the upscale blit).
+        //
+        // get_max_usable_sample_count falls back to TYPE_1 whenever the requested
+        // level isn't among the device's framebuffer sample counts, and resolving
+        // from a single-sample attachment is a spec violation
+        // (VUID-VkRenderingAttachmentInfo-imageView-06861). With one sample there
+        // is nothing to resolve, so render straight into the resolve image - which
+        // is what the blit reads either way - and keep the contents.
+        let multisampled = self.msaa_samples != vk::SampleCountFlags::TYPE_1;
+        let resolve_image_view = self.resolve_image_views[self.flight_slot];
         let color_attachment = vk::RenderingAttachmentInfo::default()
-            .image_view(self.color_image_view)
+            .image_view(if multisampled {
+                self.color_image_view
+            } else {
+                resolve_image_view
+            })
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .resolve_mode(vk::ResolveModeFlags::AVERAGE)
-            .resolve_image_view(self.resolve_image_views[self.flight_slot])
-            .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .store_op(if multisampled {
+                vk::AttachmentStoreOp::DONT_CARE
+            } else {
+                vk::AttachmentStoreOp::STORE
+            })
             .clear_value(clear_color);
+        let color_attachment = if multisampled {
+            color_attachment
+                .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+                .resolve_image_view(resolve_image_view)
+                .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        } else {
+            color_attachment
+        };
         let color_attachments = [color_attachment];
         let depth_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.depth_image_view)
@@ -4997,8 +5019,9 @@ fn get_max_usable_sample_count(
         }
     }
 
-    // NOTE this will trigger a validation error;
-    // supposed to not use resolve attachment setup at all if not using msaa
+    // NOTE record_command_buffer checks for this and skips the resolve
+    // attachment setup entirely; a resolve from a single-sample attachment is a
+    // validation error
     vk::SampleCountFlags::TYPE_1
 }
 
