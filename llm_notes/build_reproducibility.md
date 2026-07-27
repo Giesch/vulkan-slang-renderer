@@ -1,6 +1,6 @@
 # Build & test reproducibility
 
-Status, per section, re-checked against `main` @ `aae5b71`:
+Status, per section, re-checked against `main` @ `caaf66a`:
 
 | § | topic | state |
 |---|---|---|
@@ -15,7 +15,12 @@ Status, per section, re-checked against `main` @ `aae5b71`:
 Every problem below was hit while implementing
 [`link_rendering/phase_07.md`](link_rendering/phase_07.md) in a fresh cloud
 container, and every diagnosis was verified on that machine — originally
-against `main` @ `3c36467`, and re-checked after merging `aae5b71`.
+against `main` @ `3c36467`, and re-checked after merging `caaf66a`.
+
+Two of the things this note reported have since been fixed on `main` by other
+work (§1's ordering fix, and the `sprite_batch` MSAA bug §7.5 found), in both
+cases more thoroughly than proposed here. Their sections say so and the
+superseded code was dropped from this branch rather than left to conflict.
 
 Companion documents: [`offscreen_testing.md`](offscreen_testing.md) — its
 `just headless-all` design is what §7 finally makes reachable;
@@ -48,9 +53,10 @@ assumed to need a GPU.
 were injected on purpose to confirm the sweep notices them, which turned up
 five ways it can silently pass a broken example, a correction to what the
 existing docs say about `timeout` and `Drop`, and one real pre-existing
-renderer bug. That bug (`sprite_batch`'s MSAA fallback, §7.5) and the
-`sdf_2d` audio abort (§7.1) are **both fixed in this PR**, so the full sweep
-now exits 0. §1–§6 remain plan-only.
+renderer bug. Of the two examples the sweep flagged, the `sdf_2d` audio abort
+(§7.1) is fixed on this branch, and the `sprite_batch` MSAA fallback (§7.5) was
+fixed on `main` in `b260973`. Either way the full sweep now exits 0.
+§2–§6 remain plan-only.
 
 ---
 
@@ -473,24 +479,28 @@ This is a **genuine latent renderer bug in the MSAA fallback path**, not a
 lavapipe quirk: it fires on any device that doesn't support the requested
 sample count. It has simply been invisible because the dev GPU supports 2×.
 
-**Fixed in this PR.** With one sample there is nothing to resolve, so
-`record_command_buffer` now renders straight into
-`resolve_image_views[flight_slot]` — which the upscale blit reads either way —
-with `store_op: STORE` and no resolve attachment at all. The multisampled path
-is byte-for-byte what it was.
+**Fixed on `main` in `b260973`** (PR #8, "Add `MaxMSAASamples::Off` and use it
+in the sprite_batch example"), and more thoroughly than the version this branch
+originally carried. Both make the attachment conditional — render straight into
+`resolve_image_views[flight_slot]` with `store_op: STORE` and no resolve when
+there is one sample — but `main` also turns the multisampled color image into
+an `Option<MsaaColorImage>` that **isn't allocated at all** when MSAA is off,
+which this branch had left as allocated-but-unused and noted as out of scope.
+`main`'s version supersedes it, so the `renderer.rs` change was dropped from
+this branch on merge.
 
-Worth noting for review: **on a GPU that supports 2× MSAA this changes
-nothing.** `sprite_batch` keeps taking the multisampled branch there, so the
-new branch is dead code on the dev machine and only activates where the
-requested count is unavailable. Both branches are exercised by the sweep on
-this container — `sprite_batch` at 1× and every other example at 4× — and all
-are validation-clean.
+Checked while dropping it, because it is the part that could quietly regress:
+`create_color_image` returns `None` based on the **resolved** `msaa_samples`
+(`renderer.rs:5038`), which is `get_max_usable_sample_count`'s output including
+its `TYPE_1` fallback — not on the requested `MaxMSAASamples` enum. So the
+original root cause (device lacks the requested count → fallback → invalid
+resolve) is genuinely fixed, not merely sidestepped by switching `sprite_batch`
+to `Off`. Re-verified: the full sweep is green on this container with this
+branch carrying no renderer change at all.
 
-Caveat on the verification: this confirms the path is **spec-clean**, not that
-the pixels are right, since the sweep has no golden images (§7.6). The
-reasoning for correctness is that the blit's source image is now written
-directly with `STORE` instead of receiving an undefined resolve, which is
-strictly better-defined than what it replaced.
+Caveat on the verification, unchanged: the sweep confirms the path is
+**spec-clean**, not that the pixels are right, since there are no golden images
+(§7.6).
 
 It is also a fair illustration of the one caveat: **a software driver's limits
 differ from a real GPU's.** Here that difference surfaced a real bug in an
