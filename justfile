@@ -79,7 +79,7 @@ sprites:
 test:
     INSTA_UPDATE=no cargo test
 
-# run and review snapshot tests interactively
+# run and review snapshot tests interactively (needs `just install-tools`)
 [unix] # currently broken on windows, see build_tasks.rs
 insta:
     cargo insta test --review
@@ -108,17 +108,35 @@ pre-commit: shaders && lint test
 init-submodules:
   git submodule update --init --recursive
 
+# install the debian/ubuntu system packages needed to build (best-effort, distro-specific)
+[unix]
+install-deps-debian:
+    sudo apt-get install -y clang cmake ninja-build libasound2-dev libvulkan-dev
+
+# install the extra debian/ubuntu packages needed by `just headless-all`
+[unix]
+install-deps-headless-debian:
+    sudo apt-get install -y mesa-vulkan-drivers vulkan-validationlayers
+
+# install the cargo tools the documented workflows use
+install-tools:
+    cargo install cargo-insta
+
+# NOTE: the tests and slang-rhi dependency are disabled in both recipes below.
+# They are *required* on linux: slang-rhi's cmake unconditionally fetches the
+# OptiX headers, which fails without network access (and nothing here uses
+# slang-rhi - we link slang-compiler, compiler-core and core, never gfx).
+# The static build deliberately produces no libslang.a; libslang-compiler.a,
+# libcompiler-core.a and libcore.a are what slang-sys links under its 'static'
+# feature.
 # build slang as a static library (requires cmake and ninja)
 [unix]
 build-slang:
   cd slang && \
-    cmake --preset default -DSLANG_LIB_TYPE=STATIC && \
+    cmake --preset default -DSLANG_LIB_TYPE=STATIC \
+      -DSLANG_ENABLE_SLANG_RHI=OFF -DSLANG_ENABLE_TESTS=OFF && \
     cmake --build --preset release
 
-# NOTE: the tests and slang-rhi dependency are disabled below.
-# The slang-rhi fix this was waiting on (https://github.com/shader-slang/slang-rhi/pull/630)
-# is included in the slang-rhi pinned by slang v2026.13.1, so these flags are
-# likely removable; keeping them until that's verified on a Windows machine.
 # build slang as a static library (requires cmake, ninja, python3, and visual studio)
 [windows]
 build-slang:

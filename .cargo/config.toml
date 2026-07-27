@@ -1,0 +1,17 @@
+# Slang build paths for every cargo invocation, including a bare `cargo test`
+# in a shell where direnv never ran (CI, `bash -c`, an agent session). Without
+# this, anything outside an interactive direnv shell fails to build with
+# "The environment variable SLANG_INCLUDE_DIR, SLANG_DIR, or VULKAN_SDK must be set".
+#
+# `force` is left at its default of false, so a value already in the
+# environment - from `.envrc`, `scripts/load-env.sh` or `scripts/load-env.ps1` -
+# still wins. `relative = true` resolves the path against the directory
+# containing this `.cargo` directory, i.e. the repo root, which is what the
+# `$PWD` in `.env` is there for.
+#
+# Note this only covers processes cargo launches. A binary run directly
+# (`target/debug/examples/foo`) still needs one of the scripts above.
+[env]
+SLANG_LIB_DIR = { value = "slang/build/Release/lib", relative = true }
+SLANG_INCLUDE_DIR = { value = "slang/build/Release/include", relative = true }
+SLANG_EXTERNAL_DIR = { value = "slang/build/external", relative = true }
