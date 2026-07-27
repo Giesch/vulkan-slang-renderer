@@ -1,14 +1,27 @@
 # Build & test reproducibility
 
-Status: **plan, 2026-07-26. Not yet implemented.** Every problem below was hit
-while implementing [`link_rendering/phase_07.md`](link_rendering/phase_07.md)
-in a fresh cloud container, and every diagnosis here was verified on this
-machine against `main` @ `3c36467`.
+Status, per section, re-checked against `main` @ `aae5b71`:
+
+| § | topic | state |
+|---|---|---|
+| 1 | shader-atlas ordering nondeterminism | ✅ **done on `main`** in `e080d72`, independently of this branch |
+| 2 | snapshots capture pre-rustfmt output | ⬜ open — re-verified unchanged |
+| 3 | `just build-slang` fails on Linux | ⬜ open |
+| 4 | undocumented system packages | ⬜ open |
+| 5 | env vars need direnv | ⬜ open |
+| 6 | `cargo-insta` documented, not installed | ⬜ open |
+| 7 | headless sweep | ✅ **implemented on this branch**, green, and adversarially tested |
+
+Every problem below was hit while implementing
+[`link_rendering/phase_07.md`](link_rendering/phase_07.md) in a fresh cloud
+container, and every diagnosis was verified on that machine — originally
+against `main` @ `3c36467`, and re-checked after merging `aae5b71`.
 
 Companion documents: [`offscreen_testing.md`](offscreen_testing.md) — its
 `just headless-all` design is what §7 finally makes reachable;
 [`tech_debt.md`](tech_debt.md) — renderer-wide cleanups, same "no owning
-phase" character as this note.
+phase" character as this note, and now home to the codegen-namespace hazard
+that §1 surfaced.
 
 ---
 
@@ -41,9 +54,29 @@ now exits 0. §1–§6 remain plan-only.
 
 ---
 
-## 1. The generated shader atlas is filesystem-order dependent
+## 1. ~~The generated shader atlas is filesystem-order dependent~~ — DONE
 
-**The problem.** `write_precompiled_shaders` collects the shader sources with
+**Landed on `main` in `e080d72`** ("address cross-machine differences in
+codegen/tests"), independently of this branch, and it went further than this
+section asked: the two copy-pasted walks became one sorted
+`collect_slang_file_names` helper, three further unsorted iterations in the same
+file were found and sorted, and a `slang_file_names_are_sorted` regression test
+guards it — with a non-empty assertion so it can't pass vacuously on an empty
+directory. Write-up in `link_rendering/follow_up.md` §5b.
+
+**Verified here after merging `main`:** the full test suite is now **23 passed,
+0 failed** on this container. Before the merge it was 18/2, failing exactly the
+two atlas snapshots described below. That is the cross-machine reproduction
+this section was written from, now closed.
+
+One related item was promoted rather than fixed: the `reflect_slang_module_types`
+row in the table below (same-named structs in two shared modules resolving by
+last-write-wins) is now `tech_debt.md` §4 as a **silent-wrong-output** hazard.
+Sorting made it deterministic; it is still a footgun, just a predictable one.
+
+The original diagnosis is kept below, since §2 builds on it.
+
+**The problem.** `write_precompiled_shaders` collected the shader sources with
 an unsorted directory read:
 
 - `src/shaders/build_tasks.rs:28` — `slang_file_names`
@@ -98,19 +131,22 @@ Also sort the `mod.rs` construction in the `alignment_tests` check-crate helper
 (build_tasks.rs:1555, :1568) so that the temp crate it compiles is itself
 reproducible.
 
-**One-time churn to expect.** Sorting changes the committed order, so the
-`generated_files` / `alignment_tests` atlas snapshots and
-`src/generated/shader_atlas.rs` all need one deliberate regeneration. After
-that the order is alphabetical everywhere and matches what rustfmt was already
-doing to the module list, so the two stop disagreeing.
-
-**Gate.** `just shaders` twice in a row, from different working-directory
-states, produces byte-identical output; `just test` green; regenerating after
-`touch`-ing a `.slang` file produces no atlas diff.
+**One-time churn expected, and taken.** Sorting changed the committed order, so
+the two atlas snapshots and `src/generated/shader_atlas.rs` were regenerated
+once in `e080d72` — and the diffs were checked to be pure line reorderings by
+comparing sorted added/removed line sets rather than by eye, which is the right
+way to review that particular change.
 
 ---
 
 ## 2. Snapshots capture unformatted output, so they can never match the files
+
+**Still open after `e080d72`** — re-verified against current `main`, output
+below is unchanged. §1's fix made the *order* deterministic; it did not touch
+*formatting*, and the two are independent. `follow_up.md` §5b now notes in
+passing that the snapshots are taken pre-rustfmt and that this is what let the
+scrambled `init()` body hide behind a rustfmt-tidied module list — so the
+mechanism is already documented on `main`; what is missing is the fix.
 
 **The problem.** The snapshot tests generate into a temp directory and snapshot
 the raw template output. `just shaders` generates into `src/generated/` and
@@ -513,26 +549,29 @@ the three faults from 7.2 is reintroduced.
 
 ## Suggested order
 
-§1 and §2 together (they touch the same function and share one snapshot
-regeneration — doing them separately means regenerating twice), then §3+§4+§5
-as a "clean clone builds" unit, then §6, then §7 as its own piece against the
-existing design doc.
+Originally: §1 and §2 together, since they touch the same function and share
+one snapshot regeneration. §1 has since landed on its own, so that pairing is
+moot — §2 now costs its own regeneration pass, which is the one thing the
+pairing was meant to avoid. Not a problem, just no longer free.
+
+Remaining: **§2** on its own (one deliberate snapshot regeneration, reviewable
+by piping the old snapshots through `rustfmt` and diffing), then **§3+§4+§5**
+as a "clean clone builds" unit, then **§6**. §7 is done on this branch.
 
 ## Risks
 
-1. **The §1+§2 snapshot regeneration is large and must be reviewed as noise.**
-   That is exactly the situation where a real change hides. Mitigation: land
-   §1 and §2 as two commits within the PR, and verify each diff is
-   *mechanically* explainable — §1 pure reordering (every line present on both
-   sides, as checked with a sort-and-compare), §2 pure rustfmt output
-   (re-derivable by piping the old snapshot through `rustfmt`).
+1. **The §2 snapshot regeneration is large and must be reviewed as noise.**
+   That is exactly the situation where a real change hides. Mitigation: verify
+   the diff is *mechanically* explainable — pure rustfmt output, re-derivable
+   by piping the old snapshots through `rustfmt --edition 2024` and diffing.
+   §1 already did the equivalent for its own churn (sorted added/removed line
+   sets, not eyeballing), which is the pattern to copy.
 2. **Formatting at generation time makes `prepare_shaders` depend on an
    external binary.** Mitigation: hard error with an actionable message; it is
    already a de-facto dependency via the `cargo fmt` in `just shaders`.
 3. **`.cargo/config.toml [env]` may not express `$PWD`.** Mitigation is stated
    in §5 — fall back to recipe-level sourcing, which is known to work because
    Windows already does it.
-4. **Sorting could theoretically change behavior if anything depended on atlas
-   order.** Checked: nothing derives an index from it — no `enumerate()` over
-   the atlas, no positional lookup; the struct is addressed by field name.
-   Worth re-confirming while implementing rather than trusting this note.
+4. ~~**Sorting could change behavior if anything depended on atlas order.**~~
+   Settled: nothing derives an index from it — the struct is addressed by field
+   name — and `e080d72` has since shipped the sort with the test suite green.
