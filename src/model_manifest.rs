@@ -2,12 +2,218 @@
 //! shared between the `convert_link` binary (which writes it) and the
 //! `toon_link` example (which reads it). Everything is human-inspectable.
 //!
-//! Design: renderer-facing raster state uses friendly enum names (they map
-//! straight onto pipeline state); TEV interpreter data is kept as the raw GX
-//! byte values the shader packs into its `uint4` uniform arrays. `mat3_dump.txt`
-//! carries the human-readable equations, so the machine format stays compact.
+//! Design: renderer-facing raster state is typed GX enums that serialize as the
+//! canonical GX names (they map straight onto pipeline state, and their
+//! discriminants are the GX byte values); TEV interpreter data is kept as the raw
+//! GX byte values the shader packs into its `uint4` uniform arrays.
+//! `mat3_dump.txt` carries the human-readable equations, so the machine format
+//! stays compact.
+//!
+//! The enums below are the ones the manifest serializes. They live here rather
+//! than in `convert_link`'s `gx::types` because the library is the shared crate;
+//! `gx::types` re-exports them and keeps the parse-only rest (`ImageFormat`,
+//! `Attr`, `PrimitiveType`, …), declared with the same [`gx_enum`] macro.
+
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
+
+// --- shared GX enums --------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GxEnumError {
+    pub kind: &'static str,
+    pub value: u32,
+}
+
+impl fmt::Display for GxEnumError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid {} value {:#x}", self.kind, self.value)
+    }
+}
+
+impl std::error::Error for GxEnumError {}
+
+/// Declares a GX enum with `TryFrom<u8>` and a canonical name (the exact
+/// spelling the MAT3 oracle prints for the same value), used for *both* its
+/// `Display` and its serde representation — one literal, so the JSON spelling
+/// and the oracle vocabulary cannot drift apart.
+///
+/// Exported for `convert_link`'s `gx::types`, which declares the GX enums the
+/// manifest never serializes — those get the serde impls too, unused but
+/// harmless, in exchange for one macro defining the whole GX vocabulary.
+#[macro_export]
+macro_rules! gx_enum {
+    ($(#[$meta:meta])* $name:ident { $($variant:ident = $val:literal => $canon:literal,)+ }) => {
+        $(#[$meta])*
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
+            ::serde::Serialize, ::serde::Deserialize,
+        )]
+        pub enum $name {
+            $(#[serde(rename = $canon)] $variant = $val,)+
+        }
+
+        impl TryFrom<u8> for $name {
+            type Error = $crate::model_manifest::GxEnumError;
+            fn try_from(value: u8) -> Result<Self, Self::Error> {
+                match value {
+                    $($val => Ok(Self::$variant),)+
+                    _ => Err($crate::model_manifest::GxEnumError {
+                        kind: stringify!($name),
+                        value: value as u32,
+                    }),
+                }
+            }
+        }
+
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                f.write_str(match self {
+                    $(Self::$variant => $canon,)+
+                })
+            }
+        }
+    };
+}
+
+gx_enum! {
+    /// GXTexWrapMode (GXEnum.h:432–434)
+    WrapMode {
+        Clamp = 0x0 => "ClampToEdge",
+        Repeat = 0x1 => "Repeat",
+        Mirror = 0x2 => "MirroredRepeat",
+    }
+}
+
+gx_enum! {
+    /// GXTexFilter (GXEnum.h:439–444)
+    FilterMode {
+        Nearest = 0x0 => "Nearest",
+        Linear = 0x1 => "Linear",
+        NearestMipNearest = 0x2 => "NearestMipmapNearest",
+        LinearMipNearest = 0x3 => "LinearMipmapNearest",
+        NearestMipLinear = 0x4 => "NearestMipmapLinear",
+        LinearMipLinear = 0x5 => "LinearMipmapLinear",
+    }
+}
+
+gx_enum! {
+    /// J3D material pixel-engine mode (gclib PixelEngineMode)
+    PixelEngineMode {
+        Opaque = 0x1 => "Opaque",
+        AlphaTest = 0x2 => "Alpha_Test",
+        Translucent = 0x4 => "Translucent",
+    }
+}
+
+gx_enum! {
+    /// GXCullMode (GXEnum.h:17–20); stored as u32 in MAT3's list
+    CullMode {
+        None = 0x0 => "Cull_None",
+        Front = 0x1 => "Cull_Front",
+        Back = 0x2 => "Cull_Back",
+        All = 0x3 => "Cull_All",
+    }
+}
+
+gx_enum! {
+    /// GXCompare (GXEnum.h:466–473)
+    CompareType {
+        Never = 0x0 => "Never",
+        Less = 0x1 => "Less",
+        Equal = 0x2 => "Equal",
+        LessEqual = 0x3 => "Less_Equal",
+        Greater = 0x4 => "Greater",
+        NotEqual = 0x5 => "Not_Equal",
+        GreaterEqual = 0x6 => "Greater_Equal",
+        Always = 0x7 => "Always",
+    }
+}
+
+gx_enum! {
+    /// GXAlphaOp (GXEnum.h:477–480)
+    AlphaOp {
+        And = 0x0 => "AND",
+        Or = 0x1 => "OR",
+        Xor = 0x2 => "XOR",
+        Xnor = 0x3 => "XNOR",
+    }
+}
+
+gx_enum! {
+    /// GXColorSrc (GXEnum.h:92–93)
+    ColorSrc {
+        Register = 0x0 => "Register",
+        Vertex = 0x1 => "Vertex",
+    }
+}
+
+gx_enum! {
+    /// GXDiffuseFn (GXEnum.h:110–112)
+    DiffuseFunction {
+        None = 0x0 => "None_",
+        Signed = 0x1 => "Signed",
+        Clamp = 0x2 => "Clamp",
+    }
+}
+
+gx_enum! {
+    /// GXAttnFn (GXEnum.h:116–118)
+    AttenuationFunction {
+        Specular = 0x0 => "Specular",
+        Spot = 0x1 => "Spot",
+        None = 0x2 => "None_",
+    }
+}
+
+gx_enum! {
+    /// GXBlendMode (GXEnum.h:147–150)
+    BlendMode {
+        None = 0x0 => "None_",
+        Blend = 0x1 => "Blend",
+        Logic = 0x2 => "Logic",
+        Subtract = 0x3 => "Subtract",
+    }
+}
+
+gx_enum! {
+    /// GXBlendFactor (GXEnum.h:155–164); src/dst-color aliases share values
+    BlendFactor {
+        Zero = 0x0 => "Zero",
+        One = 0x1 => "One",
+        SourceColor = 0x2 => "Source_Color",
+        InverseSourceColor = 0x3 => "Inverse_Source_Color",
+        SourceAlpha = 0x4 => "Source_Alpha",
+        InverseSourceAlpha = 0x5 => "Inverse_Source_Alpha",
+        DestinationAlpha = 0x6 => "Destination_Alpha",
+        InverseDestinationAlpha = 0x7 => "Inverse_Destination_Alpha",
+    }
+}
+
+gx_enum! {
+    /// GXLogicOp (GXEnum.h:168–183)
+    LogicOp {
+        Clear = 0x0 => "CLEAR",
+        And = 0x1 => "AND",
+        RevAnd = 0x2 => "REV_AND",
+        Copy = 0x3 => "COPY",
+        InvAnd = 0x4 => "INV_AND",
+        Noop = 0x5 => "NOOP",
+        Xor = 0x6 => "XOR",
+        Or = 0x7 => "OR",
+        Nor = 0x8 => "NOR",
+        Equiv = 0x9 => "EQUIV",
+        Inv = 0xA => "INV",
+        RevOr = 0xB => "REV_OR",
+        InvCopy = 0xC => "INV_COPY",
+        InvOr = 0xD => "INV_OR",
+        Nand = 0xE => "NAND",
+        Set = 0xF => "SET",
+    }
+}
+
+// --- manifest ---------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -36,9 +242,9 @@ pub struct TextureEntry {
     pub name: String,
     /// Path relative to the manifest, e.g. `tex/12_linktexS3TC.png`.
     pub file: String,
-    pub wrap_u: String,
-    pub wrap_v: String,
-    pub filter: String,
+    pub wrap_u: WrapMode,
+    pub wrap_v: WrapMode,
+    pub filter: FilterMode,
     pub mipmaps: bool,
     /// Set on ramp slots whose pixels are replaced at conversion time
     /// (e.g. `ZBtoonEX` ← `toonex`).
@@ -80,10 +286,10 @@ pub struct MaterialEntry {
     /// slots share one record — J3D material instancing).
     pub record: u16,
     // Renderer-facing raster state (friendly names).
-    pub pe_mode: String,
-    pub cull: String,
+    pub pe_mode: PixelEngineMode,
+    pub cull: CullMode,
     pub z_test: bool,
-    pub z_func: String,
+    pub z_func: CompareType,
     pub z_write: bool,
     pub z_compare_early: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -111,18 +317,18 @@ pub struct MaterialEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlendState {
-    pub mode: String,
-    pub src: String,
-    pub dst: String,
-    pub logic: String,
+    pub mode: BlendMode,
+    pub src: BlendFactor,
+    pub dst: BlendFactor,
+    pub logic: LogicOp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlphaCompareState {
-    pub comp0: String,
+    pub comp0: CompareType,
     pub ref0: u8,
-    pub op: String,
-    pub comp1: String,
+    pub op: AlphaOp,
+    pub comp1: CompareType,
     pub ref1: u8,
 }
 
@@ -198,10 +404,10 @@ pub struct TexMatrixState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelState {
     pub lighting_enabled: bool,
-    pub mat_src: String,
-    pub amb_src: String,
-    pub diffuse: String,
-    pub attenuation: String,
+    pub mat_src: ColorSrc,
+    pub amb_src: ColorSrc,
+    pub diffuse: DiffuseFunction,
+    pub attenuation: AttenuationFunction,
     pub lit_mask: u8,
 }
 
@@ -224,9 +430,9 @@ mod tests {
             textures: vec![TextureEntry {
                 name: "linktexS3TC".into(),
                 file: "tex/12_linktexS3TC.png".into(),
-                wrap_u: "ClampToEdge".into(),
-                wrap_v: "ClampToEdge".into(),
-                filter: "Linear".into(),
+                wrap_u: WrapMode::Clamp,
+                wrap_v: WrapMode::Clamp,
+                filter: FilterMode::Linear,
                 mipmaps: false,
                 runtime_substitution: None,
             }],
@@ -252,5 +458,55 @@ mod tests {
         assert_eq!(back.buffers.vertex_count, 1754);
         assert_eq!(back.batches[0].index_count, 810);
         assert_eq!(back.skeleton.joints[0].parent, -1);
+    }
+
+    /// The JSON spelling of every GX enum is the canonical GX name, identical to
+    /// `Display` — the manifest on disk is the same text it was when these fields
+    /// were `String`s, and the MAT3 oracle diff reads the same vocabulary.
+    #[test]
+    fn enums_serialize_as_canonical_gx_names() {
+        fn check<T>(value: T, expected: &str)
+        where
+            T: Serialize + for<'de> Deserialize<'de> + fmt::Display + PartialEq + fmt::Debug,
+        {
+            let json = serde_json::to_string(&value).unwrap();
+            assert_eq!(json, format!("\"{expected}\""));
+            assert_eq!(value.to_string(), expected);
+            assert_eq!(serde_json::from_str::<T>(&json).unwrap(), value);
+        }
+
+        check(WrapMode::Clamp, "ClampToEdge");
+        check(FilterMode::LinearMipLinear, "LinearMipmapLinear");
+        check(PixelEngineMode::AlphaTest, "Alpha_Test");
+        check(CullMode::Back, "Cull_Back");
+        check(CompareType::LessEqual, "Less_Equal");
+        check(AlphaOp::Or, "OR");
+        check(BlendMode::None, "None_");
+        check(
+            BlendFactor::InverseDestinationAlpha,
+            "Inverse_Destination_Alpha",
+        );
+        check(LogicOp::Copy, "COPY");
+        check(ColorSrc::Register, "Register");
+        check(DiffuseFunction::None, "None_");
+        check(AttenuationFunction::Spot, "Spot");
+    }
+
+    /// The discriminants are the GX byte values, so consumers can hand a manifest
+    /// enum straight to a shader uniform (`toon_link`'s alpha-compare codes) and
+    /// the converter can parse one out of a MAT3 byte.
+    #[test]
+    fn discriminants_are_gx_byte_values() {
+        assert_eq!(CompareType::LessEqual as u8, 0x3);
+        assert_eq!(AlphaOp::Xnor as u8, 0x3);
+        assert_eq!(CullMode::Back as u8, 0x2);
+        assert_eq!(CompareType::try_from(0x7), Ok(CompareType::Always));
+        assert_eq!(
+            CullMode::try_from(0x4),
+            Err(GxEnumError {
+                kind: "CullMode",
+                value: 0x4
+            })
+        );
     }
 }

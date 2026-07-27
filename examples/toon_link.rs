@@ -23,7 +23,12 @@ use glam::{Mat3, Mat4, UVec4, Vec2, Vec3};
 use image::{DynamicImage, ImageReader, Rgba, RgbaImage};
 
 use vulkan_slang_renderer::game::{Game, Input, Key};
-use vulkan_slang_renderer::model_manifest::{Batch, Manifest, MaterialEntry, TextureEntry};
+// The manifest's GX enums are named `mm::CullMode` / `mm::BlendMode` throughout:
+// they collide with the renderer's same-named pipeline enums, and each mapping
+// below reads as the GX-value → Vulkan-state translation it is.
+use vulkan_slang_renderer::model_manifest::{
+    self as mm, Batch, Manifest, MaterialEntry, TextureEntry,
+};
 use vulkan_slang_renderer::renderer::{
     BlendMode, CullMode, DepthCompare, DrawError, DrawIndexed, FrameRenderer, MeshHandle,
     PipelineHandle, RasterState, Renderer, TextureColorSpace, TextureFilter, TextureHandle,
@@ -103,10 +108,11 @@ enum PeMode {
 }
 
 fn pe_mode(material: &MaterialEntry) -> anyhow::Result<PeMode> {
-    match material.pe_mode.as_str() {
-        "Opaque" => Ok(PeMode::Opaque),
-        "Translucent" => Ok(PeMode::Translucent),
-        other => anyhow::bail!("unmapped pe_mode {other:?} on material {:?}", material.name),
+    match material.pe_mode {
+        mm::PixelEngineMode::Opaque => Ok(PeMode::Opaque),
+        mm::PixelEngineMode::Translucent => Ok(PeMode::Translucent),
+        // cl.bdl has none
+        other => anyhow::bail!("unmapped pe_mode {other} on material {:?}", material.name),
     }
 }
 
@@ -118,48 +124,28 @@ struct AlphaCompareCodes {
     op: u32,
 }
 
-fn compare_code(name: &str) -> anyhow::Result<u32> {
-    Ok(match name {
-        "Never" => 0,
-        "Less" => 1,
-        "Equal" => 2,
-        "Less_Equal" => 3,
-        "Greater" => 4,
-        "Not_Equal" => 5,
-        "Greater_Equal" => 6,
-        "Always" => 7,
-        other => anyhow::bail!("unmapped GX compare {other:?}"),
-    })
-}
-
-fn alpha_op_code(name: &str) -> anyhow::Result<u32> {
-    Ok(match name {
-        "AND" => 0,
-        "OR" => 1,
-        "XOR" => 2,
-        "XNOR" => 3,
-        other => anyhow::bail!("unmapped GX alpha op {other:?}"),
-    })
-}
-
-fn alpha_compare_codes(material: &MaterialEntry) -> anyhow::Result<AlphaCompareCodes> {
-    // No record → GX's default "Always OR Always", a no-op that keeps every
-    // fragment.
+fn alpha_compare_codes(material: &MaterialEntry) -> AlphaCompareCodes {
+    // No record → GX's default "Always OR Always", a no-op that keeps every fragment.
     let Some(ac) = &material.alpha_compare else {
-        return Ok(AlphaCompareCodes {
-            compare: UVec4::new(7, 0, 7, 0),
-            op: 1,
-        });
+        return AlphaCompareCodes {
+            compare: UVec4::new(
+                mm::CompareType::Always as u32,
+                0,
+                mm::CompareType::Always as u32,
+                0,
+            ),
+            op: mm::AlphaOp::Or as u32,
+        };
     };
-    Ok(AlphaCompareCodes {
+    AlphaCompareCodes {
         compare: UVec4::new(
-            compare_code(&ac.comp0)?,
+            ac.comp0 as u32,
             ac.ref0 as u32,
-            compare_code(&ac.comp1)?,
+            ac.comp1 as u32,
             ac.ref1 as u32,
         ),
-        op: alpha_op_code(&ac.op)?,
-    })
+        op: ac.op as u32,
+    }
 }
 
 fn converted_dir() -> PathBuf {
@@ -217,28 +203,27 @@ fn load_indices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<u32>> {
 }
 
 fn texture_options(entry: &TextureEntry) -> anyhow::Result<TextureOptions> {
-    let wrap = |name: &str| -> anyhow::Result<TextureWrap> {
-        Ok(match name {
-            "ClampToEdge" => TextureWrap::ClampToEdge,
-            "Repeat" => TextureWrap::Repeat,
-            "MirroredRepeat" => TextureWrap::MirroredRepeat,
-            other => anyhow::bail!("unmapped GX wrap mode {other:?}"),
-        })
+    let wrap = |mode: mm::WrapMode| match mode {
+        mm::WrapMode::Clamp => TextureWrap::ClampToEdge,
+        mm::WrapMode::Repeat => TextureWrap::Repeat,
+        mm::WrapMode::Mirror => TextureWrap::MirroredRepeat,
     };
-    let filter = match entry.filter.as_str() {
-        "Linear" => TextureFilter::Linear,
-        "Nearest" => TextureFilter::Nearest,
-        other => anyhow::bail!("unmapped GX texture filter {other:?}"),
+    // The four mipmapping filters have no TextureFilter spelling;
+    // cl.bdl's textures are all Linear.
+    let filter = match entry.filter {
+        mm::FilterMode::Linear => TextureFilter::Linear,
+        mm::FilterMode::Nearest => TextureFilter::Nearest,
+        other => anyhow::bail!("unmapped GX texture filter {other}"),
     };
     Ok(TextureOptions {
         filter,
-        wrap_u: wrap(&entry.wrap_u)?,
-        wrap_v: wrap(&entry.wrap_v)?,
+        wrap_u: wrap(entry.wrap_u),
+        wrap_v: wrap(entry.wrap_v),
         mipmaps: entry.mipmaps,
-        // Hardcoded Unorm on purpose: GX has no sRGB anywhere (master plan §3),
-        // so the stored texels are raw values the shader consumes directly (the
-        // fragment shader applies its own sRGB decode to survive the _SRGB color
-        // target). `Unorm` looks like a mistake here without that context.
+        // Hardcoded Unorm on purpose:
+        // GX has no sRGB anywhere, so the stored texels are raw values
+        // the shader consumes directly (the fragment shader
+        // applies its own sRGB decode to survive the _SRGB color target).
         color_space: TextureColorSpace::Unorm,
     })
 }
@@ -311,11 +296,12 @@ fn resolve_texmap<'a>(
 fn raster_state(material: &MaterialEntry) -> anyhow::Result<RasterState> {
     let cull = match CULL_OVERRIDE {
         Some(cull) => cull,
-        None => match material.cull.as_str() {
-            "Cull_Back" => CullMode::Back,
-            "Cull_None" => CullMode::None,
-            "Cull_Front" => CullMode::Front,
-            other => anyhow::bail!("unmapped GX cull mode {other:?}"),
+        None => match material.cull {
+            mm::CullMode::Back => CullMode::Back,
+            mm::CullMode::None => CullMode::None,
+            mm::CullMode::Front => CullMode::Front,
+            // unused by cl.bdl
+            mm::CullMode::All => anyhow::bail!("unmapped GX cull mode {}", material.cull),
         },
     };
 
@@ -323,12 +309,12 @@ fn raster_state(material: &MaterialEntry) -> anyhow::Result<RasterState> {
     // unconditionally. All 24 materials are Less_Equal in practice (this makes
     // P6's `Less` placeholder correct).
     let depth_test = if material.z_test {
-        match material.z_func.as_str() {
-            "Less_Equal" => DepthCompare::LessEqual,
-            "Less" => DepthCompare::Less,
-            "Always" => DepthCompare::Always,
+        match material.z_func {
+            mm::CompareType::LessEqual => DepthCompare::LessEqual,
+            mm::CompareType::Less => DepthCompare::Less,
+            mm::CompareType::Always => DepthCompare::Always,
             other => anyhow::bail!(
-                "unmapped GX depth func {other:?} on material {:?}",
+                "unmapped GX depth func {other} on material {:?}",
                 material.name
             ),
         }
@@ -355,13 +341,14 @@ fn blend_mode(material: &MaterialEntry) -> anyhow::Result<BlendMode> {
     let Some(blend) = &material.blend else {
         return Ok(BlendMode::Opaque);
     };
-    // "None_" disables blending regardless of the factors.
-    if blend.mode == "None_" {
+    // GX's None_ disables blending regardless of the factors.
+    if blend.mode == mm::BlendMode::None {
         return Ok(BlendMode::Opaque);
     }
-    if blend.mode == "Blend" {
-        match (blend.src.as_str(), blend.dst.as_str()) {
-            ("Source_Alpha", "Inverse_Source_Alpha") => return Ok(BlendMode::Alpha),
+    if blend.mode == mm::BlendMode::Blend {
+        use mm::BlendFactor::*;
+        match (blend.src, blend.dst) {
+            (SourceAlpha, InverseSourceAlpha) => return Ok(BlendMode::Alpha),
             // GX's dst-alpha blend, dst_alpha·src + (1−dst_alpha)·dst, reduces
             // *exactly* to src wherever the framebuffer alpha is 1 — and it is 1
             // at these pixels today: the clear is alpha 1.0, every opaque albedo
@@ -372,12 +359,12 @@ fn blend_mode(material: &MaterialEntry) -> anyhow::Result<BlendMode> {
             // or --casual textures silently break this; real BlendMode::DstAlpha
             // lands with the eye write-mask pass in P9. See phase_07.md
             // decision 2 / risk 3.
-            ("Destination_Alpha", "Inverse_Destination_Alpha") => return Ok(BlendMode::Opaque),
+            (DestinationAlpha, InverseDestinationAlpha) => return Ok(BlendMode::Opaque),
             _ => {}
         }
     }
     anyhow::bail!(
-        "unmapped blend mode {:?} (src {:?}, dst {:?}) on material {:?}",
+        "unmapped blend mode {} (src {}, dst {}) on material {:?}",
         blend.mode,
         blend.src,
         blend.dst,
@@ -535,7 +522,7 @@ impl Game for ToonLink {
                 .with_raster_state(raster_state(material)?);
             let pipeline = renderer.create_pipeline(pipeline_config)?;
             pipelines.push((pipeline, params_buffer));
-            alpha_compares.push(alpha_compare_codes(material)?);
+            alpha_compares.push(alpha_compare_codes(material));
         }
 
         // J3D two-pass order: opaque batches and then translucent ones,
