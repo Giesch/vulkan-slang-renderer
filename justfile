@@ -85,6 +85,12 @@ insta:
     cargo insta test --review
 
 
+# run examples headless under a software vulkan driver, failing on any validation error
+[unix]
+headless-all *examples:
+    ./scripts/headless-sweep.sh {{examples}}
+
+
 # lint in debug and release, with warnings denied
 # NOTE --all-targets is required to cover examples, benches and test cfg code;
 # plain `cargo clippy` checks the lib and bins only, so example-only breakage
