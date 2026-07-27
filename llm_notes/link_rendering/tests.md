@@ -53,6 +53,14 @@ buffers) so `just test` runs in a clean checkout with no extracted assets.
 
 ## Dolphin as an automated oracle
 
+> **Status: optional, and none of it has been set up.** No savestate, no
+> `.dff`, and `just link-dolphin-refs` does not exist as a recipe. P8 —
+> originally the phase that would have made this load-bearing — deliberately
+> does not use it ([`phase_08.md`](phase_08.md) decision 7, §P8 below). Treat
+> this section as a capability catalogue: what is available *if* a specific
+> feature ends up genuinely in dispute. [`follow_up.md`](follow_up.md) §5 owns
+> the decision to invoke it.
+
 One-time manual setup: play to Outset at noon with Link framed, save a
 **savestate**, and record a **FIFO log** (`.dff`) of one frame — a capture of
 every command the game sent to the GPU that frame. Everything below is then
@@ -239,21 +247,36 @@ found the file carries its own answer key:
 By here every input is independently verified, so remaining discrepancies are
 TEV-interpreter bugs specifically — that was the point of the earlier gates.
 
-- **Structured side-by-side**: same camera angle as noclip and the golden
-  Dolphin reference frames (from `just link-dolphin-refs`); compare per
+**Dolphin is deliberately not P8's oracle** (user decision; see
+[`phase_08.md`](phase_08.md) decision 7). The savestate/`.dff` capture,
+`just link-dolphin-refs`, the FIFO analyzer and the software-renderer replay
+are an **optional escalation** owned by [`follow_up.md`](follow_up.md) §5,
+invoked only for a specific disputed feature. The cost is recorded honestly:
+the S10 clamp edge cases (risk #6) and the exact `dKy_tevstr_c` light values
+(risk #8) ship reasoned rather than measured.
+
+- **Structured side-by-side vs noclip**: same camera angles as P6; compare per
   feature (skin tone, tunic two-band boundary, hair highlight, eye whites)
   rather than gestalt.
-- **Semantic disputes adjudicated by Dolphin**: the FIFO analyzer shows the
-  runtime BP/XF register state per draw (is our frozen TEV subset what the
-  game actually configures?), and the software-renderer replay is the
-  reference-rasterizer answer for any TEV math disagreement.
 - **Light rotation** in the example: terminator bands must sweep smoothly and
-  stay *banded* — the sharpest test of the SRTG ramp path (risk #5).
-- **Single-material isolation**: a debug key in the example to draw only batch
-  N, so a wrong material is inspected alone rather than through overdraw.
+  stay *banded* — the sharpest test of the SRTG ramp path (risk #5). Prefer
+  adjudicating on band *structure*, which the hand-tuned light values do not
+  affect, over band *color*, which they do.
+- **Only the lit materials may respond**: the 12 `lighting_enabled: false`
+  eye/brow decals have no SRTG texgen, so if they change under light rotation
+  the channel is leaking (phase_08 measured facts).
+- **Single-material isolation**: P7's Q/E/Space batch keys already are material
+  isolation — batches and material slots are bijective — so a wrong material is
+  inspected alone rather than through overdraw. P8 adds the stage equations to
+  the printout for direct comparison against `mat3_dump.txt`.
+- **Internal cross-checks that need no emulator**: the converter's subset gate
+  (`tev_ir.rs`), the `tev_pack` unit tests, and the debug modes that expose
+  `COLOR0` and the SRTG texcoord before the final image is judged.
 - Optional, only if pixel-chasing gets hard: a tiny CPU reference evaluator of
   our own TEV IR (evaluate one stage config at a hand-picked N·L, compare
-  against the shader's output for a flat-lit patch).
+  against the shader's output for a flat-lit patch). Note that mainline Dolphin
+  has no per-TEV-stage intermediate dump either, so this is the stage-level
+  tool whether or not the Dolphin escalation is taken.
 
 ## P9 — polish
 

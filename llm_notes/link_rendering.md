@@ -351,8 +351,13 @@ vec4-array mini-phase (`0d08a7d`,
 [`link_rendering/vec4_array_support.md`](link_rendering/vec4_array_support.md)):
 `float4[N]`/`uint4[N]`/`int4[N]` fields generate `[glam::Vec4|UVec4|IVec4; N]`
 with compile-time layout proofs, in both std140 and BDA-pointee contexts.
-The sketch below is therefore the P8 layout as written (the BDA fallback
-phase_06 Step 1 had decided on is superseded):
+The sketch below is the shape of the P8 layout (the BDA fallback phase_06
+Step 1 had decided on is superseded). **The authoritative field list is
+[`link_rendering/phase_08.md`](link_rendering/phase_08.md) §Step 2**, which
+adds the swap tables, per-stage konst selects, texture-matrix rows and channel
+control this sketch omits, and corrects `reg[]`: the manifest's four
+`reg_colors` entries load into **REG0/REG1/REG2 plus one unused slot**, not
+PREV/REG0/REG1/REG2 (`J3DMatBlock.cpp:810-811`).
 
 ```slang
 struct ToonLinkParams {
@@ -606,9 +611,11 @@ frame.
   `perspective_rh`, as in viking_room; Link is ~100 GC units tall — scale the
   model matrix ~0.01 or frame accordingly). Hardcoded daytime light: directional
   from up-forward-left, `lightColor ≈ (1.0, 0.98, 0.92)`, ambient ≈
-  `(0.45, 0.5, 0.55)` — seeds, tuned visually against noclip, then replaced
-  with exact values read from `dKy_tevstr_c` in emulated RAM
-  (dolphin-memory-engine + tww symbols, see tests.md); fed into
+  `(0.45, 0.5, 0.55)` — seeds, tuned visually against noclip. *(P8 measured
+  the ambient: it comes from the manifest, `[50,50,50,50]` on all 24
+  materials, and `lit_mask` is 3, so **two** lights are needed. Replacing the
+  light seeds with exact `dKy_tevstr_c` values read from emulated RAM is now
+  an optional follow-up, not a P8 gate — see risk #8.)* Fed into
   `reg[0]`/konst slots the way `setLightTevColorType` does (C0 = light color,
   K0/K1 = ambient; see `../tww/src/d/d_kankyo.cpp`). Then queue one
   `queue_draw_index_range` per batch — INF1 order in P6, and from P7 a stable
@@ -633,7 +640,7 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P5** ✅ | renderer 4.3 + 4.4 (raster state, texture options); `examples/multi_mesh.rs` grew 12 view-space test panels (17 pipelines, 18 draws, 7 texture handles, 3 procedural images) — detailed plan: [`link_rendering/phase_05.md`](link_rendering/phase_05.md) | **as run**: `just test` green, snapshot churn exactly multi_mesh's `.rs`+`.json` (branching snapshot unmoved, no atlas-index change); `RasterState` default-equivalence + enum-mapping unit tests; `just lint` clean; validation sweep 15/15 (run twice — once with examples untouched); every test object shows its artifact, **all six fields perturbed and reverted**, each artifact vanishing; sRGB-vs-UNORM verified numerically (117 vs 172, linear ratio 2.32); hot reload keeps per-pipeline raster state; clean exit with no VMA leak, and the leak check itself validated by injecting one | 1–2 days |
 | **P6** ✅ `9508563` | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches — detailed plan: [`link_rendering/phase_06.md`](link_rendering/phase_06.md) (Step 1's smoke test superseded by the vec4-array mini-phase `0d08a7d`) | **as run**: `just test` green (churn = toon_link additions only); correctly shaped Link over a full orbit, smooth normal gradients; **winding flipped in the converter** (risk #3: model was inside-out under manifest cull; one-line `link.idx.bin` sha256 update, `just link-verify-p3` green); all 24 isolation batches identified; UV mode clean; hot reload at 24-pipeline scale keeps raster state; validation sweep 16/16; no VMA leak on real close | 1–2 days |
 | **P7** 🚧 code landed, **unverified** | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state; plus `pe_mode` draw ordering and inverse-sRGB output (pulled forward from P8) — detailed plan: [`link_rendering/phase_07.md`](link_rendering/phase_07.md) | **static gates pass** (shader + bindings regenerated, churn confined to `toon_link`, `cargo check --all-targets` / clippy debug+release / fmt clean, converter and golden hashes untouched). **Every runtime gate is still outstanding**: written in a headless container with no video device and no converted assets, so UV features vs noclip, alpha-cutout edges, per-material cull, and especially the **numeric** gamma check (the gate for the sRGB transfer direction) have not been observed. Run these before marking ✅ | 1 day |
-| **P8** | full TEV interpreter + lighting channel + SRTG ramp + gamma handling; subset gate final; single-material isolation debug key in the example | structured side-by-side vs noclip + golden Dolphin frames (`just link-dolphin-refs`, headless `.dff` replay) per feature (skin, tunic bands, hair highlight, eye whites); rotate light — terminator bands sweep and stay banded; isolate batch N for any wrong material; TEV semantic disputes adjudicated via FIFO analyzer (runtime BP/XF state) + software-renderer replay; optional CPU TEV reference evaluator if pixel-chasing gets hard | 3–5 days |
+| **P8** | full TEV interpreter (`shaders/source/tev.slang`) + lighting channel + SRTG ramp + pupil texture matrices; the subset gate lands as `src/bin/convert_link/tev_ir.rs`; `src/tev_pack.rs` + expanded debug modes and light controls in the example — detailed plan: [`link_rendering/phase_08.md`](link_rendering/phase_08.md) | structured side-by-side vs noclip per feature (skin, tunic bands, hair highlight, eye whites); rotate light — terminator bands sweep and stay banded, and only the 12 lit materials respond; isolate batch N for any wrong material and diff its equations against `mat3_dump.txt`; converter gate + `tev_pack` unit tests + `COLOR0`/SRTG-texcoord debug modes as the emulator-free cross-checks. **Dolphin is explicitly not P8's oracle** — the `.dff`/FIFO/software-renderer suite is an optional escalation in [`link_rendering/follow_up.md`](link_rendering/follow_up.md) §5, so risks #6 and #8 ship reasoned rather than measured | 3–5 days |
 | **P9** | optional polish: `--casual` clothes; eye write-mask multi-pass; BCK-sampled pose | casual: P7-style UV checks; eye trick vs **Dolphin** (noclip may not implement it) | 2+ days |
 
 Rough total: ~3 weeks of focused work. Once a converter phase's output is
@@ -700,6 +707,11 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
 7. ~~**Fog**~~ — *resolved*: declared LINEAR but disabled on all 24
    materials; the warn-and-force-off path never fires.
 8. **Lighting values** — exact daytime `dKy_tevstr_c` values are buried in
-   kankyo tables; v1 starts from hand-tuned seeds, then upgrades to ground
-   truth by reading the live values from emulated RAM (dolphin-memory-engine
-   + tww decomp symbol addresses; see tests.md §Dolphin).
+   kankyo tables; P8 ships hand-tuned seeds. Upgrading to ground truth means
+   reading the live values from emulated RAM (dolphin-memory-engine + tww
+   decomp symbol addresses), which is now an **optional** escalation in
+   [`link_rendering/follow_up.md`](link_rendering/follow_up.md) §5 rather than
+   a P8 gate. Practical consequence for P8: a color mismatch against noclip
+   could be our TEV math *or* our light seeds, and nothing in the phase can
+   tell them apart — so adjudicate on band *structure*, which the seeds do not
+   affect, not band *color*, which they do.
