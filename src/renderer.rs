@@ -1762,9 +1762,10 @@ impl Renderer {
         };
 
         // With MSAA: color renders at msaa_samples and resolves into this frame's
-        // resolve image; the multisampled contents themselves are never read, so
-        // they don't need storing. Without it, the pass renders (and stores)
-        // straight into the resolve image, skipping the resolve entirely.
+        // resolve image; the multisampled contents themselves are never read,
+        // so they don't need storing.
+        // Without MSAA: the pass renders (and stores) straight into the resolve image,
+        // skipping the resolve entirely.
         // Either way the upscale blit below consumes the resolve image.
         let color_attachment = match self.msaa_color.as_ref().map(|msaa| msaa.view) {
             Some(msaa_color_view) => vk::RenderingAttachmentInfo::default()

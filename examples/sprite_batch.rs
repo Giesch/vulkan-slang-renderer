@@ -100,13 +100,6 @@ impl Game for SpriteBatch {
         })
     }
 
-    /// Matches the SDL_gpu example, which renders single-sample straight into
-    /// the swapchain texture. MSAA only smooths the geometric quad silhouette,
-    /// and in `ravioli_atlas.bmp` those edges are fully transparent padding —
-    /// the sprites' own visible edges are binary alpha under `Nearest`
-    /// filtering, which MSAA never touched. So it buys nothing here and costs
-    /// a lot: ~8k blended 32x32 sprites cover the 800x600 window many times
-    /// over, and every one of those fragments would pay for the extra samples.
     fn max_msaa_samples() -> MaxMSAASamples {
         MaxMSAASamples::Off
     }
