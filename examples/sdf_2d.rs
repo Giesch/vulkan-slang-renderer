@@ -32,10 +32,28 @@ struct SDF2D {
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<SDF2DParams>,
 
+    /// Playback only - the visuals are driven by `beats` plus elapsed time, not
+    /// by the audio stream - so this is `None` on a machine with no output
+    /// device (containers, CI, `scripts/headless-sweep.sh`) and the example
+    /// still renders correctly. Held solely to keep the stream alive; the tuple
+    /// drops in declaration order, device sink first, as the two fields it
+    /// replaces did.
     #[expect(unused)]
-    device_sink: MixerDeviceSink,
-    #[expect(unused)]
-    sink: rodio::Player,
+    audio: Option<(MixerDeviceSink, rodio::Player)>,
+}
+
+/// Opens the default output device and starts the track. Fails when there is no
+/// audio device at all, which [`SDF2D::setup`] treats as non-fatal.
+fn start_audio() -> anyhow::Result<(MixerDeviceSink, rodio::Player)> {
+    let mut device_sink = rodio::DeviceSinkBuilder::open_default_sink()?;
+    device_sink.log_on_drop(false);
+    let mixer = device_sink.mixer();
+    let audio_path = manifest_path(["audio", "alias_abandon.flac"]);
+    let file = std::fs::File::open(&audio_path)?;
+    let sink = rodio::play(mixer, BufReader::new(file))?;
+    sink.set_volume(0.5);
+
+    Ok((device_sink, sink))
 }
 
 impl Game for SDF2D {
@@ -63,21 +81,23 @@ impl Game for SDF2D {
         let pipeline_config = shader.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
-        let mut device_sink = rodio::DeviceSinkBuilder::open_default_sink()?;
-        device_sink.log_on_drop(false);
-        let mixer = device_sink.mixer();
-        let audio_path = manifest_path(["audio", "alias_abandon.flac"]);
-        let file = std::fs::File::open(&audio_path)?;
-        let sink = rodio::play(mixer, BufReader::new(file))?;
-        sink.set_volume(0.5);
+        // eprintln! rather than log::warn! on purpose: with RUST_LOG unset,
+        // env_logger keeps only error!, so a warning here would be invisible
+        // exactly on the machines that hit this path.
+        let audio = match start_audio() {
+            Ok(audio) => Some(audio),
+            Err(err) => {
+                eprintln!("sdf_2d: no audio ({err}); rendering silently");
+                None
+            }
+        };
 
         Ok(Self {
             start_time,
             pipeline,
             params_buffer,
             beats,
-            device_sink,
-            sink,
+            audio,
         })
     }
 
