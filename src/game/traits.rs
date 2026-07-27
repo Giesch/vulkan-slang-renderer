@@ -18,6 +18,11 @@ pub enum MaxMSAASamples {
     Max8,
     Max4,
     Max2,
+    /// No multisampling: the main pass renders straight into the single-sample
+    /// image that gets blitted to the swapchain, skipping the MSAA attachment
+    /// and its resolve. Worth it for 2D sprite workloads with heavy overdraw,
+    /// where the multisampled color attachment is mostly bandwidth cost.
+    Off,
 }
 
 /// This is the only trait from this module to implement directly.
