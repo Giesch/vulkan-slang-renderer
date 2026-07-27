@@ -101,7 +101,7 @@ impl Game for SpriteBatch {
     }
 
     fn max_msaa_samples() -> MaxMSAASamples {
-        MaxMSAASamples::Max2
+        MaxMSAASamples::Off
     }
 
     fn update(&mut self) {

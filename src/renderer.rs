@@ -125,9 +125,11 @@ pub struct Renderer {
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
     depth_format: vk::Format,
-    color_image: vk::Image,
-    color_image_memory: vk_mem::Allocation,
-    color_image_view: vk::ImageView,
+    /// the multisampled color attachment, resolved into `resolve_images`
+    ///
+    /// None when MSAA is off, in which case the main pass renders straight
+    /// into this frame's resolve image and there's nothing to resolve.
+    msaa_color: Option<MsaaColorImage>,
     depth_image: vk::Image,
     depth_image_memory: vk_mem::Allocation,
     depth_image_view: vk::ImageView,
@@ -187,6 +189,13 @@ pub struct Renderer {
 
     picking: Option<PickingResources>,
     last_picked_object_id: u32,
+}
+
+/// The multisampled color attachment; only allocated when MSAA is enabled.
+struct MsaaColorImage {
+    image: vk::Image,
+    memory: vk_mem::Allocation,
+    view: vk::ImageView,
 }
 
 fn calculate_render_extent(display_extent: vk::Extent2D, render_scale: f32) -> vk::Extent2D {
@@ -373,7 +382,7 @@ impl Renderer {
             create_resolve_images(&allocator, &device, render_extent, image_format)?;
 
         // Color and depth buffers at render_extent (scaled resolution)
-        let (color_image, color_image_memory, color_image_view) = create_color_image(
+        let msaa_color = create_color_image(
             &allocator,
             &device,
             render_extent,
@@ -431,9 +440,7 @@ impl Renderer {
             swapchain_images,
             swapchain_image_views,
             depth_format,
-            color_image,
-            color_image_memory,
-            color_image_view,
+            msaa_color,
             depth_image,
             depth_image_memory,
             depth_image_view,
@@ -1683,17 +1690,20 @@ impl Renderer {
         // transition attachments for rendering
         // (replaces the implicit transitions and entry dependency of the old render pass;
         // the MSAA color and depth images are shared by all frames in flight)
-        let color_barrier = vk::ImageMemoryBarrier2::default()
-            .old_layout(vk::ImageLayout::UNDEFINED)
-            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .image(self.color_image)
-            .subresource_range(COLOR_SUBRESOURCE_RANGE)
-            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-            .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
-            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-            .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE);
+        // None when MSAA is off; there's no separate multisampled image to transition
+        let color_barrier = self.msaa_color.as_ref().map(|msaa_color| {
+            vk::ImageMemoryBarrier2::default()
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(msaa_color.image)
+                .subresource_range(COLOR_SUBRESOURCE_RANGE)
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+        });
 
         let mut depth_aspect = vk::ImageAspectFlags::DEPTH;
         if has_stencil_component(self.depth_format) {
@@ -1733,11 +1743,11 @@ impl Renderer {
             .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE);
 
-        cmd_barrier2(
-            &self.device,
-            command_buffer,
-            &[color_barrier, depth_barrier, resolve_barrier],
-        );
+        let attachment_barriers: Vec<_> = color_barrier
+            .into_iter()
+            .chain([depth_barrier, resolve_barrier])
+            .collect();
+        cmd_barrier2(&self.device, command_buffer, &attachment_barriers);
 
         let clear_color = vk::ClearValue {
             color: vk::ClearColorValue {
@@ -1751,39 +1761,28 @@ impl Renderer {
             },
         };
 
-        // MSAA color renders at msaa_samples and resolves into this frame's resolve
-        // image; only the resolved output is consumed (by the upscale blit).
-        //
-        // `get_max_usable_sample_count` falls back to TYPE_1 whenever the requested
-        // level isn't in the device's framebuffer counts, and a resolve from a
-        // single-sample attachment is a spec violation
-        // (VUID-VkRenderingAttachmentInfo-imageView-06861). So with one sample there
-        // is nothing to resolve: render straight into the resolve image — which is
-        // what the blit reads either way — and keep the contents.
-        let multisampled = self.msaa_samples != vk::SampleCountFlags::TYPE_1;
-        let resolve_image_view = self.resolve_image_views[self.flight_slot];
-        let color_attachment = vk::RenderingAttachmentInfo::default()
-            .image_view(if multisampled {
-                self.color_image_view
-            } else {
-                resolve_image_view
-            })
-            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(if multisampled {
-                vk::AttachmentStoreOp::DONT_CARE
-            } else {
-                vk::AttachmentStoreOp::STORE
-            })
-            .clear_value(clear_color);
-        let color_attachment = if multisampled {
-            color_attachment
+        // With MSAA: color renders at msaa_samples and resolves into this frame's
+        // resolve image; the multisampled contents themselves are never read,
+        // so they don't need storing.
+        // Without MSAA: the pass renders (and stores) straight into the resolve image,
+        // skipping the resolve entirely.
+        // Either way the upscale blit below consumes the resolve image.
+        let color_attachment = match self.msaa_color.as_ref().map(|msaa| msaa.view) {
+            Some(msaa_color_view) => vk::RenderingAttachmentInfo::default()
+                .image_view(msaa_color_view)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .resolve_mode(vk::ResolveModeFlags::AVERAGE)
-                .resolve_image_view(resolve_image_view)
+                .resolve_image_view(self.resolve_image_views[self.flight_slot])
                 .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-        } else {
-            color_attachment
-        };
+                .store_op(vk::AttachmentStoreOp::DONT_CARE),
+
+            None => vk::RenderingAttachmentInfo::default()
+                .image_view(self.resolve_image_views[self.flight_slot])
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .store_op(vk::AttachmentStoreOp::STORE),
+        }
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .clear_value(clear_color);
         let color_attachments = [color_attachment];
         let depth_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.depth_image_view)
@@ -2493,10 +2492,12 @@ impl Renderer {
             self.allocator
                 .destroy_image(self.depth_image, &mut self.depth_image_memory);
         }
-        unsafe {
-            self.device.destroy_image_view(self.color_image_view, None);
-            self.allocator
-                .destroy_image(self.color_image, &mut self.color_image_memory);
+        if let Some(mut msaa_color) = self.msaa_color.take() {
+            unsafe {
+                self.device.destroy_image_view(msaa_color.view, None);
+                self.allocator
+                    .destroy_image(msaa_color.image, &mut msaa_color.memory);
+            }
         }
         unsafe {
             for i in 0..MAX_FRAMES_IN_FLIGHT {
@@ -2558,16 +2559,13 @@ impl Renderer {
         self.depth_image_memory = depth_image_memory;
         self.depth_image_view = depth_image_view;
 
-        let (color_image, color_image_memory, color_image_view) = create_color_image(
+        self.msaa_color = create_color_image(
             &self.allocator,
             &self.device,
             self.render_extent,
             self.image_format,
             self.msaa_samples,
         )?;
-        self.color_image = color_image;
-        self.color_image_memory = color_image_memory;
-        self.color_image_view = color_image_view;
 
         if let Some(picking) = &mut self.picking {
             picking.recreate_images(&self.allocator, &self.device, self.render_extent)?;
@@ -2821,9 +2819,11 @@ impl Drop for Renderer {
             self.allocator
                 .destroy_image(self.depth_image, &mut self.depth_image_memory);
 
-            self.device.destroy_image_view(self.color_image_view, None);
-            self.allocator
-                .destroy_image(self.color_image, &mut self.color_image_memory);
+            if let Some(mut msaa_color) = self.msaa_color.take() {
+                self.device.destroy_image_view(msaa_color.view, None);
+                self.allocator
+                    .destroy_image(msaa_color.image, &mut msaa_color.memory);
+            }
 
             for i in 0..MAX_FRAMES_IN_FLIGHT {
                 self.device
@@ -5011,6 +5011,7 @@ fn get_max_usable_sample_count(
         ],
         MaxMSAASamples::Max4 => &[vk::SampleCountFlags::TYPE_4, vk::SampleCountFlags::TYPE_2],
         MaxMSAASamples::Max2 => &[vk::SampleCountFlags::TYPE_2],
+        MaxMSAASamples::Off => &[],
     };
 
     for option in descending_options {
@@ -5019,18 +5020,25 @@ fn get_max_usable_sample_count(
         }
     }
 
-    // NOTE this will trigger a validation error;
-    // supposed to not use resolve attachment setup at all if not using msaa
+    // no multisampling: the main pass renders directly into the resolve image
+    // and skips the resolve attachment entirely (see record_command_buffer)
     vk::SampleCountFlags::TYPE_1
 }
 
+/// Allocates the multisampled color attachment.
+/// Returns None when MSAA is off; the main pass then renders straight
+/// into the frame's resolve image.
 fn create_color_image(
     allocator: &vk_mem::Allocator,
     device: &ash::Device,
     swapchain_extent: vk::Extent2D,
     color_format: vk::Format,
     msaa_samples: vk::SampleCountFlags,
-) -> Result<(vk::Image, vk_mem::Allocation, vk::ImageView), anyhow::Error> {
+) -> Result<Option<MsaaColorImage>, anyhow::Error> {
+    if msaa_samples == vk::SampleCountFlags::TYPE_1 {
+        return Ok(None);
+    }
+
     let mip_levels = 1;
     let image_options = ImageOptions {
         extent: swapchain_extent,
@@ -5041,17 +5049,21 @@ fn create_color_image(
         msaa_samples,
     };
 
-    let (color_image, color_image_memory) = create_vk_image(allocator, image_options)?;
+    let (image, memory) = create_vk_image(allocator, image_options)?;
 
-    let color_image_view = create_image_view(
+    let view = create_image_view(
         device,
-        color_image,
+        image,
         color_format,
         vk::ImageAspectFlags::COLOR,
         mip_levels,
     )?;
 
-    Ok((color_image, color_image_memory, color_image_view))
+    Ok(Some(MsaaColorImage {
+        image,
+        memory,
+        view,
+    }))
 }
 
 /// Hot reload swaps SPIR-V and pipeline layouts, but the Rust structs
