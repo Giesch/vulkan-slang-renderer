@@ -225,6 +225,15 @@ fn compute_barrier(renderer: &mut FrameRenderer) {
     );
 }
 
+fn compute_to_fragment_barrier(renderer: &mut FrameRenderer) {
+    renderer.memory_barrier(
+        vk::PipelineStageFlags2::COMPUTE_SHADER,
+        vk::PipelineStageFlags2::FRAGMENT_SHADER,
+        vk::AccessFlags2::SHADER_WRITE,
+        vk::AccessFlags2::SHADER_READ,
+    );
+}
+
 // Pigment data from Curtis et al. "Computer-Generated Watercolor" Figure 5 (a-l)
 #[derive(Clone, Copy)]
 #[repr(u32)]
@@ -401,8 +410,6 @@ impl Game for Watercolor {
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self> {
-        renderer.enable_pipelined_compute();
-
         // Create all ping-pong textures
         let velocity_u = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
         let velocity_v = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
@@ -1012,9 +1019,9 @@ impl Game for Watercolor {
         self.sim_parity = !self.sim_parity;
         self.deposit_parity = !self.deposit_parity;
 
-        // Pipelined: graphics reads previous frame's results, so no compute→frag
-        // barrier needed. A compute→compute barrier suffices for next frame's reads.
-        compute_barrier(&mut renderer);
+        // The display pass reads this frame's simulation output, so the sim's
+        // last writes have to be visible to the fragment stage.
+        compute_to_fragment_barrier(&mut renderer);
 
         // 11. Display
         let grid_size = Vec2::new(CANVAS_WIDTH as f32, CANVAS_HEIGHT as f32);
