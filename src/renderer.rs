@@ -3230,7 +3230,7 @@ fn choose_swap_surface_format(swapchain: &SwapChainSupportDetails) -> vk::Surfac
 
 fn choose_swap_present_mode(available_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
     if available_modes.contains(&vk::PresentModeKHR::MAILBOX) {
-        // burns battery on mobile, good otherwise
+        // burns battery on mobile or a laptop, good otherwise
         return vk::PresentModeKHR::MAILBOX;
     }
 

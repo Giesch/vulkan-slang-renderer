@@ -88,6 +88,10 @@ pub trait Game {
     {
         pretty_env_logger::init();
 
+        // NOTE: this can cause swapchain starvation, which is why it's not a default
+        #[cfg(target_os = "linux")]
+        sdl3::hint::set("SDL_VIDEO_DRIVER", "wayland,x11");
+
         let sdl = sdl3::init()?;
         let video_subsystem = sdl.video()?;
         let window_desc = Self::window_description();
