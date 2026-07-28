@@ -1010,9 +1010,6 @@ impl Game for Watercolor {
         self.sim_parity = !self.sim_parity;
         self.deposit_parity = !self.deposit_parity;
 
-        // The display pass reads this frame's simulation output; the renderer
-        // emits the compute -> graphics barrier that makes those writes visible.
-
         // 11. Display
         let grid_size = Vec2::new(CANVAS_WIDTH as f32, CANVAS_HEIGHT as f32);
         let texel_size = Vec2::new(1.0 / CANVAS_WIDTH as f32, 1.0 / CANVAS_HEIGHT as f32);

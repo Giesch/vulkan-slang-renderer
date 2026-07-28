@@ -89,8 +89,6 @@ impl Game for Particles {
         let workgroup_size = particles_compute::WORKGROUP_SIZE[0];
         let workgroup_count = NUM_PARTICLES.div_ceil(workgroup_size);
 
-        // Dispatch compute shader. The renderer emits the compute -> graphics
-        // barrier itself, so the vertex stage sees these writes.
         renderer.dispatch(&self.compute_pipeline, workgroup_count, 1, 1);
 
         let vertex_count = NUM_PARTICLES * 6; // 6 vertices per particle quad
