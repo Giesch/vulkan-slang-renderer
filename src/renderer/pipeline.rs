@@ -436,10 +436,6 @@ impl ComputePipelineStorage {
         handle
     }
 
-    pub fn get(&self, handle: &PipelineHandle<Compute>) -> &ComputeRendererPipeline {
-        self.0[handle.index].as_ref().unwrap()
-    }
-
     #[cfg(debug_assertions)]
     #[expect(unused)]
     pub fn get_mut(&mut self, handle: &PipelineHandle<Compute>) -> &mut ComputeRendererPipeline {

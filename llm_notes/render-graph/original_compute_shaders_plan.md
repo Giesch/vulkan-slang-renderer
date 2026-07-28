@@ -1,10 +1,15 @@
 # Compute Shader Support: Same-CB with Pipeline Barriers
 
 > **STATUS: IMPLEMENTED (historical).** Same-command-buffer compute with
-> `dispatch()`/`memory_barrier()` landed as planned. The command-buffer split this
-> doc deferred to "the render graph" landed independently as pipelined compute
+> `dispatch()`/`memory_barrier()` landed as planned, and is once again the only
+> mode. The command-buffer split this doc deferred to "the render graph" did
+> land independently as pipelined compute
 > (`Renderer::enable_pipelined_compute()`, `ComputePlacement::SeparateCommandBuffer`
-> with a compute timeline semaphore). See `04_design.md` for the current design.
+> with a compute timeline semaphore) — and was **removed again on 2026-07-28**
+> ([../remove_pipelined_compute.md](../remove_pipelined_compute.md)) for want of
+> a measurable win. One addition since: the renderer now emits the
+> compute→graphics barrier itself, so apps no longer supply a trailing
+> `memory_barrier()`. See `04_design.md` for the current design.
 
 ## Context
 

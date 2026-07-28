@@ -5,8 +5,15 @@
 > modified form of `02_explicit_parallelism.md` §"Simulation-Focused Parallelism".
 > Written 2026-07 against the post-BDA, post-pipelined-compute renderer.
 >
-> **Hard prerequisite:** `claude_notes/bda_footguns/03_pipelined_current_read_plan.md`
-> (domain-typed addresses) must land before graph codegen work begins — see §9.
+> **Amended 2026-07-28** by
+> [../remove_pipelined_compute.md](../remove_pipelined_compute.md). Pipelined
+> compute has been removed from the renderer; compute always runs before
+> graphics in the same command buffer, the renderer emits the compute→graphics
+> barrier itself, and there is one 2-slot ring indexed by `flight_slot`. The
+> **hard prerequisite dissolves**: `bda_footguns/03_pipelined_current_read_plan.md`
+> is superseded, because the race it guarded against no longer exists. Sections
+> flagged inline below need rework before this design is built; the parallelism
+> it describes must now be *added* rather than inherited.
 
 ## Decisions (settled)
 
@@ -21,9 +28,14 @@
    pair; the graph creates every needed pipeline variant internally and selects
    by parity at execute time. The bind-at-pipeline-creation descriptor model is
    kept.
-4. **Domains: the graph owns the pipelined/frame split.** `.simulation()` /
+4. ~~**Domains: the graph owns the pipelined/frame split.** `.simulation()` /
    `.rendering()` sections drive `ComputePlacement`; the graph, not the app,
-   calls the pipelining machinery.
+   calls the pipelining machinery.~~ **Void (2026-07-28).** There is no
+   pipelined/frame split and no `ComputePlacement` — both were deleted with
+   pipelined compute. If the graph wants cross-frame overlap it has to build
+   the multi-queue machinery from scratch, and would first need a
+   demonstrated framerate win; the local experiment that motivated the removal
+   found none.
 
 ---
 
@@ -44,8 +56,9 @@ Storage buffers are not bound via descriptor sets. Each shader has a single
 | `ImmutableAddr<T>` (:129) | `Ptr<T, Access.Immutable, …>` | GPU never writes |
 
 Handles (`src/renderer/storage_buffer.rs`): `StorageBufferHandle<T>`,
-`ImmutableBufferHandle<T>`, `GpuOnlyBufferHandle<T>` — each a 3-slot ring
-(`PRE_WAIT_RING_LEN = MAX_FRAMES_IN_FLIGHT + 1 = 3`, `src/renderer.rs:74`).
+`ImmutableBufferHandle<T>`, `GpuOnlyBufferHandle<T>` — each a 2-slot ring
+(`MAX_FRAMES_IN_FLIGHT = 2`, `src/renderer.rs:65`; was a 3-slot
+`PRE_WAIT_RING_LEN` before 2026-07-28).
 Addresses are minted per-frame inside the draw closure via `Gpu` methods
 (`addr` :5107, `current_addr` :5118, `previous_addr` :5129,
 `current_immutable_addr` :5137).
@@ -74,10 +87,25 @@ and is consumed by exactly one terminal draw (`draw_indexed` /
 `draw_vertex_count`), whose `gpu_update: FnOnce(&mut Gpu)` closure uploads
 uniforms and mints addresses. Graphics renders only to the swapchain.
 
-### Pipelined compute already exists
+### Pipelined compute ~~already exists~~ — **removed 2026-07-28**
 
-`ComputePlacement::{BeforeGraphics, SeparateCommandBuffer}` (`:5149`), enabled
-by `Renderer::enable_pipelined_compute()` (`:853`). In pipelined mode, compute
+There is exactly one command stream now. Every `dispatch()` is recorded at the
+top of the graphics command buffer, followed by a renderer-emitted
+compute→graphics barrier, so graphics always reads the most recent compute
+output. Cross-frame compute ordering is a barrier at the top of that same
+command buffer, not a semaphore. `ComputePlacement`,
+`enable_pipelined_compute()`, the second queue and `compute_timeline` are all
+gone — see [../remove_pipelined_compute.md](../remove_pipelined_compute.md).
+
+**Consequence for the graph:** "Pattern A" from `02_explicit_parallelism.md` no
+longer exists in the renderer, so the graph cannot *own and police* inherited
+cross-frame overlap — it would have to build it. The local experiment that
+prompted the removal found no framerate win from pipelining watercolor, so
+that should be re-measured before anyone rebuilds it.
+
+*Superseded original text follows.* `ComputePlacement::{BeforeGraphics,
+SeparateCommandBuffer}` (`:5149`), enabled by
+`Renderer::enable_pipelined_compute()` (`:853`). In pipelined mode, compute
 goes to a separate queue with a timeline semaphore; **graphics frame N always
 waits on compute N−1** (VERTEX | FRAGMENT | COMPUTE stages). There is no
 same-frame ("synced") wait mode today. This is precisely "Pattern A" from
@@ -120,7 +148,10 @@ target.
   (frame domain). These map 1:1 onto the renderer's two per-frame command
   streams (see §1 planned refactor and `watercolor_race_fixes.md`): simulation
   nodes are emitted via the pipelined stream, rendering-section work via the
-  frame stream + terminal draw. **v1 constraint:** compute nodes only in
+  frame stream + terminal draw. **(2026-07-28: there is only one stream now —
+  see §1 and §9. The section split may still be worth keeping as a
+  declaration of intent, but it no longer maps onto anything in the
+  renderer.)** **v1 constraint:** compute nodes only in
   simulation; exactly one terminal draw in rendering. Post-v1, the frame
   stream makes frame-domain compute in the rendering section (e.g.
   post-processing that must see this frame's draw inputs) a natural
@@ -363,6 +394,21 @@ uniform writes plus address minting.
 
 ## 8. Cross-frame reads (and the watercolor race)
 
+> **The race described here is FIXED (2026-07-28)** by
+> [../remove_pipelined_compute.md](../remove_pipelined_compute.md), not by any
+> design in this section. Watercolor's compute and graphics are now one submit
+> on one queue, separated by a renderer-emitted compute→graphics barrier, so
+> there is no cross-queue concurrency to race and the display legitimately
+> reads *this* frame's simulation output. The finding below — that the display
+> was never reading the previous frame's output, contrary to the source comment
+> — was correct, and the comment has been fixed.
+>
+> **Fact (a) below no longer applies**, and `CrossFrameMode` is unbuilt design
+> for a renderer that no longer works this way. **Fact (b) still stands**:
+> in-place RW on ping-pong front slots breaks snapshots at any slot count, and
+> is independent of how compute is submitted. Any future cross-frame design
+> starts from fact (b) and from a 2-slot ring.
+
 ### The finding (verified 2026-07)
 
 Watercolor's display pass does **not** read the previous frame's simulation
@@ -383,20 +429,21 @@ image: a same-frame cross-queue data race. It is visually benign (the sim is
 convergent; a torn read shows slightly newer paint) but it is not the "reads
 previous frame's results" the comment claims.
 
-> **Status: unfixed.** The example still exhibits this race: it runs under
-> `enable_pipelined_compute()` (graphics N waits compute N−1), and the trace
-> line numbers above are current. The fix belongs to the render graph's
-> per-resource `CrossFrameMode` (below); a renderer-level stopgap (`SyncWait`)
-> would need a same-frame wait mode the renderer does not have yet — see
-> `watercolor_race_fixes.md`.
+> **Status: FIXED 2026-07-28** by removing pipelined compute (see the banner at
+> the top of this section). Watercolor no longer calls
+> `enable_pipelined_compute()` — the method is gone — and its compute and
+> graphics share one submit on one queue.
 
 Two deeper structural facts, which any fix must respect:
 
-- **(a) Two slots cannot give a clean previous-frame read.** If graphics N
+- ~~**(a) Two slots cannot give a clean previous-frame read.** If graphics N
   reads the slot compute N−1 wrote, compute N+1 — which waits only on compute
   N, not on graphics N — writes that same slot: a WAR race. This is exactly
   why the BDA uniform/storage rings are 3 slots (`PRE_WAIT_RING_LEN = 3`,
-  `src/renderer.rs:74`).
+  `src/renderer.rs:74`).~~ **No longer applies (2026-07-28).** Its premise is
+  async compute, where compute N+1 waits only on compute N. With one submit
+  per frame, compute N+1 is ordered after graphics N by frame N+1's
+  `frame_timeline` wait, so two slots *are* enough — the rings are 2 slots now.
 - **(b) In-place RW breaks snapshots at any slot count.** Brush and
   flow-outward write ping-pong *front* slots in place (`front_storage`), so
   the previous frame's final state is mutated by the current frame before
@@ -415,7 +462,7 @@ fails, the ping-pong must declare a `CrossFrameMode`:
 | Mode | Behavior | Cost / when |
 |---|---|---|
 | `ExtraSlot` (default) | Grow the rotation so graphics N reads a slot no in-flight compute touches (3 slots at one advance/frame, 4 at two — §2) | +1–2 textures of memory; the safe default for write-forward resources |
-| `SyncWait` | Graphics N additionally waits compute N; compute N+1 still overlaps graphics N | No memory cost; **not implemented today** — needs a same-frame wait mode on the renderer (`watercolor_race_fixes.md`) |
+| `SyncWait` | Graphics N additionally waits compute N; compute N+1 still overlaps graphics N | ~~needs a same-frame wait mode on the renderer~~ — **this is now the only behavior the renderer has** (2026-07-28): compute and graphics share a submit, separated by a barrier, at no memory cost. As a *mode* it is moot; as the default it is free |
 | `unsynchronized()` | Explicit, loudly-named opt-in reproducing today's watercolor behavior | Required for in-place-RW resources (fact (b)) until they are restructured |
 
 `cross_frame_sampled(&pp)` is only legal on rendering-section nodes, and only
@@ -424,6 +471,16 @@ for ping-pongs with a declared mode (or ones that pass the static check).
 ---
 
 ## 9. Domain integration
+
+> **Void as written (2026-07-28).** There are no per-dispatch streams, no
+> pipelined stream, and no domain markers: pipelined compute was removed and
+> `bda_footguns/03_pipelined_current_read_plan.md` was superseded rather than
+> implemented. The "prerequisite confirmed" bullet at the end of this section
+> no longer holds — `addr.rs` stays single-parameter, and `ParamsPtrs` is
+> spelled with plain `Addr<T>`. The hazard axis this section is built on
+> (frame submission vs pipelined compute submission) has one value now. Kept
+> for the reasoning about keying domains off pipelines rather than shader
+> kinds, which would still apply if multi-queue overlap is ever rebuilt.
 
 - `.simulation()` nodes are emitted into the **pipelined stream** and
   `.rendering()` work into the **frame stream** + terminal draw — the two
@@ -491,17 +548,16 @@ The `graph.execute(frame, |run| …)` block of §7: enable brush when
 `point_count > 0`, set iterations, write stroke points, and pass the existing
 per-pass uniform structs unchanged.
 
-### Migration decision — still open
+### Migration decision — mostly settled by the 2026-07-28 removal
 
-The watercolor race (§8) is currently **unfixed** in the example, so the
-migration must choose a `CrossFrameMode` for each cross-frame-read resource
-rather than inherit a settled one:
+The watercolor race (§8) is **fixed**, so the migration inherits a settled
+answer for the cross-frame-read resources and only owes the in-place-RW work:
 
-- **wet_mask / deposit**: today 2-slot `PingPong`s (`watercolor.rs:77-94`)
-  whose display reads race this frame's compute. Candidate modes: `SyncWait`
-  (cheapest, but needs the renderer's same-frame wait mode from
-  `watercolor_race_fixes.md`), `ExtraSlot` (grow the rotation), or
-  `unsynchronized()` (reproduce today's racy behavior explicitly).
+- **wet_mask / deposit**: 2-slot `PingPong`s (`watercolor.rs:77-94`) whose
+  display now reads this frame's compute output behind the renderer's
+  compute→graphics barrier — effectively `SyncWait`, at no memory cost and with
+  no mode to declare. `ExtraSlot` and `unsynchronized()` are only interesting
+  again if multi-queue overlap is ever rebuilt.
 - **In-place-RW resources** (brush and flow-outward use `read_storage`,
   `watercolor.rs:91-93`): fact (b) means `ExtraSlot` alone cannot snapshot
   them — they need write-forward restructuring first. The brush is also
@@ -519,13 +575,15 @@ migration (Phase 6) still owes.
 
 ## 11. Implementation phases
 
-- **Phase 0 — domain markers** (`bda_footguns/03`). Prerequisite; already
-  fully planned and independently valuable.
-- **Phase 0.5 — per-dispatch compute streams** (`watercolor_race_fixes.md`).
-  Replace the pipelined-mode toggle with coexisting frame + pipelined command
-  streams selected by dispatch method. Prerequisite for §9's section→stream
-  mapping; independently fixes the frame-0 combined-path barrier gap and
-  removes the mode flags. Can land before or in parallel with Phase 0.
+- ~~**Phase 0 — domain markers** (`bda_footguns/03`).~~ **Dropped
+  (2026-07-28)** — superseded, nothing left to mark.
+- ~~**Phase 0.5 — per-dispatch compute streams** (`watercolor_race_fixes.md`).~~
+  **Done differently (2026-07-28)** by
+  [../remove_pipelined_compute.md](../remove_pipelined_compute.md). Both of its
+  independent motivations are delivered: the mode flags are gone (there is one
+  stream), and the renderer emits the compute→graphics barrier itself, which
+  closes the frame-0 barrier gap. What did *not* happen is the pipelined stream
+  — §9's section→stream mapping has nothing to map onto.
 - **Phase 1 — N pipelines from one atlas entry.** `pipeline_config(self, …)`
   consumes the generated `Shader` (e.g.
   `src/generated/shader_atlas/wc_pressure_jacobi_compute.rs:56`) — the root
@@ -538,8 +596,8 @@ migration (Phase 6) still owes.
   config (or the resources closures) to re-run pipeline creation on reload.
 - **Phase 2 — core graph.** Builder + sections, fixed-resource nodes, hazard
   analysis from the `*PipelineConfig` handle lists, global-barrier emission,
-  `execute()` routing nodes onto the two `FrameRenderer` command streams from
-  Phase 0.5. No ping-pong yet. Port a simple example (e.g. particles) as the
+  `execute()` recording nodes onto `FrameRenderer`'s single command stream
+  (there are no longer two — see Phase 0.5). No ping-pong yet. Port a simple example (e.g. particles) as the
   smoke test.
 - **Phase 3 — parity groups, graph-managed ping-pongs, variant enumeration**
   (probe-recording selector, per-parity-state barrier schedules).

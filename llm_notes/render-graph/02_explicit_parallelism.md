@@ -4,21 +4,25 @@
 > form by `04_design.md`.** The rest (Options A–D, hint-based scheduling, the A/B
 > profiling harness, the hardware survey) is background.
 >
-> **Already implemented in the renderer:** Pattern A (cross-frame
-> simulation/rendering overlap) exists today as `enable_pipelined_compute()` —
-> separate compute queue, timeline semaphore, graphics frame N waits on compute
-> N−1 — along with the 3-slot buffer ring and `previous_addr` machinery. The
-> graph's job is to *own* this split (`.simulation()`/`.rendering()` sections),
-> not to introduce it.
+> **~~Already implemented in the renderer~~ — removed 2026-07-28** by
+> [../remove_pipelined_compute.md](../remove_pipelined_compute.md). Pattern A
+> (cross-frame simulation/rendering overlap) *did* exist as
+> `enable_pipelined_compute()` — separate compute queue, timeline semaphore,
+> graphics frame N waits on compute N−1 — but it showed no measurable framerate
+> win on watercolor and was deleted along with the 3-slot ring. `previous_addr`
+> and the ping-pong machinery stay, now over a 2-slot ring. **So the graph
+> would have to *introduce* this split, not merely own it** — and should
+> re-measure the win first.
 >
 > **Modifications in `04_design.md`:**
 > - Build cadence is **build-once at setup** (this doc's simulation-focused section
 >   mandates per-frame rebuild); conditionals, loop trip counts, and parity move to
 >   execute-time parameters on a fixed structure.
 > - The ownership-based `&`/`&mut` Resources idea is superseded: the
->   `Addr`/`ReadAddr`/`ImmutableAddr` pointer types plus the domain markers from
->   `claude_notes/bda_footguns/03_pipelined_current_read_plan.md` and graph
->   build-time checks cover the same hazards without making handles non-Copy.
+>   `Addr`/`ReadAddr`/`ImmutableAddr` pointer types ~~plus the domain markers
+>   from `claude_notes/bda_footguns/03_pipelined_current_read_plan.md`~~ (that
+>   plan is superseded and unimplemented) and graph build-time checks cover the
+>   same hazards without making handles non-Copy.
 
 ## Overview
 

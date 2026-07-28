@@ -1,5 +1,22 @@
 # Collapsing the pre-wait ring: 3 slots → 2
 
+> **SUPERSEDED by [remove_pipelined_compute.md](remove_pipelined_compute.md)**
+> (2026-07-28), which did collapse the ring — but on different grounds, and
+> further than this note thought possible.
+>
+> Its **Phase 1** (reorder `draw_frame` to wait → acquire → write) was absorbed
+> as that plan's Phase 4a and is implemented.
+>
+> Its **"Job 2 is NOT removable"** conclusion is **void**. That conclusion is
+> specific to async compute, where compute(N+2) waits only on compute(N+1)
+> rather than on graphics(N)'s retirement. With pipelining gone, compute(N) and
+> graphics(N) share one submit, so graphics(N) vs compute(N+2) is covered
+> unconditionally by frame N+2's `frame_timeline >= N` wait, and compute(N+1)
+> vs compute(N+2) is covered by a barrier at the top of each command buffer.
+> `PRE_WAIT_RING_LEN` and `ring_slot` are gone; there is one ring of length
+> `MAX_FRAMES_IN_FLIGHT`, indexed by `flight_slot`. This note says as much
+> itself at L82.
+
 Status: **plan, 2026-07-26.** Companion to
 [bda_footguns.md](bda_footguns.md) (§1 occasional-write flicker, §3 pipelined current-read race).
 Code references verified against main @ `bd60578`; re-verify before editing.

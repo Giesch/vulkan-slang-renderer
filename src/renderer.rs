@@ -62,16 +62,20 @@ const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
 /// applies MSAA-like sampling within textures
 const ENABLE_SAMPLE_SHADING: bool = false;
 
-/// Max GPU frames executing concurrently. Each frame blocks in wait_semaphores
-/// until frame_timeline reaches N - MAX_FRAMES_IN_FLIGHT, and slots indexed by
-/// `flight_slot` are only touched after that wait, which guards their reuse.
-/// (Compute command buffers get an equivalent wait on compute_timeline.)
+/// Max GPU frames executing concurrently, and the length of every per-frame
+/// ring: command buffers, uniform/storage buffers, descriptor sets, acquire
+/// semaphores, resolve images, picking readback.
+///
+/// Frame N blocks in wait_semaphores until frame_timeline reaches
+/// N - MAX_FRAMES_IN_FLIGHT, and nothing indexed by `flight_slot` is touched
+/// before that wait, which is what makes the reuse safe.
+///
+/// The one slot not covered by that wait is the ping-pong history read
+/// (`Gpu::previous_addr`): frame N's compute reads what frame N-1's compute
+/// wrote, and the next writer of that slot is frame N+1's compute. That pair
+/// is ordered by the barrier at the top of each command buffer instead — see
+/// `record_command_buffer`.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
-/// Ring length for slots touched before the frame_timeline wait (CPU buffer
-/// writes, swapchain acquire) or read one frame late (ping-pong history).
-/// Pre-wait, only frame N - 3 is proven retired — by the previous frame's
-/// wait — so the ring needs one slot more than MAX_FRAMES_IN_FLIGHT.
-const PRE_WAIT_RING_LEN: usize = MAX_FRAMES_IN_FLIGHT + 1;
 
 /// the subresource range of a single-mip color image
 const COLOR_SUBRESOURCE_RANGE: vk::ImageSubresourceRange = vk::ImageSubresourceRange {
@@ -143,37 +147,18 @@ pub struct Renderer {
 
     command_pool: vk::CommandPool,
     command_buffers: [vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT],
-    /// image semaphores indexed by ring_slot
-    image_available: [vk::Semaphore; PRE_WAIT_RING_LEN],
+    /// image semaphores indexed by flight_slot
+    image_available: [vk::Semaphore; MAX_FRAMES_IN_FLIGHT],
     /// render finished semaphores indexed by image_index
     /// ie, one per swapchain image, not per frame-in-flight
     render_finished: Vec<vk::Semaphore>,
     /// timeline semaphore: the graphics submit for frame N signals value N (= total_frames)
     frame_timeline: vk::Semaphore,
-    /// looping index for wait-guarded per-flight resources:
-    ///   command buffers (graphics + compute), resolve images,
-    ///   picking readback, egui texture frees
+    /// the one looping index for every per-frame resource: command buffers,
+    /// uniform/storage buffers and the descriptor sets referencing them,
+    /// acquire semaphores, resolve images, picking readback, egui texture frees
     /// (0..MAX_FRAMES_IN_FLIGHT)
     flight_slot: usize,
-    /// looping index for the pre-wait ring:
-    ///   per-frame buffers, acquire semaphores, and the descriptor
-    ///   sets that reference each slot's buffers
-    /// (0..PRE_WAIT_RING_LEN)
-    ring_slot: usize,
-
-    /// timeline semaphore: the k-th compute-signaling submit signals value k
-    compute_timeline: vk::Semaphore,
-    /// number of submits so far that signal compute_timeline (its highest pending value)
-    compute_frames: u64,
-    has_compute_pipelines: bool,
-
-    /// Dedicated compute queue for async compute (None = single-queue fallback)
-    compute_queue: Option<vk::Queue>,
-    /// Command buffers for pipelined compute dispatches
-    compute_command_buffers: [vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT],
-    /// Use pipelined compute submission; set once during Game::setup via
-    /// Renderer::enable_pipelined_compute
-    pipelined_compute: bool,
 
     pipelines: PipelineStorage,
     compute_pipelines: ComputePipelineStorage,
@@ -331,11 +316,6 @@ impl Renderer {
         let graphics_queue = unsafe { device.get_device_queue(queue_family_indices.graphics, 0) };
         let presentation_queue =
             unsafe { device.get_device_queue(queue_family_indices.presentation, 0) };
-        let compute_queue = if queue_family_indices.graphics_queue_count >= 2 {
-            Some(unsafe { device.get_device_queue(queue_family_indices.graphics, 1) })
-        } else {
-            None
-        };
 
         let swapchain_device_ext = ash::khr::swapchain::Device::new(&instance, &device);
         let CreatedSwapchain {
@@ -354,7 +334,7 @@ impl Renderer {
         let swapchain_images = unsafe { swapchain_device_ext.get_swapchain_images(swapchain)? };
         let swapchain_image_views =
             create_swapchain_image_views(&device, image_format, &swapchain_images)?;
-        let (image_available, render_finished, frame_timeline, compute_timeline) =
+        let (image_available, render_finished, frame_timeline) =
             create_sync_objects(&device, &swapchain_images)?;
 
         let depth_format = find_depth_format(&instance, physical_device);
@@ -372,7 +352,6 @@ impl Renderer {
 
         let command_pool = create_command_pool(&device, &queue_family_indices)?;
         let command_buffers = create_command_buffers(&device, command_pool)?;
-        let compute_command_buffers = create_command_buffers(&device, command_pool)?;
 
         // Calculate scaled render extent
         let render_extent = calculate_render_extent(image_extent, render_scale);
@@ -455,14 +434,6 @@ impl Renderer {
             render_finished,
             frame_timeline,
             flight_slot: 0,
-            ring_slot: 0,
-
-            compute_timeline,
-            compute_frames: 0,
-            has_compute_pipelines: false,
-            compute_queue,
-            compute_command_buffers,
-            pipelined_compute: false,
 
             pipelines,
             compute_pipelines,
@@ -809,10 +780,10 @@ impl Renderer {
     pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> anyhow::Result<UniformBufferHandle<T>> {
         let buffer_size = std::mem::size_of::<T>() as u64;
 
-        let mut buffers_per_frame: [Option<RawUniformBuffer>; PRE_WAIT_RING_LEN] =
-            [const { None }; PRE_WAIT_RING_LEN];
+        let mut buffers_per_frame: [Option<RawUniformBuffer>; MAX_FRAMES_IN_FLIGHT] =
+            [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
-        for i in 0..PRE_WAIT_RING_LEN {
+        for i in 0..MAX_FRAMES_IN_FLIGHT {
             let (buffer, allocation) = create_memory_buffer(
                 &self.allocator,
                 buffer_size,
@@ -873,29 +844,16 @@ impl Renderer {
         Ok(self.storage_buffers.add_gpu_only(buffers_per_frame, len))
     }
 
-    /// Enable pipelined async compute; call during Game::setup.
-    /// Compute dispatches are submitted separately so they can run concurrently
-    /// with the previous frame's graphics, on a dedicated compute queue when one
-    /// exists (single-queue fallback otherwise).
-    ///
-    /// In this mode a frame's graphics submit does NOT wait for that frame's
-    /// compute — graphics shaders must read compute output via
-    /// `Gpu::previous_addr`, never `Gpu::current_gpu_only_addr`.
-    /// TODO: make the warning above unnecessary
-    pub fn enable_pipelined_compute(&mut self) {
-        self.pipelined_compute = true;
-    }
-
     fn create_storage_buffers_per_frame<T: GPUWrite>(
         &mut self,
         len: u32,
-    ) -> anyhow::Result<[RawStorageBuffer; PRE_WAIT_RING_LEN]> {
+    ) -> anyhow::Result<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> {
         let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
 
-        let mut buffers_per_frame: [Option<RawStorageBuffer>; PRE_WAIT_RING_LEN] =
-            [const { None }; PRE_WAIT_RING_LEN];
+        let mut buffers_per_frame: [Option<RawStorageBuffer>; MAX_FRAMES_IN_FLIGHT] =
+            [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
-        for i in 0..PRE_WAIT_RING_LEN {
+        for i in 0..MAX_FRAMES_IN_FLIGHT {
             let (buffer, allocation) = create_memory_buffer(
                 &self.allocator,
                 buffer_size,
@@ -925,7 +883,7 @@ impl Renderer {
     pub fn write_storage_all_frames<T>(&mut self, buf: &mut StorageBufferHandle<T>, data: &[T]) {
         debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
-        for frame in 0..PRE_WAIT_RING_LEN {
+        for frame in 0..MAX_FRAMES_IN_FLIGHT {
             let mapped = self.storage_buffers.get_mapped_mem_for_frame(buf, frame);
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
@@ -940,7 +898,7 @@ impl Renderer {
     ) {
         debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
-        for frame in 0..PRE_WAIT_RING_LEN {
+        for frame in 0..MAX_FRAMES_IN_FLIGHT {
             let mapped = self
                 .storage_buffers
                 .get_mapped_mem_for_frame_immutable(buf, frame);
@@ -955,7 +913,7 @@ impl Renderer {
     pub fn write_gpu_only_all_frames<T>(&mut self, buf: &mut GpuOnlyBufferHandle<T>, data: &[T]) {
         debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
-        for frame in 0..PRE_WAIT_RING_LEN {
+        for frame in 0..MAX_FRAMES_IN_FLIGHT {
             let mapped = self
                 .storage_buffers
                 .get_mapped_mem_for_frame_gpu_only(buf, frame);
@@ -1084,7 +1042,7 @@ impl Renderer {
         let layout_bindings = picking_config.shader.layout_bindings();
         let descriptor_pool = create_descriptor_pool(&self.device, &picking_pipeline_layout)?;
 
-        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; PRE_WAIT_RING_LEN]> =
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> =
             picking_config
                 .uniform_buffer_handles
                 .iter()
@@ -1209,7 +1167,7 @@ impl Renderer {
             textures
         };
 
-        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; PRE_WAIT_RING_LEN]> =
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> =
             config
                 .uniform_buffer_handles
                 .iter()
@@ -1246,7 +1204,6 @@ impl Renderer {
         };
 
         let handle = self.compute_pipelines.add(compute_renderer_pipeline);
-        self.has_compute_pipelines = true;
 
         Ok(handle)
     }
@@ -1357,7 +1314,7 @@ impl Renderer {
             textures
         };
 
-        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; PRE_WAIT_RING_LEN]> =
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> =
             config
                 .uniform_buffer_handles
                 .iter()
@@ -1426,7 +1383,7 @@ impl Renderer {
                     let compute_descriptor_sets = compute_pipeline
                         .descriptor_sets
                         .chunks(descriptor_sets_per_frame)
-                        .nth(self.ring_slot)
+                        .nth(self.flight_slot)
                         .unwrap();
 
                     unsafe {
@@ -1464,42 +1421,16 @@ impl Renderer {
                     dst_stage,
                     src_access,
                     dst_access,
-                } => {
-                    let memory_barrier = vk::MemoryBarrier2::default()
-                        .src_stage_mask(*src_stage)
-                        .src_access_mask(*src_access)
-                        .dst_stage_mask(*dst_stage)
-                        .dst_access_mask(*dst_access);
-                    let memory_barriers = [memory_barrier];
-                    let dependency_info =
-                        vk::DependencyInfo::default().memory_barriers(&memory_barriers);
-
-                    unsafe {
-                        self.device
-                            .cmd_pipeline_barrier2(command_buffer, &dependency_info);
-                    }
-                }
+                } => cmd_memory_barrier2(
+                    &self.device,
+                    command_buffer,
+                    *src_stage,
+                    *src_access,
+                    *dst_stage,
+                    *dst_access,
+                ),
             }
         }
-    }
-
-    /// Record a standalone compute command buffer for pipelined async compute submission
-    fn record_compute_command_buffer(
-        &self,
-        pending_compute: &[PendingComputeCommand],
-    ) -> Result<(), anyhow::Error> {
-        let command_buffer = self.compute_command_buffers[self.flight_slot];
-
-        let begin_info = vk::CommandBufferBeginInfo::default();
-        unsafe {
-            self.device
-                .begin_command_buffer(command_buffer, &begin_info)?;
-        }
-
-        self.record_compute_commands(command_buffer, pending_compute);
-
-        unsafe { self.device.end_command_buffer(command_buffer)? };
-        Ok(())
     }
 
     fn record_command_buffer(
@@ -1508,7 +1439,6 @@ impl Renderer {
         image_index: u32,
         picking_config: Option<&PickingDrawConfig>,
         pending_compute: &[PendingComputeCommand],
-        compute_placement: ComputePlacement,
     ) -> Result<(), anyhow::Error> {
         let command_buffer = self.command_buffers[self.flight_slot];
 
@@ -1518,8 +1448,39 @@ impl Renderer {
                 .begin_command_buffer(command_buffer, &begin_info)?;
         }
 
-        if compute_placement == ComputePlacement::BeforeGraphics {
-            self.record_compute_commands(command_buffer, pending_compute);
+        if !pending_compute.is_empty() {
+            // Cross-frame ordering for compute. A barrier's first synchronization
+            // scope covers every command earlier in submission order on this queue,
+            // including earlier submits, so this orders frame N's compute after
+            // frame N-1's compute *and* graphics — both the RAW that
+            // `Gpu::previous_addr` needs and the WAR the ping-pong ring needs —
+            // without making frame N wait for all of frame N-1 to retire.
+            cmd_memory_barrier2(
+                &self.device,
+                command_buffer,
+                vk::PipelineStageFlags2::COMPUTE_SHADER
+                    | vk::PipelineStageFlags2::VERTEX_SHADER
+                    | vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                vk::PipelineStageFlags2::COMPUTE_SHADER,
+                vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            );
+        }
+
+        self.record_compute_commands(command_buffer, pending_compute);
+
+        if !pending_compute.is_empty() {
+            // Graphics reads the most recent compute output, so the renderer — not
+            // the app — owns the compute -> graphics dependency. Always legal:
+            // this command buffer is always submitted on the graphics queue.
+            cmd_memory_barrier2(
+                &self.device,
+                command_buffer,
+                vk::PipelineStageFlags2::COMPUTE_SHADER,
+                vk::AccessFlags2::SHADER_WRITE,
+                vk::PipelineStageFlags2::VERTEX_SHADER | vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                vk::AccessFlags2::SHADER_READ,
+            );
         }
 
         // PICKING RENDER PASS (before main pass)
@@ -2141,21 +2102,7 @@ impl Renderer {
         pipeline
             .descriptor_sets
             .chunks(descriptor_sets_per_frame)
-            .nth(self.ring_slot)
-            .unwrap()
-    }
-
-    #[expect(unused)]
-    fn descriptor_sets_for_compute_frame(
-        &self,
-        pipeline_handle: &PipelineHandle<Compute>,
-    ) -> &[vk::DescriptorSet] {
-        let compute_pipeline = self.compute_pipelines.get(pipeline_handle);
-        let descriptor_sets_per_frame = compute_pipeline.layout.descriptor_set_layouts.len();
-        compute_pipeline
-            .descriptor_sets
-            .chunks(descriptor_sets_per_frame)
-            .nth(self.ring_slot)
+            .nth(self.flight_slot)
             .unwrap()
     }
 
@@ -2168,7 +2115,7 @@ impl Renderer {
         pipeline
             .descriptor_sets
             .chunks(descriptor_sets_per_frame)
-            .nth(self.ring_slot)
+            .nth(self.flight_slot)
             .unwrap()
     }
 
@@ -2205,12 +2152,30 @@ impl Renderer {
 
         let command_buffer = self.command_buffers[self.flight_slot];
 
-        // 1. Acquire swapchain image (can block on vsync)
+        // This frame's frame_timeline value. total_frames is only bumped once the
+        // acquire below succeeds, which keeps total_frames equal to the highest
+        // value any submit has signalled. Bumping it earlier would leave a gap on
+        // every ERROR_OUT_OF_DATE_KHR return, and two gaps in a row -- easy to hit
+        // while drag-resizing -- would leave a later frame waiting forever on a
+        // value nothing ever signals.
+        let frame_value = self.total_frames as u64 + 1;
+
+        // 1. Wait until frame (N - MAX_FRAMES_IN_FLIGHT)'s graphics submit retires
+        //    (command buffer and per-frame slot reuse).
+        //    Frames 1 and 2 wait on value 0, trivially satisfied.
+        let semaphores = [self.frame_timeline];
+        let values = [frame_value.saturating_sub(MAX_FRAMES_IN_FLIGHT as u64)];
+        let wait_info = vk::SemaphoreWaitInfo::default()
+            .semaphores(&semaphores)
+            .values(&values);
+        unsafe { self.device.wait_semaphores(&wait_info, u64::MAX)? };
+
+        // 2. Acquire swapchain image (can block on vsync)
         let (image_index, swapchain_was_suboptimal_on_image_acquire) = unsafe {
             match self.swapchain_device_ext.acquire_next_image(
                 self.swapchain,
                 u64::MAX,
-                self.image_available[self.ring_slot],
+                self.image_available[self.flight_slot],
                 vk::Fence::null(),
             ) {
                 Ok(tup) => tup,
@@ -2224,26 +2189,15 @@ impl Renderer {
         };
 
         self.total_frames += 1;
-        let frame_value = self.total_frames as u64;
 
-        // 2. CPU buffer writes BEFORE the timeline wait
-        //    Safe because buffer[ring_slot] was last used by frame (total - PRE_WAIT_RING_LEN)
-        //    and that frame's timeline value was waited for during frame (total - 1)
+        // 3. CPU buffer writes, after the wait that proves this slot's last user
+        //    has retired
         let mut gpu = Gpu {
-            ring_slot: self.ring_slot,
+            flight_slot: self.flight_slot,
             uniform_buffers: &mut self.uniform_buffers,
             storage_buffers: &mut self.storage_buffers,
         };
         gpu_update(&mut gpu);
-
-        // 3. Wait until frame (N - MAX_FRAMES_IN_FLIGHT)'s graphics submit retires
-        //    (command buffer reuse). Frames 1 and 2 wait on value 0, trivially satisfied.
-        let semaphores = [self.frame_timeline];
-        let values = [frame_value.saturating_sub(MAX_FRAMES_IN_FLIGHT as u64)];
-        let wait_info = vk::SemaphoreWaitInfo::default()
-            .semaphores(&semaphores)
-            .values(&values);
-        unsafe { self.device.wait_semaphores(&wait_info, u64::MAX)? };
 
         // 3a. Read picking result from staging buffer (written 2 frames ago, now safe to read)
         if let Some(picking) = &self.picking {
@@ -2256,191 +2210,53 @@ impl Renderer {
             egui.free_pending_textures(self.flight_slot);
         }
 
-        // Determine if we should use pipelined async compute this frame.
-        // The first compute frame always goes through the combined path below,
-        // so graphics sees that frame's compute output.
-        let use_pipelined =
-            self.pipelined_compute && self.has_compute_pipelines && self.compute_frames > 0;
-        // This frame's compute_timeline value, if compute is submitted
-        let compute_value = self.compute_frames + 1;
+        // Compute + graphics in one command buffer: compute runs first with
+        // barriers, then graphics reads its results in the same frame.
+        unsafe {
+            self.device
+                .reset_command_buffer(command_buffer, Default::default())?;
+        }
+        self.record_command_buffer(
+            &pending_draws,
+            image_index,
+            picking_config.as_ref(),
+            &pending_compute,
+        )?;
 
-        if use_pipelined {
-            // --- PIPELINED: separate compute and graphics submissions ---
-            // Uses dedicated compute queue when available, otherwise same graphics queue.
-            // Two separate vkQueueSubmit calls give the driver freedom to overlap execution.
-            let compute_queue = self.compute_queue.unwrap_or(self.graphics_queue);
-            let compute_cb = self.compute_command_buffers[self.flight_slot];
+        let submit_command_buffers =
+            [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
 
-            // Wait until this slot's previous compute submit retires (compute CB reuse).
-            // compute_frames advances every frame once compute is active, so the slot's
-            // last user signaled compute_value - MAX_FRAMES_IN_FLIGHT.
-            let semaphores = [self.compute_timeline];
-            let values = [compute_value.saturating_sub(MAX_FRAMES_IN_FLIGHT as u64)];
-            let wait_info = vk::SemaphoreWaitInfo::default()
-                .semaphores(&semaphores)
-                .values(&values);
-            unsafe { self.device.wait_semaphores(&wait_info, u64::MAX)? };
+        let image_available_wait = vk::SemaphoreSubmitInfo::default()
+            .semaphore(self.image_available[self.flight_slot])
+            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT);
+        let render_finished_signal = vk::SemaphoreSubmitInfo::default()
+            .semaphore(self.render_finished[image_index as usize])
+            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS);
+        let frame_timeline_signal = vk::SemaphoreSubmitInfo::default()
+            .semaphore(self.frame_timeline)
+            .value(frame_value)
+            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS);
 
-            // Record compute command buffer
-            unsafe {
-                self.device
-                    .reset_command_buffer(compute_cb, Default::default())?;
-            }
-            self.record_compute_command_buffer(&pending_compute)?;
+        // Cross-frame compute ordering is a barrier at the top of the command
+        // buffer (see record_command_buffer), not a semaphore, so the submit
+        // needs nothing beyond the swapchain and frame timeline.
+        let wait_semaphores = [image_available_wait];
+        let signal_semaphores = [render_finished_signal, frame_timeline_signal];
 
-            // Record graphics command buffer (skip compute section)
-            unsafe {
-                self.device
-                    .reset_command_buffer(command_buffer, Default::default())?;
-            }
-            self.record_command_buffer(
-                &pending_draws,
-                image_index,
-                picking_config.as_ref(),
-                &pending_compute,
-                ComputePlacement::SeparateCommandBuffer,
-            )?;
-
-            // Submit compute: wait on the previous frame's compute, signal this frame's value
-            let compute_waits = [vk::SemaphoreSubmitInfo::default()
-                .semaphore(self.compute_timeline)
-                .value(compute_value - 1)
-                .stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)];
-            let compute_signals = [vk::SemaphoreSubmitInfo::default()
-                .semaphore(self.compute_timeline)
-                .value(compute_value)
-                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
-            let compute_cbs = [vk::CommandBufferSubmitInfo::default().command_buffer(compute_cb)];
-            let compute_submit = vk::SubmitInfo2::default()
-                .wait_semaphore_infos(&compute_waits)
-                .command_buffer_infos(&compute_cbs)
-                .signal_semaphore_infos(&compute_signals);
-            unsafe {
-                self.device
-                    .queue_submit2(compute_queue, &[compute_submit], vk::Fence::null())?;
-            }
-
-            // Submit graphics: wait on image_available + previous frame's compute,
-            // signal render_finished + this frame's timeline value
-            let gfx_waits = [
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(self.image_available[self.ring_slot])
-                    .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(self.compute_timeline)
-                    .value(compute_value - 1)
-                    // compute output may be read by the vertex stage (e.g. particle
-                    // rendering), the fragment stage, or same-frame compute
-                    .stage_mask(
-                        vk::PipelineStageFlags2::VERTEX_SHADER
-                            | vk::PipelineStageFlags2::FRAGMENT_SHADER
-                            | vk::PipelineStageFlags2::COMPUTE_SHADER,
-                    ),
-            ];
-            let gfx_signals = [
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(self.render_finished[image_index as usize])
-                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(self.frame_timeline)
-                    .value(frame_value)
-                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
-            ];
-            let gfx_cbs = [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
-            let gfx_submit = vk::SubmitInfo2::default()
-                .wait_semaphore_infos(&gfx_waits)
-                .command_buffer_infos(&gfx_cbs)
-                .signal_semaphore_infos(&gfx_signals);
-            unsafe {
-                self.device
-                    .queue_submit2(self.graphics_queue, &[gfx_submit], vk::Fence::null())?;
-            }
-
-            self.compute_frames += 1;
-        } else {
-            // --- NON-PIPELINED: compute + graphics in one command buffer ---
-            // Compute runs first with barriers, then graphics reads results in same frame.
-            unsafe {
-                self.device
-                    .reset_command_buffer(command_buffer, Default::default())?;
-            }
-            self.record_command_buffer(
-                &pending_draws,
-                image_index,
-                picking_config.as_ref(),
-                &pending_compute,
-                ComputePlacement::BeforeGraphics,
-            )?;
-
-            let submit_command_buffers =
-                [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
-
-            let image_available_wait = vk::SemaphoreSubmitInfo::default()
-                .semaphore(self.image_available[self.ring_slot])
-                .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT);
-            let render_finished_signal = vk::SemaphoreSubmitInfo::default()
-                .semaphore(self.render_finished[image_index as usize])
-                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS);
-            let frame_timeline_signal = vk::SemaphoreSubmitInfo::default()
-                .semaphore(self.frame_timeline)
-                .value(frame_value)
-                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS);
-
-            // When compute pipelines exist, add cross-frame synchronization:
-            // - Wait on the previous frame's compute_timeline value (so reads see prior writes)
-            // - Signal this frame's value (for the next frame to wait on)
-            let (wait_semaphores, signal_semaphores);
-            if self.has_compute_pipelines {
-                wait_semaphores = vec![
-                    image_available_wait,
-                    vk::SemaphoreSubmitInfo::default()
-                        .semaphore(self.compute_timeline)
-                        // 0 on the first compute frame, which is trivially satisfied
-                        .value(compute_value - 1)
-                        // compute output may be read by this frame's compute, or by the
-                        // vertex or fragment stages (e.g. particle rendering)
-                        .stage_mask(
-                            vk::PipelineStageFlags2::VERTEX_SHADER
-                                | vk::PipelineStageFlags2::FRAGMENT_SHADER
-                                | vk::PipelineStageFlags2::COMPUTE_SHADER,
-                        ),
-                ];
-                signal_semaphores = vec![
-                    render_finished_signal,
-                    frame_timeline_signal,
-                    vk::SemaphoreSubmitInfo::default()
-                        .semaphore(self.compute_timeline)
-                        .value(compute_value)
-                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
-                ];
-            } else {
-                wait_semaphores = vec![image_available_wait];
-                signal_semaphores = vec![render_finished_signal, frame_timeline_signal];
-            }
-
-            let submit_info = vk::SubmitInfo2::default()
-                .wait_semaphore_infos(&wait_semaphores)
-                .command_buffer_infos(&submit_command_buffers)
-                .signal_semaphore_infos(&signal_semaphores);
-            unsafe {
-                self.device.queue_submit2(
-                    self.graphics_queue,
-                    &[submit_info],
-                    vk::Fence::null(),
-                )?;
-            }
-
-            if self.has_compute_pipelines {
-                self.compute_frames += 1;
-            }
+        let submit_info = vk::SubmitInfo2::default()
+            .wait_semaphore_infos(&wait_semaphores)
+            .command_buffer_infos(&submit_command_buffers)
+            .signal_semaphore_infos(&signal_semaphores);
+        unsafe {
+            self.device
+                .queue_submit2(self.graphics_queue, &[submit_info], vk::Fence::null())?;
         }
 
-        // 6. Advance both frame counters BEFORE present
+        // 6. Advance the frame slot BEFORE present
         //    This ensures that if present triggers swapchain recreation (early return),
-        //    the next frame won't reuse the same ring slot whose semaphores
+        //    the next frame won't reuse the same slot whose semaphores
         //    are still signaled from this frame's submit.
         self.flight_slot = (self.flight_slot + 1) % MAX_FRAMES_IN_FLIGHT;
-        self.ring_slot = (self.ring_slot + 1) % PRE_WAIT_RING_LEN;
 
         let swapchains = [self.swapchain];
         let image_indices = [image_index];
@@ -2811,7 +2627,6 @@ impl Drop for Renderer {
                 self.device.destroy_semaphore(*semaphore, None);
             }
             self.device.destroy_semaphore(self.frame_timeline, None);
-            self.device.destroy_semaphore(self.compute_timeline, None);
 
             self.device.destroy_command_pool(self.command_pool, None);
 
@@ -3029,7 +2844,6 @@ fn vk_str_bytes(vk_str: &[c_char]) -> Vec<u8> {
 struct QueueFamilyIndices {
     graphics: u32,
     presentation: u32,
-    graphics_queue_count: u32,
 }
 
 impl QueueFamilyIndices {
@@ -3068,14 +2882,10 @@ impl QueueFamilyIndices {
         }
 
         let indices = match (graphics, presentation) {
-            (Some(graphics), Some(presentation)) => {
-                let graphics_queue_count = queue_families[graphics as usize].queue_count;
-                Some(Self {
-                    graphics,
-                    presentation,
-                    graphics_queue_count,
-                })
-            }
+            (Some(graphics), Some(presentation)) => Some(Self {
+                graphics,
+                presentation,
+            }),
             _ => None,
         };
 
@@ -3363,18 +3173,11 @@ fn create_logical_device(
     let unique_queue_families = BTreeSet::from([indices.graphics, indices.presentation]);
 
     let mut queue_create_infos = vec![];
-    let queue_priorities_single = [1.0];
-    let queue_priorities_dual = [1.0, 1.0];
+    let queue_priorities = [1.0];
     for index in unique_queue_families {
-        // Request 2 queues from the graphics family when available (for async compute)
-        let priorities = if index == indices.graphics && indices.graphics_queue_count >= 2 {
-            &queue_priorities_dual[..]
-        } else {
-            &queue_priorities_single[..]
-        };
         let queue_create_info = vk::DeviceQueueCreateInfo::default()
             .queue_family_index(index)
-            .queue_priorities(priorities);
+            .queue_priorities(&queue_priorities);
 
         queue_create_infos.push(queue_create_info);
     }
@@ -3687,17 +3490,16 @@ fn create_sync_objects(
     swapchain_images: &[vk::Image],
 ) -> Result<
     (
-        [vk::Semaphore; PRE_WAIT_RING_LEN],
+        [vk::Semaphore; MAX_FRAMES_IN_FLIGHT],
         Vec<vk::Semaphore>,
-        vk::Semaphore,
         vk::Semaphore,
     ),
     anyhow::Error,
 > {
-    let mut image_available: [Option<vk::Semaphore>; PRE_WAIT_RING_LEN] =
-        [const { None }; PRE_WAIT_RING_LEN];
+    let mut image_available: [Option<vk::Semaphore>; MAX_FRAMES_IN_FLIGHT] =
+        [const { None }; MAX_FRAMES_IN_FLIGHT];
     #[expect(clippy::needless_range_loop)]
-    for i in 0..PRE_WAIT_RING_LEN {
+    for i in 0..MAX_FRAMES_IN_FLIGHT {
         image_available[i] = Some(unsafe { device.create_semaphore(&Default::default(), None)? });
     }
     let image_available = image_available.map(Option::unwrap);
@@ -3709,14 +3511,8 @@ fn create_sync_objects(
     }
 
     let frame_timeline = create_timeline_semaphore(device)?;
-    let compute_timeline = create_timeline_semaphore(device)?;
 
-    Ok((
-        image_available,
-        render_finished,
-        frame_timeline,
-        compute_timeline,
-    ))
+    Ok((image_available, render_finished, frame_timeline))
 }
 
 fn create_timeline_semaphore(device: &ash::Device) -> Result<vk::Semaphore, anyhow::Error> {
@@ -3921,7 +3717,7 @@ fn create_descriptor_pool_from_layouts(
     descriptor_set_layouts: &[(ash::vk::DescriptorSetLayout, DescriptorCounts)],
 ) -> Result<vk::DescriptorPool, anyhow::Error> {
     let descriptor_sets_per_frame = descriptor_set_layouts.len() as u32;
-    let sets_across_frames = descriptor_sets_per_frame * PRE_WAIT_RING_LEN as u32;
+    let sets_across_frames = descriptor_sets_per_frame * MAX_FRAMES_IN_FLIGHT as u32;
 
     let total_counts: DescriptorCounts = descriptor_set_layouts.iter().map(|tup| tup.1).sum();
 
@@ -3941,7 +3737,7 @@ fn create_descriptor_pool(
     pipeline_layout: &ShaderPipelineLayout,
 ) -> Result<vk::DescriptorPool, anyhow::Error> {
     let descriptor_sets_per_frame = pipeline_layout.descriptor_set_layouts.len() as u32;
-    let sets_across_frames = descriptor_sets_per_frame * PRE_WAIT_RING_LEN as u32;
+    let sets_across_frames = descriptor_sets_per_frame * MAX_FRAMES_IN_FLIGHT as u32;
 
     let total_counts: DescriptorCounts = pipeline_layout
         .descriptor_set_layouts
@@ -3995,7 +3791,7 @@ fn create_descriptor_sets(
     device: &ash::Device,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layouts: &[vk::DescriptorSetLayout],
-    uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer; PRE_WAIT_RING_LEN]],
+    uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]],
     textures: &[&Texture],
     storage_images: &[&storage_texture::StorageTexture],
     layout_bindings: Vec<Vec<LayoutDescription>>,
@@ -4012,7 +3808,7 @@ fn create_descriptor_sets(
     //     frame_1_set_1_binding_1,
     // ]
     let mut set_layouts = vec![];
-    for _frame in 0..PRE_WAIT_RING_LEN {
+    for _frame in 0..MAX_FRAMES_IN_FLIGHT {
         for &descriptor_set_layout in descriptor_set_layouts {
             // i = frame * descriptor_set_layouts.len() + layout_offset;
             set_layouts.push(descriptor_set_layout);
@@ -4023,7 +3819,7 @@ fn create_descriptor_sets(
         .set_layouts(&set_layouts);
     let descriptor_sets = unsafe { device.allocate_descriptor_sets(&alloc_info)? };
 
-    for frame in 0..PRE_WAIT_RING_LEN {
+    for frame in 0..MAX_FRAMES_IN_FLIGHT {
         let mut uniform_buffer_index = 0;
         let mut texture_index = 0;
         let mut storage_image_index = 0;
@@ -4585,6 +4381,24 @@ fn cmd_barrier2(
     image_barriers: &[vk::ImageMemoryBarrier2],
 ) {
     let dependency_info = vk::DependencyInfo::default().image_memory_barriers(image_barriers);
+    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency_info) };
+}
+
+/// A global memory barrier, covering buffer and image memory alike
+fn cmd_memory_barrier2(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    src_stage: vk::PipelineStageFlags2,
+    src_access: vk::AccessFlags2,
+    dst_stage: vk::PipelineStageFlags2,
+    dst_access: vk::AccessFlags2,
+) {
+    let memory_barriers = [vk::MemoryBarrier2::default()
+        .src_stage_mask(src_stage)
+        .src_access_mask(src_access)
+        .dst_stage_mask(dst_stage)
+        .dst_access_mask(dst_access)];
+    let dependency_info = vk::DependencyInfo::default().memory_barriers(&memory_barriers);
     unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency_info) };
 }
 
@@ -5386,7 +5200,7 @@ impl shaders::json::ReflectedStageFlags {
 
 /// the interface a game uses to update gpu resources during a renderer draw call
 pub struct Gpu<'f> {
-    ring_slot: usize,
+    flight_slot: usize,
     uniform_buffers: &'f mut UniformBufferStorage,
     storage_buffers: &'f mut StorageBufferStorage,
 }
@@ -5395,7 +5209,7 @@ impl<'f> Gpu<'f> {
     pub fn write_uniform<T>(&mut self, uniform_buffer: &mut UniformBufferHandle<T>, data: T) {
         let mapped_mem = self
             .uniform_buffers
-            .get_mapped_mem_for_frame(uniform_buffer, self.ring_slot);
+            .get_mapped_mem_for_frame(uniform_buffer, self.flight_slot);
 
         *mapped_mem = data;
     }
@@ -5406,7 +5220,7 @@ impl<'f> Gpu<'f> {
 
         let mapped_mem = self
             .storage_buffers
-            .get_mapped_mem_for_frame(storage_buffer, self.ring_slot);
+            .get_mapped_mem_for_frame(storage_buffer, self.flight_slot);
 
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len_to_copy);
@@ -5423,7 +5237,7 @@ impl<'f> Gpu<'f> {
 
         let mapped_mem = self
             .storage_buffers
-            .get_mapped_mem_for_frame_immutable(immutable_buffer, self.ring_slot);
+            .get_mapped_mem_for_frame_immutable(immutable_buffer, self.flight_slot);
 
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len_to_copy);
@@ -5434,7 +5248,7 @@ impl<'f> Gpu<'f> {
     pub fn addr<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
         Addr::from_raw(
             self.storage_buffers
-                .get_device_address_for_frame(storage_buffer, self.ring_slot),
+                .get_device_address_for_frame(storage_buffer, self.flight_slot),
         )
     }
 
@@ -5445,7 +5259,7 @@ impl<'f> Gpu<'f> {
     pub fn current_addr<T>(&self, gpu_only_buffer: &GpuOnlyBufferHandle<T>) -> Addr<T> {
         Addr::from_raw(
             self.storage_buffers
-                .get_device_address_for_frame_gpu_only(gpu_only_buffer, self.ring_slot),
+                .get_device_address_for_frame_gpu_only(gpu_only_buffer, self.flight_slot),
         )
     }
 
@@ -5454,7 +5268,7 @@ impl<'f> Gpu<'f> {
     /// We distinguish between current and previous only for gpu-only buffers,
     /// as these are the only ones that can read the previous frame's output.
     pub fn previous_addr<T>(&self, gpu_only_buffer: &GpuOnlyBufferHandle<T>) -> ReadAddr<T> {
-        let prev_frame = (self.ring_slot + PRE_WAIT_RING_LEN - 1) % PRE_WAIT_RING_LEN;
+        let prev_frame = (self.flight_slot + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
         ReadAddr::from_raw(
             self.storage_buffers
                 .get_device_address_for_frame_gpu_only(gpu_only_buffer, prev_frame),
@@ -5467,17 +5281,9 @@ impl<'f> Gpu<'f> {
     ) -> ImmutableAddr<T> {
         ImmutableAddr::from_raw(
             self.storage_buffers
-                .get_device_address_for_frame_immutable(immutable_buffer, self.ring_slot),
+                .get_device_address_for_frame_immutable(immutable_buffer, self.flight_slot),
         )
     }
-}
-
-#[derive(PartialEq, Eq)]
-enum ComputePlacement {
-    /// Compute before graphics in the same command buffer
-    BeforeGraphics,
-    /// Compute in a separate command buffer (pipelined multi-queue)
-    SeparateCommandBuffer,
 }
 
 enum PendingComputeCommand {

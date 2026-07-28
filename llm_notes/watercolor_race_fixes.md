@@ -1,8 +1,16 @@
 # Watercolor Race Fixes: Per-Dispatch Compute Streams
 
-> **STATUS: PLANNED.** Implementation plan for replacing the renderer's
-> pipelined-compute *mode* with two coexisting per-frame command streams
-> selected per dispatch. This is Phase 0.5 of the render-graph plan
+> **SUPERSEDED by [remove_pipelined_compute.md](remove_pipelined_compute.md)**
+> (2026-07-28). The per-dispatch stream split (`CrossFrameMode`,
+> `dispatch_pipelined`) is unneeded: pipelined compute was removed outright, so
+> the same-frame cross-queue race it was designed around does not exist. Its
+> **Step 2 survives** — the renderer, not the app, now emits the
+> compute→graphics barrier, which is that step's design and also closes the
+> frame-0 barrier gap described below.
+>
+> *Original status:* **PLANNED.** Implementation plan for replacing the
+> renderer's pipelined-compute *mode* with two coexisting per-frame command
+> streams selected per dispatch. This is Phase 0.5 of the render-graph plan
 > (`render-graph/04_design.md` §11), independently motivated: it deletes the
 > mode-toggle footgun and the frame-0 barrier gap. Line anchors are current as
 > of commit `d574950`.

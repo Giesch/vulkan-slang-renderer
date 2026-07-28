@@ -401,8 +401,6 @@ impl Game for Watercolor {
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self> {
-        renderer.enable_pipelined_compute();
-
         // Create all ping-pong textures
         let velocity_u = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
         let velocity_v = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
@@ -1011,10 +1009,6 @@ impl Game for Watercolor {
         // Flip simulation parity
         self.sim_parity = !self.sim_parity;
         self.deposit_parity = !self.deposit_parity;
-
-        // Pipelined: graphics reads previous frame's results, so no compute→frag
-        // barrier needed. A compute→compute barrier suffices for next frame's reads.
-        compute_barrier(&mut renderer);
 
         // 11. Display
         let grid_size = Vec2::new(CANVAS_WIDTH as f32, CANVAS_HEIGHT as f32);
