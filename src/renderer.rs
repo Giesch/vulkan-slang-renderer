@@ -2153,7 +2153,25 @@ impl Renderer {
 
         let command_buffer = self.command_buffers[self.flight_slot];
 
-        // 1. Acquire swapchain image (can block on vsync)
+        // This frame's frame_timeline value. total_frames is only bumped once the
+        // acquire below succeeds, which keeps total_frames equal to the highest
+        // value any submit has signalled. Bumping it earlier would leave a gap on
+        // every ERROR_OUT_OF_DATE_KHR return, and two gaps in a row -- easy to hit
+        // while drag-resizing -- would leave a later frame waiting forever on a
+        // value nothing ever signals.
+        let frame_value = self.total_frames as u64 + 1;
+
+        // 1. Wait until frame (N - MAX_FRAMES_IN_FLIGHT)'s graphics submit retires
+        //    (command buffer and per-frame slot reuse).
+        //    Frames 1 and 2 wait on value 0, trivially satisfied.
+        let semaphores = [self.frame_timeline];
+        let values = [frame_value.saturating_sub(MAX_FRAMES_IN_FLIGHT as u64)];
+        let wait_info = vk::SemaphoreWaitInfo::default()
+            .semaphores(&semaphores)
+            .values(&values);
+        unsafe { self.device.wait_semaphores(&wait_info, u64::MAX)? };
+
+        // 2. Acquire swapchain image (can block on vsync)
         let (image_index, swapchain_was_suboptimal_on_image_acquire) = unsafe {
             match self.swapchain_device_ext.acquire_next_image(
                 self.swapchain,
@@ -2172,26 +2190,15 @@ impl Renderer {
         };
 
         self.total_frames += 1;
-        let frame_value = self.total_frames as u64;
 
-        // 2. CPU buffer writes BEFORE the timeline wait
-        //    Safe because buffer[ring_slot] was last used by frame (total - PRE_WAIT_RING_LEN)
-        //    and that frame's timeline value was waited for during frame (total - 1)
+        // 3. CPU buffer writes, after the wait that proves this slot's last user
+        //    has retired
         let mut gpu = Gpu {
             ring_slot: self.ring_slot,
             uniform_buffers: &mut self.uniform_buffers,
             storage_buffers: &mut self.storage_buffers,
         };
         gpu_update(&mut gpu);
-
-        // 3. Wait until frame (N - MAX_FRAMES_IN_FLIGHT)'s graphics submit retires
-        //    (command buffer reuse). Frames 1 and 2 wait on value 0, trivially satisfied.
-        let semaphores = [self.frame_timeline];
-        let values = [frame_value.saturating_sub(MAX_FRAMES_IN_FLIGHT as u64)];
-        let wait_info = vk::SemaphoreWaitInfo::default()
-            .semaphores(&semaphores)
-            .values(&values);
-        unsafe { self.device.wait_semaphores(&wait_info, u64::MAX)? };
 
         // 3a. Read picking result from staging buffer (written 2 frames ago, now safe to read)
         if let Some(picking) = &self.picking {
