@@ -347,17 +347,28 @@ timeout 3 just dev space_invaders # multiple storage buffers + egui
 timeout 3 just dev viking_room    # plain uniform + texture path
 ```
 
+Automated results: `cargo check --all-targets`, `just lint` and `just test`
+(32 + 66 tests, no snapshot drift) all green, and all 16 examples run clean under
+validation layers in debug.
+
 Manual checks automation will not catch:
 
-- **`particles` visual correctness.** A WAR hazard on the 2-slot history ring shows
-  up as intermittent particle-position corruption or stutter, never as a validation
-  error. Run it for 30+ seconds after Phase 3 and again after Phase 4.
-- **`VK_LAYER_ENABLE_SYNC_VALIDATION`** on `particles` and `watercolor` — the one
-  automated check that can catch a mis-sized history ring or a missing barrier.
-- **Resize under load.** Drag-resize `particles` and `watercolor` continuously for
-  several seconds; Phase 4a changes when acquire happens relative to the wait.
-- **Watercolor §8 race.** Paint a stroke and confirm it appears and spreads as
-  before — the display now legitimately reads this frame's simulation output.
-- **Framerate.** Confirm on `watercolor` that removing pipelining costs nothing, and
-  that Phase 3 does not regress it relative to Phase 2 — the cross-frame
-  serialisation is the one place a real regression could hide.
+- **`particles` visual correctness — CONFIRMED.** A WAR hazard on the 2-slot history
+  ring would show up as intermittent particle-position corruption or stutter, never
+  as a validation error. Visually confirmed on the finished branch; also ran 30 s
+  debug and 35 s release without validation errors or crashes.
+- **Watercolor §8 race — CONFIRMED.** The display legitimately reads this frame's
+  simulation output now, and the example renders correctly.
+- **~~`VK_LAYER_ENABLE_SYNC_VALIDATION`~~ — not a usable check here.** See the
+  status block at the top: with the layer confirming it was enabled, removing every
+  barrier in watercolor still produced zero hazard reports. BDA accesses are
+  invisible to it. Do not treat a silent sync-validation run as evidence.
+- **Resize under load.** Not separately exercised. Phase 4a changes when acquire
+  happens relative to the wait, and the `total_frames` fix above is what a
+  repeated-`OUT_OF_DATE` resize storm tests. Worth a drag-resize pass if this area
+  is touched again.
+- **Framerate.** Not separately measured — watercolor's FPS readout is an on-screen
+  egui label, and `Game::frame_delay` caps at ~60 fps
+  (`DEFAULT_FRAME_DELAY = 15 ms`, `src/game/traits.rs:9`), so a small regression
+  would hide under the cap anyway. The premise that pipelining bought nothing came
+  from the pre-existing local experiment, not from a measurement taken here.
