@@ -1,5 +1,14 @@
 # Domain-marked address types: fix BDA footgun #3 (pipelined current-read race)
 
+> **SUPERSEDED by [../remove_pipelined_compute.md](../remove_pipelined_compute.md)**
+> (2026-07-28). Not implemented, and no longer needed. The race this plan
+> defends against only exists under `enable_pipelined_compute`, which has been
+> removed: compute now always runs before graphics in the same command buffer,
+> so a graphics shader reading the *current* slot reads output the renderer's
+> own barrier has already made visible. The domain-marked `Addr<T, S>` types
+> existed solely to police the pipelined/frame domain split, so there is
+> nothing left for them to police. Kept as a record of the analysis.
+
 Plan, 2026-07-21. Addresses [../bda_footguns.md](../bda_footguns.md) §3 (and §9 as a
 side effect). Code references verified against main @ fb67b29.
 

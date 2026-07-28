@@ -140,8 +140,9 @@ post-BDA-migration — descriptor-based storage buffers no longer exist):
 - Index buffers are u32-only; vertex/index buffers are owned per-pipeline
   unless the pipeline points at a shared mesh.
 - Per-pipeline descriptor sets and uniform buffers are allocated at
-  `create_pipeline` (a 3-slot pre-wait ring: `PRE_WAIT_RING_LEN =
-  MAX_FRAMES_IN_FLIGHT + 1 = 3`); `Gpu::write_uniform` writes mapped memory per
+  `create_pipeline` (a 2-slot ring, `MAX_FRAMES_IN_FLIGHT`; this was a 3-slot
+  `PRE_WAIT_RING_LEN` when written, collapsed 2026-07-28 by
+  `remove_pipelined_compute.md`); `Gpu::write_uniform` writes mapped memory per
   frame. So N materials = N pipelines, each with its own uniforms and
   textures — no dynamic offsets needed. Corollary proven by multi_mesh:
   **uniforms are per-pipeline, not per-draw**, so every draw sharing a pipeline

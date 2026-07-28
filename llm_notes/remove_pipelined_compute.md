@@ -1,6 +1,28 @@
 # Removing pipelined compute; collapsing the frame ring to 2 slots
 
-Status: **plan, 2026-07-28.** Supersedes
+Status: **IMPLEMENTED, 2026-07-28.** All five phases landed, one commit per
+phase (Phase 4 split into 4a and 4b/4c). Deviations from the plan as written:
+
+- **Phase 4a needed a fix the plan did not anticipate.** Reordering to
+  wait → acquire naively would bump `total_frames` before the acquire, leaving
+  a never-signalled timeline gap on every `ERROR_OUT_OF_DATE_KHR` return. One
+  gap is survivable (`vkWaitSemaphores` is `>=`), but two in a row — plausible
+  during a drag-resize — would leave a later frame waiting forever. Fixed by
+  computing `frame_value = total_frames + 1` for the wait and only committing
+  the bump after a successful acquire.
+- **`VK_LAYER_ENABLE_SYNC_VALIDATION` turned out to be a dead check here.**
+  With the layer confirming `Current Enables:
+  VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT`, stripping
+  *every* barrier — the new automatic one and watercolor's eight per-dispatch
+  ones — still produced zero hazard reports. Buffer traffic here goes through
+  BDA, which the layer cannot track, and the descriptor-bound storage textures
+  were not flagged either. It should not be relied on as the barrier check the
+  Verification section below claims it is.
+- A small refactor rode along: `cmd_memory_barrier2` (`src/renderer.rs`) now
+  backs both the app-requested `memory_barrier()` and the two renderer-emitted
+  barriers.
+
+Supersedes
 [frame_ring_collapse.md](frame_ring_collapse.md) and
 [watercolor_race_fixes.md](watercolor_race_fixes.md). Code references verified
 against main @ `76ad25c` plus the uncommitted `examples/watercolor.rs` edit;

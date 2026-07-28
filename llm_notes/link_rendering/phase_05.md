@@ -612,8 +612,9 @@ deviations discovered:    1. PipelineConfigBuilder gained NO raster_state field,
    master plan §2.3). Say so in the example's comments so the next reader
    doesn't "fix" the ordering.
 6. **Render-graph drift.** `../render-graph/04_design.md` (landed `73fb65f`)
-   is an independent design that also touches pipeline creation; it is gated
-   on `../bda_footguns/03_pipelined_current_read_plan.md` and does not block
-   P5. Keep P5 additive — new fields on `PipelineConfig` and a new `with_*`
+   is an independent design that also touches pipeline creation; it ~~is gated
+   on `../bda_footguns/03_pipelined_current_read_plan.md`~~ (that gate
+   dissolved 2026-07-28 — the plan is superseded, see
+   `../remove_pipelined_compute.md`) and does not block P5. Keep P5 additive — new fields on `PipelineConfig` and a new `with_*`
    method — and avoid restructuring the config type, so the graph work
    doesn't have to undo it.

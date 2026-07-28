@@ -103,9 +103,11 @@ trivially to uniform arrays.
   they'd be whitelisted; P2 decodes everything to RGBA8, so Link never
   needs them). (phase_05.)
 - **Render-graph integration** — `../render-graph/04_design.md` is an
-  independent design touching pipeline creation, gated on
-  `../bda_footguns/03_pipelined_current_read_plan.md`. P4/P5 stayed
-  additive so the graph work doesn't have to undo them. (phase_05 risk #6.)
+  independent design touching pipeline creation, ~~gated on
+  `../bda_footguns/03_pipelined_current_read_plan.md`~~ (ungated since
+  2026-07-28: that plan is superseded by `../remove_pipelined_compute.md`).
+  P4/P5 stayed additive so the graph work doesn't have to undo them.
+  (phase_05 risk #6.)
 
 ## 3. Converter gaps (one-model converter by design)
 
