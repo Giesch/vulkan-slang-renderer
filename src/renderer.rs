@@ -1434,21 +1434,14 @@ impl Renderer {
                     dst_stage,
                     src_access,
                     dst_access,
-                } => {
-                    let memory_barrier = vk::MemoryBarrier2::default()
-                        .src_stage_mask(*src_stage)
-                        .src_access_mask(*src_access)
-                        .dst_stage_mask(*dst_stage)
-                        .dst_access_mask(*dst_access);
-                    let memory_barriers = [memory_barrier];
-                    let dependency_info =
-                        vk::DependencyInfo::default().memory_barriers(&memory_barriers);
-
-                    unsafe {
-                        self.device
-                            .cmd_pipeline_barrier2(command_buffer, &dependency_info);
-                    }
-                }
+                } => cmd_memory_barrier2(
+                    &self.device,
+                    command_buffer,
+                    *src_stage,
+                    *src_access,
+                    *dst_stage,
+                    *dst_access,
+                ),
             }
         }
     }
@@ -1469,6 +1462,20 @@ impl Renderer {
         }
 
         self.record_compute_commands(command_buffer, pending_compute);
+
+        if !pending_compute.is_empty() {
+            // Graphics reads the most recent compute output, so the renderer — not
+            // the app — owns the compute -> graphics dependency. Always legal:
+            // this command buffer is always submitted on the graphics queue.
+            cmd_memory_barrier2(
+                &self.device,
+                command_buffer,
+                vk::PipelineStageFlags2::COMPUTE_SHADER,
+                vk::AccessFlags2::SHADER_WRITE,
+                vk::PipelineStageFlags2::VERTEX_SHADER | vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                vk::AccessFlags2::SHADER_READ,
+            );
+        }
 
         // PICKING RENDER PASS (before main pass)
         if let (Some(picking_config), Some(picking)) = (picking_config, self.picking.as_ref()) {
@@ -2087,20 +2094,6 @@ impl Renderer {
         let pipeline = self.pipelines.get_by_index(pipeline_index);
         let descriptor_sets_per_frame = pipeline.layout.descriptor_set_layouts.len();
         pipeline
-            .descriptor_sets
-            .chunks(descriptor_sets_per_frame)
-            .nth(self.ring_slot)
-            .unwrap()
-    }
-
-    #[expect(unused)]
-    fn descriptor_sets_for_compute_frame(
-        &self,
-        pipeline_handle: &PipelineHandle<Compute>,
-    ) -> &[vk::DescriptorSet] {
-        let compute_pipeline = self.compute_pipelines.get(pipeline_handle);
-        let descriptor_sets_per_frame = compute_pipeline.layout.descriptor_set_layouts.len();
-        compute_pipeline
             .descriptor_sets
             .chunks(descriptor_sets_per_frame)
             .nth(self.ring_slot)
@@ -4417,6 +4410,24 @@ fn cmd_barrier2(
     image_barriers: &[vk::ImageMemoryBarrier2],
 ) {
     let dependency_info = vk::DependencyInfo::default().image_memory_barriers(image_barriers);
+    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency_info) };
+}
+
+/// A global memory barrier, covering buffer and image memory alike
+fn cmd_memory_barrier2(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    src_stage: vk::PipelineStageFlags2,
+    src_access: vk::AccessFlags2,
+    dst_stage: vk::PipelineStageFlags2,
+    dst_access: vk::AccessFlags2,
+) {
+    let memory_barriers = [vk::MemoryBarrier2::default()
+        .src_stage_mask(src_stage)
+        .src_access_mask(src_access)
+        .dst_stage_mask(dst_stage)
+        .dst_access_mask(dst_access)];
+    let dependency_info = vk::DependencyInfo::default().memory_barriers(&memory_barriers);
     unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency_info) };
 }
 
