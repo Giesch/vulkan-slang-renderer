@@ -495,7 +495,9 @@ before P7 can be called done. **They were, on 2026-07-27 — see the block
 above.**
 
 ```
-commit:                   (this commit; branch claude/link-rendering-phase-7-2k9d5z)
+commit:                   f415612 ("implement phase 7: toon_link albedo
+                          textures, alpha cutout, raster state"; authored on
+                          branch claude/link-rendering-phase-7-2k9d5z)
 
 static gates:             PASS. shaders regenerated; churn confined to
                           toon_link (.slang, .json, both .spv, generated

@@ -12,6 +12,15 @@ identity) ran on the real file and passed (residuals recorded in
 [`phase_03.md`](phase_03.md)). #4 (uniform-array codegen) is the top *open* risk,
 first thing P6 tests.
 
+**Status update (post-P8, 2026-07-27)**: #4 is closed — the vec4-array codegen
+shipped with compile-time offset/size proofs and `toon_link` is its first
+production user. #8 is closed too, and its premise turned out to be wrong: the
+lighting values were reachable from the decomp and the disc, not only from
+emulated RAM. #5 gained a second resolution (the ramp is *separable*, and #8
+explains why). **#6 (S10 clamp semantics) is now the only risk in this file
+still shipping reasoned rather than measured**, and the only one for which the
+Dolphin escalation would still buy anything.
+
 ## 1. SHP1 matrix groups (the exploded-vertex risk)
 
 The GameCube's GPU had space for only **10 position/normal matrices** loaded at
@@ -130,6 +139,17 @@ Two deliberate mitigations:
   into a `StructuredBuffer` — a path sprite_batch already proves end-to-end, at
   the cost of slightly clunkier example code.
 
+*Resolved (the vec4-array mini-phase `0d08a7d`,
+[`vec4_array_support.md`](vec4_array_support.md); first production use in P8)*.
+Both mitigations held and the `StructuredBuffer` fallback was not needed.
+`float4[N]`/`uint4[N]`/`int4[N]` fields are supported with **compile-time
+offset/size proofs**, which converts the nasty failure mode into the fine one —
+a layout error is a build failure, not silent GPU-data corruption. P8's
+`TevParams` is the first production user: 1328 bytes, every field 16-aligned, no
+`_padding_N` emitted, offsets exactly as designed. The one combination that was
+still untested going in — *arrays inside a nested struct*, since `ToonLinkParams`
+embeds `TevParams` — worked, so phase_08 decision 2's contingency went unused.
+
 ## 5. SRTG texgen (the heart of the toon look)
 
 This is *the* cel-shading mechanism, so uncertainty here is uncertainty about
@@ -153,8 +173,9 @@ Mitigation is that this doesn't need to be reasoned out from scratch: the **P2
 MAT3 dump makes Link's actual texgen configs ground truth** before any shader
 work starts, and noclip.website's `gx_material.ts` is a working,
 pixel-verified SRTG implementation to check semantics against. The P8
-verification step ("rotate the light, watch the terminator bands move") is
-designed to exercise exactly this path.
+verification step ("watch the terminator bands sweep as the model turns" — the
+example spins Link under a fixed light rather than swinging the light, as the
+game does) is designed to exercise exactly this path.
 
 *Resolved (P2 dump, phase_02.md Recorded facts)*: SRTG sources **COLOR0 via
 the IDENTITY matrix** — no texture matrix on the ramp path, so the
@@ -168,6 +189,17 @@ intensity textures — absent from the original subset guess entirely, and the
 `tev.slang` interpreter and its uniform layout must carry a swap-select
 path. Which of `toon`/`toonEX` each material samples also settled: only
 `ZBtoonEX` exists in cl.bdl.
+
+*Resolved further (P8, and the remaining "how do R/G map to S/T" doubt is now
+gone)*: the ramp is **separable**, and deliberately so. Decoding
+`tex/raw_toonex.png` shows R varying only with u, G only with v, B ≡ 0, both
+sharp steps at ≈0.49 — so the `(color.r, color.g)` read is not one diagonal
+lookup but two independent ones, which stage 0's RRR swizzle and stage 2's GGG
+swizzle then read separately. Risk #8 supplies the reason: **the game's two
+lights carry one channel each**, red for the diffuse band and green for the
+eflight highlight, so the ramp's two axes are two different *lights*, not two
+hues of one. Confirmed at runtime by the example's debug mode 5. `ClampToEdge`
+makes out-of-range channel values harmless.
 
 ## 6. S10 register semantics
 
@@ -193,6 +225,16 @@ with bias ZERO and scale 1, so intermediates can barely leave [0, 2); exactly
 **2 stages run with the clamp bit off**, and honoring that bit is the whole
 remaining obligation.
 
+*Update (P8, and this is now the only risk in this file still shipping reasoned
+rather than measured)*: `tev.slang` does honor the bit, and goes one step past
+the "deliberately lazy" mitigation — clearing GX's clamp bit does not mean *no*
+clamp, it means clamp to the S10 register range, so the else branch is
+`clamp(v, -1024/255, 1023/255)`, matching noclip. That branch is reachable
+(`eyeL`/`eyeR` stage 1) but inert here, since its values stay inside [0,1]. No
+software-renderer capture was taken, so the edge semantics are reasoned from
+noclip rather than measured — the one place the Dolphin escalation would still
+buy something.
+
 ## 7. Fog
 
 Every GX material carries a fog block, and in-game, Link's materials get fog
@@ -210,6 +252,14 @@ mostly so a "why does the dump warn about fog?" moment isn't a surprise.
 fog handling at all.
 
 ## 8. Lighting values
+
+> **Status: resolved 2026-07-27, and the premise below was wrong.** This risk
+> assumed the daytime values were either buried in the kankyo tables or only
+> reachable out of emulated RAM. They were neither: the light colors are
+> constants in the decomp and the stage-0 lerp endpoints are static data on the
+> disc. Nothing was hand-tuned in the end, and Dolphin was never involved. The
+> body is kept as written — the reasoning is what turned out to be wrong, so it
+> is worth reading before the resolution at the bottom.
 
 The actual daytime colors — what goes in C0 (light color) and K0/K1 (ambient)
 — don't live anywhere convenient. In-game they're produced by the *kankyo*
@@ -245,6 +295,50 @@ the seeds and adjudicates on band structure instead.
 *P8 measurement*: the ambient half of this risk turns out not to need tuning at
 all — `ambient_colors[0]` is `[50,50,50,50]` on all 24 materials in the
 manifest, so only the two light colors (`lit_mask` is 3) are seeds.
+
+*Resolved (P8 lighting pass, `1ca758b`; full trace in
+[`phase_08.md`](phase_08.md)'s Recorded facts — the lighting pass, and its risk
+#4)*. P8 did ship the hand-tuned seeds first, and they were visibly wrong in a
+specific way — the lit band came out strongly **yellow**. Chasing that turned
+out to answer the whole risk, from `../tww` and the disc rather than from RAM:
+
+- **The two GX lights carry one channel each.** Light 0 is red-only
+  (`d_kankyo.cpp:1494-1499` sets `mColor.r`, `:1545-1547` hard-zeros green and
+  blue, repeated in `dKy_tevstr_init` at `:3410-3412`). Light 1 is green-only
+  and dark unless an "eflight" (torch, sword glow, chest) is nearby
+  (`:2557-2559`, gated by `lightMask = 1` with no eflight versus `3` with one,
+  `:2527-2531`). **This is what §5's separable ramp is *for***: red drives the
+  toon band, green drives the warm highlight, and SRTG's `(color.r, color.g)`
+  reads them independently. There was never a "light color" to tune — there is
+  a red scalar and a green scalar.
+- **That is the entire explanation for the yellow.** With ambient 50/255 on
+  every channel and no eflight, `color.g ≡ 0.196`, below the ramp's ≈0.49 step,
+  so `ramp.G` is 0 and stage 2's `konst1 = (160,90,0)` contributes exactly
+  nothing. Near-neutral seeds made `r ≈ g`, so it fired over the whole lit band
+  instead. The game belt-and-braces it: `setLightTevColorType_sub`
+  (`:1764-1787`) forces `setLightMask(1)` and calls `setTevStageNum` to drop
+  that stage outright unless `mColorK1.a != 0`.
+- **The C0/K0 endpoints are static stage data**, not runtime state, so the
+  kankyo excavation this risk dreaded is a 144-line script:
+  `scripts/link_env_colors.py` (`just link-env-colors`) walks a stage `.dzs`'s
+  `EnvR → Colo → Pale` chain. The ocean stage's daytime plateau gives
+  `Actor_C0 = (156,140,134)` (shadow end → `GX_TEVREG0`) and
+  `Actor_K0 = (255,255,255)` (lit end → konst K0); the example patches both per
+  frame, mirroring `setLightTevColorType_sub` (`:1817-1829`).
+- **Attenuation is exactly 1**, measured rather than approximated: `mCosAtten`
+  and `mDistAtten` are both `(1,0,0)` (`:1548-1553`, `:3413-3418`).
+
+So the paragraph above about dolphin-memory-engine describes **the harder route
+to values that were sitting in a `.dzs` and in decomp constants** — take the
+escalation for risk #6 if ever, not for this. What is left here is a *choice*,
+not a gap: which time-of-day palette slot to render. The script defaults to the
+ocean stage's 150–270 schedule plateau, the widest daytime band and the only one
+whose two schedule endpoints name the same slot, so it alone needs no blend; any
+other time would need `setLight_actor`'s two-way palette lerp
+(`d_kankyo.cpp:1328-1353`). And the advice about attribution — "adjudicate on
+band *structure*, not band *tint*" — is now obsolete in the direction that
+matters: the tint is derived, so a tint mismatch against noclip is once again a
+real signal rather than a known-unknown.
 
 ---
 

@@ -12,7 +12,8 @@ measurement below verified at `00b8d59` against the
 real GX color channel driving the `ZBtoonEX` ramp through an SRTG texgen, the
 full TEV stage pipeline (inputs, ops, bias/scale/clamp, registers, konst
 selects, swap tables), and the two non-identity texture matrices on the pupils.
-Rotating the light sweeps the terminator and the bands stay banded. The frozen
+The model turns under a fixed light, which sweeps the terminator, and the bands
+stay banded. The frozen
 TEV subset finally has a **gate that fails loudly** instead of a doc paragraph.
 Still out: BTP eye/brow frame animation, `BlendMode::DstAlpha` + the eye
 write-mask multi-pass, `--casual`, BCK poses (all P9 or deferred).
@@ -28,12 +29,20 @@ write-mask multi-pass, `--casual`, BCK poses (all P9 or deferred).
    per-fragment TEV; new generated bindings including
    `src/generated/shader_atlas/tev.rs`
 4. `src/tev_pack.rs` — manifest → `TevParams`, unit-tested under `just test`
-5. `examples/toon_link.rs` — per-material TEV uniforms, light controls,
+5. `examples/toon_link.rs` — per-material TEV uniforms, the light rig,
    expanded debug modes, isolation printout with stage equations
 6. Doc edits: master plan §6 P8 row + risks #5/#6/#8;
    [`tests.md`](tests.md) §P8; [`follow_up.md`](follow_up.md) §5/§6;
    the wrong `reg_colors` doc comment in `src/model_manifest.rs:341`
 7. Recorded facts below filled in
+8. **Added during the phase, not planned** (the lighting pass — see
+   [Recorded facts — the lighting pass](#recorded-facts--the-lighting-pass)):
+   `scripts/link_env_colors.py` + a `just link-env-colors` recipe, the
+   `sea_stage.dzs` extraction and `check_dzs_chunks` tier-1 check in
+   `scripts/extract_link.sh`, and a `Key::T` variant in `src/game/traits.rs`.
+   Decision 7 said P8's lighting would ship reasoned rather than measured; it
+   turned out the measurement was in the decomp and on the disc, so the seeds
+   were replaced before the phase closed.
 
 ## Measured facts this phase relies on
 
@@ -44,7 +53,9 @@ these win.
 > **Corrections applied during implementation.** Eleven claims below and in
 > Step 2 turned out to be wrong; they are corrected **in place** in the sections
 > that follow, and the full list with evidence is in
-> [Recorded facts](#recorded-facts) under *deviations discovered*. The ones that
+> [Recorded facts — the interpreter](#recorded-facts--the-interpreter) under
+> *deviations discovered*, with three more (15–17) under
+> [the lighting pass](#recorded-facts--the-lighting-pass). The ones that
 > would have been build failures or silent wrong renders: `float2 texcoord[4]`
 > in a varying is rejected by the reflection; `texMtxRows[8]` indexed by
 > texmatrix slot cannot address `TEXMTX9`; the `color_channels` dense-prefix
@@ -85,8 +96,8 @@ color channel never reaches TEV as a raster color — it reaches it *only* as th
 SRTG texcoord that indexes the ramp. On the unlit group `lighting_enabled` is
 false, so `COLOR0A0` collapses to the material register color (white, alpha
 255) and RASC/RASA are constants. So **light direction can only ever move the
-12 lit materials, and only through the ramp**. If rotating the light changes
-the eyes or brows, something is wrong by construction.
+12 lit materials, and only through the ramp**. If turning the model under the
+light changes the eyes or brows, something is wrong by construction.
 
 ### The TEV subset, re-measured
 
@@ -220,8 +231,15 @@ serialized bytes and no golden-hash change.
   `shaders/test/std140_arrays.shader.slang` are the only prior users.
 - **`Key` is a closed 13-variant enum** (`src/game/traits.rs:188-203`:
   W A S D Q E R F Space Num1–Num4). `toon_link` uses Num1–4 + Q/E/Space today,
-  leaving W/A/S/D/R/F free — enough for P8 with no core-library change. The
+  leaving W/A/S/D/R/F free — ~~enough for P8 with no core-library change~~. The
   held-key intent pattern to copy is `examples/ray_marching.rs:100-122`.
+
+  **Correction:** P8 *did* need a core-library change, just not the one this
+  note was guarding against. The lighting pass deleted the four held light keys
+  and added `Key::T` (the eflight toggle) — a 14th variant plus its
+  `SDLScancode::T` arm. Trivial, but the "no core-library change" claim is
+  false as it stands, and `ray_marching`'s held-key pattern ended up unused
+  because nothing in the final example is held.
 - `examples/toon_link.rs` today: `alpha_compare_codes` at :127, `ToonLink` at
   :375 with `alpha_compares: Vec<AlphaCompareCodes>` at :388, isolation
   printout at :415, setup at :437, the pipeline loop building `alpha_compares`
@@ -295,8 +313,15 @@ serialized bytes and no golden-hash change.
    software-renderer replay move to [`follow_up.md`](follow_up.md) as an
    **optional** escalation, invoked only if a specific feature is genuinely in
    dispute. The honest cost: the S10 clamp edge cases (master plan risk #6) and
-   the exact `dKy_tevstr_c` light values (risk #8) ship **reasoned, not
+   ~~the exact `dKy_tevstr_c` light values (risk #8)~~ ship **reasoned, not
    measured**, and the Recorded facts must say so.
+
+   **Half of that cost was imaginary.** Risk #6 held, but risk #8 did not: the
+   lighting values were never Dolphin's to give. The light colors are constants
+   in the decomp and stage 0's lerp endpoints are static data on the disc, both
+   reachable with the tooling already in the repo. Deciding Dolphin was out of
+   scope was right; concluding *therefore* the lighting could not be measured
+   was a non-sequitur, and it is deviation 17.
 
 ## Step 1 — converter: the subset gate
 
@@ -407,8 +432,13 @@ Interpreter functions, in evaluation order:
    `color = matColor · saturate(illum)`. Diffuse follows the GX function —
    `None → 1`, `Signed → dot(N, L)`, `Clamp → max(dot(N, L), 0)`. **Attenuation
    is forced to 1.0** for both `Spot` and `Specular`: our light is a hardcoded
-   directional, so there is no position to attenuate from. That is a deliberate
-   approximation, not an oversight — say so at the call site.
+   directional, so there is no position to attenuate from. ~~That is a
+   deliberate approximation, not an oversight~~ — **and it turned out to be
+   exact.** The game sets every actor light's coefficients to the identity,
+   `mCosAtten = (1,0,0)` and `mDistAtten = (1,0,0)`
+   (`../tww/src/d/d_kankyo.cpp:1548-1553`, `:3413-3418`), which makes GX's
+   attenuation term 1 whatever the geometry. The comment at the call site says
+   so rather than apologising.
    `lit_mask` is 3 on every lit material, so **two** lights are needed; the
    example supplies both.
 2. `evalTexGen(...)` — per texgen `i < numTexgens`, by type:
@@ -506,13 +536,37 @@ anything in `examples/`, which `cargo test` builds but never executes;
   `tev_pack::pack`, keeping the alpha-compare codes folded into the same
   per-material struct. The per-frame `write_uniform` loop (:590) fills in
   `mvp`, `lightDir`, `lightColor` and `debugMode`; everything else is static.
-- **Light controls**, held-key intent per `examples/ray_marching.rs:100-122`:
+- ~~**Light controls**, held-key intent per `examples/ray_marching.rs:100-122`:
   A/D rotate azimuth, W/S rotate elevation, integrated in `update`. Seed from
   master plan §5 — direction up-forward-left, `lightColor ≈ (1.0, 0.98, 0.92)`,
-  the second light (mask bit 1) dimmer and from the opposite side, ambient
-  already comes from the manifest's `[50,50,50,50]`. These are hand-tuned
-  seeds; risk #8's ground-truth extraction stays deferred.
-- **Debug modes** cycled with R/F, with Num1–Num4 as jump-to presets:
+  the second light (mask bit 1) dimmer and from the opposite side… These are
+  hand-tuned seeds; risk #8's ground-truth extraction stays deferred.~~
+
+  **Superseded — every clause of that bullet is now false.** The held-key rig
+  shipped first and was then deleted outright when risk #8 turned out to be
+  answerable from the decomp. **As shipped:**
+
+  - **Both lights are fixed and the *model* turns**, `MODEL_SPIN` = 20°/s about
+    Y, which is what sweeps the terminator. That is the game's arrangement (the
+    sun does not move, Link does) and it replaces P6's camera orbit, which
+    showed every side of Link but never moved the shading. Light 0 sits at a
+    fixed world azimuth/elevation; the eflight is anchored in *model* space, so
+    it rides along with him — watching the two decouple is the clearest
+    demonstration that the ramp's two axes are independent.
+  - **The light colors are single-channel constants**, `LIGHT0_COLOR = (1,0,0)`
+    and `LIGHT1_COLOR = (0,0,0)`, traced rather than tuned — see the lighting
+    pass's Recorded facts and risk #1. `T` toggles the eflight, swapping light 1
+    to `(0,1,0)` and K1 to the treasure chest's glow.
+  - **Stage 0's two lerp endpoints are patched per frame**, `reg[1]` and
+    `konst[0]` from `ENV_ACTOR_C0` / `ENV_ACTOR_K0`, mirroring
+    `setLightTevColorType_sub`. Applied to a *copy* of the params so the
+    manifest's values stay verbatim in `self.params` and the eflight's K1 is not
+    sticky, and gated on `chan_control[0].x != 0` so the unlit decals keep their
+    MAT3 values.
+  - Ambient is untouched — the manifest's `[50,50,50,50]` is what the hardware
+    uses, which that part of the original bullet had right.
+- **Debug modes** cycled with R/F, with Num1–Num4 as jump-to presets. **Ten, not
+  nine** — mode 9 was added during Step 4 and this table never grew to match it:
 
   | mode | view |
   |---|---|
@@ -525,6 +579,7 @@ anything in `examples/`, which `cargo test` builds but never executes;
   | 6 | raw `tex0` sample |
   | 7 | raw `tex1` sample at its own texgen coord |
   | 8 | channel recomputed per-fragment (decision 4's A/B) |
+  | 9 | texgen matrices forced to identity (the pupil `TEXMTX1` A/B) |
 
 - **Isolation printout** (:415) grows to print the isolated material's stage
   equations in `mat3_dump.txt`'s notation, so a wrong material can be compared
@@ -560,13 +615,20 @@ results go into Recorded facts):
 
 1. **noclip side-by-side** at P6's canonical angles, feature by feature: skin
    tone, the tunic's two-band boundary, the hair highlight, eye whites.
-2. **Light rotation** — A/D/W/S sweeps the terminator. The bands must move
-   smoothly and stay *banded*, never becoming a gradient. This is the sharpest
-   test of the SRTG ramp path (master plan risk #5).
+2. **Terminator sweep** — ~~A/D/W/S rotates the light~~; as shipped the model
+   spins under a fixed light, which sweeps the terminator without a keypress.
+   The bands must move smoothly and stay *banded*, never becoming a gradient.
+   This is the sharpest test of the SRTG ramp path (master plan risk #5).
+
+   **Eflight A/B** (`T`) — added with the lighting pass, and a sharper test of
+   the *same* mechanism than the sweep is: light 1 is green-only and light 0 is
+   red-only, so toggling it must light stage 2's additive highlight and nothing
+   else. With it off, the ramp's G axis must be dead — that is the whole
+   explanation for the yellow band being gone.
 3. **Only the 12 lit materials may respond to the light.** Per the measured
    split, the eye and brow decals are `lighting_enabled: false` with no SRTG,
-   so if they change under light rotation the channel is leaking somewhere it
-   should not.
+   so if they change as the model turns under the light, the channel is leaking
+   somewhere it should not.
 4. **Per-material isolation** — Q/E through all 24, each inspected alone with
    its equations printed and cross-checked against `mat3_dump.txt`. `ear` is
    the one to check first and in most detail; it exercises every mechanism in
@@ -600,14 +662,21 @@ results go into Recorded facts):
       (16 tests)
 - [x] `src/model_manifest.rs` `reg_colors` comment corrected
 - [x] `cargo check --all-targets`, `just lint` (debug + release), `cargo fmt` clean
-- [~] Cel bands visible and stable over a full orbit — **yes, and measured**
+- [~] Cel bands visible and stable over a full turn — **yes, and measured**
       (shadow (45,89,37) vs lit (250,255,74) in one region, with the
-      white-albedo shadow band at exactly REG0's (128,128,128)). The **noclip
-      per-feature comparison is NOT done** and is the main outstanding item
-- [x] Light rotation sweeps the terminator; bands stay banded; only the 12 lit
+      white-albedo shadow band at exactly REG0's (128,128,128)). Those numbers
+      are the interpreter commit's; the lighting pass then moved both endpoints
+      to the Pale palette's, and the bands were re-checked by eye but not
+      re-measured. The **noclip per-feature comparison is NOT done** and is the
+      main outstanding item
+- [x] The terminator sweeps (by the model spinning under a fixed light, not by
+      the since-deleted light keys); bands stay banded; only the 12 lit
       materials respond (the last part structurally as well as observationally —
       `evalChannel` returns `matColor` before touching a light when lighting is
       off, and the gate test asserts SRTG and lighting coincide on all 24)
+- [x] Lighting values traced rather than tuned, and the eflight `T` toggle
+      drives the ramp's second axis on its own (added by the lighting pass;
+      closes master plan risk #8, which this plan had scoped as deferred)
 - [x] All 24 materials isolated and compared against `mat3_dump.txt` — driven
       mechanically, 24 compared, 0 mismatched
 - [ ] Pupil `TEXMTX1` offset confirmed by toggling, not assumed — **still
@@ -618,13 +687,21 @@ results go into Recorded facts):
       clean (2 events × 24 pipelines); no VMA leak on a real window close (via a
       genuine `WM_DELETE_WINDOW`, not SIGTERM)
 - [x] Docs updated: master plan §5 (stale `setLightTevColorType` sentence), §6
-      P8 row, risks #5/#6/#8; `tests.md` §P8; `follow_up.md` §5 and §6
+      P8 row, risks #5/#6/#8; `tests.md` §P8; `follow_up.md` §5 and §6.
+      **Not swept for the lighting pass:** `tests.md:97`/`:263` and
+      `risks.md:156`/`:222` still describe the hand-tuned seeds, the
+      dolphin-memory-engine escalation and "rotate the light" — superseded by
+      risk #4 here and master plan risk #8, but not yet edited in place
 - [x] Recorded facts filled in, explicitly naming what shipped
       reasoned-rather-than-measured
 - [ ] Mode 0 vs mode 8 (per-vertex vs per-fragment channel) compared —
       **still open**, needs the same side-by-side as the noclip pass
 
-## Recorded facts
+## Recorded facts — the interpreter
+
+The phase landed in two commits. This block is the first one, the TEV
+interpreter itself; the [lighting pass](#recorded-facts--the-lighting-pass)
+below is the second, and where the two disagree the later block wins.
 
 Implemented and verified on 2026-07-27, on the development machine (Pop!_OS /
 COSMIC Wayland, RTX 3070 Ti + Intel Xe, converted assets present). P7's
@@ -634,7 +711,7 @@ that the **sRGB transfer direction is now measured** (0 LSB on four colors),
 which is what any P8 color claim rests on.
 
 ```
-commit:                   (this commit)
+commit:                   97db02c ("first pass at lit toon link example")
 
 step 0b (new):            The 14 TEV/texgen gx_enum!s moved from
                           convert_link's gx/types.rs into the library's
@@ -758,6 +835,15 @@ light rotation:           Terminator sweeps, bands stay banded. Verified by
                           same screen region flips from the shadow value
                           (45,89,37) to the lit value (250,255,74) -- two
                           discrete values, no intermediate gradient.
+                          **The control this used no longer exists.** The
+                          lighting pass deleted the W/A/S/D rig and now spins
+                          the model under a fixed light instead, so the sweep
+                          happens without a keypress. The measurement above
+                          stands as taken -- it is what established that the
+                          bands are discrete -- but it was not re-taken
+                          numerically afterwards, and the colors would differ
+                          anyway now that the endpoints come from the Pale
+                          palette. See the lighting pass's `on screen` entry.
                           Only lit materials respond: `mayuL` isolated and
                           light-rotated is pixel-identical, and more strongly,
                           `tev.slang`'s evalChannel returns matColor before
@@ -823,13 +909,18 @@ reasoned, not measured:   1. **S10 clamp semantics** (risk #6). Implemented as
                              capture was taken. Reachable but inert on cl.bdl:
                              eyeL/eyeR stage 1 is the only unclamped stage and
                              its values stay in [0,1].
-                          2. **dKy_tevstr_c light values** (risk #8). Hand-tuned
-                             seeds, two lights, attenuation forced to 1.0. They
-                             are constrained rather than arbitrary -- the ramp's
-                             ~0.49 terminator and the manifest's 0.196 ambient
-                             pin roughly where light 0 has to sit -- but they are
-                             not the game's values, and the yellow lit band above
-                             is the visible consequence.
+                          2. ~~**dKy_tevstr_c light values** (risk #8).
+                             Hand-tuned seeds, two lights, attenuation forced to
+                             1.0 ... not the game's values, and the yellow lit
+                             band above is the visible consequence.~~
+                             **No longer true -- the lighting pass measured all
+                             of it**, out of the decomp and off the disc rather
+                             than out of emulated RAM. Light colors traced,
+                             attenuation confirmed exactly 1, stage 0's lerp
+                             endpoints read from the ocean stage's Pale palette.
+                             See the lighting pass's Recorded facts and risk #4.
+                             What remains here is a *choice*, not a gap: which
+                             time-of-day palette slot to render.
                           3. **The texmatrix rotation/scale branches.** The
                              general SRT composition is written and unit-tested,
                              but every cl.bdl matrix has unit scale and zero
@@ -857,7 +948,9 @@ tooling (reusable):       This machine is Wayland/COSMIC, so the X11 root is
                           pixels.
 
 deviations discovered:    Eleven corrections to this document, all applied in
-                          place above, plus three implementation findings.
+                          place above, plus three implementation findings
+                          (numbered 12-14 below). The lighting pass found three
+                          more, 15-17, listed in its own block.
 
                           Corrections that would have been build failures or
                           silent wrong renders:
@@ -924,6 +1017,126 @@ outstanding:              The per-feature noclip side-by-side (skin, tunic
                           plus `None_` blend over an all-(0,0,0,0) texture, i.e.
                           missing BTP plus P9's deferred DstAlpha pass. P8 does
                           not fix it and was never going to.
+```
+
+## Recorded facts — the lighting pass
+
+The phase's second commit, 2026-07-27, same machine. It exists because
+decision 7 turned out to be wrong in a good way: the plan scoped the lighting
+values as *reasoned, not measured*, on the belief that ground truth lived in
+emulated RAM. It did not. Every value below came out of the `../tww` decomp or
+off the disc, and the hand-tuned seeds are gone.
+
+No shader logic, no converter change, no generated code: the only `.slang`
+edits are comments, `src/generated/` is untouched, and the golden hashes are
+unaffected. `cargo check --all-targets`, `just lint` (debug + release) and
+`just test` (39 + 86 pass, 0 fail) all green before the commit.
+
+```
+commit:                   1ca758b ("trace toon link lighting from the decomp")
+
+the light model:          The two GX lights are **single-channel by
+                          construction** -- light 0 red-only, light 1
+                          green-only. Full trace with line numbers is in the
+                          `cel bands vs noclip` entry above; the short version
+                          is that red carries the diffuse term and green the
+                          "eflight" (torch, sword glow) term, which is *why*
+                          ZBtoonEX is a separable ramp and why SRTG's
+                          (color.r, color.g) is two independent lookups rather
+                          than one diagonal read. The example ships
+                          LIGHT0_COLOR = (1,0,0), LIGHT1_COLOR = (0,0,0), and
+                          `T` swaps light 1 to (0,1,0).
+                          This is the whole of the yellow lit band the first
+                          commit shipped: near-neutral seeds gave r ~= g, so
+                          the ramp's G axis saturated wherever R did and stage 2
+                          fired everywhere instead of nowhere.
+
+attenuation:              Exact, not approximate. mCosAtten and mDistAtten are
+                          both (1,0,0) on every actor light
+                          (d_kankyo.cpp:1548-1553, :3413-3418), so tev.slang
+                          forcing 1.0 is the hardware's answer, not a stand-in
+                          for a directional light with no position. The comment
+                          in evalChannel was rewritten to say so.
+
+env colors (new tool):    scripts/link_env_colors.py (`just link-env-colors`)
+                          walks a stage .dzs's EnvR -> Colo -> Pale chain and
+                          prints the actor lighting slots. Reached via
+                          EnvR[0][0] -> Colo[0][2] -> Pale[2] on the ocean
+                          stage, the 150-270 schedule plateau (~10:00-18:00):
+                          Actor_C0 = (156,140,134) is stage 0's shadow endpoint
+                          (-> GX_TEVREG0) and Actor_K0 = (255,255,255) its lit
+                          endpoint (-> konst K0). The example patches both per
+                          frame, mirroring setLightTevColorType_sub
+                          (d_kankyo.cpp:1817-1829), onto a *copy* of the params
+                          so the manifest values stay verbatim and the eflight's
+                          K1 does not go sticky, and gated on the channel
+                          actually being lit so the decals keep their MAT3
+                          values. Ambient is *not* patched by the game, so
+                          tev_pack's 50/255 was already right.
+                          The .dzs comes from a new extract_link.sh entry
+                          (Stage/sea/Stage.arc:dzs/stage.dzs, 4 files -> 5)
+                          behind a new tier-1 check_dzs_chunks that walks the
+                          chunk header and requires EnvR, Colo and Pale before
+                          the golden hash is trusted.
+
+the eflight:              EFLIGHT_KONST is the treasure chest's glow,
+                          (255,255,100) verbatim from d_a_tbox.cpp:302-304 -- a
+                          chest is a steady eflight rather than a decaying
+                          flash, so it is one stable value instead of a row off
+                          a decay curve. EFLIGHT_FALLOFF = 0.25 is **a demo
+                          choice, and the only tuned number in the pass**: the
+                          game scales the registered color by bright^2 with
+                          bright = 1 - distance/power
+                          (settingTevStruct_eflightcol_plus, :1567-1584), and
+                          0.25 is that factor at half the light's radius.
+                          Unscaled, the near-white glow saturates the tunic and
+                          the ramp's second axis stops being legible.
+                          EFLIGHT_AZIMUTH = 0 rests on a measurement rather than
+                          an assumption: the model faces +Z, from cl.bdl itself
+                          -- the `mouth` batch's mean vertex normal is +0.82 in
+                          Z and mayuL's is +0.90, with the eyes at z = +16.2.
+
+controls / camera:        The W/A/S/D held-key light rig is deleted; both lights
+                          are fixed and MODEL_SPIN (20 deg/s about Y) turns Link
+                          under them, which is the game's arrangement and also
+                          what now sweeps the terminator. P6's camera orbit is
+                          gone with it -- it showed every side of Link but never
+                          moved the shading. Light 0 is anchored in world space,
+                          the eflight in model space, so the eflight's highlight
+                          rides along with him while light 0's terminator sweeps
+                          past; the two decoupling is the visible proof that the
+                          ramp's axes are independent. `Key::T` (the eflight
+                          toggle) is a new variant in src/game/traits.rs.
+
+on screen:                **Run, and it looks right.** The yellow lit band is
+                          gone, the bands stay banded as the model spins under
+                          the fixed light, and `T` visibly drives the ramp's
+                          second axis on its own. Recorded qualitatively: unlike
+                          the first commit's checks this was not re-measured
+                          pixel-by-pixel, so no numeric values are claimed for
+                          it. The three outstanding items above are unchanged --
+                          the pass moved the light values, not the comparisons
+                          that still need a human looking at two images.
+
+deviations (15-17):      15. `Key` needed a 14th variant after all. The
+                             affordances note said P8 fit in the existing 13
+                             "with no core-library change"; the eflight toggle
+                             added Key::T and its SDLScancode arm. The
+                             ray_marching held-key pattern the plan pointed at
+                             went unused -- nothing in the final example is
+                             held.
+                         16. Step 4's debug-mode table shipped one short: mode 9
+                             (texgen matrices forced to identity, the pupil A/B)
+                             was added during implementation and the table was
+                             never grown. Corrected above.
+                         17. Decision 7's premise. "Dolphin is out of scope,
+                             therefore risk #8 ships reasoned" conflated two
+                             things -- Dolphin being out of scope did not mean
+                             the values were unmeasurable, only that *that*
+                             route was. dolphin-memory-engine would have been
+                             the harder path to numbers sitting in a .dzs and
+                             in decomp constants. Risk #6 (S10 clamp) is the
+                             only part of decision 7 that held.
 ```
 
 ## Out of scope for P8
