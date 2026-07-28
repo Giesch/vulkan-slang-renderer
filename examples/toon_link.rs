@@ -5,13 +5,14 @@
 //! order, gamma-correct output, and — new in P8 — the **full GX TEV
 //! interpreter**: a real color channel driving the `ZBtoonEX` ramp through an
 //! SRTG texgen, the stage chain with its swap tables and konst selects, and the
-//! `TEXMTX1` pupil offset. Rotating the light sweeps the terminator.
+//! `TEXMTX1` pupil offset. Both lights are fixed in world space and the model
+//! turns under them, as in the game — which sweeps the terminator across Link.
 //!
 //! Requires converted assets on disk (gitignored — you need the disc image):
 //! `just extract-link && just convert-link`.
 //!
 //! Controls:
-//! - W / A / S / D: rotate the light (elevation / azimuth), held
+//! - T: toggle the eflight — the second, green-channel light
 //! - R / F: next / previous debug mode
 //! - Num1 / Num2 / Num3 / Num4: jump to mode 0 / 1 / 2 / 3
 //! - Q / E: isolate previous / next batch (prints its TEV state to stdout)
@@ -21,7 +22,7 @@
 //! 4 rasterized COLOR0, 5 texgen-1 coord, 6 raw tex0, 7 raw tex1,
 //! 8 channel per-fragment, 9 texgen matrices forced to identity.
 
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::PI;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -171,79 +172,153 @@ const DEBUG_MODE_NAMES: [&str; 10] = [
     "texgen matrices = identity",
 ];
 
-/// Held-key light controls, per the `examples/ray_marching.rs` pattern.
-#[derive(Default)]
-struct Intent {
-    az_left: bool,
-    az_right: bool,
-    el_up: bool,
-    el_down: bool,
-}
+/// Radians per second the model turns about Y. Both lights are fixed in world
+/// space, so this is what sweeps the terminator — and it replaces the camera
+/// orbit that used to sit here, which showed every side of Link but never moved
+/// the shading.
+const MODEL_SPIN: f32 = 20.0 * (PI / 180.0);
 
-/// Radians per second of light rotation while a key is held.
-const LIGHT_SPIN: f32 = 1.2;
+/// The two GX lights `lit_mask == 3` selects. **Each carries exactly one
+/// channel**, and that is not a simplification — it is how the game does it.
+///
+/// `ZBtoonEX` is a *separable* 2D ramp (phase_08 risk #1): its red varies only
+/// with u and its green only with v, both stepping sharply at ≈0.49. The SRTG
+/// texgen feeds it `(color0.r, color0.g)`, so the two axes are two independent
+/// lookups — which only works if the lights write to different channels. They do:
+///
+/// - **Light 0 is red-only.** `../tww/src/d/d_kankyo.cpp:1494-1499` sets
+///   `mColor.r` (255 with no nearby point light and no flicker) and `:1545-1547`
+///   hard-zero green and blue; `dKy_tevstr_init` repeats it at `:3410-3412`.
+///   Its ramp axis drives stage 0's toon band.
+/// - **Light 1 is green-only, and dark unless an "eflight" (torch, sword glow)
+///   is nearby** — `:2557-2559`, gated by `lightMask = 1` with no eflight versus
+///   `3` with one (`:2527-2531`). Its ramp axis drives stage 2's warm additive
+///   highlight. Black here makes the manifest's `lit_mask == 3` behave exactly
+///   like the runtime's `setLightMask(1)`; [`LightRig::eflight`] toggles it on.
+///
+/// Getting this wrong is what made the first pass strongly yellow: near-neutral
+/// light colors give `r ≈ g`, so green saturated wherever red did and stage 2's
+/// `konst1 = (160,90,0)` fired over the *whole* lit band instead of nothing.
+///
+/// With ambient fixed at 50/255 ≈ 0.196 on every channel, `illum.r` crosses the
+/// ramp's 0.49 step at `N·L ≈ 0.294` and `illum.g` stays at 0.196 — below it,
+/// always, until the eflight comes on.
+const LIGHT0_COLOR: Vec3 = Vec3::new(1.0, 0.0, 0.0);
+const LIGHT1_COLOR: Vec3 = Vec3::new(0.0, 0.0, 0.0);
+/// Light 1 with the eflight on. The game ramps the green byte with distance and
+/// flicker (`d_kankyo.cpp:2542-2557`); we take it at full.
+const EFLIGHT_COLOR: Vec3 = Vec3::new(0.0, 1.0, 0.0);
+/// Stage 2's additive tint while the eflight is on, replacing the manifest's
+/// `konst_colors[1]`. `setLightTevColorType_sub` overwrites K1 with the eflight's
+/// own color whenever that stage runs at all (`d_kankyo.cpp:1780`), so the
+/// manifest value is a default the game never actually shows.
+///
+/// The treasure chest's glow, verbatim from `d_a_tbox.cpp:302-304`. A chest is a
+/// steady eflight rather than a decaying flash, so this is one stable value
+/// instead of a row picked off a decay curve.
+const EFLIGHT_KONST: Vec3 = rgb8(255, 255, 100);
+/// How much of [`EFLIGHT_KONST`] actually reaches K1.
+///
+/// **A demo choice, but a grounded one.** The game never writes the registered
+/// color straight through: `settingTevStruct_eflightcol_plus` scales it by
+/// `bright²` where `bright = 1 - distance/power` (`d_kankyo.cpp:1567-1584`), so
+/// the full value only appears standing exactly at the light. This is that factor
+/// at half the light's radius — `(1 - 0.5)² = 0.25`. Unscaled, the chest's near-
+/// white glow saturates the tunic and the ramp's second axis stops being legible.
+const EFLIGHT_FALLOFF: f32 = 0.25;
 
-/// The two GX lights `lit_mask == 3` selects.
-///
-/// **Hand-tuned daytime seeds, not ground truth** (master plan risk #8): the
-/// manifest's `light_colors` is null on every material because the game writes
-/// them per frame from `dKy_tevstr_c`, and reading those out of emulated RAM is
-/// a deferred escalation.
-///
-/// They are not arbitrary, though. The `ZBtoonEX` ramp's terminator is a sharp
-/// step at ≈0.49 in both of its axes, and the manifest's ambient is a fixed
-/// 50/255 ≈ 0.196, so `illum = 0.196 + Σ max(N·L, 0)·color` has to *straddle*
-/// 0.49 across the model or there are no bands at all: too dim and everything
-/// is shadow, too bright and everything is lit. Light 0 at ~0.75 puts a
-/// full-facing surface at 0.95 and a 60°-off surface at 0.57 (both lit) while
-/// grazing surfaces fall to the ambient 0.196 (shadow). Light 1 is the fill from
-/// behind, deliberately small enough that it cannot push the shadow side over
-/// the threshold on its own.
-const LIGHT0_COLOR: Vec3 = Vec3::new(0.75, 0.735, 0.69);
-const LIGHT1_COLOR: Vec3 = Vec3::new(0.22, 0.22, 0.26);
+/// Light 0's fixed orientation, **world space**. The game's key light does not
+/// move with the actor — it is the sun, the moon, or the nearest torch — so the
+/// terminator sweeps because [`MODEL_SPIN`] turns Link under it, not because the
+/// light swings.
 const LIGHT0_AZIMUTH: f32 = 0.6;
 const LIGHT0_ELEVATION: f32 = 0.7;
-/// Elevation clamp, just shy of straight up/down so the direction never
-/// degenerates.
-const MAX_ELEVATION: f32 = 1.4;
 
-/// Light 0's orientation; light 1 is derived from it so all four keys move the
-/// rig coherently.
+/// The eflight's orientation, **model space** — it rotates with Link rather than
+/// staying put in the world, so the highlight stays pinned to his front while
+/// light 0's terminator sweeps past. That is the arrangement when the glow comes
+/// from something he is facing: `d_a_tbox.cpp:301` puts the chest's light 50
+/// units above the chest, and Link stands in front of it during the opening.
+///
+/// Azimuth 0 is straight ahead: the model faces **+Z**, measured off `cl.bdl`
+/// itself — the `mouth` batch's mean vertex normal is `+0.82` in Z and `mayuL`'s
+/// is `+0.90`, with the eyes at `z = +16.2`.
+const EFLIGHT_AZIMUTH: f32 = 0.0;
+const EFLIGHT_ELEVATION: f32 = 0.35;
+
+/// The two endpoints of stage 0's toon lerp, `PREV = mix(REG0, K0, ramp.r)`.
+///
+/// Measured, not seeded: `scripts/link_env_colors.py` reads them out of the ocean
+/// stage's `Pale` chunk (`just link-env-colors`) at `EnvR[0][0] → Colo[0][2] →
+/// Pale[2]`, the 150–270 schedule plateau — roughly 10:00–18:00, the widest
+/// daytime band and the only one whose two schedule endpoints name the same slot,
+/// so it needs no time-of-day blend.
+///
+/// The game overwrites both every frame in `setLightTevColorType_sub`
+/// (`../tww/src/d/d_kankyo.cpp:1817-1829`), which is why the manifest's values
+/// (`reg_colors[0]` = mid-gray, `konst_colors[0]` = white) are only defaults.
+/// Note that the lit end really is pure white at midday — the manifest's default
+/// happens to be right here, and would not be at dawn or sunset.
+///
+/// Pale → `dKy_tevstr_c` wiring is `setLight_actor`, `d_kankyo.cpp:1328-1353`.
+const ENV_ACTOR_C0: Vec3 = rgb8(156, 140, 134);
+const ENV_ACTOR_K0: Vec3 = rgb8(255, 255, 255);
+
+/// A GX color, written as the bytes it is in the decomp and the disc data so the
+/// constants below stay greppable against their sources.
+const fn rgb8(r: u8, g: u8, b: u8) -> Vec3 {
+    Vec3::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
+}
+
+/// Overwrite a GX color register's RGB and leave its alpha alone, the way
+/// `setLightTevColorType_sub` does.
+fn set_rgb(dst: &mut Vec4, rgb: Vec3) {
+    *dst = Vec4::new(rgb.x, rgb.y, rgb.z, dst.w);
+}
+
+/// The lights are fixed — light 0 in the world, the eflight relative to Link —
+/// so the only mutable state is whether the eflight is lit.
+#[derive(Default)]
 struct LightRig {
-    azimuth: f32,
-    elevation: f32,
+    /// Whether a nearby "eflight" is lighting light 1's green channel. Off is the
+    /// common case in the game — see [`LIGHT1_COLOR`].
+    eflight: bool,
 }
 
 impl LightRig {
     /// `lightDir[i]` points **from the surface toward light i**, in world space.
     /// The shader does not negate — this is the one place the convention is
     /// established, and it is the classic sign-flip site.
-    fn directions(&self) -> [Vec4; 2] {
+    ///
+    /// The two lights live in *different* frames, which is the whole point: light
+    /// 0 is anchored in the world, so `spin` sweeps its terminator across Link,
+    /// while the eflight is anchored to Link, so its highlight rides along with
+    /// him. Watching the two decouple as he turns is the clearest demonstration
+    /// that the ramp's red and green axes are independent.
+    fn directions(&self, spin: f32) -> [Vec4; 2] {
         let dir = |az: f32, el: f32| {
-            let d = Vec3::new(el.cos() * az.sin(), el.sin(), el.cos() * az.cos()).normalize();
-            Vec4::new(d.x, d.y, d.z, 0.0)
+            Vec3::new(el.cos() * az.sin(), el.sin(), el.cos() * az.cos()).normalize()
         };
+        let world = |d: Vec3| Vec4::new(d.x, d.y, d.z, 0.0);
         [
-            dir(self.azimuth, self.elevation),
-            // the fill: opposite side, mirrored in elevation
-            dir(self.azimuth + PI, -self.elevation * 0.5),
+            world(dir(LIGHT0_AZIMUTH, LIGHT0_ELEVATION)),
+            // Model space → world by the same Y rotation the vertices get, which
+            // is what pins it to Link. It only shows up when `eflight` is on,
+            // since otherwise its color is black.
+            world(Mat3::from_rotation_y(spin) * dir(EFLIGHT_AZIMUTH, EFLIGHT_ELEVATION)),
         ]
     }
 
     fn colors(&self) -> [Vec4; 2] {
+        let light1 = if self.eflight {
+            EFLIGHT_COLOR
+        } else {
+            LIGHT1_COLOR
+        };
         [
             Vec4::new(LIGHT0_COLOR.x, LIGHT0_COLOR.y, LIGHT0_COLOR.z, 1.0),
-            Vec4::new(LIGHT1_COLOR.x, LIGHT1_COLOR.y, LIGHT1_COLOR.z, 1.0),
+            Vec4::new(light1.x, light1.y, light1.z, 1.0),
         ]
-    }
-}
-
-impl Default for LightRig {
-    fn default() -> Self {
-        Self {
-            azimuth: LIGHT0_AZIMUTH,
-            elevation: LIGHT0_ELEVATION,
-        }
     }
 }
 
@@ -493,7 +568,6 @@ pub struct ToonLink {
     debug_mode: u32,
     isolate: Option<BatchIndex>,
     light: LightRig,
-    intent: Intent,
 }
 
 impl ToonLink {
@@ -784,7 +858,7 @@ impl Game for ToonLink {
             "toon_link: {} batches, {} materials, {} vertices\n\
              draw order (batch idx): {:?}\n\
              controls:\n\
-             \x20 W / A / S / D              rotate the light (held)\n\
+             \x20 T                          toggle the eflight (green light)\n\
              \x20 R / F                      next / previous debug mode\n\
              \x20 Num1..Num4                 jump to debug mode 0..3\n\
              \x20 Q / E                      isolate previous / next batch\n\
@@ -807,27 +881,24 @@ impl Game for ToonLink {
             debug_mode: 0,
             isolate: None,
             light: LightRig::default(),
-            intent: Intent::default(),
         })
     }
 
-    fn update(&mut self) {
-        let dt = self.frame_delay().as_secs_f32();
-        let axis = |neg: bool, pos: bool| (pos as i32 - neg as i32) as f32 * LIGHT_SPIN * dt;
-        self.light.azimuth =
-            (self.light.azimuth + axis(self.intent.az_left, self.intent.az_right)).rem_euclid(TAU);
-        self.light.elevation = (self.light.elevation
-            + axis(self.intent.el_down, self.intent.el_up))
-        .clamp(-MAX_ELEVATION, MAX_ELEVATION);
-    }
-
     fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
+        // The model turns under a fixed camera and a fixed light, which is the
+        // game's arrangement: the sun does not move, Link does. It also sweeps
+        // the toon terminator across him, which is what the old W/A/S/D light
+        // controls were for.
         let elapsed = (Instant::now() - self.start_time).as_secs_f32();
-        let orbit = elapsed * 20f32.to_radians();
+        let spin = elapsed * MODEL_SPIN;
 
-        let model = Mat4::from_scale(Vec3::splat(MODEL_SCALE));
+        // Uniform scale commutes with rotation, so the order is readability only.
+        // Normals survive this: `rotateDirection` (shaders/source/mvp.slang) is
+        // exact for rotation plus *uniform* scale, and the fragment shader
+        // renormalizes anyway.
+        let model = Mat4::from_rotation_y(spin) * Mat4::from_scale(Vec3::splat(MODEL_SCALE));
         let target = Vec3::new(0.0, 0.62, 0.0);
-        let eye = target + Mat3::from_rotation_y(orbit) * Vec3::new(0.0, 0.25, 2.8);
+        let eye = target + Vec3::new(0.0, 0.25, 2.8);
         let view = Mat4::look_at_rh(eye, target, Vec3::Y);
         let proj = Mat4::perspective_rh(45f32.to_radians(), renderer.aspect_ratio(), 0.1, 20.0);
 
@@ -843,8 +914,9 @@ impl Game for ToonLink {
 
         let mvp = MVPMatrices { model, view, proj };
         let debug_mode = self.debug_mode;
-        let light_dir = self.light.directions();
+        let light_dir = self.light.directions(spin);
         let light_color = self.light.colors();
+        let eflight = self.light.eflight;
         renderer.submit_draws(|gpu| {
             // Everything else in `params` was built once from the manifest.
             for ((_, params_buffer), params) in
@@ -854,20 +926,47 @@ impl Game for ToonLink {
                 params.tev.light_dir = light_dir;
                 params.tev.light_color = light_color;
                 params.debug_mode = debug_mode;
-                gpu.write_uniform(params_buffer, *params);
+
+                // The environment override, mirroring `setLightTevColorType_sub`
+                // (`../tww/src/d/d_kankyo.cpp:1817-1829`): the game rewrites
+                // stage 0's two lerp endpoints from `dKy_tevstr_c` every frame,
+                // so the manifest's `reg_colors[0]` / `konst_colors[0]` are only
+                // the defaults J3D loaded.
+                //
+                // Applied to a *copy*, so `self.params` keeps the manifest's
+                // values verbatim. Writing back in place would work for the two
+                // unconditional colors but would make the eflight's K1 sticky —
+                // toggling it off could not restore `konst_colors[1]`.
+                let mut params = *params;
+
+                // Gated on the color channel actually being lit, as the game
+                // gates on `mLightMode != 0`: the eye and brow decals keep their
+                // MAT3 values. RGB only — the game copies the existing alpha back
+                // before writing (`:1820`, `:1826`), and `sleeve` stage 1's alpha
+                // reads K0's, so clobbering it would change the cutout.
+                if params.tev.chan_control[0].x != 0 {
+                    set_rgb(&mut params.tev.reg[1], ENV_ACTOR_C0);
+                    set_rgb(&mut params.tev.konst[0], ENV_ACTOR_K0);
+                    if eflight {
+                        set_rgb(&mut params.tev.konst[1], EFLIGHT_KONST * EFLIGHT_FALLOFF);
+                    }
+                }
+
+                gpu.write_uniform(params_buffer, params);
             }
         })
     }
 
     fn input(&mut self, input: Input) {
         let batch_count = self.manifest.batches.len();
-        match input {
-            Input::KeyDown(key) => match key {
-                // held: the light rig, integrated in `update`
-                Key::A => self.intent.az_left = true,
-                Key::D => self.intent.az_right = true,
-                Key::W => self.intent.el_up = true,
-                Key::S => self.intent.el_down = true,
+        if let Input::KeyDown(key) = input {
+            match key {
+                // The eflight is the only thing that drives the ramp's second
+                // axis, so this is the A/B that shows the two are independent.
+                Key::T => {
+                    self.light.eflight = !self.light.eflight;
+                    println!("toon_link: eflight {}", self.light.eflight);
+                }
 
                 Key::R => self.set_debug_mode(self.debug_mode + 1),
                 Key::F => self.set_debug_mode(self.debug_mode + DEBUG_MODE_NAMES.len() as u32 - 1),
@@ -895,17 +994,9 @@ impl Game for ToonLink {
                     self.isolate = None;
                     self.print_isolation();
                 }
-            },
 
-            Input::KeyUp(key) => match key {
-                Key::A => self.intent.az_left = false,
-                Key::D => self.intent.az_right = false,
-                Key::W => self.intent.el_up = false,
-                Key::S => self.intent.el_down = false,
                 _ => {}
-            },
-
-            _ => {}
+            }
         }
     }
 }

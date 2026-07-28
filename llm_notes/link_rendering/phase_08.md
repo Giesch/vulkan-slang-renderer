@@ -725,6 +725,33 @@ cel bands vs noclip:      Bands render, and they are unambiguously *banded*:
                           **No konst or reg value was tuned to make the picture
                           look better** -- they are the manifest's, verbatim.
 
+                          **RESOLVED 2026-07-27, by reading ../tww.** The first
+                          explanation, and it is not a matter of degree: the two
+                          GX lights are *single-channel by construction*.
+                          Light 0 is red-only -- d_kankyo.cpp:1494-1499 sets
+                          mColor.r and :1545-1547 hard-zero g and b, repeated in
+                          dKy_tevstr_init at :3410-3412. Light 1 is green-only
+                          and exists only near an "eflight" (torch, sword glow),
+                          :2557-2559, gated by lightMask = 1 with no eflight vs
+                          3 with one (:2527-2531). That is *why* the ramp is
+                          separable: red carries the diffuse term, green carries
+                          the eflight term, and SRTG's (color.r, color.g) is two
+                          independent lookups. With ambient 50/255 on every
+                          channel and no eflight, color.g == 0.196 < 0.49
+                          forever, so ramp.G is 0 and stage 2 contributes
+                          *exactly nothing*. The game belt-and-braces it:
+                          setLightTevColorType_sub (:1764-1787) forces
+                          setLightMask(1) and calls setTevStageNum to drop the
+                          kcsel==13 stage outright unless mColorK1.a != 0.
+                          The canonical C-source spelling of this same shader is
+                          dCloth_packet_c::TevSetting, d_cloth_packet.cpp:395-437
+                          -- SRTG from COLOR0, SWAP1 = RRRA on stage 0, SWAP2 =
+                          GGGA on the optional stage 2, numStages 3 and lightMask
+                          3 iff mColorK1.a != 0. It matches sleeve stage for
+                          stage. The example now ships LIGHT0_COLOR = (1,0,0)
+                          and LIGHT1_COLOR = (0,0,0), with T toggling the
+                          eflight. Still no konst or reg value tuned by eye.
+
 light rotation:           Terminator sweeps, bands stay banded. Verified by
                           driving the window with synthetic held keys and
                           diffing frames: holding A rotates the azimuth and the
@@ -933,12 +960,18 @@ outstanding:              The per-feature noclip side-by-side (skin, tunic
    Confirmed at runtime by debug mode 5, which reads `(193, 190, 0)` on the lit
    tunic — r ≈ g as predicted, B exactly 0, both well past the 0.49 step.
 
-   **What this hands to risk #8 instead**: because the two axes have nearly
-   identical thresholds and our light is near-neutral, r ≈ g, so both ramp
-   channels saturate together — stage 2's warm `(160,90,0)` highlight fires over
-   the *entire* lit band rather than a sub-band of it. A 2D separable ramp only
-   buys separate shading and highlight thresholds when the light color is
-   distinctly non-neutral. See the *cel bands vs noclip* entry in Recorded facts.
+   ~~**What this hands to risk #8 instead**~~ — **answered 2026-07-27.** The
+   note here read: because the two axes have nearly identical thresholds and our
+   light is near-neutral, r ≈ g, so both ramp channels saturate together and
+   stage 2's warm `(160,90,0)` highlight fires over the *entire* lit band. It
+   then guessed that "a 2D separable ramp only buys separate thresholds when the
+   light color is distinctly non-neutral."
+
+   That guess was too weak. The game's lights are not merely non-neutral, they
+   are **one channel each** — light 0 red-only, light 1 green-only, so the two
+   axes are wired to two *different lights* rather than to a hue. Separability is
+   the whole design, not a happy accident of the texture. Full trace in the
+   *cel bands vs noclip* entry in Recorded facts.
 2. **`reg_colors` register shift.** Documented above and traced to
    `J3DMatBlock.cpp:810-811`, but the wrong reading is *silent* — stage 0
    degenerates to a no-op and the model just looks flat. The `tev_pack` test on
@@ -948,11 +981,34 @@ outstanding:              The per-feature noclip side-by-side (skin, tunic
    implementation is reasoned, not measured. Low practical risk — every op is
    ADD at scale 1, so values stay near range — but record it as unmeasured
    rather than implying it was checked.
-4. **Lighting ground truth** (risk #8). Hand-tuned daytime seeds, two lights,
-   attenuation forced to 1. Any noclip color mismatch could be our TEV math
-   *or* our light values, and P8 has no way to tell them apart. Prefer
-   adjudicating on band *structure* (which the light values do not affect)
-   over band *color* (which they do).
+4. ~~**Lighting ground truth**~~ (risk #8) — **largely closed 2026-07-27.** The
+   entry read: hand-tuned daytime seeds, two lights, attenuation forced to 1;
+   any noclip color mismatch could be our TEV math *or* our light values.
+
+   Nothing is hand-tuned any more, and none of it needed emulated RAM:
+   - **Light colors are traced constants**, `(1,0,0)` and `(0,0,0)` — see risk #1
+     and the *cel bands vs noclip* entry.
+   - **Attenuation ≡ 1 is now measured, not assumed.** `mCosAtten` and
+     `mDistAtten` are both `(1,0,0)` (`d_kankyo.cpp:1548-1553`, `:3413-3418`), so
+     `tev.slang` forcing 1.0 is exact rather than an approximation.
+   - **The stage-0 lerp endpoints are read off the disc.** They are static stage
+     data, not runtime state: `scripts/link_env_colors.py` walks a stage `.dzs`'s
+     `EnvR → Colo → Pale` chain (`just link-env-colors`). The ocean stage's
+     daytime plateau gives `Actor_C0 = (156,140,134)` (shadow end, → `GX_TEVREG0`)
+     and `Actor_K0 = (255,255,255)` (lit end, → konst K0). The example patches
+     both per frame, mirroring `setLightTevColorType_sub`
+     (`d_kankyo.cpp:1817-1829` — note the sibling branch at `:1797-1816` swaps
+     them, but it is gated on `toon_proc_check()`, which unconditionally returns
+     false in retail, `:89-99`).
+
+   Ambient is *not* patched by the game — MAT3's 50/255 is what the hardware
+   uses, so `tev_pack` was already right.
+
+   **What is still a choice, not a measurement:** which palette slot to render.
+   The script defaults to the ocean stage's 150–270 schedule plateau, the widest
+   daytime band and the only one whose two schedule endpoints name the same slot,
+   so it alone needs no time-of-day blend. Any other time of day would need
+   `setLight_actor`'s two-way palette lerp (`d_kankyo.cpp:1328-1353`).
 5. **`ToonLinkParams` shape change** → `assert_shader_interface_unchanged`
    panics if the struct is edited while `just dev` runs. `just shaders` +
    restart. Body edits in `tev.slang` still hot-reload, which is most of the

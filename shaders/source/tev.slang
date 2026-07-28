@@ -279,6 +279,11 @@ public struct TevParams {
     // game writes them per frame from dKy_tevstr_c), so both come from the
     // example. Two lights because lit_mask is 3; widening means resizing these
     // and relaxing the gate.
+    //
+    // The colors are single-channel by design, not by simplification: the game's
+    // light 0 is red-only and its light 1 green-only, which is what lets the
+    // separable ZBtoonEX ramp read two independent terms off one channel color.
+    // See examples/toon_link.rs's LIGHT0_COLOR.
     float4 lightDir[2];
     float4 lightColor[2];
 
@@ -298,9 +303,13 @@ public struct TevParams {
     // wants .rgb from slot 0 and .a from slot 1, because both halves run the same
     // math on the same registers.
     //
-    // Attenuation is forced to 1.0 for Spot and Specular alike: our light is a
-    // hardcoded directional with no position, so there is nothing to attenuate
-    // from. A deliberate approximation, not an oversight.
+    // Attenuation is forced to 1.0 for Spot and Specular alike. That started as
+    // a deliberate approximation -- our light is a directional with no position,
+    // so there is nothing to attenuate from -- but it turns out to be exact:
+    // the game sets every actor light's coefficients to the identity,
+    // mCosAtten = (1,0,0) and mDistAtten = (1,0,0)
+    // (../tww/src/d/d_kankyo.cpp:1548-1553 and :3413-3418), which makes GX's
+    // attenuation term 1 regardless of geometry.
     public func evalChannel(uint slot, float3 normal) -> float4 {
         let chan = this.chanControl[slot];
         let matColor = this.chanMatColor;

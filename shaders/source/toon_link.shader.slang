@@ -68,8 +68,9 @@ struct FragVertex {
 [shader("vertex")]
 FragVertex vertMain(Vertex vertex) {
     let position = params.mvp.project(vertex.position);
-    // the model matrix is rotation-free uniform scale in P6, so
-    // rotateDirection is exact; renormalized per-fragment after interpolation
+    // the model matrix is a Y rotation with uniform scale, which rotateDirection
+    // handles exactly (only a *non-uniform* scale would need the
+    // inverse-transpose); renormalized per-fragment after interpolation
     let worldNormal = params.mvp.rotateDirection(vertex.normal);
 
     let color0 = params.tev.evalRasterColor(worldNormal);

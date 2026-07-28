@@ -179,14 +179,24 @@ trivially to uniform arrays.
   converter gate, the `tev_pack` unit tests and the in-example debug modes.
   Two things therefore ship reasoned rather than measured, and this is the
   entry that owns them: the **S10 clamp semantics** (master plan risk #6 — the
-  software renderer is the only literal reference) and the exact daytime
-  **`dKy_tevstr_c` light/ambient values** (risk #8 — dolphin-memory-engine
-  reads them from emulated RAM). Also noted: mainline Dolphin has no
+  software renderer is the only literal reference) and ~~the exact daytime
+  `dKy_tevstr_c` light/ambient values (risk #8 — dolphin-memory-engine reads
+  them from emulated RAM)~~. Also noted: mainline Dolphin has no
   per-TEV-stage intermediate dump either, so stage-level debugging falls to the
-  optional CPU reference evaluator regardless. **Revisit when:** a specific
-  feature is genuinely in dispute between us and noclip, or the hand-tuned
-  lighting seeds become the thing blocking a color match. (tests.md §P8;
-  phase_00; phase_08.)
+  optional CPU reference evaluator regardless.
+
+  **Risk #8 came off this list on 2026-07-27, and the premise was wrong.**
+  Nothing about the lighting needed emulated RAM. The light *colors* are
+  constants in the decomp — one channel per light, red for the diffuse ramp axis
+  and green for the eflight (`d_kankyo.cpp:1545-1547`, `:2557-2559`) — and the
+  stage-0 lerp endpoints are static stage data, read straight off the disc by
+  `scripts/link_env_colors.py` through the same `dtk vfs cp` path
+  `scripts/extract_link.sh` already used. dolphin-memory-engine would have been
+  the harder route to values that were sitting in a `.dzs`. Only S10 clamp
+  semantics still wants Dolphin.
+
+  **Revisit when:** a specific feature is genuinely in dispute between us and
+  noclip. (tests.md §P8; phase_00; phase_08.)
 - **toon_link is not CI-verifiable** — assets are machine-local
   (gitignored, disc-image-derived); the example bails without them, so the
   validation sweep's toon_link line only means something on a machine where
