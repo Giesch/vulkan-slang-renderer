@@ -62,15 +62,20 @@ const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
 /// applies MSAA-like sampling within textures
 const ENABLE_SAMPLE_SHADING: bool = false;
 
-/// Max GPU frames executing concurrently. Each frame blocks in wait_semaphores
-/// until frame_timeline reaches N - MAX_FRAMES_IN_FLIGHT, and slots indexed by
-/// `flight_slot` are only touched after that wait, which guards their reuse.
+/// Max GPU frames executing concurrently, and the length of every per-frame
+/// ring: command buffers, uniform/storage buffers, descriptor sets, acquire
+/// semaphores, resolve images, picking readback.
+///
+/// Frame N blocks in wait_semaphores until frame_timeline reaches
+/// N - MAX_FRAMES_IN_FLIGHT, and nothing indexed by `flight_slot` is touched
+/// before that wait, which is what makes the reuse safe.
+///
+/// The one slot not covered by that wait is the ping-pong history read
+/// (`Gpu::previous_addr`): frame N's compute reads what frame N-1's compute
+/// wrote, and the next writer of that slot is frame N+1's compute. That pair
+/// is ordered by the barrier at the top of each command buffer instead — see
+/// `record_command_buffer`.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
-/// Ring length for slots touched before the frame_timeline wait (CPU buffer
-/// writes, swapchain acquire) or read one frame late (ping-pong history).
-/// Pre-wait, only frame N - 3 is proven retired — by the previous frame's
-/// wait — so the ring needs one slot more than MAX_FRAMES_IN_FLIGHT.
-const PRE_WAIT_RING_LEN: usize = MAX_FRAMES_IN_FLIGHT + 1;
 
 /// the subresource range of a single-mip color image
 const COLOR_SUBRESOURCE_RANGE: vk::ImageSubresourceRange = vk::ImageSubresourceRange {
@@ -142,23 +147,18 @@ pub struct Renderer {
 
     command_pool: vk::CommandPool,
     command_buffers: [vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT],
-    /// image semaphores indexed by ring_slot
-    image_available: [vk::Semaphore; PRE_WAIT_RING_LEN],
+    /// image semaphores indexed by flight_slot
+    image_available: [vk::Semaphore; MAX_FRAMES_IN_FLIGHT],
     /// render finished semaphores indexed by image_index
     /// ie, one per swapchain image, not per frame-in-flight
     render_finished: Vec<vk::Semaphore>,
     /// timeline semaphore: the graphics submit for frame N signals value N (= total_frames)
     frame_timeline: vk::Semaphore,
-    /// looping index for wait-guarded per-flight resources:
-    ///   command buffers (graphics + compute), resolve images,
-    ///   picking readback, egui texture frees
+    /// the one looping index for every per-frame resource: command buffers,
+    /// uniform/storage buffers and the descriptor sets referencing them,
+    /// acquire semaphores, resolve images, picking readback, egui texture frees
     /// (0..MAX_FRAMES_IN_FLIGHT)
     flight_slot: usize,
-    /// looping index for the pre-wait ring:
-    ///   per-frame buffers, acquire semaphores, and the descriptor
-    ///   sets that reference each slot's buffers
-    /// (0..PRE_WAIT_RING_LEN)
-    ring_slot: usize,
 
     pipelines: PipelineStorage,
     compute_pipelines: ComputePipelineStorage,
@@ -434,7 +434,6 @@ impl Renderer {
             render_finished,
             frame_timeline,
             flight_slot: 0,
-            ring_slot: 0,
 
             pipelines,
             compute_pipelines,
@@ -781,10 +780,10 @@ impl Renderer {
     pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> anyhow::Result<UniformBufferHandle<T>> {
         let buffer_size = std::mem::size_of::<T>() as u64;
 
-        let mut buffers_per_frame: [Option<RawUniformBuffer>; PRE_WAIT_RING_LEN] =
-            [const { None }; PRE_WAIT_RING_LEN];
+        let mut buffers_per_frame: [Option<RawUniformBuffer>; MAX_FRAMES_IN_FLIGHT] =
+            [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
-        for i in 0..PRE_WAIT_RING_LEN {
+        for i in 0..MAX_FRAMES_IN_FLIGHT {
             let (buffer, allocation) = create_memory_buffer(
                 &self.allocator,
                 buffer_size,
@@ -848,13 +847,13 @@ impl Renderer {
     fn create_storage_buffers_per_frame<T: GPUWrite>(
         &mut self,
         len: u32,
-    ) -> anyhow::Result<[RawStorageBuffer; PRE_WAIT_RING_LEN]> {
+    ) -> anyhow::Result<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> {
         let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
 
-        let mut buffers_per_frame: [Option<RawStorageBuffer>; PRE_WAIT_RING_LEN] =
-            [const { None }; PRE_WAIT_RING_LEN];
+        let mut buffers_per_frame: [Option<RawStorageBuffer>; MAX_FRAMES_IN_FLIGHT] =
+            [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
-        for i in 0..PRE_WAIT_RING_LEN {
+        for i in 0..MAX_FRAMES_IN_FLIGHT {
             let (buffer, allocation) = create_memory_buffer(
                 &self.allocator,
                 buffer_size,
@@ -884,7 +883,7 @@ impl Renderer {
     pub fn write_storage_all_frames<T>(&mut self, buf: &mut StorageBufferHandle<T>, data: &[T]) {
         debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
-        for frame in 0..PRE_WAIT_RING_LEN {
+        for frame in 0..MAX_FRAMES_IN_FLIGHT {
             let mapped = self.storage_buffers.get_mapped_mem_for_frame(buf, frame);
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
@@ -899,7 +898,7 @@ impl Renderer {
     ) {
         debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
-        for frame in 0..PRE_WAIT_RING_LEN {
+        for frame in 0..MAX_FRAMES_IN_FLIGHT {
             let mapped = self
                 .storage_buffers
                 .get_mapped_mem_for_frame_immutable(buf, frame);
@@ -914,7 +913,7 @@ impl Renderer {
     pub fn write_gpu_only_all_frames<T>(&mut self, buf: &mut GpuOnlyBufferHandle<T>, data: &[T]) {
         debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
-        for frame in 0..PRE_WAIT_RING_LEN {
+        for frame in 0..MAX_FRAMES_IN_FLIGHT {
             let mapped = self
                 .storage_buffers
                 .get_mapped_mem_for_frame_gpu_only(buf, frame);
@@ -1043,7 +1042,7 @@ impl Renderer {
         let layout_bindings = picking_config.shader.layout_bindings();
         let descriptor_pool = create_descriptor_pool(&self.device, &picking_pipeline_layout)?;
 
-        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; PRE_WAIT_RING_LEN]> =
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> =
             picking_config
                 .uniform_buffer_handles
                 .iter()
@@ -1168,7 +1167,7 @@ impl Renderer {
             textures
         };
 
-        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; PRE_WAIT_RING_LEN]> =
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> =
             config
                 .uniform_buffer_handles
                 .iter()
@@ -1315,7 +1314,7 @@ impl Renderer {
             textures
         };
 
-        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; PRE_WAIT_RING_LEN]> =
+        let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> =
             config
                 .uniform_buffer_handles
                 .iter()
@@ -1384,7 +1383,7 @@ impl Renderer {
                     let compute_descriptor_sets = compute_pipeline
                         .descriptor_sets
                         .chunks(descriptor_sets_per_frame)
-                        .nth(self.ring_slot)
+                        .nth(self.flight_slot)
                         .unwrap();
 
                     unsafe {
@@ -2103,7 +2102,7 @@ impl Renderer {
         pipeline
             .descriptor_sets
             .chunks(descriptor_sets_per_frame)
-            .nth(self.ring_slot)
+            .nth(self.flight_slot)
             .unwrap()
     }
 
@@ -2116,7 +2115,7 @@ impl Renderer {
         pipeline
             .descriptor_sets
             .chunks(descriptor_sets_per_frame)
-            .nth(self.ring_slot)
+            .nth(self.flight_slot)
             .unwrap()
     }
 
@@ -2176,7 +2175,7 @@ impl Renderer {
             match self.swapchain_device_ext.acquire_next_image(
                 self.swapchain,
                 u64::MAX,
-                self.image_available[self.ring_slot],
+                self.image_available[self.flight_slot],
                 vk::Fence::null(),
             ) {
                 Ok(tup) => tup,
@@ -2194,7 +2193,7 @@ impl Renderer {
         // 3. CPU buffer writes, after the wait that proves this slot's last user
         //    has retired
         let mut gpu = Gpu {
-            ring_slot: self.ring_slot,
+            flight_slot: self.flight_slot,
             uniform_buffers: &mut self.uniform_buffers,
             storage_buffers: &mut self.storage_buffers,
         };
@@ -2228,7 +2227,7 @@ impl Renderer {
             [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
 
         let image_available_wait = vk::SemaphoreSubmitInfo::default()
-            .semaphore(self.image_available[self.ring_slot])
+            .semaphore(self.image_available[self.flight_slot])
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT);
         let render_finished_signal = vk::SemaphoreSubmitInfo::default()
             .semaphore(self.render_finished[image_index as usize])
@@ -2253,12 +2252,11 @@ impl Renderer {
                 .queue_submit2(self.graphics_queue, &[submit_info], vk::Fence::null())?;
         }
 
-        // 6. Advance both frame counters BEFORE present
+        // 6. Advance the frame slot BEFORE present
         //    This ensures that if present triggers swapchain recreation (early return),
-        //    the next frame won't reuse the same ring slot whose semaphores
+        //    the next frame won't reuse the same slot whose semaphores
         //    are still signaled from this frame's submit.
         self.flight_slot = (self.flight_slot + 1) % MAX_FRAMES_IN_FLIGHT;
-        self.ring_slot = (self.ring_slot + 1) % PRE_WAIT_RING_LEN;
 
         let swapchains = [self.swapchain];
         let image_indices = [image_index];
@@ -3492,16 +3490,16 @@ fn create_sync_objects(
     swapchain_images: &[vk::Image],
 ) -> Result<
     (
-        [vk::Semaphore; PRE_WAIT_RING_LEN],
+        [vk::Semaphore; MAX_FRAMES_IN_FLIGHT],
         Vec<vk::Semaphore>,
         vk::Semaphore,
     ),
     anyhow::Error,
 > {
-    let mut image_available: [Option<vk::Semaphore>; PRE_WAIT_RING_LEN] =
-        [const { None }; PRE_WAIT_RING_LEN];
+    let mut image_available: [Option<vk::Semaphore>; MAX_FRAMES_IN_FLIGHT] =
+        [const { None }; MAX_FRAMES_IN_FLIGHT];
     #[expect(clippy::needless_range_loop)]
-    for i in 0..PRE_WAIT_RING_LEN {
+    for i in 0..MAX_FRAMES_IN_FLIGHT {
         image_available[i] = Some(unsafe { device.create_semaphore(&Default::default(), None)? });
     }
     let image_available = image_available.map(Option::unwrap);
@@ -3719,7 +3717,7 @@ fn create_descriptor_pool_from_layouts(
     descriptor_set_layouts: &[(ash::vk::DescriptorSetLayout, DescriptorCounts)],
 ) -> Result<vk::DescriptorPool, anyhow::Error> {
     let descriptor_sets_per_frame = descriptor_set_layouts.len() as u32;
-    let sets_across_frames = descriptor_sets_per_frame * PRE_WAIT_RING_LEN as u32;
+    let sets_across_frames = descriptor_sets_per_frame * MAX_FRAMES_IN_FLIGHT as u32;
 
     let total_counts: DescriptorCounts = descriptor_set_layouts.iter().map(|tup| tup.1).sum();
 
@@ -3739,7 +3737,7 @@ fn create_descriptor_pool(
     pipeline_layout: &ShaderPipelineLayout,
 ) -> Result<vk::DescriptorPool, anyhow::Error> {
     let descriptor_sets_per_frame = pipeline_layout.descriptor_set_layouts.len() as u32;
-    let sets_across_frames = descriptor_sets_per_frame * PRE_WAIT_RING_LEN as u32;
+    let sets_across_frames = descriptor_sets_per_frame * MAX_FRAMES_IN_FLIGHT as u32;
 
     let total_counts: DescriptorCounts = pipeline_layout
         .descriptor_set_layouts
@@ -3793,7 +3791,7 @@ fn create_descriptor_sets(
     device: &ash::Device,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layouts: &[vk::DescriptorSetLayout],
-    uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer; PRE_WAIT_RING_LEN]],
+    uniform_buffers_in_layout_frame_order: &[&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]],
     textures: &[&Texture],
     storage_images: &[&storage_texture::StorageTexture],
     layout_bindings: Vec<Vec<LayoutDescription>>,
@@ -3810,7 +3808,7 @@ fn create_descriptor_sets(
     //     frame_1_set_1_binding_1,
     // ]
     let mut set_layouts = vec![];
-    for _frame in 0..PRE_WAIT_RING_LEN {
+    for _frame in 0..MAX_FRAMES_IN_FLIGHT {
         for &descriptor_set_layout in descriptor_set_layouts {
             // i = frame * descriptor_set_layouts.len() + layout_offset;
             set_layouts.push(descriptor_set_layout);
@@ -3821,7 +3819,7 @@ fn create_descriptor_sets(
         .set_layouts(&set_layouts);
     let descriptor_sets = unsafe { device.allocate_descriptor_sets(&alloc_info)? };
 
-    for frame in 0..PRE_WAIT_RING_LEN {
+    for frame in 0..MAX_FRAMES_IN_FLIGHT {
         let mut uniform_buffer_index = 0;
         let mut texture_index = 0;
         let mut storage_image_index = 0;
@@ -5202,7 +5200,7 @@ impl shaders::json::ReflectedStageFlags {
 
 /// the interface a game uses to update gpu resources during a renderer draw call
 pub struct Gpu<'f> {
-    ring_slot: usize,
+    flight_slot: usize,
     uniform_buffers: &'f mut UniformBufferStorage,
     storage_buffers: &'f mut StorageBufferStorage,
 }
@@ -5211,7 +5209,7 @@ impl<'f> Gpu<'f> {
     pub fn write_uniform<T>(&mut self, uniform_buffer: &mut UniformBufferHandle<T>, data: T) {
         let mapped_mem = self
             .uniform_buffers
-            .get_mapped_mem_for_frame(uniform_buffer, self.ring_slot);
+            .get_mapped_mem_for_frame(uniform_buffer, self.flight_slot);
 
         *mapped_mem = data;
     }
@@ -5222,7 +5220,7 @@ impl<'f> Gpu<'f> {
 
         let mapped_mem = self
             .storage_buffers
-            .get_mapped_mem_for_frame(storage_buffer, self.ring_slot);
+            .get_mapped_mem_for_frame(storage_buffer, self.flight_slot);
 
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len_to_copy);
@@ -5239,7 +5237,7 @@ impl<'f> Gpu<'f> {
 
         let mapped_mem = self
             .storage_buffers
-            .get_mapped_mem_for_frame_immutable(immutable_buffer, self.ring_slot);
+            .get_mapped_mem_for_frame_immutable(immutable_buffer, self.flight_slot);
 
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_mem, len_to_copy);
@@ -5250,7 +5248,7 @@ impl<'f> Gpu<'f> {
     pub fn addr<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
         Addr::from_raw(
             self.storage_buffers
-                .get_device_address_for_frame(storage_buffer, self.ring_slot),
+                .get_device_address_for_frame(storage_buffer, self.flight_slot),
         )
     }
 
@@ -5261,7 +5259,7 @@ impl<'f> Gpu<'f> {
     pub fn current_addr<T>(&self, gpu_only_buffer: &GpuOnlyBufferHandle<T>) -> Addr<T> {
         Addr::from_raw(
             self.storage_buffers
-                .get_device_address_for_frame_gpu_only(gpu_only_buffer, self.ring_slot),
+                .get_device_address_for_frame_gpu_only(gpu_only_buffer, self.flight_slot),
         )
     }
 
@@ -5270,7 +5268,7 @@ impl<'f> Gpu<'f> {
     /// We distinguish between current and previous only for gpu-only buffers,
     /// as these are the only ones that can read the previous frame's output.
     pub fn previous_addr<T>(&self, gpu_only_buffer: &GpuOnlyBufferHandle<T>) -> ReadAddr<T> {
-        let prev_frame = (self.ring_slot + PRE_WAIT_RING_LEN - 1) % PRE_WAIT_RING_LEN;
+        let prev_frame = (self.flight_slot + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
         ReadAddr::from_raw(
             self.storage_buffers
                 .get_device_address_for_frame_gpu_only(gpu_only_buffer, prev_frame),
@@ -5283,7 +5281,7 @@ impl<'f> Gpu<'f> {
     ) -> ImmutableAddr<T> {
         ImmutableAddr::from_raw(
             self.storage_buffers
-                .get_device_address_for_frame_immutable(immutable_buffer, self.ring_slot),
+                .get_device_address_for_frame_immutable(immutable_buffer, self.flight_slot),
         )
     }
 }
