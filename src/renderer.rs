@@ -65,7 +65,6 @@ const ENABLE_SAMPLE_SHADING: bool = false;
 /// Max GPU frames executing concurrently. Each frame blocks in wait_semaphores
 /// until frame_timeline reaches N - MAX_FRAMES_IN_FLIGHT, and slots indexed by
 /// `flight_slot` are only touched after that wait, which guards their reuse.
-/// (Compute command buffers get an equivalent wait on compute_timeline.)
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 /// Ring length for slots touched before the frame_timeline wait (CPU buffer
 /// writes, swapchain acquire) or read one frame late (ping-pong history).
@@ -160,12 +159,6 @@ pub struct Renderer {
     ///   sets that reference each slot's buffers
     /// (0..PRE_WAIT_RING_LEN)
     ring_slot: usize,
-
-    /// timeline semaphore: the k-th compute-signaling submit signals value k
-    compute_timeline: vk::Semaphore,
-    /// number of submits so far that signal compute_timeline (its highest pending value)
-    compute_frames: u64,
-    has_compute_pipelines: bool,
 
     pipelines: PipelineStorage,
     compute_pipelines: ComputePipelineStorage,
@@ -341,7 +334,7 @@ impl Renderer {
         let swapchain_images = unsafe { swapchain_device_ext.get_swapchain_images(swapchain)? };
         let swapchain_image_views =
             create_swapchain_image_views(&device, image_format, &swapchain_images)?;
-        let (image_available, render_finished, frame_timeline, compute_timeline) =
+        let (image_available, render_finished, frame_timeline) =
             create_sync_objects(&device, &swapchain_images)?;
 
         let depth_format = find_depth_format(&instance, physical_device);
@@ -442,10 +435,6 @@ impl Renderer {
             frame_timeline,
             flight_slot: 0,
             ring_slot: 0,
-
-            compute_timeline,
-            compute_frames: 0,
-            has_compute_pipelines: false,
 
             pipelines,
             compute_pipelines,
@@ -1216,7 +1205,6 @@ impl Renderer {
         };
 
         let handle = self.compute_pipelines.add(compute_renderer_pipeline);
-        self.has_compute_pipelines = true;
 
         Ok(handle)
     }
@@ -1459,6 +1447,25 @@ impl Renderer {
         unsafe {
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)?;
+        }
+
+        if !pending_compute.is_empty() {
+            // Cross-frame ordering for compute. A barrier's first synchronization
+            // scope covers every command earlier in submission order on this queue,
+            // including earlier submits, so this orders frame N's compute after
+            // frame N-1's compute *and* graphics — both the RAW that
+            // `Gpu::previous_addr` needs and the WAR the ping-pong ring needs —
+            // without making frame N wait for all of frame N-1 to retire.
+            cmd_memory_barrier2(
+                &self.device,
+                command_buffer,
+                vk::PipelineStageFlags2::COMPUTE_SHADER
+                    | vk::PipelineStageFlags2::VERTEX_SHADER
+                    | vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                vk::PipelineStageFlags2::COMPUTE_SHADER,
+                vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            );
         }
 
         self.record_compute_commands(command_buffer, pending_compute);
@@ -2197,9 +2204,6 @@ impl Renderer {
             egui.free_pending_textures(self.flight_slot);
         }
 
-        // This frame's compute_timeline value, if compute is submitted
-        let compute_value = self.compute_frames + 1;
-
         // Compute + graphics in one command buffer: compute runs first with
         // barriers, then graphics reads its results in the same frame.
         unsafe {
@@ -2227,37 +2231,11 @@ impl Renderer {
             .value(frame_value)
             .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS);
 
-        // When compute pipelines exist, add cross-frame synchronization:
-        // - Wait on the previous frame's compute_timeline value (so reads see prior writes)
-        // - Signal this frame's value (for the next frame to wait on)
-        let (wait_semaphores, signal_semaphores);
-        if self.has_compute_pipelines {
-            wait_semaphores = vec![
-                image_available_wait,
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(self.compute_timeline)
-                    // 0 on the first compute frame, which is trivially satisfied
-                    .value(compute_value - 1)
-                    // compute output may be read by this frame's compute, or by the
-                    // vertex or fragment stages (e.g. particle rendering)
-                    .stage_mask(
-                        vk::PipelineStageFlags2::VERTEX_SHADER
-                            | vk::PipelineStageFlags2::FRAGMENT_SHADER
-                            | vk::PipelineStageFlags2::COMPUTE_SHADER,
-                    ),
-            ];
-            signal_semaphores = vec![
-                render_finished_signal,
-                frame_timeline_signal,
-                vk::SemaphoreSubmitInfo::default()
-                    .semaphore(self.compute_timeline)
-                    .value(compute_value)
-                    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
-            ];
-        } else {
-            wait_semaphores = vec![image_available_wait];
-            signal_semaphores = vec![render_finished_signal, frame_timeline_signal];
-        }
+        // Cross-frame compute ordering is a barrier at the top of the command
+        // buffer (see record_command_buffer), not a semaphore, so the submit
+        // needs nothing beyond the swapchain and frame timeline.
+        let wait_semaphores = [image_available_wait];
+        let signal_semaphores = [render_finished_signal, frame_timeline_signal];
 
         let submit_info = vk::SubmitInfo2::default()
             .wait_semaphore_infos(&wait_semaphores)
@@ -2266,10 +2244,6 @@ impl Renderer {
         unsafe {
             self.device
                 .queue_submit2(self.graphics_queue, &[submit_info], vk::Fence::null())?;
-        }
-
-        if self.has_compute_pipelines {
-            self.compute_frames += 1;
         }
 
         // 6. Advance both frame counters BEFORE present
@@ -2648,7 +2622,6 @@ impl Drop for Renderer {
                 self.device.destroy_semaphore(*semaphore, None);
             }
             self.device.destroy_semaphore(self.frame_timeline, None);
-            self.device.destroy_semaphore(self.compute_timeline, None);
 
             self.device.destroy_command_pool(self.command_pool, None);
 
@@ -3515,7 +3488,6 @@ fn create_sync_objects(
         [vk::Semaphore; PRE_WAIT_RING_LEN],
         Vec<vk::Semaphore>,
         vk::Semaphore,
-        vk::Semaphore,
     ),
     anyhow::Error,
 > {
@@ -3534,14 +3506,8 @@ fn create_sync_objects(
     }
 
     let frame_timeline = create_timeline_semaphore(device)?;
-    let compute_timeline = create_timeline_semaphore(device)?;
 
-    Ok((
-        image_available,
-        render_finished,
-        frame_timeline,
-        compute_timeline,
-    ))
+    Ok((image_available, render_finished, frame_timeline))
 }
 
 fn create_timeline_semaphore(device: &ash::Device) -> Result<vk::Semaphore, anyhow::Error> {
