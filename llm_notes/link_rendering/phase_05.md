@@ -157,10 +157,12 @@ impl Default for RasterState {
 }
 ```
 
-- **`BlendMode` is `Alpha | Opaque` only.** Link's MAT3 also uses one
-  destination-alpha variant (master plan §3); it is deliberately deferred to
-  P8, where the eye trick that needs it lives — see "Out of scope". Adding it
-  here would ship an unverified variant.
+- **`BlendMode` is `Alpha | Opaque` only.** Link's MAT3 also uses **four**
+  destination-alpha materials (master plan §3); they are deliberately deferred
+  to **P9**, where the eye trick that needs them lives — see "Out of scope".
+  Adding it here would ship an unverified variant. *(Corrected twice by P9: this
+  line said "P8" against `:566`'s "P9" — P9 is right — and "one" against P7's
+  measurement of four. `BlendMode::DstAlpha` shipped in P9.)*
 - Front face stays `COUNTER_CLOCKWISE` for every mode. `CullMode::Front` is a
   *test* affordance (it makes a closed mesh render inside-out, which is loud);
   the Link winding question (master plan risk #3) is resolved in P6 by
@@ -563,9 +565,10 @@ deviations discovered:    1. PipelineConfigBuilder gained NO raster_state field,
 
 ## Out of scope for P5
 
-- **`BlendMode::DstAlpha`** — Link's one destination-alpha material (master
-  plan §3) lands with the eye trick in **P9**/§4.5, not here. P8 must not
-  assume the variant exists.
+- **`BlendMode::DstAlpha`** — Link's **four** destination-alpha materials
+  (master plan §3) land with the eye trick in **P9**/§4.5, not here. P8 must not
+  assume the variant exists. *(P9: shipped —
+  [`phase_09_eyes.md`](phase_09_eyes.md). "one" was wrong; P7 measured four.)*
 - Stencil, depth bias, polygon mode, primitive topology, per-attachment blend
   (there is one color attachment), independent color/alpha blend factors,
   logic ops

@@ -398,7 +398,8 @@ guess:
   channel-broadcast tables (identity, RRR+A, GGG+A; ras_sel always 0,
   tex_sel ∈ {0,1,2}) to splat one channel of intensity textures; the
   interpreter and `ToonLinkParams` need a swap-select field
-- blends: None, src-alpha, and one **destination-alpha** variant; Z always
+- blends: None, src-alpha, and **four destination-alpha** materials (`eyeL`,
+  `eyeR`, `mayuL`, `mayuR` — measured in P7, shipped in P9); Z always
   LESS_EQUAL (test/write vary); alpha-compare configs (Always OR Always)
   and (Greater 0 OR Greater 0)
 - confirmed absent: indirect stages, fog (declared LINEAR but disabled on
@@ -505,7 +506,7 @@ pub struct RasterState {
     pub cull: CullMode,           // Back (default) | None | Front
     pub depth_test: DepthCompare, // Less (default) | LessEqual | Always | Disabled
     pub depth_write: bool,        // true
-    pub color_write: [bool; 4],   // all true; exercised later by the eye trick
+    pub color_write: [bool; 4],   // all true by default; first exercised by P9's eye trick
 }
 impl Default for RasterState { /* == the pre-P5 hardcoded pipeline state */ }
 
@@ -528,15 +529,15 @@ impl PipelineConfig<…> { pub fn with_raster_state(mut self, s: RasterState) ->
   phase plan): the template emits a complete struct literal, so `build()`
   defaults the state and `with_raster_state` overrides it. This is what keeps
   P5 snapshot-neutral outside `multi_mesh`.
-- `BlendMode::DstAlpha` deliberately does not exist yet; Link's
-  destination-alpha materials land with the eye trick in P9. *(Refined by P7's
-  measurement: there are **4** of them — `eyeL`, `eyeR`, `mayuL`, `mayuR` —
-  not one, and P7 maps them to `Opaque`, which is numerically exact while the
-  framebuffer alpha at those pixels is 1. It is: the clear is alpha 1.0, every
-  opaque albedo is alpha-255 at every texel, and those four are the first
-  translucent batches drawn. See
-  [`link_rendering/phase_07.md`](link_rendering/phase_07.md) decision 2 and
-  risk 3.)*
+- `BlendMode::DstAlpha` **shipped in P9** with the eye write-mask multi-pass.
+  There are **4** destination-alpha materials — `eyeL`, `eyeR`, `mayuL`,
+  `mayuR` — not one. P7 mapped them to `Opaque`, exact only while framebuffer
+  alpha at those pixels was 1; P9's mask pass deliberately breaks that
+  precondition, so the variant is now real (`DST_ALPHA`/`ONE_MINUS_DST_ALPHA`
+  on both color and alpha, matching GX). The old approximation survives only
+  behind the example's `M` toggle. See
+  [`link_rendering/phase_09_eyes.md`](link_rendering/phase_09_eyes.md); P7's
+  decision 2 and risk 3 are retired there.
   Detailed plan and results:
   [`link_rendering/phase_05.md`](link_rendering/phase_05.md).
 
@@ -583,9 +584,14 @@ impl Renderer {
 
 ### 4.5 Explicitly deferred
 
-Eye write-mask multi-pass (needs `color_write` exercised + per-pass shape-group
-toggling), destination-alpha tricks, stencil, u16 index buffers, BTP/BTK eye
-animation, runtime skinning.
+~~Eye write-mask multi-pass~~ and ~~destination-alpha tricks~~ — **both shipped
+in P9** ([`link_rendering/phase_09_eyes.md`](link_rendering/phase_09_eyes.md)).
+The estimate here was wrong in kind, not just in size: no per-pass shape-group
+toggling was needed, because each of the 24 materials is still drawn exactly
+once. It was a draw reordering plus per-material write masks.
+
+Still deferred: stencil, u16 index buffers, BTP/BTK eye animation, runtime
+skinning.
 
 Also deferred from P4: **picking + multi-draw.** Picking stays on the legacy
 single-draw wrapper (`draw_vertex_count_with_picking`, guarded by a
@@ -646,9 +652,9 @@ interleaved. Each phase is separately verifiable — full detail on the oracles
 | **P4** ✅ `4621112` | renderer 4.1 + 4.2 (multi-draw, index ranges, shared mesh) + committed `examples/multi_mesh.rs` (multiple pipelines, one shared mesh, disjoint index sub-ranges) — detailed plan: [`link_rendering/phase_04.md`](link_rendering/phase_04.md) | **as run**: `just test` green (pre-existing per-shader snapshots byte-identical); `just lint` clean; validation sweep 15/15 examples; multi_mesh tiles its index buffer exactly, perturbation test confirms gaps/spikes/`debug_assert`; multi-pipeline hot reload clean; no VMA leak on exit | 2 days |
 | **P5** ✅ | renderer 4.3 + 4.4 (raster state, texture options); `examples/multi_mesh.rs` grew 12 view-space test panels (17 pipelines, 18 draws, 7 texture handles, 3 procedural images) — detailed plan: [`link_rendering/phase_05.md`](link_rendering/phase_05.md) | **as run**: `just test` green, snapshot churn exactly multi_mesh's `.rs`+`.json` (branching snapshot unmoved, no atlas-index change); `RasterState` default-equivalence + enum-mapping unit tests; `just lint` clean; validation sweep 15/15 (run twice — once with examples untouched); every test object shows its artifact, **all six fields perturbed and reverted**, each artifact vanishing; sRGB-vs-UNORM verified numerically (117 vs 172, linear ratio 2.32); hot reload keeps per-pipeline raster state; clean exit with no VMA leak, and the leak check itself validated by injecting one | 1–2 days |
 | **P6** ✅ `9508563` | `toon_link.shader.slang` v0 (normals-as-color debug frag) + example loads manifest, draws all batches — detailed plan: [`link_rendering/phase_06.md`](link_rendering/phase_06.md) (Step 1's smoke test superseded by the vec4-array mini-phase `0d08a7d`) | **as run**: `just test` green (churn = toon_link additions only); correctly shaped Link over a full orbit, smooth normal gradients; **winding flipped in the converter** (risk #3: model was inside-out under manifest cull; one-line `link.idx.bin` sha256 update, `just link-verify-p3` green); all 24 isolation batches identified; UV mode clean; hot reload at 24-pipeline scale keeps raster state; validation sweep 16/16; no VMA leak on real close | 1–2 days |
-| **P7** ✅ `f415612` (runtime gates run 2026-07-27) | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state; plus `pe_mode` draw ordering and inverse-sRGB output (pulled forward from P8) — detailed plan: [`link_rendering/phase_07.md`](link_rendering/phase_07.md) | **as run**: static gates green; then every runtime gate re-run at the start of P8 on a real GPU with assets present, needing **no code change**. 7 of 41 textures load; **gamma verified numerically — 0 LSB on four distinct colors** (on-screen tunic `(90,178,74)` byte-identical to the source PNG's dominant color; the two wrong transfer directions would be 674 and 9290 squared-distance off), so the sRGB direction is now measured rather than reasoned; draw order relocates batches 16 and 23 exactly as predicted; cull correct front and back; sweep 16/16 with the validation layer confirmed loaded; hot reload = 24 pipelines recompiled with raster state intact; clean close via a real `WM_DELETE_WINDOW` → exit 0, no VMA leak. **One gate blocked, not failed**: the opaque black rectangle around each eye/brow is traced to `eyeLdamB`-style materials (`Always` compare + `None_` blend + an all-`(0,0,0,0)` texture) — i.e. missing BTP plus P9's deferred `DstAlpha` pass, not a P7 defect. The formal per-feature noclip side-by-side is folded into P8's | 1 day |
+| **P7** ✅ `f415612` (runtime gates run 2026-07-27) | albedo-only: real textures, tex0 sample, alpha-compare discard, per-material raster state; plus `pe_mode` draw ordering and inverse-sRGB output (pulled forward from P8) — detailed plan: [`link_rendering/phase_07.md`](link_rendering/phase_07.md) | **as run**: static gates green; then every runtime gate re-run at the start of P8 on a real GPU with assets present, needing **no code change**. 7 of 41 textures load; **gamma verified numerically — 0 LSB on four distinct colors** (on-screen tunic `(90,178,74)` byte-identical to the source PNG's dominant color; the two wrong transfer directions would be 674 and 9290 squared-distance off), so the sRGB direction is now measured rather than reasoned; draw order relocates batches 16 and 23 exactly as predicted; cull correct front and back; sweep 16/16 with the validation layer confirmed loaded; hot reload = 24 pipelines recompiled with raster state intact; clean close via a real `WM_DELETE_WINDOW` → exit 0, no VMA leak. **One gate blocked, not failed**: the opaque black rectangle around each eye/brow is traced to `eyeLdamB`-style materials (`Always` compare + `None_` blend + an all-`(0,0,0,0)` texture) — *(P9 correction: not "missing BTP plus the deferred `DstAlpha` pass" as originally written. BTP is not implicated at all, and the `DstAlpha` pass was only half of it: the quad is a **write-mask** bug — those materials run `colorUpdate = 0` on hardware and P7 drew them with color writes on. Fixed in [`link_rendering/phase_09_eyes.md`](link_rendering/phase_09_eyes.md).)* — not a P7 defect. The formal per-feature noclip side-by-side is folded into P8's | 1 day |
 | **P8** 🚧 landed, **noclip comparison outstanding** | full TEV interpreter (`shaders/source/tev.slang`) + lighting channel + SRTG ramp + pupil texture matrices; the subset gate lands as `src/bin/convert_link/tev_ir.rs`; `src/tev_pack.rs` + expanded debug modes and light controls in the example; plus a Step 0b that moved the 14 TEV/texgen GX enums into the library so `tev_pack` can parse them and print `mat3_dump`-identical equations — detailed plan: [`link_rendering/phase_08.md`](link_rendering/phase_08.md) | **as run**: gate accepts 24/24 with the golden hashes byte-identical and `link-verify-p2`/`-p3` green; `TevParams` 1328 B / `ToonLinkParams` 1552 B with no padding and the descriptor shape unchanged (P7 decision 1 paying off); 16 `tev_pack` unit tests incl. the register shift and `ear` end-to-end; **cel bands render and stay banded** — one screen region measured at (45,89,37) shadow vs (250,255,74) lit as the light rotates, and the white leggings' shadow band at exactly (128,128,128) = REG0, which is the direct confirmation of the `reg_colors` shift; **all 24 materials' equations diffed against `mat3_dump.txt` mechanically, 0 mismatches**; mode 4 smooth (499 values), mode 5 reads (193,190,0) confirming the SRTG r≈g; sweep 16/16, hot reload 24 pipelines, clean close with no VMA leak. **Outstanding**: the per-feature noclip side-by-side, mode 0 vs mode 8, and the pupil-direction toggle. ~~plus one honest finding, that the lit band is strongly yellow~~ — **the yellow was fixed 2026-07-27**: the game's two GX lights carry one channel each (red = diffuse, green = eflight), which is what makes the ramp separable, so with the eflight off `ramp.G` is 0 and stage 2 contributes nothing; the stage-0 lerp endpoints also come off the disc now via `scripts/link_env_colors.py`. **Dolphin was explicitly not P8's oracle** — risk #6 still ships reasoned rather than measured, but risk #8 turned out not to need Dolphin at all | 3–5 days |
-| **P9** | optional polish: `--casual` clothes; eye write-mask multi-pass; BCK-sampled pose | casual: P7-style UV checks; eye trick vs **Dolphin** (noclip may not implement it) | 2+ days |
+| **P9** | optional polish: `--casual` clothes; **eye write-mask multi-pass — detailed plan and results: [`link_rendering/phase_09_eyes.md`](link_rendering/phase_09_eyes.md)**; BCK-sampled pose | casual: P7-style UV checks; eye trick verified against the **decompiled source** (`daPy_lk_c::draw` / `playerInit`) rather than Dolphin — stronger for pass structure, weaker for pixels, and the suite Dolphin would need is still unbuilt | 2+ days |
 
 Rough total: ~3 weeks of focused work. Once a converter phase's output is
 verified, commit SHA256 golden hashes of `assets/link/converted/` outputs

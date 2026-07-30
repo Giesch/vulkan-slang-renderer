@@ -136,6 +136,11 @@ Nearly two-pass already, but batch 16 (slot 22, `ear(7)`) and batch 23 (slot
    changes; real `BlendMode::DstAlpha` still lands with the eye write-mask
    multi-pass in P9 (master plan §4.3/§4.5), where it finally buys something.
    *This is an approximation with a precondition — see risk 3.*
+   **RETIRED by P9** ([`phase_09_eyes.md`](phase_09_eyes.md)): `BlendMode::DstAlpha`
+   now exists and these four materials use it. The precondition this decision
+   rested on — framebuffer alpha ≡ 1 at those pixels — is exactly what P9's mask
+   pass stops being true, on purpose. The `Opaque` mapping survives only behind
+   the example's `M` toggle, as the instrument that reproduces the old artifact.
 3. **Opaque-before-translucent draw ordering lands in P7.** A stable partition
    of the batch list by `pe_mode`, INF1 order preserved within each group.
    It only becomes observable now that blending is real, and it is ~10 lines.
@@ -431,6 +436,15 @@ alpha cutout:             The compare works; the visual "no rectangular halos"
                           implemented) plus decision 2's deferred DstAlpha pass
                           (P9's eye write-mask trick), not a P7 alpha-compare
                           defect. It will still be present after P8.
+                          CORRECTION (P9, phase_09_eyes.md): the diagnosis in
+                          the last sentence is wrong. BTP is not implicated at
+                          all -- the twelve batches are 3 passes x 4 features,
+                          all of which the game also draws every frame. The
+                          observation above is accurate; the cause is that
+                          eyeLdamB runs colorUpdate=0 on hardware (it only ever
+                          touches destination alpha) and we drew it with color
+                          writes ON. It is a write-mask bug, not a blend bug and
+                          not a missing-animation artifact. Fixed in P9.
 
 cull / missing parts:     PASS. Full front and back views show a complete model,
                           nothing inside-out, nothing missing.
@@ -445,6 +459,12 @@ depth_write fix effect:   Honored per material (raster_state reads z_write
                           mayuLdamA / mayuRdamA are z_write=false. Not isolated
                           visually -- the effect is masked by the eye-decal
                           stacking above.
+                          UNBLOCKED by P9 (phase_09_eyes.md): the black quad is
+                          gone and the four *damA masks now draw color-free in
+                          their own pass, so the depth_write effect is finally
+                          observable in isolation. Note Q/E on a mask or erase
+                          batch yields a black frame by design (color writes
+                          off); print_isolation says so.
 
 sweep:                    PASS 16/16. Every example ran 3s with zero lines
                           matching /validation|VUID/. VK_LAYER_KHRONOS_validation
@@ -599,16 +619,30 @@ deviations discovered:    1. `BatchIndex::raw` takes `self` by value, so
 
 ## Risks / open questions
 
-1. **Eye and brow decals stack.** Twelve 36-index decal batches (`eyeL`,
-   `eyeLdamA`, `eyeLdamB` and the R / `mayu` equivalents) all draw over the
-   same patch of face. The game picks one frame per eye at runtime via BTP,
-   which we don't implement, so all of them composite at once. Expect a
-   muddled eye/brow region in P7. **Note it in Recorded facts; do not chase
-   it** — it is a missing-feature artifact, not a P7 bug, and P8 will not fix
-   it either.
+1. ~~**Eye and brow decals stack.**~~ **MISDIAGNOSED — corrected by P9**
+   ([`phase_09_eyes.md`](phase_09_eyes.md)). The original text read: "Twelve
+   36-index decal batches (`eyeL`, `eyeLdamA`, `eyeLdamB` and the R / `mayu`
+   equivalents) all draw over the same patch of face. The game picks one frame
+   per eye at runtime via BTP, which we don't implement, so all of them
+   composite at once."
+
+   Every clause of that is wrong. The twelve batches are **3 passes × 4
+   features**, not 12 BTP frames, and `playerInit`
+   (`../tww/src/d/actor/d_a_player_main.cpp:12150-12178`) classifies them into
+   three arrays of four and asserts `zon_cnt == 4 && zoff_none_cnt == 4 &&
+   zoff_blend_cnt == 4` — **the game draws all twelve every frame too**. All
+   three passes of a feature sample the *same* default texture; BTP swaps that
+   texture for blinking, it does not select between the passes. Nothing was
+   stacking that the game does not also stack. The real defect was a write-mask
+   bug (the `*damB` materials run `colorUpdate = 0` and we drew them with color
+   writes on), fixed in P9 with no animation support whatsoever.
 2. **Gamma transfer direction.** Covered above; the mitigation is that the
    gate is numeric.
-3. **The dst-alpha → `Opaque` mapping has a precondition.** It is exact only
+3. **RETIRED by P9** — see decision 2. The precondition below is precisely what
+   P9's mask pass invalidates on purpose, and `BlendMode::DstAlpha` now exists,
+   so there is no approximation left to guard. Original text follows.
+
+   **The dst-alpha → `Opaque` mapping has a precondition.** It is exact only
    while the framebuffer alpha at those pixels is 1. That holds today because
    the clear is alpha 1.0, all opaque albedos are alpha-255, and the four
    dst-alpha materials draw first among the translucent group. Any of the

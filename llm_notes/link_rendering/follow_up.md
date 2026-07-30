@@ -143,8 +143,11 @@ trivially to uniform arrays.
   SDL3 posts no Quit event for them; verifying a leak-free exit needs a
   real window close (P5 used a temporary frame-limit escape in app.rs).
   (phase_04, phase_05.)
-- **`color_write` is plumbed and unit-tested but has no runtime test
-  object** — first real exercise is the P9 eye trick. (phase_05.)
+- ~~**`color_write` is plumbed and unit-tested but has no runtime test
+  object**~~ — **CLOSED by P9** ([`phase_09_eyes.md`](phase_09_eyes.md)): the
+  eye/brow mask and erase passes draw with `[false, false, false, true]` and
+  every other material with `[true, true, true, false]`, which is its first
+  runtime exercise. (phase_05.)
 - ~~**`uint4`/`UVec4` uniform codegen unproven**~~ — proven by the §1
   mini-phase (`0d08a7d`): bare `uint4`/`int4` fields have committed
   test-shader coverage (std140_arrays' `flags`/`bias`) and passed the
@@ -222,19 +225,35 @@ trivially to uniform arrays.
   missing BTP frame animation plus P9's deferred `DstAlpha` eye pass, not a P7
   alpha-compare defect; the materials that *do* carry a cutout compare discard
   correctly. It will persist through P8.
+  *(P9 correction, [`phase_09_eyes.md`](phase_09_eyes.md): the observation is
+  right, the attribution is wrong. BTP is not implicated — the twelve decal
+  batches are 3 passes × 4 features that the game also draws every frame — and
+  `DstAlpha` was only half the fix. `eyeLdamB` runs `colorUpdate = 0` on
+  hardware; drawing it with color writes on is what painted the quad. **Fixed
+  in P9.**)*
   The remaining piece is the **formal per-feature noclip side-by-side**, folded
   into P8's since it uses the same P6 camera angles. (phase_07 Recorded facts,
   second block.)
-- **Reusable runtime-verification tooling discovered while doing the above.**
-  This machine is Wayland/COSMIC, so the X11 root is black and `ffmpeg x11grab`
-  captures nothing. What does work: `cosmic-screenshot --interactive=false
-  --modal=false --notify=false -s DIR` for frames, and python-xlib `XTEST
-  fake_input` against a window located by `WM_NAME` (with the example run under
-  `SDL_VIDEODRIVER=x11`) for keystrokes — verified by driving the debug-mode and
-  isolation keys and observing the render change. Together they make the
-  24-material isolation sweep and the debug-mode sweep scriptable rather than
-  manual, which is what P8's verification leans on. Note this is a *screenshot*
-  path, not the in-renderer readback that
+- **A runtime-verification *recipe* discovered while doing the above — recorded
+  prose, NOT committed tooling.** Nothing from this entry exists on disk:
+  `scripts/` contains no capture script and the justfile has no recipe for one,
+  so this has to be re-derived from the description below every time it is
+  needed. Committing it under `scripts/` with a justfile recipe is itself open
+  work, and until that happens no plan should assume a capture harness is on
+  hand. (This entry previously read "Reusable runtime-verification tooling",
+  which misled P9 planning into scheduling verification against a script that
+  does not exist. Compare §5's Dolphin entry, which correctly says
+  `link-dolphin-refs` "does not exist yet".)
+
+  The recipe: this machine is Wayland/COSMIC, so the X11 root is black and
+  `ffmpeg x11grab` captures nothing. What does work: `cosmic-screenshot
+  --interactive=false --modal=false --notify=false -s DIR` for frames, and
+  python-xlib `XTEST fake_input` against a window located by `WM_NAME` (with the
+  example run under `SDL_VIDEODRIVER=x11`) for keystrokes — verified by driving
+  the debug-mode and isolation keys and observing the render change. Together
+  they make the 24-material isolation sweep and the debug-mode sweep scriptable
+  rather than manual, which is what P8's verification leaned on. Note this is a
+  *screenshot* path, not the in-renderer readback that
   [`../offscreen_testing.md`](../offscreen_testing.md) plans; it is good enough
   to compare flat interior texels numerically but not to diff whole frames.
 

@@ -645,6 +645,9 @@ results go into Recorded facts):
    (`timeout`'s SIGTERM skips `Drop`, so this needs a manual close).
 8. Known and not a bug: the eye/brow decals still stack, because BTP is not
    implemented (phase_07 risk 1). P8 does not fix it.
+   *(P9 correction: the "because BTP is not implemented" clause is wrong — see
+   [`phase_09_eyes.md`](phase_09_eyes.md). The stacking is what the hardware
+   does too; the artifact was a write-mask bug, fixed in P9.)*
 
 ## Verification (exit checklist)
 
@@ -878,6 +881,13 @@ pupil TEXMTX1:            **NOT confirmed by toggling.** The packing is proven
                           unreliable here (see the tooling caveat). The plan
                           asks for this to be confirmed rather than assumed, so
                           it stays open.
+                          UNBLOCKED by P9 (phase_09_eyes.md): the pupil is
+                          visible inside the lash silhouette now that the black
+                          quad is gone, so the mode-9 A/B is observable on the
+                          whole model rather than on an isolated decal -- which
+                          is exactly the case the capture path handles badly.
+                          Still requires a human comparing two frames; P9 does
+                          not claim it.
 
 isolation pass:           **All 24, done mechanically rather than by eye.** The
                           window was driven through all 24 batches with
@@ -930,7 +940,13 @@ reasoned, not measured:   1. **S10 clamp semantics** (risk #6). Implemented as
                              convention; gclib's `u16Rot` carries no conversion
                              to check it against.
 
-tooling (reusable):       This machine is Wayland/COSMIC, so the X11 root is
+tooling (recipe only,     NOT committed: `scripts/` has no capture script and the
+NOT committed):           justfile no recipe for one, so this must be re-derived
+                          from the description below each time it is needed.
+                          Recorded as prose, not as tooling. (P9 planning read
+                          the old "tooling (reusable)" label as meaning a script
+                          was on hand; it never was.)
+                          This machine is Wayland/COSMIC, so the X11 root is
                           black and ffmpeg x11grab captures nothing. What works:
                           `cosmic-screenshot --interactive=false --modal=false
                           --notify=false -s DIR`, plus python-xlib XTEST
@@ -1017,6 +1033,13 @@ outstanding:              The per-feature noclip side-by-side (skin, tunic
                           plus `None_` blend over an all-(0,0,0,0) texture, i.e.
                           missing BTP plus P9's deferred DstAlpha pass. P8 does
                           not fix it and was never going to.
+                          P9 CORRECTION (phase_09_eyes.md): "missing BTP plus"
+                          is wrong -- BTP is not implicated, and the stacking is
+                          what the hardware does too. The cause was that the
+                          *damB materials run colorUpdate=0 on hardware and we
+                          drew them with color writes on. Fixed in P9 by a draw
+                          reordering plus per-material write masks; still 24
+                          draws, no animation support added.
 ```
 
 ## Recorded facts — the lighting pass

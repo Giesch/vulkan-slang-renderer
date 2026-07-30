@@ -342,6 +342,56 @@ real signal rather than a known-unknown.
 
 ---
 
+## 9. Eye/brow decals and the destination-alpha trick — *added and largely closed by P9*
+
+This file never had an eye/decal entry; the risks lived scattered across
+`phase_07.md` risk 1/3 and `phase_08.md`. They are consolidated here, with the
+detail in [`phase_09_eyes.md`](phase_09_eyes.md).
+
+**What it is.** Link's twelve translucent batches are **3 passes × 4 features**
+(eyes L/R, brows L/R): a z-tested *mask* that writes only destination alpha, a
+*composite* that blends `dstA·src + (1−dstA)·dst` with the depth test off, and
+an *erase* that zeroes the mask. The bangs draw between mask and composite
+without touching alpha, which is how the eyes read *through* the hair.
+
+**Resolved.** The original diagnosis — "the game picks one frame per eye via BTP,
+so all twelve stack" — was **wrong**; `playerInit` asserts 4/4/4 and the game
+draws all twelve every frame too. The black quad was a **write-mask** bug (the
+`*damB` materials run `colorUpdate = 0`; we drew them with color writes on), not
+a blend bug and not a missing-animation artifact. Also resolved: the mask and
+composite footprints cannot diverge, because the three passes of a feature are
+byte-identical geometry.
+
+**What remains, honestly.**
+- *Clear alpha is 1.0; GX's is 0.* Our mask leaves `1 − a(1−a)` where hardware
+  would leave `a²`, a slightly stronger composite confined to the antialiased
+  rim. The game's own value there is whatever the background left in alpha, so
+  there is no well-defined target to match. Accepted. The composite also blends
+  in linear space (`B8G8R8A8_SRGB`) where GX blended in gamma space — same rim,
+  same verdict.
+- *The mask's z-test has nothing to test against.* In-game it is what stops eyes
+  showing through walls; our scene is Link alone on a cleared depth buffer, so
+  the pass always passes. Faithful structure, untested guarantee — it would
+  become testable if the example grew an occluder.
+- *The erase pass has no local observable.* The attachment is `load_op(CLEAR)`
+  every frame and nothing reads alpha after `cmd_end_rendering`, so whether
+  erase runs at all is invisible. What *is* observable is that it no longer
+  paints black RGB. Do not later claim to have "verified" the erase ordering.
+- *The composite's `Greater 0` alpha compare is load-bearing.* Because our clear
+  is alpha 1.0, destination alpha stays ≥ 0.75 across the whole quad including
+  fully transparent texels; only the shader-side discard stops the composite
+  repainting an opaque rectangle. A future "skip the alpha test in debug mode N"
+  change would resurrect the black quad by another route.
+- *BTP is still absent*, so the eyes never blink and the pupil never tracks. No
+  longer implicated in anything; it has no landing phase and stays in
+  [`follow_up.md`](follow_up.md).
+
+**Severity: low and bounded.** Everything above is either a sub-pixel rim effect
+or an untestable-here guarantee, and the structure is verified against the
+decompiled source rather than reasoned from first principles.
+
+---
+
 Original severity ranking: **#1 and #5 are the substantive ones** (structural
 correctness of geometry and of the toon look), **#4 is the one most likely to
 bite early** but has a proven escape hatch, **#2 and #3 are near-certain to
