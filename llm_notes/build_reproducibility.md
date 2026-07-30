@@ -597,11 +597,18 @@ so a machine with a real GPU still sweeps on lavapipe and stays comparable to th
 container; an unreadable `VK_ICD_FILENAMES` otherwise produces 16 identical
 device-init failures that read like a renderer bug.
 
+**Documented in `CLAUDE.md`** (§"Vulkan validation sweep"): how to invoke it,
+when it is worth running, the required packages, and the four traps from 7.3 that
+make a hand-run validation check lie — the exit code meaning nothing, `--release`
+validating nothing, `RUST_LOG` swallowing warnings, and `timeout N cargo run`
+timing the compile. Those are the ones that cost real time to rediscover.
+
 Remaining work:
 
 - wire the script to `just headless-all`;
-- document the container packages from §4 (and drop the `~/.asoundrc` step,
-  now unnecessary — see 7.1);
+- document the container packages from §4 for a *fresh clone* — `CLAUDE.md`
+  covers the sweep's own dependencies, but the README still lists none, and the
+  `~/.asoundrc` step can go (now unnecessary — see 7.1);
 - decide whether the sweep belongs in CI. It needs no GPU, so the only real
   cost is build time.
 
