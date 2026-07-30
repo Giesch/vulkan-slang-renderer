@@ -535,7 +535,10 @@ done; echo "sweep clean"
    recreate, per-material raster state preserved (P5's check at 24-pipeline
    scale).
 8. Clean exit via real window close, **no VMA leak report** (`timeout`'s
-   SIGTERM skips Drop — the leak check needs a manual close).
+   SIGTERM skips Drop — the leak check needs a manual close). [Superseded
+   2026-07-29: the parenthetical is wrong; `timeout`'s SIGTERM becomes
+   `SDL_QUIT` and `Drop` runs, so no manual close is needed. See
+   `build_reproducibility.md` §7.4.]
 
 ## Verification (exit checklist)
 

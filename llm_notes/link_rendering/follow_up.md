@@ -141,10 +141,16 @@ trivially to uniform arrays.
   panics on reloaded-shader interface changes by design (replaces silent
   GPU-data corruption). Body edits hot-reload; struct-shape edits need
   `just shaders` + restart. (Master plan; phase_06 risk #7.)
-- **VMA leak check can't be automated** — SIGTERM/SIGINT skip `Drop` and
+- ~~**VMA leak check can't be automated** — SIGTERM/SIGINT skip `Drop` and
   SDL3 posts no Quit event for them; verifying a leak-free exit needs a
-  real window close (P5 used a temporary frame-limit escape in app.rs).
-  (phase_04, phase_05.)
+  real window close (P5 used a temporary frame-limit escape in app.rs).~~ —
+  **disproven** (`build_reproducibility.md` §7.4). `timeout` without
+  `--foreground` signals the whole process group, SDL converts SIGTERM into
+  `SDL_QUIT`, and `drain_gpu()` plus `Drop for Renderer` both run — verified in
+  both directions, with SIGKILL and `SDL_NO_SIGNAL_HANDLERS=1` as negative
+  controls. `scripts/headless-sweep.sh` exercises teardown on every example, so
+  this check is automated rather than merely automatable. (phase_04, phase_05,
+  now closed.)
 - **`color_write` is plumbed and unit-tested but has no runtime test
   object** — first real exercise is the P9 eye trick. (phase_05.)
 - ~~**`uint4`/`UVec4` uniform codegen unproven**~~ — proven by the §1

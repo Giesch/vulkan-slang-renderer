@@ -328,8 +328,10 @@ done; echo "sweep clean"
 6. **Hot reload** — a fragment-body edit recompiles across all 24 pipelines
    with per-material raster state preserved (P6 proved this at 24-pipeline
    scale; re-confirm now that textures are bound).
-7. Clean exit via a real window close, **no VMA leak report** (`timeout`'s
-   SIGTERM skips `Drop`, so the leak check needs a manual close).
+7. Clean exit, **no VMA leak report**. No manual close needed: `timeout`'s
+   SIGTERM becomes `SDL_QUIT`, so `Drop` runs and leaks report themselves —
+   `scripts/headless-sweep.sh toon_link` covers this (`build_reproducibility.md`
+   §7.4 corrects the earlier claim that it needed a real window close).
 
 ## Verification (exit checklist)
 
@@ -359,7 +361,8 @@ converted assets; must be run on a real machine before P7 is done):
       transfer direction; the shader's decode direction is reasoned, not measured*
 - [ ] Draw-order and `depth_write` effects observed
 - [ ] Validation sweep clean (16/16)
-- [ ] Hot reload preserves per-material raster state; no VMA leak on real close
+- [ ] Hot reload preserves per-material raster state; no VMA leak at exit
+      (`scripts/headless-sweep.sh toon_link`; no manual close needed)
 - [ ] Master plan §6 P7 row ✅ + hash (deliberately **not** marked ✅ yet)
 
 ## Recorded facts

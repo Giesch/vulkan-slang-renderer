@@ -76,6 +76,13 @@ temporarily forcing a failure at each `?` and confirming a clean
 help; `destroy_compute_pipeline` (`src/renderer.rs:1247`) already shows the
 teardown order.
 
+The confirming half of that is already automated: `scripts/headless-sweep.sh`
+exits every example through `timeout`'s SIGTERM, which SDL turns into
+`SDL_QUIT`, so `Drop` runs and `vkDestroyDevice` reports any survivors. Verified
+non-vacuous by skipping a `destroy_image_view` and watching
+`VUID-vkDestroyDevice-device-05137` appear (`build_reproducibility.md` §7.2/§7.4).
+Only the forcing-a-failure-at-each-`?` half is still manual.
+
 ## 2. Dangling pipeline when a hot reload's `create_graphics_pipeline` fails
 
 **Not debt — an actual correctness bug**, found while surveying §1 and kept

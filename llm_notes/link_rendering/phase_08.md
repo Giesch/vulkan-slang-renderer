@@ -480,8 +480,10 @@ results go into Recorded facts):
    two batches and toggle the matrix off to confirm the direction rather than
    assuming it.
 7. **Hot reload** of a `tev.slang` *body* edit across all 24 pipelines, raster
-   state preserved; clean exit via a real window close with **no VMA leak**
-   (`timeout`'s SIGTERM skips `Drop`, so this needs a manual close).
+   state preserved; clean exit with **no VMA leak**. The leak half needs no
+   manual close — `timeout`'s SIGTERM becomes `SDL_QUIT` and `Drop` runs, so
+   `scripts/headless-sweep.sh toon_link` covers it (`build_reproducibility.md`
+   §7.4). Only the hot-reload half needs a live session.
 8. Known and not a bug: the eye/brow decals still stack, because BTP is not
    implemented (phase_07 risk 1). P8 does not fix it.
 
@@ -504,7 +506,7 @@ results go into Recorded facts):
 - [ ] All 24 materials isolated and compared against `mat3_dump.txt`
 - [ ] Pupil `TEXMTX1` offset confirmed by toggling, not assumed
 - [ ] Validation sweep clean (16/16); hot reload of a `tev.slang` body edit
-      clean; no VMA leak on a real window close
+      clean; no VMA leak at exit (covered by the sweep, no manual close needed)
 - [ ] Docs updated: master plan §6 P8 row ✅ + hash, risks #5/#6/#8;
       `tests.md` §P8; `follow_up.md` §5 (Dolphin optional) and §6 (`tev_ir.rs`
       reconciliation closed)
