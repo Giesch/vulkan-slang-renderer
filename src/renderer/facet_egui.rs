@@ -1,12 +1,13 @@
 //! Auto-generated egui UI from facet reflection
 
-use crate::editor::{Checkbox, Label, RadioButton, Slider, pascal_to_display};
+use crate::editor::{Checkbox, IntSlider, Label, RadioButton, Slider, pascal_to_display};
 use egui::Ui;
 use facet::{EnumRepr, Facet, Poke, PokeStruct, Shape, Type, UserType};
 
 /// Classification of a field's type for UI rendering.
 enum FieldKind {
     Slider,
+    IntSlider,
     Checkbox,
     RadioButton,
     Label,
@@ -19,6 +20,10 @@ enum FieldKind {
 fn classify_field(shape: &Shape) -> Option<FieldKind> {
     if shape.is_type::<Slider>() {
         return Some(FieldKind::Slider);
+    }
+
+    if shape.is_type::<IntSlider>() {
+        return Some(FieldKind::IntSlider);
     }
 
     if shape.is_type::<Checkbox>() {
@@ -52,6 +57,14 @@ fn render_slider(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
     let slider = poke
         .get_mut::<Slider>()
         .expect("type mismatch: expected Slider");
+    slider.render_ui(ui)
+}
+
+/// Render an IntSlider wrapper type.
+fn render_int_slider(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
+    let slider = poke
+        .get_mut::<IntSlider>()
+        .expect("type mismatch: expected IntSlider");
     slider.render_ui(ui)
 }
 
@@ -130,6 +143,7 @@ pub fn render_facet_ui<'a, T: Facet<'a>>(ui: &mut Ui, value: &mut T) -> bool {
 
     match kind {
         FieldKind::Slider => render_slider(ui, poke),
+        FieldKind::IntSlider => render_int_slider(ui, poke),
         FieldKind::Checkbox => render_checkbox(ui, poke),
         FieldKind::RadioButton => render_radio_button(ui, poke),
         FieldKind::Label => {
@@ -163,6 +177,11 @@ fn render_collapsing(ui: &mut Ui, mut poke_struct: PokeStruct<'_, '_>) -> bool {
             match kind {
                 FieldKind::Slider => {
                     if render_slider(ui, field_poke) {
+                        modified = true;
+                    }
+                }
+                FieldKind::IntSlider => {
+                    if render_int_slider(ui, field_poke) {
                         modified = true;
                     }
                 }

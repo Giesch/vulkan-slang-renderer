@@ -26,6 +26,28 @@ impl Slider {
     }
 }
 
+/// An integer value edited via egui::Slider with an inclusive range.
+/// Use this instead of [`Slider`] for values that index something, so the
+/// widget can't hand back a fraction of an index.
+#[derive(Clone, Debug, Facet)]
+pub struct IntSlider {
+    pub value: i64,
+    pub min: i64,
+    pub max: i64,
+}
+
+impl IntSlider {
+    pub fn new(value: i64, min: i64, max: i64) -> Self {
+        Self { value, min, max }
+    }
+
+    /// Render this slider in egui, returning true if the value changed.
+    pub fn render_ui(&mut self, ui: &mut Ui) -> bool {
+        let response = ui.add(egui::Slider::new(&mut self.value, self.min..=self.max));
+        response.changed()
+    }
+}
+
 /// A boolean toggle edited via egui::Checkbox.
 #[derive(Clone, Debug, Facet)]
 pub struct Checkbox {
