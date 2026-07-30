@@ -1,6 +1,8 @@
 //! Auto-generated egui UI from facet reflection
 
-use crate::editor::{Checkbox, IntSlider, Label, RadioButton, Slider, pascal_to_display};
+use crate::editor::{
+    Checkbox, IntSlider, Label, RadioButton, Slider, pascal_to_display, render_radio_group,
+};
 use egui::Ui;
 use facet::{EnumRepr, Facet, Poke, PokeStruct, Shape, Type, UserType};
 
@@ -100,11 +102,7 @@ fn render_unit_enum(ui: &mut Ui, poke: Poke<'_, '_>) -> bool {
     let labels: Vec<String> = variants.iter().map(|v| pascal_to_display(v.name)).collect();
 
     let mut selected = current;
-    for (i, label) in labels.iter().enumerate() {
-        if ui.radio_value(&mut selected, i, label).changed() {
-            // selection changed handled below
-        }
-    }
+    render_radio_group(ui, &mut selected, &labels);
 
     if selected != current {
         let new_disc = variants[selected].discriminant.expect("discriminant");

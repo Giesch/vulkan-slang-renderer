@@ -82,14 +82,44 @@ impl RadioButton {
 
     /// Render this radio button group in egui, returning true if the selection changed.
     pub fn render_ui(&mut self, ui: &mut Ui) -> bool {
-        let mut changed = false;
-        for (i, label) in self.labels.iter().enumerate() {
-            if ui.radio_value(&mut self.selected, i, label).changed() {
-                changed = true;
-            }
-        }
-        changed
+        let Self { selected, labels } = self;
+        render_radio_group(ui, selected, labels)
     }
+}
+
+/// Radio groups this large or larger split into two vertical columns; a single
+/// row of that many buttons makes the debug window uncomfortably wide.
+const MIN_TWO_COLUMN_RADIO_OPTIONS: usize = 4;
+
+/// Render `labels` as radio buttons in the ambient layout direction.
+/// `offset` is the index of `labels[0]` within the full option list.
+fn radio_buttons(ui: &mut Ui, selected: &mut usize, offset: usize, labels: &[String]) -> bool {
+    let mut changed = false;
+    for (i, label) in labels.iter().enumerate() {
+        if ui.radio_value(selected, offset + i, label).changed() {
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Render a radio button group, returning true if the selection changed.
+/// Splits into two vertical columns once there are enough options that a
+/// single row would stretch the debug window.
+pub fn render_radio_group(ui: &mut Ui, selected: &mut usize, labels: &[String]) -> bool {
+    if labels.len() < MIN_TWO_COLUMN_RADIO_OPTIONS {
+        return radio_buttons(ui, selected, 0, labels);
+    }
+
+    // Extra option goes in the left column, so an odd count reads top-to-bottom.
+    let split = labels.len().div_ceil(2);
+    let (left, right) = labels.split_at(split);
+
+    let mut changed = ui.vertical(|ui| radio_buttons(ui, selected, 0, left)).inner;
+    changed |= ui
+        .vertical(|ui| radio_buttons(ui, selected, split, right))
+        .inner;
+    changed
 }
 
 /// Convert a PascalCase name to a display string with spaces.
