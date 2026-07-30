@@ -1,6 +1,6 @@
 # Build & test reproducibility
 
-Status, per section, re-checked against `main` @ `caaf66a`:
+Status, per section, re-checked against `main` @ `a1d22e1`:
 
 | § | topic | state |
 |---|---|---|
@@ -11,11 +11,15 @@ Status, per section, re-checked against `main` @ `caaf66a`:
 | 5 | env vars need direnv | ⬜ open |
 | 6 | `cargo-insta` documented, not installed | ⬜ open |
 | 7 | headless sweep | ✅ **implemented on this branch**, green, and adversarially tested |
+| 7.4 | the `timeout`/`Drop` claim in the notes | ✅ **corrected on this branch** across 9 files |
 
 Every problem below was hit while implementing
 [`link_rendering/phase_07.md`](link_rendering/phase_07.md) in a fresh cloud
 container, and every diagnosis was verified on that machine — originally
-against `main` @ `3c36467`, and re-checked after merging `caaf66a`.
+against `main` @ `3c36467`, then re-checked after merging `caaf66a`, and again
+after merging `a1d22e1` (which brought the pipelined-compute removal series:
+compute→graphics barrier, per-frame ring collapse, acquire ordering — renderer
+synchronization changes, and so exactly the class §7 exists to catch).
 
 Two of the things this note reported have since been fixed on `main` by other
 work (§1's ordering fix, and the `sprite_batch` MSAA bug §7.5 found), in both
@@ -147,9 +151,11 @@ way to review that particular change.
 
 ## 2. Snapshots capture unformatted output, so they can never match the files
 
-**Still open after `e080d72`** — re-verified against current `main`, output
-below is unchanged. §1's fix made the *order* deterministic; it did not touch
-*formatting*, and the two are independent. `follow_up.md` §5b now notes in
+**Still open after `e080d72`** — re-verified against `main` @ `a1d22e1`, output
+below is unchanged: diffing a committed `.snap` against its generated file still
+shows exactly the two differences named here, import placement and signature
+wrapping. §1's fix made the *order* deterministic; it did not touch *formatting*,
+and the two are independent. `follow_up.md` §5b now notes in
 passing that the snapshots are taken pre-rustfmt and that this is what let the
 scrambled `init()` body hide behind a rustfmt-tidied module list — so the
 mechanism is already documented on `main`; what is missing is the fix.
@@ -416,20 +422,23 @@ detection go to zero.
 Also: **the exit code is not a signal.** Every run above — clean, one error,
 478 errors — exited **124**. The debug callback returns `vk::FALSE`, so nothing
 propagates. Detection must grep the log. (Exit codes are still worth checking
-for the *separate* case of a crash or an early bail; `toon_link` correctly
-exits 1 with its "run `just convert-link`" message, which the sweep reports
+for the *separate* case of a crash or an early bail, which the sweep reports
 distinctly from a validation failure.)
 
 ### 7.4 Correction: `timeout` does **not** skip `Drop`
 
-`offscreen_testing.md` states that "`timeout` SIGKILLs the process, so
-`drain_gpu()` and `Drop for Renderer` never run", and
-[`link_rendering/phase_07.md`](link_rendering/phase_07.md)'s test plan repeats
-it ("`timeout`'s SIGTERM skips `Drop`, so the leak check needs a manual
-close"). Both are wrong, and it matters because it is the stated reason
-teardown leaks supposedly can't be automated.
+Nine files in this repo asserted, in one form or another, that `timeout`
+prevents destructors from running. `offscreen_testing.md` had the strongest
+version ("`timeout` SIGKILLs the process, so `drain_gpu()` and
+`Drop for Renderer` never run"); four `link_rendering` phase docs repeated it as
+"`timeout`'s SIGTERM skips `Drop`, so the leak check needs a manual close";
+`follow_up.md` had escalated it to a standing accepted risk, "**VMA leak check
+can't be automated**"; and `todo.org` had a task to build a CLI around it.
 
-Measured, with the leaked-image-view fault active:
+All of it is wrong, and it mattered because it was the stated reason the
+`tech_debt.md` §1 teardown-leak class supposedly could not be automated.
+
+First measured in the container, with the leaked-image-view fault active:
 
 | invocation | exit | teardown VUID seen |
 |---|---|---|
@@ -437,20 +446,65 @@ Measured, with the leaked-image-view fault active:
 | `timeout -s KILL` | 137 | no |
 | `timeout -s TERM` + `SDL_NO_SIGNAL_HANDLERS=1` | 124 | no |
 
-`timeout` sends **SIGTERM**, not SIGKILL, and SDL installs a handler that
-converts SIGTERM into an `SDL_QUIT` event — so the event loop exits normally,
-`Drop` runs, and `vkDestroyDevice` reports leaked objects. That makes the
-`tech_debt.md` §1 leak class **automatable today**, with no clean-exit
-machinery to build.
+Then re-measured on the laptop (real GPU, Wayland session) before correcting the
+docs, since `phase_05`'s Recorded facts claimed the opposite there — not merely
+that SIGTERM skips `Drop` but that "there is no signal that works." Detection
+here is direct rather than leak-mediated: a temporary `eprintln!` after
+`drain_gpu()` (`app.rs:62`) and another at the top of `Drop for Renderer`.
+
+| invocation | video driver | markers | exit |
+|---|---|---|---|
+| `timeout -s TERM 5 ./target/debug/examples/basic_triangle` | wayland | **both** | 124 |
+| same, `SDL_VIDEODRIVER=offscreen` | offscreen | **both** | 124 |
+| `timeout -s TERM 5 just dev basic_triangle` | wayland | **both** | 124 |
+| `timeout -s TERM 5 cargo run --example basic_triangle` | wayland | **both** | 124 |
+| manual window close | wayland | **both** | 0 |
+| `timeout -s KILL 5 ./…` — *control* | wayland | none | 137 |
+| `SDL_NO_SIGNAL_HANDLERS=1` + SIGTERM — *control* | wayland | none | 124 |
+
+The two controls are what make this more than a green run: they show the markers
+*can* vanish, so their presence carries information.
+
+**Mechanism.** `timeout` sends **SIGTERM**, not SIGKILL, and SDL installs a
+handler that converts SIGTERM into an `SDL_QUIT` event — so the event loop exits
+normally, `drain_gpu()` and `Drop` run, and `vkDestroyDevice` reports leaked
+objects.
+
+The `just`/`cargo` indirection makes no difference, which is worth knowing
+because it looks like it should. GNU `timeout` without `--foreground` runs the
+command in **its own process group and signals the group**, so the example is
+signalled even though `just` is the direct child. `--foreground` signals only
+the direct child: `just` dies, the example is orphaned and runs forever. That is
+the one invocation that really does skip `Drop`, and nothing here uses it.
+
+So the `tech_debt.md` §1 leak class is not merely automatable — the sweep
+automates it, on every example, on every run.
+
+**Why the P4/P5 observations disagreed was never established**, and inventing a
+reason would be worse than leaving it open. The likeliest candidate is 7.3.5:
+a `timeout` expiring during compilation exits 124 with an empty log, which is
+indistinguishable from a run whose `Drop` was skipped. P5 built a temporary
+frame-limit escape in `app.rs` around the belief; it was not necessary. The
+phase docs keep those observations as recorded, with a bracketed superseding
+note — a Recorded-facts block is a log, not a claim to be rewritten.
 
 The dependency is real but fragile: it holds only while SDL's signal handlers
-are left enabled. The sweep should `unset SDL_NO_SIGNAL_HANDLERS` and say why,
-and the two docs above should be corrected.
+are enabled. The sweep therefore `unset`s `SDL_NO_SIGNAL_HANDLERS` and says why.
+
+**Corrected on this branch** (previously listed here as remaining work):
+`offscreen_testing.md` §Why item 2 and its teardown-coverage gate;
+`follow_up.md`'s accepted risk, struck through per that file's convention;
+`phase_07.md` and `phase_08.md`, whose Eyeball lists are live instructions for
+phases not yet run; annotations in the `phase_04`/`phase_05`/`phase_06` Recorded
+facts; an additive note on `tech_debt.md` §1, which never carried the false
+claim; and `todo.org`'s "build a better timeout into a cli", closed as
+premise-invalid. `CLAUDE.md`'s `timeout 3 just dev EXAMPLE` needs no caveat —
+that exact form is row 3 above.
 
 ### 7.5 The first full sweep found a real bug
 
-Running the sweep over all 16 examples on a clean tree: 14 `ok`, `toon_link`
-exits 1 on its missing assets (expected), and **`sprite_batch` emits 55
+Running the sweep over all 16 examples on a clean tree in the container: 14
+`ok`, `toon_link` skipped for want of its assets, and **`sprite_batch` emits 55
 validation errors** —
 
 ```
@@ -512,28 +566,50 @@ failure by reading the VUID before assuming either.
 
 `scripts/headless-sweep.sh` is a working prototype encoding all five controls
 from 7.3, each with a comment saying why it is there. **The full sweep is
-green**: 15 `ok`, 1 skip, exit 0.
+green**: 16 `ok`, 0 skip, exit 0 on the laptop; 15 `ok`, 1 skip, exit 0 in the
+container. Same invocation both places — the difference is `toon_link`, and it
+is the script noticing where it is rather than being told.
 
-The skip is `toon_link`, via a `SWEEP_SKIP` list. It cannot run anywhere
-without `assets/link/converted`, which is gitignored and disc-image-derived
-(`link_rendering/follow_up.md`), and it bails with a helpful message rather
-than crashing. `SWEEP_SKIP=` sweeps it anyway on a machine where
-`just convert-link` has been run.
+**Which examples can run is a property of the machine, not a list.** `toon_link`
+needs `assets/link/converted`, which is gitignored and disc-image-derived
+(`link_rendering/follow_up.md`). Rather than a hard-coded skip name, the script
+tests for the exact file the example bails on
+(`assets/link/converted/link.manifest.json`, `examples/toon_link.rs:155`) in an
+`assets_missing()` predicate keyed by example name. So the sweep covers
+`toon_link` on a dev machine and skips it in a container, with no env var to
+remember and nothing to keep in sync. `SWEEP_SKIP` survives as a manual override
+and now defaults to empty; the two skips print differently. A missing-asset
+example named explicitly on the command line still skips rather than failing —
+in a container there is nothing to fix and a red sweep would be noise. Every
+other example loads from tracked `textures/`, `models/` or `audio/`, so
+`toon_link` is the whole set; add a `case` arm alongside any new one.
+
+Doing that turned up something worth stating plainly: **`toon_link` had never
+been through the sweep**, so its "skip" was hiding an unknown rather than a known
+non-runner. It runs clean — 7 of 41 textures loaded, 24 batches, 1754 vertices,
+no validation output, inside the default 10s window. That is the validation gate
+P7 had to leave **NOT RUN** (`offscreen_testing.md` §Why), closed by running it.
+
+One other robustness fix in passing: the lavapipe ICD is now resolved by glob
+over `/usr/share/vulkan/icd.d/lvp_icd*.json` with a loud failure if none matches,
+rather than one hard-coded filename. It is pinned rather than left to the loader
+so a machine with a real GPU still sweeps on lavapipe and stays comparable to the
+container; an unreadable `VK_ICD_FILENAMES` otherwise produces 16 identical
+device-init failures that read like a renderer bug.
 
 Remaining work:
 
 - wire the script to `just headless-all`;
 - document the container packages from §4 (and drop the `~/.asoundrc` step,
   now unnecessary — see 7.1);
-- correct the `timeout`/`Drop` claim in `offscreen_testing.md` and
-  `link_rendering/phase_07.md` (7.4);
 - decide whether the sweep belongs in CI. It needs no GPU, so the only real
   cost is build time.
 
-Re-validated after all of the above: with the viewport fault reintroduced, the
-sweep still fails both examples it is pointed at. Worth repeating whenever the
-script changes — a sweep that has quietly stopped detecting anything is
-indistinguishable from a healthy one.
+Re-validated after all of the above, and again after merging `a1d22e1`: with the
+viewport fault reintroduced, the sweep still fails both examples it is pointed at
+(`VUID-VkViewport-width-01771`, 20 lines each). Worth repeating whenever the
+script changes *or the renderer does* — a sweep that has quietly stopped
+detecting anything is indistinguishable from a healthy one.
 
 **Out of scope:** golden images. `offscreen_testing.md` is explicit that
 lavapipe does not solve comparison against frames blessed on real hardware, and
@@ -552,9 +628,9 @@ the three faults from 7.2 is reintroduced.
 - **No converter changes**, so `scripts/link_converted.sha256` must stay
   untouched — same gate P6/P7 used.
 - **`toon_link` stays un-runnable in CI** regardless of §7: its assets are
-  machine-local and disc-image-derived. §7 makes the *other* examples sweepable;
-  the toon_link line still only means something where `just convert-link` has
-  run. (`link_rendering/follow_up.md`.)
+  machine-local and disc-image-derived. §7 makes the *other* examples sweepable
+  everywhere, and `toon_link` sweepable wherever `just convert-link` has run —
+  which is now detected rather than configured. (`link_rendering/follow_up.md`.)
 - **Golden-image testing stays out**, per §7.
 
 ## Suggested order
