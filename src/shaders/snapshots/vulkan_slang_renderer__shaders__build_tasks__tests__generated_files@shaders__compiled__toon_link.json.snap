@@ -418,10 +418,6 @@ info:
                 {
                   "name": "IdentityTexMtx",
                   "value": 9
-                },
-                {
-                  "name": "MaskWhite",
-                  "value": 10
                 }
               ]
             }

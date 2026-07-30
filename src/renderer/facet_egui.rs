@@ -1,7 +1,8 @@
 //! Auto-generated egui UI from facet reflection
 
 use crate::editor::{
-    Checkbox, IntSlider, Label, RadioButton, Slider, pascal_to_display, render_radio_group,
+    Checkbox, ColorPicker, IntSlider, Label, RadioButton, Slider, pascal_to_display,
+    render_radio_group,
 };
 use egui::Ui;
 use facet::{EnumRepr, Facet, Poke, PokeStruct, Shape, Type, UserType};
@@ -11,6 +12,7 @@ enum FieldKind {
     Slider,
     IntSlider,
     Checkbox,
+    ColorPicker,
     RadioButton,
     Label,
     Collapsing,
@@ -30,6 +32,10 @@ fn classify_field(shape: &Shape) -> Option<FieldKind> {
 
     if shape.is_type::<Checkbox>() {
         return Some(FieldKind::Checkbox);
+    }
+
+    if shape.is_type::<ColorPicker>() {
+        return Some(FieldKind::ColorPicker);
     }
 
     if shape.is_type::<RadioButton>() {
@@ -76,6 +82,14 @@ fn render_checkbox(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
         .get_mut::<Checkbox>()
         .expect("type mismatch: expected Checkbox");
     checkbox.render_ui(ui)
+}
+
+/// Render a ColorPicker wrapper type.
+fn render_color_picker(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
+    let color = poke
+        .get_mut::<ColorPicker>()
+        .expect("type mismatch: expected ColorPicker");
+    color.render_ui(ui)
 }
 
 /// Render a RadioButton wrapper type.
@@ -143,6 +157,7 @@ pub fn render_facet_ui<'a, T: Facet<'a>>(ui: &mut Ui, value: &mut T) -> bool {
         FieldKind::Slider => render_slider(ui, poke),
         FieldKind::IntSlider => render_int_slider(ui, poke),
         FieldKind::Checkbox => render_checkbox(ui, poke),
+        FieldKind::ColorPicker => render_color_picker(ui, poke),
         FieldKind::RadioButton => render_radio_button(ui, poke),
         FieldKind::Label => {
             render_label(ui, poke);
@@ -185,6 +200,11 @@ fn render_collapsing(ui: &mut Ui, mut poke_struct: PokeStruct<'_, '_>) -> bool {
                 }
                 FieldKind::Checkbox => {
                     if render_checkbox(ui, field_poke) {
+                        modified = true;
+                    }
+                }
+                FieldKind::ColorPicker => {
+                    if render_color_picker(ui, field_poke) {
                         modified = true;
                     }
                 }

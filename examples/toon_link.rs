@@ -16,9 +16,8 @@
 //! `just extract-link && just convert-link`.
 //!
 //! Controls live in the egui debug window (debug builds only):
-//! - `debug_mode`: the eleven `DebugMode` variants from the shader, as radio
-//!   buttons. `Mask White` is the eye/brow mask view and also switches the draw
-//!   order — see [`ToonLink::mode`].
+//! - `debug_mode`: the ten `DebugMode` variants from the shader, as radio
+//!   buttons
 //! - `eflight`: toggle the second, green-channel light
 //! - `isolate_batch` + `batch`: draw one batch instead of all of them
 //! - `batch_info`: what the `batch` slider is currently pointing at; selecting a
@@ -33,7 +32,7 @@ use facet::Facet;
 use glam::{Mat3, Mat4, UVec4, Vec2, Vec3, Vec4};
 use image::{DynamicImage, ImageReader, Rgba, RgbaImage};
 
-use vulkan_slang_renderer::editor::{Checkbox, IntSlider, Label};
+use vulkan_slang_renderer::editor::{Checkbox, ColorPicker, IntSlider, Label, Slider};
 use vulkan_slang_renderer::game::Game;
 // The manifest's GX enums are named `mm::CullMode` / `mm::BlendMode` throughout:
 // they collide with the renderer's same-named pipeline enums, and each mapping
@@ -279,6 +278,9 @@ const EFLIGHT_COLOR: Vec3 = Vec3::new(0.0, 1.0, 0.0);
 /// The treasure chest's glow, verbatim from `d_a_tbox.cpp:302-304`. A chest is a
 /// steady eflight rather than a decaying flash, so this is one stable value
 /// instead of a row picked off a decay curve.
+///
+/// The debug window's `eflight_konst` picker starts here; it, and not this
+/// constant, is what `draw` writes.
 const EFLIGHT_KONST: Vec3 = rgb8(255, 255, 100);
 /// How much of [`EFLIGHT_KONST`] actually reaches K1.
 ///
@@ -288,6 +290,9 @@ const EFLIGHT_KONST: Vec3 = rgb8(255, 255, 100);
 /// the full value only appears standing exactly at the light. This is that factor
 /// at half the light's radius — `(1 - 0.5)² = 0.25`. Unscaled, the chest's near-
 /// white glow saturates the tunic and the ramp's second axis stops being legible.
+///
+/// The debug window's `eflight_falloff` slider starts here, so the whole `bright²`
+/// range is walkable without a rebuild.
 const EFLIGHT_FALLOFF: f32 = 0.25;
 
 /// Light 0's fixed orientation, **world space**. The game's key light does not
@@ -306,8 +311,16 @@ const LIGHT0_ELEVATION: f32 = 0.7;
 /// Azimuth 0 is straight ahead: the model faces **+Z**, measured off `cl.bdl`
 /// itself — the `mouth` batch's mean vertex normal is `+0.82` in Z and `mayuL`'s
 /// is `+0.90`, with the eyes at `z = +16.2`.
+///
+/// The elevation is **negative**, which the `+50` above is easy to misread: that
+/// offset is off the chest's origin sitting on the floor, and `cl.bdl` spans
+/// `y = 0..124`, so the light lands around Link's waist and shines *up* at the
+/// torso it lights. `-0.35` is `atan2(50 - 85, 90)` — the light at 50, his upper
+/// chest at 85, standing about a body length away. The distance is the soft part
+/// of that, so the debug window's `eflight_elevation` slider walks the whole
+/// plausible range without a rebuild; this constant only seeds it.
 const EFLIGHT_AZIMUTH: f32 = 0.0;
-const EFLIGHT_ELEVATION: f32 = 0.35;
+const EFLIGHT_ELEVATION: f32 = -0.35;
 
 /// The two endpoints of stage 0's toon lerp, `PREV = mix(REG0, K0, ramp.r)`.
 ///
@@ -324,6 +337,10 @@ const EFLIGHT_ELEVATION: f32 = 0.35;
 /// happens to be right here, and would not be at dawn or sunset.
 ///
 /// Pale → `dKy_tevstr_c` wiring is `setLight_actor`, `d_kankyo.cpp:1328-1353`.
+///
+/// These two seed the debug window's `env_actor_c0` / `env_actor_k0` pickers,
+/// which are what `draw` actually writes — so another time of day's plateau can
+/// be dialed in and compared without a rebuild.
 const ENV_ACTOR_C0: Vec3 = rgb8(156, 140, 134);
 const ENV_ACTOR_K0: Vec3 = rgb8(255, 255, 255);
 
@@ -339,13 +356,25 @@ fn set_rgb(dst: &mut Vec4, rgb: Vec3) {
     *dst = Vec4::new(rgb.x, rgb.y, rgb.z, dst.w);
 }
 
-/// The lights are fixed — light 0 in the world, the eflight relative to Link —
-/// so the only mutable state is whether the eflight is lit.
-#[derive(Default)]
+/// Light 0 is fixed in the world and the eflight is fixed relative to Link, so
+/// the only mutable state is the eflight: whether it is lit, and how far above or
+/// below him it sits.
 struct LightRig {
     /// Whether a nearby "eflight" is lighting light 1's green channel. Off is the
     /// common case in the game — see [`LIGHT1_COLOR`].
     eflight: bool,
+    /// Radians above the horizontal, negative for a light below him — see
+    /// [`EFLIGHT_ELEVATION`].
+    eflight_elevation: f32,
+}
+
+impl Default for LightRig {
+    fn default() -> Self {
+        Self {
+            eflight: false,
+            eflight_elevation: EFLIGHT_ELEVATION,
+        }
+    }
 }
 
 impl LightRig {
@@ -368,7 +397,7 @@ impl LightRig {
             // Model space → world by the same Y rotation the vertices get, which
             // is what pins it to Link. It only shows up when `eflight` is on,
             // since otherwise its color is black.
-            world(Mat3::from_rotation_y(spin) * dir(EFLIGHT_AZIMUTH, EFLIGHT_ELEVATION)),
+            world(Mat3::from_rotation_y(spin) * dir(EFLIGHT_AZIMUTH, self.eflight_elevation)),
         ]
     }
 
@@ -530,31 +559,7 @@ fn resolve_texmap<'a>(
         .unwrap_or(dummy)
 }
 
-/// Which raster-state translation and draw order are live.
-///
-/// `MaskWhite` draws *only* the four `*damA` mask batches, as solid white on
-/// black: it is the one view that makes the eye/brow coverage visible at all,
-/// since under `Hardware` that pass runs with color writes off and deposits its
-/// result in destination alpha, which nothing can read back.
-///
-/// What is white is exactly what composites: the mask's TEV alpha is `eyeh.a` /
-/// `mayuh.a`, and the composite pass tests that same value with `Greater 0`, so
-/// this is the eye silhouette itself rather than an approximation of it.
-///
-/// The same enum bakes the pipelines and selects them at draw time, so a
-/// pipeline built with a mode is exactly the one that mode draws. See
-/// `llm_notes/link_rendering/phase_09_eyes.md` step 5.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RenderMode {
-    Hardware,
-    MaskWhite,
-}
-
-fn raster_state(
-    material: &MaterialEntry,
-    role: Option<DecalRole>,
-    mode: RenderMode,
-) -> anyhow::Result<RasterState> {
+fn raster_state(material: &MaterialEntry, role: Option<DecalRole>) -> anyhow::Result<RasterState> {
     let cull = match CULL_OVERRIDE {
         Some(cull) => cull,
         None => match material.cull {
@@ -565,23 +570,6 @@ fn raster_state(
             mm::CullMode::All => anyhow::bail!("unmapped GX cull mode {}", material.cull),
         },
     };
-
-    // The mask view answers "where is the coverage", not "what would the
-    // hardware do", so it deliberately drops the material's own state: `Opaque`
-    // rather than the material's source-alpha blend, because blending white by
-    // the coverage would put back the antialiased grey the shader's discard is
-    // there to remove; and no depth test, because nothing else is drawn in this
-    // mode and an occluded mask would just be an invisible one. The alpha it
-    // leaves in the framebuffer is unread — the swapchain is OPAQUE.
-    if mode == RenderMode::MaskWhite {
-        return Ok(RasterState {
-            blend: BlendMode::Opaque,
-            cull,
-            depth_test: DepthCompare::Always,
-            depth_write: false,
-            color_write: [true; 4],
-        });
-    }
 
     // Depth test: honor z_func exactly when the test is enabled, else pass
     // unconditionally. All 24 materials are Less_Equal in practice (this makes
@@ -675,21 +663,9 @@ pub struct ToonLink {
     /// construction: `draw` copies each one and patches `mvp`, the two light
     /// fields, `debug_mode` and the environment override onto the copy.
     params: Vec<ToonLinkParams>,
-    /// The [`RenderMode::MaskWhite`] pipeline, parallel to [`Self::pipelines`]
-    /// and indexed by [`MaterialSlot`] — `Some` for exactly the four
-    /// [`DecalRole::Mask`] slots, `None` everywhere else, since no other
-    /// material is drawn in that mode.
-    ///
-    /// Deliberately stores no [`UniformBufferHandle`] of its own: `pipelines`
-    /// stays the single owner, so the per-frame zip against `params` in `draw`
-    /// cannot desync no matter how this vector changes.
-    mask_pipelines: Vec<Option<PipelineHandle<DrawIndexed>>>,
-    /// The hardware's five-group order ([`RenderMode::Hardware`]): mask,
-    /// face+hair, composite, erase, then the rest of the model.
+    /// The hardware's five-group order: mask, face+hair, composite, erase, then
+    /// the rest of the model.
     draw_order: Vec<BatchIndex>,
-    /// The four mask batches, and nothing else ([`RenderMode::MaskWhite`]).
-    /// Unlike [`Self::draw_order`] this is *not* a permutation of the batches.
-    mask_draw_order: Vec<BatchIndex>,
     /// Which batch [`Self::update`] last dumped TEV state for, so the dump
     /// happens on a change rather than every frame.
     dumped: Option<BatchIndex>,
@@ -704,6 +680,19 @@ pub struct EditState {
     debug_mode: DebugMode,
     /// The second, green-channel light. Off is the common case in the game.
     eflight: Checkbox,
+    /// Stage 2's additive tint, before `eflight_falloff` scales it. Only reaches
+    /// K1 while `eflight` is checked — see [`EFLIGHT_KONST`].
+    eflight_konst: ColorPicker,
+    /// How much of `eflight_konst` actually reaches K1 — see [`EFLIGHT_FALLOFF`].
+    eflight_falloff: Slider,
+    /// How far below Link the eflight sits, in radians. Runs `0` (level with him)
+    /// down to `-0.5` — see [`EFLIGHT_ELEVATION`]. Only visible while `eflight` is
+    /// checked, since light 1 is otherwise black.
+    eflight_elevation: Slider,
+    /// Stage 0's toon lerp endpoints: the shadow end goes to `reg[1]` and the lit
+    /// end to `konst[0]`. See [`ENV_ACTOR_C0`] and [`ENV_ACTOR_K0`].
+    env_actor_c0: ColorPicker,
+    env_actor_k0: ColorPicker,
     isolate_batch: Checkbox,
     /// A [`BatchIndex`] in disguise: 0..=batches-1, only read when
     /// `isolate_batch` is checked.
@@ -720,35 +709,8 @@ impl ToonLink {
         &self.manifest.materials[slot.raw()]
     }
 
-    /// The mask view is selected by the debug mode rather than by a control of
-    /// its own. `render_unit_enum` (`src/renderer/facet_egui.rs`) renders every
-    /// variant of a unit enum as a radio button with no way to hide one, so a
-    /// separate checkbox would leave `Mask White` selectable on its own — and on
-    /// its own it paints the whole model white. Deriving the mode here keeps the
-    /// pipeline swap and the draw-order swap tied to the one control.
-    fn mode(&self) -> RenderMode {
-        match self.edit_state.debug_mode {
-            DebugMode::MaskWhite => RenderMode::MaskWhite,
-            _ => RenderMode::Hardware,
-        }
-    }
-
-    /// `None` when the slot has no pipeline in the active mode, which under
-    /// [`RenderMode::MaskWhite`] is every slot that is not a mask decal.
-    fn pipeline(&self, slot: MaterialSlot) -> Option<&PipelineHandle<DrawIndexed>> {
-        match self.mode() {
-            RenderMode::Hardware => Some(&self.pipelines[slot.raw()].0),
-            RenderMode::MaskWhite => self.mask_pipelines[slot.raw()].as_ref(),
-        }
-    }
-
-    /// Deliberately *not* named `draw_order`: `self.draw_order` and
-    /// `self.draw_order()` differing by two characters in one function is a trap.
-    fn active_draw_order(&self) -> &[BatchIndex] {
-        match self.mode() {
-            RenderMode::Hardware => &self.draw_order,
-            RenderMode::MaskWhite => &self.mask_draw_order,
-        }
+    fn pipeline(&self, slot: MaterialSlot) -> &PipelineHandle<DrawIndexed> {
+        &self.pipelines[slot.raw()].0
     }
 
     /// The batch the debug window has selected, or `None` while it's drawing
@@ -806,25 +768,16 @@ impl ToonLink {
             batch.first_index,
             batch.index_count
         );
-        // Both modes have a way to legitimately render nothing, and during
-        // bring-up that is indistinguishable from a bug. Say which one it is.
+        // Isolating a batch has a way to legitimately render nothing, and during
+        // bring-up that is indistinguishable from a bug. Say when it is the
+        // former: the mask and erase passes draw with color writes off, so
+        // isolating one of those eight batches yields a *black frame*.
         let role = decal_role(material).ok().flatten();
-        let mode = self.mode();
-        println!("  mode {mode:?}, role {role:?}");
-        match mode {
-            // The mask and erase passes draw with color writes off, so
-            // isolating one of those eight batches yields a *black frame*.
-            RenderMode::Hardware if matches!(role, Some(DecalRole::Mask | DecalRole::Erase)) => {
-                println!(
-                    "  -> expect a black frame: this pass touches destination alpha and nothing else"
-                );
-            }
-            // MaskWhite draws only the four mask batches; anything else
-            // isolated there is filtered out before it reaches a pipeline.
-            RenderMode::MaskWhite if role != Some(DecalRole::Mask) => {
-                println!("  -> expect a black frame: MaskWhite draws only the four mask batches");
-            }
-            _ => {}
+        println!("  role {role:?}");
+        if matches!(role, Some(DecalRole::Mask | DecalRole::Erase)) {
+            println!(
+                "  -> expect a black frame: this pass touches destination alpha and nothing else"
+            );
         }
         self.print_tev_state(material);
     }
@@ -1022,10 +975,8 @@ impl Game for ToonLink {
             },
         )?;
 
-        // push order defines MaterialSlot: pipelines[slot] is materials[slot],
-        // and mask_pipelines[slot] is its MaskWhite twin where it has one
+        // push order defines MaterialSlot: pipelines[slot] is materials[slot]
         let mut pipelines = vec![];
-        let mut mask_pipelines = vec![];
         let mut params = vec![];
         for material in &manifest.materials {
             let role = decal_role(material)?;
@@ -1039,34 +990,10 @@ impl Game for ToonLink {
                     params_buffer: &params_buffer,
                 })
                 .with_shared_mesh(&mesh)
-                .with_raster_state(raster_state(material, role, RenderMode::Hardware)?);
+                .with_raster_state(raster_state(material, role)?);
             let pipeline = renderer.create_pipeline(pipeline_config)?;
 
-            // Only the mask decals are ever drawn under MaskWhite, so only they
-            // get a second pipeline — 28 total rather than 48.
-            //
-            // The *same* uniform buffer, deliberately. `Resources` only borrows
-            // it and `RawUniformBufferHandle::from_typed` copies an index
-            // (`src/renderer/uniform_buffer.rs:83`), so the two pipelines get
-            // separate descriptor sets pointing at one `vk::Buffer` per ring
-            // slot, and `write_uniform` writes that buffer's mapped memory,
-            // which both then read. `draw`'s uniform loop is unchanged.
-            let mask_pipeline = if role == Some(DecalRole::Mask) {
-                let mask_config = Shader::init()
-                    .pipeline_config(Resources {
-                        tex0,
-                        tex1,
-                        params_buffer: &params_buffer,
-                    })
-                    .with_shared_mesh(&mesh)
-                    .with_raster_state(raster_state(material, role, RenderMode::MaskWhite)?);
-                Some(renderer.create_pipeline(mask_config)?)
-            } else {
-                None
-            };
-
             pipelines.push((pipeline, params_buffer));
-            mask_pipelines.push(mask_pipeline);
 
             // The whole per-material uniform, built once. `tev_pack::pack` is a
             // second gate on top of the converter's `tev_ir.rs`: this example
@@ -1157,21 +1084,15 @@ impl Game for ToonLink {
             .copied()
             .collect();
 
-        // The mask view: the mask group alone. Not a permutation of the batches,
-        // so `check_permutation` does not apply — the 4/4/4 assertion above is
-        // what guarantees its contents.
-        let mask_draw_order = mask.clone();
-
         check_permutation(&draw_order, manifest.batches.len(), "five-group")?;
 
-        // `draw`'s uniform loop zips the first two and would silently skip the
-        // tail if they ever diverged.
+        // `draw`'s uniform loop zips these two and would silently skip the tail
+        // if they ever diverged.
         anyhow::ensure!(
-            pipelines.len() == params.len() && mask_pipelines.len() == pipelines.len(),
-            "pipeline/params/mask arrays desynced ({} / {} / {})",
+            pipelines.len() == params.len(),
+            "pipeline/params arrays desynced ({} / {})",
             pipelines.len(),
-            params.len(),
-            mask_pipelines.len()
+            params.len()
         );
 
         let group =
@@ -1184,7 +1105,6 @@ impl Game for ToonLink {
              \x20  3 composite  {:?}   dst-alpha blend, no depth test\n\
              \x20  4 erase      {:?}   alpha-only writes, zeroes the mask\n\
              \x20  5 rest       {:?}\n\
-             mask-view draw order: {:?}\n\
              debug controls are in the egui window",
             manifest.batches.len(),
             manifest.materials.len(),
@@ -1194,13 +1114,17 @@ impl Game for ToonLink {
             group(&composite),
             group(&erase),
             group(&rest),
-            group(&mask_draw_order),
         );
 
         let last_batch = manifest.batches.len() as i64 - 1;
         let edit_state = EditState {
             debug_mode: DebugMode::default(),
             eflight: Checkbox::new(LightRig::default().eflight),
+            eflight_konst: ColorPicker::from_vec3(EFLIGHT_KONST),
+            eflight_falloff: Slider::new(EFLIGHT_FALLOFF, 0.0, 1.0),
+            eflight_elevation: Slider::new(EFLIGHT_ELEVATION, 0.0, -0.5),
+            env_actor_c0: ColorPicker::from_vec3(ENV_ACTOR_C0),
+            env_actor_k0: ColorPicker::from_vec3(ENV_ACTOR_K0),
             isolate_batch: Checkbox::new(false),
             batch: IntSlider::new(0, 0, last_batch),
             batch_info: Label::new(""),
@@ -1211,10 +1135,8 @@ impl Game for ToonLink {
             manifest,
             mesh,
             pipelines,
-            mask_pipelines,
             params,
             draw_order,
-            mask_draw_order,
             dumped: None,
             edit_state,
         };
@@ -1246,29 +1168,35 @@ impl Game for ToonLink {
         let view = Mat4::look_at_rh(eye, target, Vec3::Y);
         let proj = Mat4::perspective_rh(45f32.to_radians(), renderer.aspect_ratio(), 0.1, 20.0);
 
-        // one index-range draw per batch, in the active mode's order
+        // one index-range draw per batch, in the five-group order
         let isolate = self.isolate();
-        for &index in self.active_draw_order() {
+        for &index in &self.draw_order {
             if isolate.is_some_and(|only| only != index) {
                 continue;
             }
             let batch = self.batch(index);
-            let Some(pipeline) = self.pipeline(MaterialSlot::from_manifest(batch.material)) else {
-                continue;
-            };
+            let pipeline = self.pipeline(MaterialSlot::from_manifest(batch.material));
             renderer.queue_draw_index_range(pipeline, batch.first_index, batch.index_count);
         }
 
         let mvp = MVPMatrices { model, view, proj };
         let debug_mode = self.edit_state.debug_mode;
-        // Built from the checkbox rather than stored, so the widget is the one
-        // source of truth and there is no per-frame sync to forget.
+        // Built from the widgets rather than stored, so they are the one source
+        // of truth and there is no per-frame sync to forget.
         let light = LightRig {
             eflight: self.edit_state.eflight.checked,
+            eflight_elevation: self.edit_state.eflight_elevation.value,
         };
         let light_dir = light.directions(spin);
         let light_color = light.colors();
         let eflight = light.eflight;
+
+        // Read out here rather than inside the closure: it borrows `self.pipelines`
+        // mutably, so it can't also reach into `self.edit_state`.
+        let env_actor_c0 = self.edit_state.env_actor_c0.to_vec3();
+        let env_actor_k0 = self.edit_state.env_actor_k0.to_vec3();
+        let eflight_konst =
+            self.edit_state.eflight_konst.to_vec3() * self.edit_state.eflight_falloff.value;
 
         renderer.submit_draws(|gpu| {
             for ((_, params_buffer), base) in self.pipelines.iter_mut().zip(&self.params) {
@@ -1291,10 +1219,10 @@ impl Game for ToonLink {
                 // before writing (`:1820`, `:1826`), and `sleeve` stage 1's alpha
                 // reads K0's, so clobbering it would change the cutout.
                 if params.tev.chan_control[0].x != 0 {
-                    set_rgb(&mut params.tev.reg[1], ENV_ACTOR_C0);
-                    set_rgb(&mut params.tev.konst[0], ENV_ACTOR_K0);
+                    set_rgb(&mut params.tev.reg[1], env_actor_c0);
+                    set_rgb(&mut params.tev.konst[0], env_actor_k0);
                     if eflight {
-                        set_rgb(&mut params.tev.konst[1], EFLIGHT_KONST * EFLIGHT_FALLOFF);
+                        set_rgb(&mut params.tev.konst[1], eflight_konst);
                     }
                 }
 

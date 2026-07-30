@@ -39,7 +39,6 @@ pub enum DebugMode {
     RawTex1 = 7,
     ChannelPerPixel = 8,
     IdentityTexMtx = 9,
-    MaskWhite = 10,
 }
 
 const _: () = assert!(std::mem::size_of::<DebugMode>() == 4);
@@ -69,7 +68,6 @@ impl TryFrom<u32> for DebugMode {
             7 => Ok(Self::RawTex1),
             8 => Ok(Self::ChannelPerPixel),
             9 => Ok(Self::IdentityTexMtx),
-            10 => Ok(Self::MaskWhite),
             other => Err(other),
         }
     }

@@ -8,22 +8,82 @@ import tev;
 // Keep in sync with examples/toon_link.rs's module doc comment. The variant
 // names are what the debug window's radio buttons are labelled with, via
 // `pascal_to_display` — there is no parallel list of names on the Rust side.
+//
+// Three things hold in *every* mode, so the notes below only cover the rgb:
+// the GX alpha test still runs on the TEV output before the switch, the output
+// alpha is always the real `tevOut.a` (so blending still happens), and the rgb
+// goes through `srgbDecode` — which cancels the _SRGB target's encode, so the
+// bytes in the framebuffer are the raw values described here.
 enum DebugMode : uint {
-    FinalTev = 0,         // final TEV output
-    WorldNormals = 1,     // world-space normals
+    // final TEV output.
+    // `evalStages`'s GX_TEVPREV register: the shaded pixel. On a toon material
+    // that is the band lerp between reg[1] (shadow) and konst[0] (lit) selected
+    // by the ramp's red, modulated by the albedo, plus konst[1] (the eflight
+    // highlight) weighted by the ramp's green. Shares the switch's `default:`
+    // arm with ChannelPerPixel and IdentityTexMtx.
+    FinalTev = 0,
+    // world-space normals.
+    // `normalize(normal) * 0.5 + 0.5`, so mid-gray is a zero component: red =
+    // +X, green = +Y (up), blue = +Z. The normal is the model matrix's rotation
+    // applied per vertex, interpolated, then renormalized here — the P6
+    // diagnostic for a bad rotation or a bad interpolation.
+    WorldNormals = 1,
+    // the mesh's raw uv0.
+    // red = u, green = v, blue = 0, straight off the vertex attribute with no
+    // texgen applied. Every material's texgen 0 is MTX2x4/TEX0/IDENTITY, so
+    // this is also what texcoord 0 samples the albedo with.
     Uv0 = 2,
-    TevAlpha = 3,         // final TEV alpha as grayscale
-    RasterColor0 = 4,     // the rasterized channel, pre-TEV
-    Texgen1Coord = 5,     // texgen 1's coord as red/green
-    RawTex0 = 6,          // raw tex0 at texcoord 0
-    RawTex1 = 7,          // raw tex1 at texcoord 1
-    ChannelPerPixel = 8,  // channel recomputed per fragment
-    IdentityTexMtx = 9,   // texgen matrices forced to identity
-    // Selecting this one also switches the example to RenderMode::MaskWhite,
-    // which draws only the four `*damA` mask batches. On its own it would paint
-    // the whole model white, so the two must move together — see
-    // `ToonLink::mode` in examples/toon_link.rs.
-    MaskWhite = 10,       // solid white wherever TEV alpha > 0
+    // final TEV alpha as grayscale.
+    // `tevOut.a` replicated to rgb: black 0, white 1. The same number the alpha
+    // test just compared, that the blend sees, and that the mask pass writes to
+    // destination alpha. Use this rather than MaskWhite to read alpha's
+    // magnitude, not just its coverage.
+    TevAlpha = 3,
+    // the rasterized channel, pre-TEV.
+    // The "control colors": `evalRasterColor`'s COLOR0 rgb, which is what the
+    // SRTG texgen turns into the ZBtoonEX lookup. With material color white and
+    // ambient 50/255, red = saturate(0.196 + N·L for LIGHT0), green = the same
+    // for the eflight LIGHT1 (0.196 flat when eflight is off) and blue = the
+    // flat 0.196 ambient. Must look smoothly shaded — it is per-vertex lit and
+    // interpolated, so any banding here is a bug, not the toon step. Unlit
+    // materials short-circuit to flat material color (white).
+    RasterColor0 = 4,
+    // texgen 1's coord as red/green.
+    // `texcoord01.zw`: red = u1, green = v1, blue = 0. On the 12 lit materials
+    // texgen 1 is GX_TG_SRTG, so the coord *is* RasterColor0's (r, g) — this
+    // view is mode 4 with blue zeroed, and it is the ramp lookup: u picks the
+    // shadow/lit step out of the ramp's red, v picks the eflight step out of
+    // its green, both flipping at ~0.49. On eyeL/eyeR it is instead the
+    // TEXMTX1-translated pupil UV, which is the useful reading there. Materials
+    // with one texgen never write uv[1], so they read black.
+    Texgen1Coord = 5,
+    // raw tex0 at texcoord 0.
+    // The albedo texel (linktexS3TC) sampled at `texcoord01.xy`, bypassing the
+    // swap tables, the konst/reg selects and the whole stage chain — the
+    // texture as authored, for checking a binding or a UV against the source
+    // PNG.
+    RawTex0 = 6,
+    // raw tex1 at texcoord 1.
+    // Slot 1 sampled at `texcoord01.zw`: the ZBtoonEX ramp on the lit
+    // materials, the hitomi pupil on eyeL/eyeR, and a 1x1 white dummy wherever
+    // slot 1 is unreferenced. On a ramp material this shows the ramp already
+    // evaluated at the current lighting coordinate — red is the shadow/lit
+    // step, green the eflight step.
+    RawTex1 = 7,
+    // channel recomputed per fragment.
+    // The same final TEV rgb as FinalTev, but with the color channel and the
+    // texgens re-evaluated from the interpolated normal instead of
+    // interpolating the vertex results. A/B against mode 0 isolates GX's
+    // per-vertex lighting: the difference is how cleanly the toon band edge
+    // crosses a large triangle (phase_08 decision 4).
+    ChannelPerPixel = 8,
+    // texgen matrices forced to identity.
+    // Also the final TEV rgb, with `evalTexGens` told to use raw uv0 in place
+    // of any composed MTX2x4 result. Only eyeL/eyeR reference a non-identity
+    // matrix — TEXMTX1's [-0.05, 0] pupil translate — so this is identical to
+    // mode 0 everywhere but the pupils, which makes it an A/B on the sign and
+    // magnitude of that offset. The SRTG branch is unaffected.
+    IdentityTexMtx = 9,
 }
 
 ParameterBlock<ToonLinkParams> params;
@@ -186,18 +246,6 @@ float4 fragMain(FragVertex fragVertex) : SV_TARGET {
         break;
     case DebugMode.RawTex1:
         color = params.tex1.Sample(texcoord01.zw).rgb;
-        break;
-    case DebugMode.MaskWhite:
-        // The mask view. The `*damA` materials compare Always, so their
-        // silhouette lives entirely in alpha and the GX alpha test above never
-        // discards; this discard is what makes the shape visible. It is the
-        // same predicate the composite pass runs (`Greater 0` on the same texel
-        // of the same texture through the same texcoord), so what is white here
-        // is exactly what composites there.
-        if (tevOut.a <= 0.0) {
-            discard;
-        }
-        color = float3(1.0);
         break;
     default:
         // final TEV output (FinalTev, ChannelPerPixel and IdentityTexMtx)

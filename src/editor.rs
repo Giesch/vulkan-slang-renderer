@@ -5,6 +5,7 @@
 
 use egui::Ui;
 use facet::Facet;
+use glam::Vec3;
 
 /// A value edited via egui::Slider with a defined range.
 #[derive(Clone, Debug, Facet)]
@@ -62,6 +63,43 @@ impl Checkbox {
     /// Render this checkbox in egui, returning true if the value changed.
     pub fn render_ui(&mut self, ui: &mut Ui) -> bool {
         ui.checkbox(&mut self.checked, "").changed()
+    }
+}
+
+/// An RGB color edited via egui's color picker.
+///
+/// Stored as bytes, the way a GX color register holds it, so the widget reads
+/// the same as the `rgb8(...)` constants and the decomp they were copied from.
+/// egui treats these as sRGB, which is the right space: the shader's final
+/// `srgbDecode` says the byte/255 values reaching it are gamma-encoded.
+///
+/// No alpha, deliberately — the GX color overrides this drives are RGB-only.
+#[derive(Clone, Debug, Facet)]
+pub struct ColorPicker {
+    pub rgb: [u8; 3],
+}
+
+impl ColorPicker {
+    pub fn new(rgb: [u8; 3]) -> Self {
+        Self { rgb }
+    }
+
+    /// Build from the 0..1 form uniforms take, so a caller can seed the widget
+    /// from the constant it replaces instead of restating the bytes.
+    pub fn from_vec3(rgb: Vec3) -> Self {
+        let byte = |x: f32| (x * 255.0).round().clamp(0.0, 255.0) as u8;
+        Self::new([byte(rgb.x), byte(rgb.y), byte(rgb.z)])
+    }
+
+    /// The 0..1 form uniforms take.
+    pub fn to_vec3(&self) -> Vec3 {
+        let [r, g, b] = self.rgb;
+        Vec3::new(r as f32, g as f32, b as f32) / 255.0
+    }
+
+    /// Render this color picker in egui, returning true if the color changed.
+    pub fn render_ui(&mut self, ui: &mut Ui) -> bool {
+        ui.color_edit_button_srgb(&mut self.rgb).changed()
     }
 }
 
