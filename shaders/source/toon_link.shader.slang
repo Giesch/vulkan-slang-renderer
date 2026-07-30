@@ -5,6 +5,27 @@ module toon_link;
 import mvp;
 import tev;
 
+// Keep in sync with examples/toon_link.rs's module doc comment. The variant
+// names are what the debug window's radio buttons are labelled with, via
+// `pascal_to_display` — there is no parallel list of names on the Rust side.
+enum DebugMode : uint {
+    FinalTev = 0,         // final TEV output
+    WorldNormals = 1,     // world-space normals
+    Uv0 = 2,
+    TevAlpha = 3,         // final TEV alpha as grayscale
+    RasterColor0 = 4,     // the rasterized channel, pre-TEV
+    Texgen1Coord = 5,     // texgen 1's coord as red/green
+    RawTex0 = 6,          // raw tex0 at texcoord 0
+    RawTex1 = 7,          // raw tex1 at texcoord 1
+    ChannelPerPixel = 8,  // channel recomputed per fragment
+    IdentityTexMtx = 9,   // texgen matrices forced to identity
+    // Selecting this one also switches the example to RenderMode::MaskWhite,
+    // which draws only the four `*damA` mask batches. On its own it would paint
+    // the whole model white, so the two must move together — see
+    // `ToonLink::mode` in examples/toon_link.rs.
+    MaskWhite = 10,       // solid white wherever TEV alpha > 0
+}
+
 ParameterBlock<ToonLinkParams> params;
 
 struct ToonLinkParams {
@@ -24,28 +45,11 @@ struct ToonLinkParams {
     //            GREATER 4, NEQUAL 5, GEQUAL 6, ALWAYS 7
     uint4 alphaCompare;      // comp0, ref0, comp1, ref1
     uint  alphaCompareOp;    // GXAlphaOp: AND 0, OR 1, XOR 2, XNOR 3
-    // See DEBUG_* below.
-    //
     // NOTE: changing this struct's shape while `just dev` runs trips
     // assert_shader_interface_unchanged — body edits hot-reload, shape
     // edits need `just shaders` + a restart.
-    uint  debugMode;
+    DebugMode debugMode;
 }
-
-// Keep in sync with examples/toon_link.rs's legend and module doc comment.
-static const uint DEBUG_TEV = 0;         // final TEV output
-static const uint DEBUG_NORMALS = 1;     // world-space normals
-static const uint DEBUG_UV0 = 2;         // uv0
-static const uint DEBUG_ALPHA = 3;       // final TEV alpha as grayscale
-static const uint DEBUG_COLOR0 = 4;      // the rasterized channel, pre-TEV
-static const uint DEBUG_SRTG = 5;        // texgen 1's coord as red/green
-static const uint DEBUG_TEX0 = 6;        // raw tex0 at texcoord 0
-static const uint DEBUG_TEX1 = 7;        // raw tex1 at texcoord 1
-static const uint DEBUG_CHAN_PER_PIXEL = 8;  // channel recomputed per fragment
-static const uint DEBUG_IDENTITY_TEXMTX = 9; // texgen matrices forced to identity
-// Not part of the R/F cycle — `Key::M` forces it, and only the four `*damA`
-// mask batches draw while it is live. See RenderMode::MaskWhite.
-static const uint DEBUG_WHITE = 10;      // solid white wherever TEV alpha > 0
 
 struct Vertex {
     float3 position;
@@ -77,7 +81,7 @@ FragVertex vertMain(Vertex vertex) {
     let worldNormal = params.mvp.rotateDirection(vertex.normal);
 
     let color0 = params.tev.evalRasterColor(worldNormal);
-    let forceIdentity = params.debugMode == DEBUG_IDENTITY_TEXMTX;
+    let forceIdentity = params.debugMode == DebugMode.IdentityTexMtx;
     let texcoord01 = params.tev.evalTexGens(vertex.uv0, color0, forceIdentity);
 
     return FragVertex(position, worldNormal, vertex.uv0, color0, texcoord01);
@@ -136,7 +140,7 @@ float4 fragMain(FragVertex fragVertex) : SV_TARGET {
     // stages, since the channel feeds RASC/RASA and the SRTG texcoord.
     float4 color0 = fragVertex.color0;
     float4 texcoord01 = fragVertex.texcoord01;
-    if (params.debugMode == DEBUG_CHAN_PER_PIXEL) {
+    if (params.debugMode == DebugMode.ChannelPerPixel) {
         color0 = params.tev.evalRasterColor(fragVertex.normal);
         texcoord01 = params.tev.evalTexGens(fragVertex.uv0, color0, false);
     }
@@ -156,45 +160,47 @@ float4 fragMain(FragVertex fragVertex) : SV_TARGET {
 
     float3 color;
     switch (params.debugMode) {
-    case DEBUG_NORMALS:
+    case DebugMode.WorldNormals:
+        // world-space normals as color (the P6 diagnostic)
         color = normalize(fragVertex.normal) * 0.5 + 0.5;
         break;
-    case DEBUG_UV0:
+    case DebugMode.Uv0:
+        // uv0: red = u, green = v
         color = float3(fragVertex.uv0, 0.0);
         break;
-    case DEBUG_ALPHA:
+    case DebugMode.TevAlpha:
         // the TEV output alpha — what the alpha test and the blend both see
         color = float3(tevOut.a);
         break;
-    case DEBUG_COLOR0:
+    case DebugMode.RasterColor0:
         // the lighting channel before TEV touches it; must be smoothly shaded
         color = color0.rgb;
         break;
-    case DEBUG_SRTG:
+    case DebugMode.Texgen1Coord:
         // texgen 1's coord. On the lit materials that is the SRTG ramp lookup;
         // on eyeL/eyeR it is the pupil UV, which is the useful reading there.
         color = float3(texcoord01.zw, 0.0);
         break;
-    case DEBUG_TEX0:
+    case DebugMode.RawTex0:
         color = params.tex0.Sample(texcoord01.xy).rgb;
         break;
-    case DEBUG_TEX1:
+    case DebugMode.RawTex1:
         color = params.tex1.Sample(texcoord01.zw).rgb;
         break;
-    case DEBUG_WHITE:
-        // The mask view (`Key::M`). The `*damA` materials compare Always, so
-        // their silhouette lives entirely in alpha and the GX alpha test above
-        // never discards; this discard is what makes the shape visible. It is
-        // the same predicate the composite pass runs (`Greater 0` on the same
-        // texel of the same texture through the same texcoord), so what is
-        // white here is exactly what composites there.
+    case DebugMode.MaskWhite:
+        // The mask view. The `*damA` materials compare Always, so their
+        // silhouette lives entirely in alpha and the GX alpha test above never
+        // discards; this discard is what makes the shape visible. It is the
+        // same predicate the composite pass runs (`Greater 0` on the same texel
+        // of the same texture through the same texcoord), so what is white here
+        // is exactly what composites there.
         if (tevOut.a <= 0.0) {
             discard;
         }
         color = float3(1.0);
         break;
     default:
-        // final TEV output (modes 0, 8 and 9)
+        // final TEV output (FinalTev, ChannelPerPixel and IdentityTexMtx)
         color = tevOut.rgb;
         break;
     }

@@ -26,6 +26,16 @@ via destination alpha, which is the entire point of the technique.
    recorded risks and corrects one misdiagnosis**
 5. Recorded facts below filled in
 
+*Superseded by the merge with `main`, which had meanwhile moved this example's
+debug controls into the egui window and taught shader reflection to emit enums.
+Deliverables 2, 3 and 3a landed as written and were then reworked: `DEBUG_WHITE`
+is now the `MaskWhite` variant of a slang `enum DebugMode`, selecting it in the
+debug window is what switches to `RenderMode::MaskWhite`, and deliverable 3 was
+reverted — `Key::M`, and keyboard input in this example generally, is gone.
+Everything below that says `Key::M` or `M` means "select `Mask White` in the
+debug window". Nothing about the passes, the write masks or the draw order
+changed.*
+
 No converter change, no asset change, no codegen change. The golden hashes in
 `scripts/link_converted.sha256` must not move.
 
@@ -267,10 +277,18 @@ used exactly that to confirm the two-pass reordering.
 `pe_mode()` (`:119-126`) stays — it is still what separates group 5 from the
 decals — but the `PeMode::Translucent` arm now feeds the role classifier.
 
-## Step 5 — example: the `Key::M` mask view
+## Step 5 — example: the mask view
 
 `RenderMode::MaskWhite` draws **only the four `*damA` mask batches**, as solid
-white on black. `Key::M` toggles it against `Hardware`.
+white on black.
+
+*As merged: selected by picking `Mask White` in the debug window's `debug_mode`
+radio group, not by a key. `ToonLink::mode` derives the `RenderMode` from the
+debug mode rather than reading a control of its own, because
+`render_unit_enum` renders every variant of a unit enum as a radio button with no
+way to hide one — a separate toggle would leave `Mask White` selectable while the
+draw order stayed `Hardware`, which paints the whole model white. Tying the two
+to one control makes that state unreachable.*
 
 The mask pass is invisible by construction under `Hardware` — decision 3 turns
 its colour writes off and its entire product is destination alpha, which nothing
@@ -296,15 +314,12 @@ Mechanics:
   the source-alpha blend (blending white *by* the coverage would put back the
   antialiased grey the discard exists to remove), and no depth test (nothing else
   is drawn, so an occluded mask would just be an invisible one).
-- The white itself is `DEBUG_WHITE` in `toon_link.shader.slang` — `discard` where
-  `tevOut.a <= 0`, else `float3(1.0)`. The discard is load-bearing: the `*damA`
-  materials compare `Always`, so the GX alpha test never removes anything and a
-  flat white would paint the decal *quad*, not the eye. It is deliberately not in
-  `DEBUG_MODE_NAMES`, so `R`/`F` cannot cycle into it; `draw` forces it while the
-  mode is live and leaves `self.debug_mode` alone, so toggling back restores it.
-
-Adding a `Key` variant means a new arm in `src/game/traits.rs`, exactly as P8
-did for `Key::T` (deviation 15 in `phase_08.md`).
+- The white itself is `DebugMode.MaskWhite` in `toon_link.shader.slang` —
+  `discard` where `tevOut.a <= 0`, else `float3(1.0)`. The discard is
+  load-bearing: the `*damA` materials compare `Always`, so the GX alpha test
+  never removes anything and a flat white would paint the decal *quad*, not the
+  eye. It is the one case whose branch moves the `shader_branching_snapshots`
+  count (`toon_link.frag.spv: 80 → 81`).
 
 *Superseded during implementation.* This step originally built a second pipeline
 for all 24 slots with the **pre-phase (P8) raster state** — default
@@ -419,13 +434,14 @@ exists (see step 5), so these are judged by eye:
 
 - [ ] Black rectangle gone — both eyes and both brows
 - [ ] Pupil visible; brows correct; noclip side-by-side recorded
-- [ ] `M` shows four solid-white eye/brow silhouettes on black, matching the
-      lash shape seen in debug mode 3 — no rectangle, no grey fringe. Toggling
-      back restores whatever debug mode `R`/`F` had selected
+- [ ] `Mask White` shows four solid-white eye/brow silhouettes on black, matching
+      the lash shape seen in `Tev Alpha` — no rectangle, no grey fringe, and
+      **not** a white model (that would mean the draw order did not switch with
+      the debug mode)
 - [ ] Eyes remain visible when the bangs cross them
-- [ ] `Q`/`E` re-confirms `ear(2)` is the hair (risk 6). Note isolating any of
-      the 8 mask/erase batches shows a **black frame by design** — colour writes
-      are off; `print_isolation` says so
+- [ ] The `batch` slider re-confirms `ear(2)` is the hair (risk 6). Note
+      isolating any of the 8 mask/erase batches shows a **black frame by
+      design** — colour writes are off; `dump_selection` says so
 - [ ] `depth_write` isolation and debug mode 9 pupil A/B recorded
 - [ ] Sweep 16/16, hot reload clean per mode, no VMA leak
 

@@ -7,6 +7,7 @@ use std::io::Cursor;
 
 use ash::util::read_spv;
 use ash::vk;
+use facet::Facet;
 use serde::Serialize;
 
 pub use super::mvp::MVPMatrices;
@@ -21,6 +22,59 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, Facet)]
+#[repr(u32)]
+// variant names come from the shader author, so clippy's shared-prefix lint
+// would otherwise force renaming away from the slang spelling
+#[allow(clippy::enum_variant_names)]
+pub enum DebugMode {
+    #[default]
+    FinalTev = 0,
+    WorldNormals = 1,
+    Uv0 = 2,
+    TevAlpha = 3,
+    RasterColor0 = 4,
+    Texgen1Coord = 5,
+    RawTex0 = 6,
+    RawTex1 = 7,
+    ChannelPerPixel = 8,
+    IdentityTexMtx = 9,
+    MaskWhite = 10,
+}
+
+const _: () = assert!(std::mem::size_of::<DebugMode>() == 4);
+
+impl From<DebugMode> for u32 {
+    fn from(value: DebugMode) -> u32 {
+        value as u32
+    }
+}
+
+// A repr(int) enum holding a value outside its declared variants is undefined
+// behavior. Data flows CPU -> GPU here, so the CPU never materializes a value it
+// did not construct; any future readback must come back through this TryFrom,
+// never a transmute or an `as` cast into the enum.
+impl TryFrom<u32> for DebugMode {
+    type Error = u32;
+
+    fn try_from(value: u32) -> Result<Self, u32> {
+        match value {
+            0 => Ok(Self::FinalTev),
+            1 => Ok(Self::WorldNormals),
+            2 => Ok(Self::Uv0),
+            3 => Ok(Self::TevAlpha),
+            4 => Ok(Self::RasterColor0),
+            5 => Ok(Self::Texgen1Coord),
+            6 => Ok(Self::RawTex0),
+            7 => Ok(Self::RawTex1),
+            8 => Ok(Self::ChannelPerPixel),
+            9 => Ok(Self::IdentityTexMtx),
+            10 => Ok(Self::MaskWhite),
+            other => Err(other),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct ToonLinkParams {
@@ -28,7 +82,7 @@ pub struct ToonLinkParams {
     pub tev: TevParams,
     pub alpha_compare: glam::UVec4,
     pub alpha_compare_op: u32,
-    pub debug_mode: u32,
+    pub debug_mode: DebugMode,
     pub _padding_0: [u8; 8],
 }
 
@@ -43,7 +97,7 @@ const _: () = assert!(std::mem::size_of::<glam::UVec4>() == 16);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare_op) == 1536);
 const _: () = assert!(std::mem::size_of::<u32>() == 4);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 1540);
-const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::size_of::<DebugMode>() == 4);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]

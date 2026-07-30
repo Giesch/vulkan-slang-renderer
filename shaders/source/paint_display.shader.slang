@@ -23,7 +23,7 @@ struct DisplayParams {
     Sampler2D paperHeight;
     Sampler2D wetMask;
     float2 texelSize;
-    uint debugView;
+    DebugView debugView;
     float canvasAspect;
     float windowAspect;
     PigmentKM pigment0;
@@ -110,7 +110,7 @@ float4 fragMain(FragInput input) : SV_Target {
     }
 
     // Debug: show wet mask as grayscale
-    if (displayParams.debugView == uint(DebugView.WetAreaMask)) {
+    if (displayParams.debugView == DebugView.WetAreaMask) {
         let wet = displayParams.wetMask.Sample(uv).r;
         return float4(wet, wet, wet, 1.0);
     }

@@ -1,5 +1,18 @@
 # Shader enums: implementation plan
 
+> **STATUS: implemented, with §7 deliberately NOT taken.** Only `uint` and `int`
+> tags are supported; `uint8_t`/`uint16_t` are rejected at reflection, so
+> `src/renderer.rs` is untouched and no new device features are required. This is
+> the alternative §7 itself offers, chosen because narrow tags would add optional
+> Vulkan feature requirements for a width no shader here needs.
+>
+> Other deviations, forced by what slang actually does, are recorded inline in §11:
+> array/anonymous/empty enums and enum-typed vertex inputs are all *rejected* rather
+> than degraded; `try_add_enum_def` dedups within one shader only (matching
+> `try_add_struct_def`), with cross-shader agreement enforced in
+> `collect_shared_modules`; and shared modules carry a `GeneratedTypeDefs` bundle
+> rather than two parallel maps.
+
 ## Context
 
 Slang shaders can declare C-style enums, but today they cannot cross the reflection boundary.
@@ -24,9 +37,10 @@ type safety and readability in the generated bindings.
 
 ## Settled decisions
 
-- **Tag types supported**: `uint` → `#[repr(u32)]`, `int` → `#[repr(i32)]`, `uint16_t` →
-  `#[repr(u16)]`, `uint8_t` → `#[repr(u8)]`. A bare `enum X { .. }` (no tag annotation) reflects as
-  `int32` and is therefore accepted as `#[repr(i32)]`.
+- **Tag types supported**: ~~`uint` → `#[repr(u32)]`, `int` → `#[repr(i32)]`, `uint16_t` →
+  `#[repr(u16)]`, `uint8_t` → `#[repr(u8)]`.~~ **As built: `uint` → `#[repr(u32)]` and `int` →
+  `#[repr(i32)]` only.** A bare `enum X { .. }` (no tag annotation) reflects as `int32` and is
+  therefore accepted as `#[repr(i32)]`. `uint8_t`/`uint16_t` are rejected — see the §7 note.
 - **Scope**: enum fields are allowed anywhere a scalar is allowed today — std140 ParameterBlock
   structs, nested structs inside them, and std430 BDA pointee structs. Enums declared in shared
   `.slang` modules get hoisted into the shared generated module exactly like shared structs.
@@ -385,7 +399,32 @@ Note that `DebugView` in `paint_display.shader.slang` is declared in the *shader
 it stays local (`source_module: None`) and is emitted directly into
 `src/generated/shader_atlas/paint_display.rs`.
 
-## 7. Renderer device features (uint8/uint16 tags)
+## 7. Renderer device features (uint8/uint16 tags) — NOT TAKEN
+
+> **Decision: this section was deliberately skipped.** `src/renderer.rs` is unchanged, and
+> `uint8_t`/`uint16_t` tags are rejected in `enum_tag_from_slang` instead — the alternative this
+> section offers in its closing paragraph.
+>
+> The rationale: these are not extensions (`REQUIRED_DEVICE_EXTENSIONS` is untouched, and nothing
+> here needs an extension string). `shaderInt16` is a core Vulkan 1.0 feature bool and the 8/16-bit
+> access features are core Vulkan 1.2, promoted from `VK_KHR_8bit_storage` / `VK_KHR_16bit_storage`.
+> But they are all still *optional* feature bits that a conformant device may report as false, so
+> requiring them is a real narrowing of supported hardware — bought for a tag width no shader in
+> this repo uses. Every enum here (`DebugView`, `DebugMode`, and the GX vocabulary a future
+> `GXCompare` would cover) fits a 32-bit tag.
+>
+> Rejecting at reflection turns a would-be device-creation failure into a build-time error naming
+> the offending enum. Pinned by `sub_32_bit_enum_tags_are_rejected`.
+>
+> If narrow tags are ever genuinely wanted, this section is the recipe — plus the two corrections
+> below it missed: the `missing_features` list in `choose_physical_device` (`src/renderer.rs:3148`)
+> and the `anyhow::bail!` at `:3191` are hand-maintained and must be updated in lockstep, and
+> `generate_std430_struct_fields`'s `max_alignment` floor of 4 must drop to 1, or a pointee whose
+> members are all sub-4-byte enums computes a size that disagrees with slang's reflected
+> `pointee_size`.
+
+The original plan follows, for reference.
+
 
 Per Verified fact 5, a `uint8_t`/`uint16_t`-tagged enum read in a shader forces
 `UniformAndStorageBuffer8BitAccess` / `UniformAndStorageBuffer16BitAccess` / `Int8` / `Int16`.
@@ -531,19 +570,34 @@ done
   into a uniform buffer and nothing reads it back — so the CPU never materializes a value it did not
   construct. If a readback path (GPU picking, compute → CPU) ever wants an enum field, it must go
   through the generated `TryFrom` rather than `transmute`. Worth a comment in the generated file.
-- **`field.ty()` on non-enum fields.** The new check calls `VariableLayout::ty()` on every field,
-  including resources and pointers. It should be a cheap declared-type lookup, but if it turns out
-  to be `None` or surprising for some existing field kind, the guard is `if let Some(..) && kind ==
-  Enum`, which degrades to today's behavior. Confirm during P0 that no existing snapshot changes.
+- **`field.ty()` on non-enum fields.** *(SETTLED — no effect.)* The guard calls
+  `VariableLayout::ty()` on every field, including resources and pointers. Every pre-existing
+  snapshot stayed byte-identical after P0, and both `paint_display.spv` and `toon_link.spv` were
+  unchanged by the P5 migration — only the reflection JSON gained the enum node.
 - **Enum inside a resource result type.** `ResourceResultType` (`json/parameters.rs:183`) has its
   own `Scalar`/`Vector`/`Struct` shape reached from `reflect_struct_fields` at `:284-319`. A struct
   result type recurses through `reflect_struct_fields`, so an enum there is handled; a bare enum
   result type is not. Not worth supporting — the existing `todo!()` at `:319` is the right failure.
-- **Array of enums is unaddressed.** Array support (`StructField::Array`) landed in `0d08a7d`,
-  after this document was written, so nothing in §1–§5 covers `DebugView modes[4]`. Out of scope
-  for P0–P5, but the §1 guard needs a deliberate answer during P0: an array field's declared type
-  is an array whose *element* is the enum, so `declared.kind()` is `Array`, not `Enum`, and the
-  field falls through to today's array path and degrades to `[u32; 4]`. Confirm that is what
-  happens rather than a panic, and say so in the doc when it is settled.
+- **Array of enums.** *(SETTLED — rejected, loudly.)* `DebugView modes[4]` falls through to the
+  array path as predicted, but does **not** degrade to `[u32; 4]`: the element's *layout* is its tag
+  type's, i.e. a scalar, and `validate_array_element` accepts only 4-component vector elements. So it
+  bails with "array field 'modes': only float4/int4/uint4 element arrays are supported". Pinned by
+  `enum_arrays_are_rejected`, because the failure mode if that gate ever loosens is a silent degrade.
+- **Anonymous enums.** *(SETTLED — rejected.)* Slang accepts `enum { A = 0 } bad;` and synthesizes
+  the name `SLANG_anonymous_0` rather than reporting no name, so the `name()`-is-`None` check the
+  plan assumed is unreachable. Codegen would emit a Rust type named `SLANG_anonymous_0`, which trips
+  clippy's `non_camel_case_types` under `just lint`'s `-D warnings` — and which no caller could
+  meaningfully name. Reflection now rejects the synthesized prefix explicitly.
+- **Empty enums.** *(SETTLED — rejected.)* Slang also accepts `enum Bad : uint {}`; `Default` and
+  `TryFrom` both need a first case, so reflection bails.
+- **Enum-typed vertex inputs.** *(SETTLED — rejected in reflection, not codegen.)* The plan expected
+  these to reach the `vk::Format` `todo!()` at `build_tasks.rs:305`. They do not: a vertex input
+  field reflects with a `VaryingInput` binding, so the guard requires `Binding::Uniform` and bails
+  with a message naming the field.
+- **Sign extension on unsigned tags.** `default_value_int()` returns `i64`, so a `uint` case may
+  arrive sign-extended; emitting `-1 => ..` into a `match value: u32` would not compile. Values are
+  normalized into the tag's range at reflection time.
+- **`GXCompare` / `mm::CompareType` ownership** is untouched — `toon_link`'s migration covered only
+  `DebugMode`, per §9. Reshaping `uint4 alphaCompare` into named fields remains the prerequisite.
 - **Askama duplication.** Three near-identical enum blocks across templates. Accepted deliberately
   (§5), but if a fourth template appears, factor all of it out at once.

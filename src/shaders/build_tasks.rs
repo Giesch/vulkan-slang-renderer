@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use askama::Template;
-use heck::ToSnakeCase;
+use heck::{ToSnakeCase, ToUpperCamelCase};
 
 use crate::util::relative_path;
 
@@ -132,29 +132,30 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
     if config.generate_rust_source {
         let mut generated_source_files = vec![];
 
-        // Pass 2: Identify shared modules from all shader struct defs
-        let all_shader_defs: Vec<(String, Vec<GeneratedStructDefinition>)> = graphics_data
+        // Pass 2: Identify shared modules from all shader type defs
+        let all_shader_defs: Vec<(String, GeneratedTypeDefs)> = graphics_data
             .iter()
-            .map(|d| (d.shader_name.clone(), d.struct_defs.clone()))
+            .map(|d| (d.shader_name.clone(), d.defs.clone()))
             .chain(
                 compute_data
                     .iter()
-                    .map(|d| (d.shader_name.clone(), d.struct_defs.clone())),
+                    .map(|d| (d.shader_name.clone(), d.defs.clone())),
             )
             .collect();
 
         let shared_modules = collect_shared_modules(&all_shader_defs);
 
         // Generate shared module files
-        for (module_name, module_defs) in &shared_modules {
-            let cross_imports = cross_module_imports(module_name, module_defs, &shared_modules);
+        for (module_name, module) in &shared_modules {
+            let cross_imports = cross_module_imports(module_name, module, &shared_modules);
 
             let template = SharedModuleTemplate {
                 module_doc_lines: vec![format!(
                     "shared types from slang module: {module_name}.slang"
                 )],
                 cross_module_imports: cross_imports,
-                struct_defs: module_defs.clone(),
+                enum_defs: module.enum_defs.clone(),
+                struct_defs: module.struct_defs.clone(),
             };
 
             let file_name = format!("{module_name}.rs");
@@ -248,7 +249,7 @@ fn add_top_level_rust_modules(
 /// Intermediate data collected from a graphics shader before rendering
 struct GraphicsShaderData {
     shader_name: String,
-    struct_defs: Vec<GeneratedStructDefinition>,
+    defs: GeneratedTypeDefs,
     vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
     source_file_name: String,
@@ -259,7 +260,7 @@ fn collect_graphics_shader_data(
     reflection_json: &ReflectionJson,
     type_to_module: &HashMap<String, String>,
 ) -> GraphicsShaderData {
-    let mut struct_defs = vec![];
+    let mut defs = GeneratedTypeDefs::default();
     let mut vertex_impl_blocks = vec![];
 
     // NOTE vertex/index data is not a Resources field: whether a pipeline owns
@@ -279,7 +280,7 @@ fn collect_graphics_shader_data(
                 let mut generated_fields = vec![];
                 for field in &struct_param.fields {
                     if let Some(generated_field) =
-                        gather_struct_defs(field, &mut struct_defs, Some(Alignment::Std140))
+                        gather_struct_defs(field, &mut defs, Some(Alignment::Std140))
                     {
                         generated_fields.push(generated_field);
                     };
@@ -319,14 +320,14 @@ fn collect_graphics_shader_data(
                 };
                 vertex_impl_blocks.push(vert_block);
 
-                struct_defs.push(def);
+                defs.struct_defs.push(def);
             }
         }
     }
 
     for GlobalParameter::ParameterBlock(parameter_block) in &reflection_json.global_parameters {
         let (param_block_fields, _struct_alignment, expected_size) =
-            generate_std140_struct_fields(&parameter_block.element_type.fields, &mut struct_defs);
+            generate_std140_struct_fields(&parameter_block.element_type.fields, &mut defs);
 
         for field in &parameter_block.element_type.fields {
             if let Some(req) = required_resource(field) {
@@ -337,7 +338,7 @@ fn collect_graphics_shader_data(
         let has_uniform_fields = !param_block_fields.is_empty();
 
         let type_name = &parameter_block.element_type.type_name;
-        struct_defs.push(GeneratedStructDefinition {
+        defs.struct_defs.push(GeneratedStructDefinition {
             type_name: type_name.to_string(),
             source_module: None,
             fields: param_block_fields,
@@ -358,7 +359,7 @@ fn collect_graphics_shader_data(
         }
     }
 
-    struct_defs.reverse();
+    defs.struct_defs.reverse();
 
     let resources_fields = required_resources
         .iter()
@@ -383,7 +384,7 @@ fn collect_graphics_shader_data(
         alignment: None,
         expected_size: None,
     };
-    struct_defs.push(resources_struct);
+    defs.struct_defs.push(resources_struct);
 
     let shader_name = reflection_json
         .source_file_name
@@ -417,11 +418,11 @@ fn collect_graphics_shader_data(
     };
 
     // Tag struct defs with source module info
-    tag_source_modules(&mut struct_defs, type_to_module, &shader_name);
+    tag_source_modules(&mut defs, type_to_module, &shader_name);
 
     GraphicsShaderData {
         shader_name,
-        struct_defs,
+        defs,
         vertex_impl_blocks,
         shader_impl,
         source_file_name: reflection_json.source_file_name.clone(),
@@ -431,17 +432,12 @@ fn collect_graphics_shader_data(
 /// Render a graphics shader file, filtering out shared types and adding imports
 fn render_graphics_shader_file(
     data: &GraphicsShaderData,
-    shared_modules: &BTreeMap<String, Vec<GeneratedStructDefinition>>,
+    shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
 ) -> GeneratedFile {
-    let shared_module_imports = shared_imports_for_shader(&data.struct_defs, shared_modules);
+    let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
     // Filter out shared types — they're in their own module files
-    let local_struct_defs: Vec<GeneratedStructDefinition> = data
-        .struct_defs
-        .iter()
-        .filter(|d| d.source_module.is_none())
-        .cloned()
-        .collect();
+    let local = local_type_defs(&data.defs);
 
     let module_doc_lines = vec![format!(
         "generated from slang shader: {}",
@@ -451,7 +447,8 @@ fn render_graphics_shader_file(
     let content = ShaderAtlasEntryModule {
         module_doc_lines,
         shared_module_imports,
-        struct_defs: local_struct_defs,
+        enum_defs: local.enum_defs,
+        struct_defs: local.struct_defs,
         vertex_impl_blocks: data.vertex_impl_blocks.clone(),
         shader_impl: data.shader_impl.clone(),
     }
@@ -482,6 +479,7 @@ struct ShaderAtlasModule {
 struct ShaderAtlasEntryModule {
     module_doc_lines: Vec<String>,
     shared_module_imports: Vec<SharedModuleImport>,
+    enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
     vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
@@ -492,8 +490,28 @@ struct ShaderAtlasEntryModule {
 struct ShaderComputeEntryModule {
     module_doc_lines: Vec<String>,
     shared_module_imports: Vec<SharedModuleImport>,
+    enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
     shader_impl: GeneratedComputeShaderImpl,
+}
+
+/// The types a shader emits into its own file — everything not hoisted into a
+/// shared slang module's file.
+fn local_type_defs(defs: &GeneratedTypeDefs) -> GeneratedTypeDefs {
+    GeneratedTypeDefs {
+        struct_defs: defs
+            .struct_defs
+            .iter()
+            .filter(|d| d.source_module.is_none())
+            .cloned()
+            .collect(),
+        enum_defs: defs
+            .enum_defs
+            .iter()
+            .filter(|d| d.source_module.is_none())
+            .cloned()
+            .collect(),
+    }
 }
 
 #[derive(Clone)]
@@ -542,7 +560,7 @@ impl GeneratedShaderImpl {
 /// Intermediate data collected from a compute shader before rendering
 struct ComputeShaderData {
     shader_name: String,
-    struct_defs: Vec<GeneratedStructDefinition>,
+    defs: GeneratedTypeDefs,
     shader_impl: GeneratedComputeShaderImpl,
     source_file_name: String,
 }
@@ -552,12 +570,12 @@ fn collect_compute_shader_data(
     reflection_json: &ComputeReflectionJson,
     type_to_module: &HashMap<String, String>,
 ) -> ComputeShaderData {
-    let mut struct_defs = vec![];
+    let mut defs = GeneratedTypeDefs::default();
     let mut required_resources = vec![];
 
     for GlobalParameter::ParameterBlock(parameter_block) in &reflection_json.global_parameters {
         let (param_block_fields, _struct_alignment, expected_size) =
-            generate_std140_struct_fields(&parameter_block.element_type.fields, &mut struct_defs);
+            generate_std140_struct_fields(&parameter_block.element_type.fields, &mut defs);
 
         for field in &parameter_block.element_type.fields {
             if let Some(req) = required_resource(field) {
@@ -568,7 +586,7 @@ fn collect_compute_shader_data(
         let has_uniform_fields = !param_block_fields.is_empty();
 
         let type_name = &parameter_block.element_type.type_name;
-        struct_defs.push(GeneratedStructDefinition {
+        defs.struct_defs.push(GeneratedStructDefinition {
             type_name: type_name.to_string(),
             source_module: None,
             fields: param_block_fields,
@@ -589,7 +607,7 @@ fn collect_compute_shader_data(
         }
     }
 
-    struct_defs.reverse();
+    defs.struct_defs.reverse();
 
     let resources_fields = required_resources
         .iter()
@@ -614,7 +632,7 @@ fn collect_compute_shader_data(
         alignment: None,
         expected_size: None,
     };
-    struct_defs.push(resources_struct);
+    defs.struct_defs.push(resources_struct);
 
     let shader_name = reflection_json
         .source_file_name
@@ -648,11 +666,11 @@ fn collect_compute_shader_data(
     };
 
     // Tag struct defs with source module info
-    tag_source_modules(&mut struct_defs, type_to_module, &shader_name);
+    tag_source_modules(&mut defs, type_to_module, &shader_name);
 
     ComputeShaderData {
         shader_name,
-        struct_defs,
+        defs,
         shader_impl,
         source_file_name: reflection_json.source_file_name.clone(),
     }
@@ -661,16 +679,11 @@ fn collect_compute_shader_data(
 /// Render a compute shader file, filtering out shared types and adding imports
 fn render_compute_shader_file(
     data: &ComputeShaderData,
-    shared_modules: &BTreeMap<String, Vec<GeneratedStructDefinition>>,
+    shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
 ) -> GeneratedFile {
-    let shared_module_imports = shared_imports_for_shader(&data.struct_defs, shared_modules);
+    let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
-    let local_struct_defs: Vec<GeneratedStructDefinition> = data
-        .struct_defs
-        .iter()
-        .filter(|d| d.source_module.is_none())
-        .cloned()
-        .collect();
+    let local = local_type_defs(&data.defs);
 
     let module_doc_lines = vec![format!(
         "generated from slang compute shader: {}",
@@ -680,7 +693,8 @@ fn render_compute_shader_file(
     let content = ShaderComputeEntryModule {
         module_doc_lines,
         shared_module_imports,
-        struct_defs: local_struct_defs,
+        enum_defs: local.enum_defs,
+        struct_defs: local.struct_defs,
         shader_impl: data.shader_impl.clone(),
     }
     .render()
@@ -698,7 +712,7 @@ fn render_compute_shader_file(
 /// Returns (fields, struct_alignment, expected_size).
 fn generate_std430_struct_fields(
     source_fields: &[StructField],
-    struct_defs: &mut Vec<GeneratedStructDefinition>,
+    defs: &mut GeneratedTypeDefs,
 ) -> (Vec<GeneratedStructFieldDefinition>, usize, usize) {
     let mut generated_fields = Vec::new();
     let mut current_offset: usize = 0;
@@ -710,8 +724,7 @@ fn generate_std430_struct_fields(
         let alignment_for_nested = Some(Alignment::Std430 {
             struct_alignment: 16,
         });
-        let Some(mut gen_field) =
-            gather_struct_defs(source_field, struct_defs, alignment_for_nested)
+        let Some(mut gen_field) = gather_struct_defs(source_field, defs, alignment_for_nested)
         else {
             continue;
         };
@@ -728,7 +741,7 @@ fn generate_std430_struct_fields(
         gen_field.size = Some(field_size);
 
         // Track max alignment for struct alignment calculation
-        let field_align = field_alignment(&gen_field.type_name);
+        let field_align = field_alignment(&gen_field);
         max_alignment = max_alignment.max(field_align);
 
         // Insert padding if needed
@@ -765,7 +778,7 @@ fn generate_std430_struct_fields(
 /// Key difference from std430: nested structs always have 16-byte alignment in std140.
 fn generate_std140_struct_fields(
     source_fields: &[StructField],
-    struct_defs: &mut Vec<GeneratedStructDefinition>,
+    defs: &mut GeneratedTypeDefs,
 ) -> (Vec<GeneratedStructFieldDefinition>, usize, usize) {
     let mut generated_fields = Vec::new();
     let mut current_offset: usize = 0;
@@ -775,13 +788,12 @@ fn generate_std140_struct_fields(
         // Skip resources - they don't have offset/size and don't contribute to layout
         if matches!(source_field, StructField::Resource(_)) {
             // Still need to gather struct definitions for StructuredBuffer element types
-            let _ = gather_struct_defs(source_field, struct_defs, Some(Alignment::Std140));
+            let _ = gather_struct_defs(source_field, defs, Some(Alignment::Std140));
             continue;
         }
 
         // Get the generated field (and recurse for nested structs)
-        let Some(mut gen_field) =
-            gather_struct_defs(source_field, struct_defs, Some(Alignment::Std140))
+        let Some(mut gen_field) = gather_struct_defs(source_field, defs, Some(Alignment::Std140))
         else {
             continue;
         };
@@ -831,7 +843,7 @@ fn generate_std140_struct_fields(
 
 fn gather_struct_defs(
     field: &StructField,
-    struct_defs: &mut Vec<GeneratedStructDefinition>,
+    defs: &mut GeneratedTypeDefs,
     alignment: Option<Alignment>,
 ) -> Option<GeneratedStructFieldDefinition> {
     match field {
@@ -859,7 +871,7 @@ fn gather_struct_defs(
             // per-frame via Gpu::device_address — no descriptor, no Resources
             // entry.
             let (fields, struct_alignment, expected_size) =
-                generate_std430_struct_fields(&ptr.pointee_type.fields, struct_defs);
+                generate_std430_struct_fields(&ptr.pointee_type.fields, defs);
 
             assert_eq!(
                 expected_size, ptr.pointee_size,
@@ -868,7 +880,7 @@ fn gather_struct_defs(
             );
 
             try_add_struct_def(
-                struct_defs,
+                &mut defs.struct_defs,
                 GeneratedStructDefinition {
                     type_name: ptr.pointee_type.type_name.clone(),
                     source_module: None,
@@ -919,17 +931,13 @@ fn gather_struct_defs(
             // Use the same offset-based padding logic as top-level structs
             let (generated_sub_fields, nested_alignment, expected_size) = match alignment {
                 Some(Alignment::Std140) => {
-                    let (fields, _align, size) = generate_std140_struct_fields(
-                        &struct_field.struct_type.fields,
-                        struct_defs,
-                    );
+                    let (fields, _align, size) =
+                        generate_std140_struct_fields(&struct_field.struct_type.fields, defs);
                     (fields, Some(Alignment::Std140), Some(size))
                 }
                 Some(Alignment::Std430 { .. }) => {
-                    let (fields, align, size) = generate_std430_struct_fields(
-                        &struct_field.struct_type.fields,
-                        struct_defs,
-                    );
+                    let (fields, align, size) =
+                        generate_std430_struct_fields(&struct_field.struct_type.fields, defs);
                     (
                         fields,
                         Some(Alignment::Std430 {
@@ -941,9 +949,7 @@ fn gather_struct_defs(
                 None => {
                     let mut fields = vec![];
                     for sub_field in &struct_field.struct_type.fields {
-                        if let Some(field_def) =
-                            gather_struct_defs(sub_field, struct_defs, alignment)
-                        {
+                        if let Some(field_def) = gather_struct_defs(sub_field, defs, alignment) {
                             fields.push(field_def);
                         };
                     }
@@ -961,7 +967,7 @@ fn gather_struct_defs(
                 alignment: nested_alignment,
                 expected_size,
             };
-            try_add_struct_def(struct_defs, sub_struct_def);
+            try_add_struct_def(&mut defs.struct_defs, sub_struct_def);
 
             Some(GeneratedStructFieldDefinition::new(
                 struct_field.field_name.to_snake_case(),
@@ -1008,6 +1014,19 @@ fn gather_struct_defs(
                 format!("[{element_type}; {}]", array.element_count),
             ))
         }
+
+        StructField::Enum(enum_field) => {
+            try_add_enum_def(&mut defs.enum_defs, &enum_field.enum_type);
+
+            // A slang enum is laid out as its tag type, whose alignment equals
+            // its size. The name-based alignment helpers can't know that, so it
+            // travels with the field.
+            Some(GeneratedStructFieldDefinition::new_with_align(
+                enum_field.field_name.to_snake_case(),
+                enum_field.enum_type.type_name.clone(),
+                enum_field.enum_type.tag_type.size(),
+            ))
+        }
     }
 }
 
@@ -1026,6 +1045,58 @@ fn required_resource(field: &StructField) -> Option<RequiredResource> {
         },
 
         _ => None,
+    }
+}
+
+/// The generated type definitions gathered from one shader. Structs and enums
+/// travel together because a slang module can contribute either, and the shared
+/// module map is keyed by module name regardless of which kind it holds.
+#[derive(Debug, Clone, Default)]
+struct GeneratedTypeDefs {
+    struct_defs: Vec<GeneratedStructDefinition>,
+    enum_defs: Vec<GeneratedEnumDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct GeneratedEnumDefinition {
+    type_name: String,
+    /// Which slang module this type originated from (None = local to the shader)
+    source_module: Option<String>,
+    tag_type: EnumTagType,
+    cases: Vec<GeneratedEnumCase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GeneratedEnumCase {
+    variant_name: String,
+    value: i64,
+}
+
+impl GeneratedEnumDefinition {
+    fn trait_derive_line(&self) -> String {
+        // Debug/Clone/Copy/Serialize match what generated structs derive;
+        // PartialEq/Eq/Default/Facet are added because an enum is a value type
+        // callers compare, construct, and edit through the facet-driven UI.
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, Facet)]".to_string()
+    }
+
+    fn repr(&self) -> String {
+        self.tag_type.repr()
+    }
+
+    fn tag_rust_type(&self) -> &'static str {
+        self.tag_type.rust_type_name()
+    }
+
+    fn expected_size(&self) -> usize {
+        self.tag_type.size()
+    }
+
+    fn try_from_arms(&self) -> Vec<String> {
+        self.cases
+            .iter()
+            .map(|case| format!("{} => Ok(Self::{}),", case.value, case.variant_name))
+            .collect()
     }
 }
 
@@ -1103,6 +1174,9 @@ struct GeneratedStructFieldDefinition {
     offset: Option<usize>,
     /// reflected size within the GPU struct; None when offset is None
     size: Option<usize>,
+    /// the emitted Rust type's alignment, when the name-based helpers can't
+    /// derive it (generated enums). None means "look it up by type name".
+    rust_align: Option<usize>,
 }
 
 impl GeneratedStructFieldDefinition {
@@ -1112,6 +1186,17 @@ impl GeneratedStructFieldDefinition {
             type_name,
             offset: None,
             size: None,
+            rust_align: None,
+        }
+    }
+
+    fn new_with_align(field_name: String, type_name: String, rust_align: usize) -> Self {
+        Self {
+            field_name,
+            type_name,
+            offset: None,
+            size: None,
+            rust_align: Some(rust_align),
         }
     }
 
@@ -1121,6 +1206,7 @@ impl GeneratedStructFieldDefinition {
             type_name: format!("[u8; {size}]"),
             offset: None,
             size: None,
+            rust_align: None,
         }
     }
 }
@@ -1174,6 +1260,7 @@ fn field_offset_size(field: &StructField) -> Option<(usize, usize)> {
         StructField::Struct(s) => Some(&s.binding),
         StructField::Pointer(p) => Some(&p.binding),
         StructField::Array(a) => Some(&a.binding),
+        StructField::Enum(e) => Some(&e.binding),
         StructField::Resource(_) => None,
     };
 
@@ -1190,12 +1277,21 @@ fn parse_array_type(type_name: &str) -> Option<(&str, usize)> {
     Some((element, count.trim().parse().ok()?))
 }
 
+/// Returns the GPU alignment of a generated field, preferring an alignment the
+/// field carries explicitly. A generated enum's type name says nothing about its
+/// tag width, and the by-name fallback would assume 16 for it.
+fn field_alignment(field: &GeneratedStructFieldDefinition) -> usize {
+    field
+        .rust_align
+        .unwrap_or_else(|| field_alignment_by_name(&field.type_name))
+}
+
 /// Returns the alignment for a given Rust type name.
 /// These rules are the same for both std140 and std430 for basic types.
-fn field_alignment(type_name: &str) -> usize {
+fn field_alignment_by_name(type_name: &str) -> usize {
     // arrays share their element's alignment in both std140 and std430
     if let Some((element, _count)) = parse_array_type(type_name) {
-        return field_alignment(element);
+        return field_alignment_by_name(element);
     }
 
     match type_name {
@@ -1257,7 +1353,13 @@ fn rust_type_alignment(type_name: &str) -> Option<usize> {
 /// cannot be reproduced with a #[repr(C)] field of that type — unreachable under
 /// std140/std430, so it means a non-std GPU layout leaked into codegen.
 fn check_rust_placeable(gen_field: &GeneratedStructFieldDefinition, expected_offset: usize) {
-    if let Some(align) = rust_type_alignment(&gen_field.type_name)
+    // an explicit alignment wins: a generated enum's type name isn't in the
+    // by-name table, which would otherwise skip the check entirely
+    let alignment = gen_field
+        .rust_align
+        .or_else(|| rust_type_alignment(&gen_field.type_name));
+
+    if let Some(align) = alignment
         && !expected_offset.is_multiple_of(align)
     {
         panic!(
@@ -1273,6 +1375,54 @@ fn check_rust_placeable(gen_field: &GeneratedStructFieldDefinition, expected_off
 /// shaders see the same struct with different GPU layouts.
 fn struct_defs_compatible(a: &GeneratedStructDefinition, b: &GeneratedStructDefinition) -> bool {
     a.fields == b.fields
+}
+
+/// The tag is part of the ABI, so it's compared alongside the cases.
+fn enum_defs_compatible(a: &GeneratedEnumDefinition, b: &GeneratedEnumDefinition) -> bool {
+    a.tag_type == b.tag_type && a.cases == b.cases
+}
+
+/// Adds an enum definition if it doesn't already exist. Like try_add_struct_def
+/// this only dedups *within one shader* — enum_defs is allocated per shader, and
+/// cross-shader agreement is enforced for hoisted types in collect_shared_modules.
+fn try_add_enum_def(enum_defs: &mut Vec<GeneratedEnumDefinition>, enum_type: &EnumFieldType) {
+    let mut cases: Vec<GeneratedEnumCase> = vec![];
+    for case in &enum_type.cases {
+        let variant_name = case.name.to_upper_camel_case();
+
+        // rustc's duplicate-variant error doesn't mention the slang spelling
+        // the two cases came from, which is the only actionable part
+        if let Some(clash) = cases.iter().find(|c| c.variant_name == variant_name) {
+            panic!(
+                "enum '{}' cases '{}' and '{}' both generate the Rust variant \
+                '{variant_name}'; rename one in the shader",
+                enum_type.type_name, clash.variant_name, case.name,
+            );
+        }
+
+        cases.push(GeneratedEnumCase {
+            variant_name,
+            value: case.value,
+        });
+    }
+
+    let new_def = GeneratedEnumDefinition {
+        type_name: enum_type.type_name.clone(),
+        source_module: None,
+        tag_type: enum_type.tag_type,
+        cases,
+    };
+
+    if let Some(existing) = enum_defs.iter().find(|d| d.type_name == new_def.type_name) {
+        if !enum_defs_compatible(existing, &new_def) {
+            panic!(
+                "Incompatible enum definitions for '{}': cases or tag type differ",
+                new_def.type_name
+            );
+        }
+    } else {
+        enum_defs.push(new_def);
+    }
 }
 
 /// Adds a struct definition if it doesn't already exist.
@@ -1348,14 +1498,21 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
         .unwrap_or_else(|e| panic!("failed to reflect shared modules: {e}"))
 }
 
-/// Tag struct definitions with their source module based on the type→module map.
-/// Recursively tags nested structs.
+/// Tag type definitions with their source module based on the type→module map.
+/// The flat lists already contain nested types, so no recursion is needed.
 fn tag_source_modules(
-    struct_defs: &mut [GeneratedStructDefinition],
+    defs: &mut GeneratedTypeDefs,
     type_to_module: &HashMap<String, String>,
     current_shader_module: &str,
 ) {
-    for def in struct_defs.iter_mut() {
+    for def in defs.struct_defs.iter_mut() {
+        if let Some(module) = type_to_module.get(&def.type_name)
+            && module != current_shader_module
+        {
+            def.source_module = Some(module.clone());
+        }
+    }
+    for def in defs.enum_defs.iter_mut() {
         if let Some(module) = type_to_module.get(&def.type_name)
             && module != current_shader_module
         {
@@ -1370,17 +1527,21 @@ struct SharedModuleImport {
 }
 
 /// Collect shared type definitions from all shaders into per-module groups.
-/// Returns (module_name → definitions) for types that appear in more than one shader.
+/// Returns (module_name → definitions) for types declared in a shared slang module.
 fn collect_shared_modules(
-    all_shader_defs: &[(String, Vec<GeneratedStructDefinition>)],
-) -> BTreeMap<String, Vec<GeneratedStructDefinition>> {
-    let mut modules: BTreeMap<String, Vec<GeneratedStructDefinition>> = BTreeMap::new();
+    all_shader_defs: &[(String, GeneratedTypeDefs)],
+) -> BTreeMap<String, GeneratedTypeDefs> {
+    let mut modules: BTreeMap<String, GeneratedTypeDefs> = BTreeMap::new();
 
     for (shader_name, defs) in all_shader_defs {
-        for def in defs {
+        for def in &defs.struct_defs {
             if let Some(ref module_name) = def.source_module {
-                let module_defs = modules.entry(module_name.clone()).or_default();
-                match module_defs.iter().find(|d| d.type_name == def.type_name) {
+                let module = modules.entry(module_name.clone()).or_default();
+                match module
+                    .struct_defs
+                    .iter()
+                    .find(|d| d.type_name == def.type_name)
+                {
                     Some(existing) => {
                         // a shared type must have the same layout in every shader
                         // that uses it; first-definition-wins would silently drop
@@ -1393,7 +1554,29 @@ fn collect_shared_modules(
                             );
                         }
                     }
-                    None => module_defs.push(def.clone()),
+                    None => module.struct_defs.push(def.clone()),
+                }
+            }
+        }
+
+        for def in &defs.enum_defs {
+            if let Some(ref module_name) = def.source_module {
+                let module = modules.entry(module_name.clone()).or_default();
+                match module
+                    .enum_defs
+                    .iter()
+                    .find(|d| d.type_name == def.type_name)
+                {
+                    Some(existing) => {
+                        if !enum_defs_compatible(existing, def) {
+                            panic!(
+                                "shared enum '{}' (module '{module_name}') has \
+                                incompatible cases or tag type in shader '{shader_name}'",
+                                def.type_name,
+                            );
+                        }
+                    }
+                    None => module.enum_defs.push(def.clone()),
                 }
             }
         }
@@ -1405,23 +1588,37 @@ fn collect_shared_modules(
 /// Determine which shared modules a shader needs to import, and which type names.
 /// Only imports types directly referenced by local (non-shared) struct fields.
 fn shared_imports_for_shader(
-    struct_defs: &[GeneratedStructDefinition],
-    shared_modules: &BTreeMap<String, Vec<GeneratedStructDefinition>>,
+    defs: &GeneratedTypeDefs,
+    shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
 ) -> Vec<SharedModuleImport> {
     let mut imports: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
-    // Check which shared types are directly referenced by local struct fields
-    for def in struct_defs {
+    // Check which shared types are directly referenced by local struct fields.
+    // Enums have no fields, so they are only ever import targets, never sources.
+    for def in &defs.struct_defs {
         if def.source_module.is_some() {
             continue; // skip shared types themselves
         }
         for field in &def.fields {
-            for (module_name, module_defs) in shared_modules {
-                for module_def in module_defs {
+            for (module_name, module) in shared_modules {
+                for module_def in &module.struct_defs {
                     // Check exact match or contained within generic type (e.g., StorageBufferHandle<Cube>)
                     if field.type_name == module_def.type_name
                         || field.type_name.contains(&module_def.type_name)
                     {
+                        imports
+                            .entry(module_name.clone())
+                            .or_default()
+                            .insert(module_def.type_name.clone());
+                    }
+                }
+
+                // exact match only: an enum is never a generic argument (a pointee
+                // must be a struct) nor an array element, and short enum names are
+                // exactly the substrings likeliest to collide — `contains` would
+                // import an enum `View` for a field of type `DebugView`
+                for module_def in &module.enum_defs {
+                    if field.type_name == module_def.type_name {
                         imports
                             .entry(module_name.clone())
                             .or_default()
@@ -1445,18 +1642,26 @@ fn shared_imports_for_shader(
 /// For example, ray_march_camera.rs needs to import Projection from projection.rs.
 fn cross_module_imports(
     module_name: &str,
-    module_defs: &[GeneratedStructDefinition],
-    all_shared_modules: &BTreeMap<String, Vec<GeneratedStructDefinition>>,
+    module: &GeneratedTypeDefs,
+    all_shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
 ) -> Vec<SharedModuleImport> {
     let mut imports: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
-    for def in module_defs {
+    for def in &module.struct_defs {
         for field in &def.fields {
-            for (other_module, other_defs) in all_shared_modules {
+            for (other_module, other) in all_shared_modules {
                 if other_module == module_name {
                     continue;
                 }
-                for other_def in other_defs {
+                for other_def in &other.struct_defs {
+                    if field.type_name == other_def.type_name {
+                        imports
+                            .entry(other_module.clone())
+                            .or_default()
+                            .insert(other_def.type_name.clone());
+                    }
+                }
+                for other_def in &other.enum_defs {
                     if field.type_name == other_def.type_name {
                         imports
                             .entry(other_module.clone())
@@ -1482,6 +1687,7 @@ fn cross_module_imports(
 struct SharedModuleTemplate {
     module_doc_lines: Vec<String>,
     cross_module_imports: Vec<SharedModuleImport>,
+    enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
 }
 
@@ -1652,7 +1858,7 @@ mod tests {
             }),
         });
 
-        gather_struct_defs(&field, &mut Vec::new(), None);
+        gather_struct_defs(&field, &mut GeneratedTypeDefs::default(), None);
     }
 
     #[test]
@@ -1668,7 +1874,7 @@ mod tests {
 
     #[test]
     fn array_fields_use_element_alignment_and_size() {
-        assert_eq!(field_alignment("[glam::IVec4; 3]"), 16);
+        assert_eq!(field_alignment_by_name("[glam::IVec4; 3]"), 16);
         assert_eq!(rust_type_alignment("[glam::Vec4; 4]"), Some(16));
         assert_eq!(rust_type_alignment("[glam::UVec4; 8]"), Some(4));
         assert_eq!(rust_size_of("[glam::UVec4; 8]"), Some(128));
@@ -1725,16 +1931,22 @@ mod tests {
                     check_field_sizes(&ptr.pointee_type.fields, &pointee_context, mismatches);
                 }
 
+                // NOTE the enum arm is deliberately inert: rust_size_of returns
+                // None for a generated type name, so the tripwire skips enums.
+                // The emitted size_of::<TheEnum>() assert is the real check.
                 StructField::Scalar(_)
                 | StructField::Vector(_)
                 | StructField::Matrix(_)
-                | StructField::Array(_) => {}
+                | StructField::Array(_)
+                | StructField::Enum(_) => {}
             }
 
             let Some((_offset, reflected_size)) = field_offset_size(field) else {
                 continue;
             };
-            let Some(generated) = gather_struct_defs(field, &mut Vec::new(), None) else {
+            let Some(generated) =
+                gather_struct_defs(field, &mut GeneratedTypeDefs::default(), None)
+            else {
                 continue;
             };
             let Some(rust_size) = rust_size_of(&generated.type_name) else {
@@ -2067,6 +2279,356 @@ float4 fragMain() : SV_Target {
             })
             .expect("pointer field 'items' not reflected");
         assert_eq!(access, PointerAccess::Immutable);
+    }
+
+    // Slang lays an enum out as its tag type, so an enum field's *layout* kind is
+    // Scalar and reflection would silently degrade it to a bare uint. This pins
+    // the declared-type lookup that recovers the enum, including a non-contiguous
+    // case list (which is what makes the values worth carrying at all).
+    #[cfg(not(windows))]
+    #[test]
+    fn enum_field_is_reflected() {
+        let tmp_dir = std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let source = r#"#language slang 2026
+
+module enum_field;
+
+enum Mode : uint {
+    First = 0,
+    Skipped = 7,
+}
+
+struct Params {
+    float scale;
+    Mode mode;
+}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(params.scale, 0.0, 0.0, 1.0);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    if (params.mode == Mode.Skipped) {
+        return float4(0.0);
+    }
+    return float4(1.0);
+}
+"#;
+        std::fs::write(tmp_dir.join("enum_field.shader.slang"), source).unwrap();
+
+        let result = prepare_reflected_shader("enum_field.shader.slang", tmp_dir.to_str().unwrap());
+
+        std::fs::remove_dir_all(&tmp_dir).ok();
+
+        let reflected = result.expect("an enum field must be accepted");
+        let GlobalParameter::ParameterBlock(block) =
+            &reflected.reflection_json.global_parameters[0];
+        let enum_field = block
+            .element_type
+            .fields
+            .iter()
+            .find_map(|field| match field {
+                StructField::Enum(e) if e.field_name == "mode" => Some(e),
+                _ => None,
+            })
+            .expect("enum field 'mode' not reflected");
+
+        assert_eq!(enum_field.enum_type.type_name, "Mode");
+        assert_eq!(enum_field.enum_type.tag_type, EnumTagType::Uint32);
+        assert_eq!(
+            enum_field.enum_type.cases,
+            vec![
+                EnumCase {
+                    name: "First".to_string(),
+                    value: 0
+                },
+                EnumCase {
+                    name: "Skipped".to_string(),
+                    value: 7
+                },
+            ]
+        );
+        // the enum still occupies exactly its tag type's 4 bytes, right after the float
+        let Binding::Uniform(binding) = &enum_field.binding else {
+            panic!("enum field must have a uniform binding");
+        };
+        assert_eq!((binding.offset, binding.size), (4, 4));
+    }
+
+    // An array field's declared type is an Array whose *element* is the enum, so
+    // the enum guard doesn't fire and it falls through to the array path. The
+    // element's layout is its tag's (a scalar), which the vec4-only array gate
+    // rejects. Pinned because the failure mode if it ever changes is a silent
+    // degrade to [u32; N], not a panic.
+    #[cfg(not(windows))]
+    #[test]
+    fn enum_arrays_are_rejected() {
+        let tmp_dir = std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let source = r#"#language slang 2026
+
+module enum_array;
+
+enum Mode : uint {
+    First = 0,
+    Second = 1,
+}
+
+struct Params {
+    Mode modes[4];
+}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(float(uint(params.modes[0])), 0.0, 0.0, 1.0);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        std::fs::write(tmp_dir.join("enum_array.shader.slang"), source).unwrap();
+
+        let result = prepare_reflected_shader("enum_array.shader.slang", tmp_dir.to_str().unwrap());
+
+        std::fs::remove_dir_all(&tmp_dir).ok();
+
+        let err = match result {
+            Ok(_) => panic!("an array of enums must be rejected"),
+            Err(err) => err,
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("array field 'modes'")
+                && message.contains("only float4/int4/uint4 element arrays are supported"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    /// Compiles an inline shader that is expected to be rejected, and returns the
+    /// rendered error. The fixture lives in a temp dir because every shader in
+    /// shaders/test must compile.
+    #[cfg(not(windows))]
+    fn reflect_rejected_shader(module_name: &str, source: &str) -> String {
+        let tmp_dir = std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let file_name = format!("{module_name}.shader.slang");
+        std::fs::write(tmp_dir.join(&file_name), source).unwrap();
+
+        let result = prepare_reflected_shader(&file_name, tmp_dir.to_str().unwrap());
+
+        std::fs::remove_dir_all(&tmp_dir).ok();
+
+        match result {
+            Ok(_) => panic!("'{module_name}' must be rejected"),
+            Err(err) => format!("{err:#}"),
+        }
+    }
+
+    /// Wraps an enum declaration in the minimal shader that uses it as a
+    /// ParameterBlock field, so reflection actually reaches the enum.
+    #[cfg(not(windows))]
+    fn enum_fixture_source(module_name: &str, enum_decl: &str) -> String {
+        format!(
+            r#"#language slang 2026
+
+module {module_name};
+
+{enum_decl}
+
+struct Params {{
+    Bad bad;
+}}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {{
+    return float4(1.0);
+}}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {{
+    return float4(1.0);
+}}
+"#
+        )
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn duplicate_enum_values_are_rejected() {
+        let message = reflect_rejected_shader(
+            "duplicate_enum_values",
+            &enum_fixture_source(
+                "duplicate_enum_values",
+                "enum Bad : uint {\n    First = 3,\n    Second = 3,\n}",
+            ),
+        );
+        assert!(
+            message.contains("enum 'Bad'")
+                && message.contains("share the value 3")
+                && message.contains("duplicate discriminants"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // slang accepts `enum Bad : uint {}`, but Default and TryFrom both need a
+    // first case, so codegen would emit an uninhabited enum in a GPU struct.
+    #[cfg(not(windows))]
+    #[test]
+    fn empty_enums_are_rejected() {
+        let message = reflect_rejected_shader(
+            "empty_enum",
+            &enum_fixture_source("empty_enum", "enum Bad : uint {\n}"),
+        );
+        assert!(
+            message.contains("enum 'Bad'") && message.contains("has no cases"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // slang accepts an anonymous enum and synthesizes `SLANG_anonymous_N` for it,
+    // which would generate a Rust type name that clippy's non_camel_case_types
+    // rejects — and that no caller could meaningfully name anyway.
+    #[cfg(not(windows))]
+    #[test]
+    fn anonymous_enums_are_rejected() {
+        let source = r#"#language slang 2026
+
+module anon_enum;
+
+struct Params {
+    enum { A = 0 } bad;
+}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(1.0);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        let message = reflect_rejected_shader("anon_enum", source);
+        assert!(
+            message.contains("enum field 'bad'") && message.contains("anonymous enum type"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unsupported_enum_tag_is_rejected() {
+        let message = reflect_rejected_shader(
+            "unsupported_enum_tag",
+            &enum_fixture_source(
+                "unsupported_enum_tag",
+                "enum Bad : uint64_t {\n    Only = 0,\n}",
+            ),
+        );
+        assert!(
+            message.contains("enum 'Bad'") && message.contains("unsupported tag type"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // A narrow tag lays out fine, but reading one makes slang emit Int8/Int16 and
+    // UniformAndStorageBuffer{8,16}BitAccess — optional Vulkan feature bits that
+    // create_logical_device deliberately does not request. Rejecting at reflection
+    // keeps that a compile-time error instead of a device-creation failure.
+    #[cfg(not(windows))]
+    #[test]
+    fn sub_32_bit_enum_tags_are_rejected() {
+        for tag in ["uint8_t", "uint16_t"] {
+            let message = reflect_rejected_shader(
+                "narrow_enum_tag",
+                &enum_fixture_source(
+                    "narrow_enum_tag",
+                    &format!("enum Bad : {tag} {{\n    Only = 0,\n}}"),
+                ),
+            );
+            assert!(
+                message.contains("enum 'Bad'")
+                    && message.contains("sub-32-bit tag type")
+                    && message.contains("8/16-bit storage device features"),
+                "unexpected error message for {tag}: {message}"
+            );
+        }
+    }
+
+    // The guard that recovers the enum sits before the layout-kind match, so it
+    // also intercepts vertex inputs, where there is no uniform binding to carry.
+    #[cfg(not(windows))]
+    #[test]
+    fn enum_vertex_inputs_are_rejected() {
+        let source = r#"#language slang 2026
+
+module enum_vertex_input;
+
+enum Bad : uint {
+    Only = 0,
+}
+
+struct Vertex {
+    float3 position;
+    Bad bad;
+}
+
+[shader("vertex")]
+float4 vertMain(Vertex vertex) : SV_Position {
+    return float4(vertex.position, 1.0);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        let message = reflect_rejected_shader("enum_vertex_input", source);
+        assert!(
+            message.contains("enum field 'bad'") && message.contains("not vertex inputs"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // heck folds SCREAMING_CASE and UpperCamel onto the same variant name;
+    // rustc's own duplicate-variant error names neither slang case.
+    #[test]
+    #[should_panic(expected = "both generate the Rust variant 'WetAreaMask'")]
+    fn colliding_enum_variant_names_are_rejected() {
+        try_add_enum_def(
+            &mut Vec::new(),
+            &EnumFieldType {
+                type_name: "Bad".to_string(),
+                tag_type: EnumTagType::Uint32,
+                cases: vec![
+                    EnumCase {
+                        name: "WET_AREA_MASK".to_string(),
+                        value: 0,
+                    },
+                    EnumCase {
+                        name: "WetAreaMask".to_string(),
+                        value: 1,
+                    },
+                ],
+            },
+        );
     }
 
     fn count_branch_instructions(spv_bytes: &[u8]) -> usize {

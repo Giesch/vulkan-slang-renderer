@@ -2,7 +2,9 @@
 
 * Now
 - [ ] problems/issues for side-agent PRs
-  - [ ] triple-buffering problems
+  - [X] triple-buffering problems
+    done 2026-07-28: PRE_WAIT_RING_LEN and ring_slot deleted, one 2-slot ring
+    (llm_notes/remove_pipelined_compute.md)
   - [ ] testing without opening a window
     write to a texture? will this catch validation errors?
     might be worth it anyway
@@ -16,7 +18,8 @@
   then consider the api change below if necessary
   - [ ] 1. potential skipped writes on storage buffers
   - [ ] 2. stashing addresses
-  - [ ] 3. pipelined current-read race
+  - [X] 3. pipelined current-read race
+    resolved 2026-07-28 by removing pipelined compute, not by a guard
   - [ ] 4. potential skipped writes on uniform buffers
   - [X] 5. implicit truncate
     addressed with a debug assert
@@ -129,7 +132,10 @@
   - [ ] get the unit tests working
 
 - [ ] reconsider FLAME GPU-based render graph
-  - find a strucutured solution for pipelined compute shader simulations
+  - pipelined compute was removed 2026-07-28 for want of a measurable win.
+    if cross-frame simulation/rendering overlap is wanted again, first measure
+    what it actually buys, then build it in the graph rather than as a
+    renderer-wide mode
   - look for a potentially nicer way using BDAs and a slang helper module
   - find a way to incoprorate gpu picking into this way of doing things
 
@@ -315,6 +321,9 @@
   but has a slower framerate on linux for some reason
   - increasing MAX_FRAMES_IN_FLIGHT makes it faster at first,
     but then it hits a wall and slows down
+    note (2026-07-28): that knob now also sets the per-frame buffer /
+    descriptor ring length, so raising it costs proportional memory and
+    per-frame CPU writes go further out of date. re-measure before tuning it
 
 - [ ] fix `just shaders` on windows
   - [ ] sort struct fields consistently
@@ -509,6 +518,10 @@
   - group one-time initialized fields into a sub-struct w/methods
   - group sync primitive arrays with their resources in some way
     ie make it clear what's per-swapchain-image vs per-in-flight-frame
+    easier since 2026-07-28: everything per-frame is one flight_slot ring,
+    so render_finished (per swapchain image) is the only odd one out
+  - recreate_swapchain never recreates render_finished, which is sized per
+    swapchain image -- panics or leaks if the image count changes
   - use an env var for vulkan validation layer
     https://github.com/ash-rs/ash/issues/190#issuecomment-758269723
     maybe for logging too? ie always compile w/verbose

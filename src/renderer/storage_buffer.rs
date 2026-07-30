@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use ash::vk;
 
-use super::PRE_WAIT_RING_LEN;
+use super::MAX_FRAMES_IN_FLIGHT;
 
 #[derive(Debug)]
 pub struct StorageBufferHandle<T> {
@@ -41,10 +41,15 @@ impl<T> ImmutableBufferHandle<T> {
 /// A storage buffer the CPU writes only at setup, never from `gpu_update`
 ///
 /// During the frame loop only the GPU touches it, reading and writing via
-/// `Addr`/`ReadAddr`. Because no CPU write can land before the frame_timeline
-/// wait, this is the only handle that can mint a `Gpu::previous_addr` history
-/// pointer: an in-flight frame's read of the previous slot cannot race a CPU
-/// write that no longer exists.
+/// `Addr`/`ReadAddr`. That is what lets it mint a `Gpu::previous_addr` history
+/// pointer, which no other handle can: reading the previous slot is only
+/// meaningful for a buffer whose slots hold GPU output rather than whatever
+/// the CPU last wrote there.
+///
+/// The write-after-read on the slot being reused — frame N's compute reads
+/// slot s via `previous_addr` while frame N+1's compute writes it — is the one
+/// hazard the frame_timeline wait does not cover. It is ordered by the barrier
+/// at the top of every command buffer instead; see `record_command_buffer`.
 ///
 /// Initialize with `Renderer::write_gpu_only_all_frames`.
 #[derive(Debug)]
@@ -72,7 +77,7 @@ pub(super) struct RawStorageBuffer {
 
 // NOTE renderer has to enforce type safety
 // ordered first by handle index, then by frame
-pub(super) struct StorageBufferStorage(Vec<Option<[RawStorageBuffer; PRE_WAIT_RING_LEN]>>);
+pub(super) struct StorageBufferStorage(Vec<Option<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]>>);
 
 impl StorageBufferStorage {
     pub fn new() -> Self {
@@ -81,7 +86,7 @@ impl StorageBufferStorage {
 
     pub fn add<T>(
         &mut self,
-        buffers_per_frame: [RawStorageBuffer; PRE_WAIT_RING_LEN],
+        buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
     ) -> StorageBufferHandle<T> {
         let handle = StorageBufferHandle {
@@ -115,7 +120,7 @@ impl StorageBufferStorage {
     pub fn take<T>(
         &mut self,
         handle: StorageBufferHandle<T>,
-    ) -> [RawStorageBuffer; PRE_WAIT_RING_LEN] {
+    ) -> [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT] {
         self.0[handle.index].take().unwrap()
     }
 
@@ -124,7 +129,7 @@ impl StorageBufferStorage {
 
     pub fn add_immutable<T>(
         &mut self,
-        buffers_per_frame: [RawStorageBuffer; PRE_WAIT_RING_LEN],
+        buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
     ) -> ImmutableBufferHandle<T> {
         let handle = ImmutableBufferHandle {
@@ -158,7 +163,7 @@ impl StorageBufferStorage {
     pub fn take_immutable<T>(
         &mut self,
         handle: ImmutableBufferHandle<T>,
-    ) -> [RawStorageBuffer; PRE_WAIT_RING_LEN] {
+    ) -> [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT] {
         self.0[handle.index].take().unwrap()
     }
 
@@ -167,7 +172,7 @@ impl StorageBufferStorage {
 
     pub fn add_gpu_only<T>(
         &mut self,
-        buffers_per_frame: [RawStorageBuffer; PRE_WAIT_RING_LEN],
+        buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
     ) -> GpuOnlyBufferHandle<T> {
         let handle = GpuOnlyBufferHandle {
@@ -201,11 +206,11 @@ impl StorageBufferStorage {
     pub fn take_gpu_only<T>(
         &mut self,
         handle: GpuOnlyBufferHandle<T>,
-    ) -> [RawStorageBuffer; PRE_WAIT_RING_LEN] {
+    ) -> [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT] {
         self.0[handle.index].take().unwrap()
     }
 
-    pub fn take_all(&mut self) -> Vec<[RawStorageBuffer; PRE_WAIT_RING_LEN]> {
+    pub fn take_all(&mut self) -> Vec<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> {
         self.0
             .iter_mut()
             .filter_map(|option| option.take())

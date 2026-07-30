@@ -12,6 +12,7 @@ use std::io::Cursor;
 
 use ash::util::read_spv;
 use ash::vk;
+use facet::Facet;
 use serde::Serialize;
 
 use crate::renderer::gpu_write::GPUWrite;
@@ -24,11 +25,46 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, Facet)]
+#[repr(u32)]
+// variant names come from the shader author, so clippy's shared-prefix lint
+// would otherwise force renaming away from the slang spelling
+#[allow(clippy::enum_variant_names)]
+pub enum DebugView {
+    #[default]
+    Pigments = 0,
+    WetAreaMask = 1,
+}
+
+const _: () = assert!(std::mem::size_of::<DebugView>() == 4);
+
+impl From<DebugView> for u32 {
+    fn from(value: DebugView) -> u32 {
+        value as u32
+    }
+}
+
+// A repr(int) enum holding a value outside its declared variants is undefined
+// behavior. Data flows CPU -> GPU here, so the CPU never materializes a value it
+// did not construct; any future readback must come back through this TryFrom,
+// never a transmute or an `as` cast into the enum.
+impl TryFrom<u32> for DebugView {
+    type Error = u32;
+
+    fn try_from(value: u32) -> Result<Self, u32> {
+        match value {
+            0 => Ok(Self::Pigments),
+            1 => Ok(Self::WetAreaMask),
+            other => Err(other),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct DisplayParams {
     pub texel_size: glam::Vec2,
-    pub debug_view: u32,
+    pub debug_view: DebugView,
     pub canvas_aspect: f32,
     pub window_aspect: f32,
     pub _padding_0: [u8; 12],
@@ -51,7 +87,7 @@ const _: () = assert!(std::mem::size_of::<DisplayParams>() == 416);
 const _: () = assert!(std::mem::offset_of!(DisplayParams, texel_size) == 0);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 const _: () = assert!(std::mem::offset_of!(DisplayParams, debug_view) == 8);
-const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::size_of::<DebugView>() == 4);
 const _: () = assert!(std::mem::offset_of!(DisplayParams, canvas_aspect) == 12);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 const _: () = assert!(std::mem::offset_of!(DisplayParams, window_aspect) == 16);

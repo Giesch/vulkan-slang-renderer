@@ -363,14 +363,63 @@
             "scalarType": "uint32"
           },
           {
-            "kind": "scalar",
+            "kind": "enum",
             "fieldName": "debugMode",
             "binding": {
               "kind": "uniform",
               "offset": 1540,
               "size": 4
             },
-            "scalarType": "uint32"
+            "enumType": {
+              "typeName": "DebugMode",
+              "tagType": "uint32",
+              "cases": [
+                {
+                  "name": "FinalTev",
+                  "value": 0
+                },
+                {
+                  "name": "WorldNormals",
+                  "value": 1
+                },
+                {
+                  "name": "Uv0",
+                  "value": 2
+                },
+                {
+                  "name": "TevAlpha",
+                  "value": 3
+                },
+                {
+                  "name": "RasterColor0",
+                  "value": 4
+                },
+                {
+                  "name": "Texgen1Coord",
+                  "value": 5
+                },
+                {
+                  "name": "RawTex0",
+                  "value": 6
+                },
+                {
+                  "name": "RawTex1",
+                  "value": 7
+                },
+                {
+                  "name": "ChannelPerPixel",
+                  "value": 8
+                },
+                {
+                  "name": "IdentityTexMtx",
+                  "value": 9
+                },
+                {
+                  "name": "MaskWhite",
+                  "value": 10
+                }
+              ]
+            }
           }
         ]
       }

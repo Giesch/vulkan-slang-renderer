@@ -241,8 +241,11 @@ pub fn reflect_shared_module_types(
         let module_decl = module.module_reflection();
 
         for child in module_decl.children() {
-            if child.kind() == slang::DeclKind::Struct
-                && let Some(name) = child.name()
+            // enums hoist into a shared module file exactly like structs
+            if matches!(
+                child.kind(),
+                slang::DeclKind::Struct | slang::DeclKind::Enum
+            ) && let Some(name) = child.name()
             {
                 type_to_module.insert(name.to_string(), module_name.to_string());
             }

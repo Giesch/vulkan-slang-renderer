@@ -88,6 +88,10 @@ pub trait Game {
     {
         pretty_env_logger::init();
 
+        // NOTE: this can cause swapchain starvation, which is why it's not a default
+        #[cfg(target_os = "linux")]
+        sdl3::hint::set("SDL_VIDEO_DRIVER", "wayland,x11");
+
         let sdl = sdl3::init()?;
         let video_subsystem = sdl.video()?;
         let window_desc = Self::window_description();
@@ -196,7 +200,6 @@ pub enum Key {
     R,
     T,
     F,
-    M,
     Space,
     Num1,
     Num2,
@@ -216,7 +219,6 @@ impl Key {
             SDLScancode::R => Some(Key::R),
             SDLScancode::T => Some(Key::T),
             SDLScancode::F => Some(Key::F),
-            SDLScancode::M => Some(Key::M),
             SDLScancode::Space => Some(Key::Space),
             SDLScancode::_1 => Some(Key::Num1),
             SDLScancode::_2 => Some(Key::Num2),

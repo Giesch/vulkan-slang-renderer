@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use ash::vk;
 use glam::{Vec2, Vec4};
 
 use vulkan_slang_renderer::game::*;
@@ -90,16 +89,7 @@ impl Game for Particles {
         let workgroup_size = particles_compute::WORKGROUP_SIZE[0];
         let workgroup_count = NUM_PARTICLES.div_ceil(workgroup_size);
 
-        // Dispatch compute shader
         renderer.dispatch(&self.compute_pipeline, workgroup_count, 1, 1);
-
-        // Barrier: compute writes must complete before vertex shader reads
-        renderer.memory_barrier(
-            vk::PipelineStageFlags2::COMPUTE_SHADER,
-            vk::PipelineStageFlags2::VERTEX_SHADER,
-            vk::AccessFlags2::SHADER_WRITE,
-            vk::AccessFlags2::SHADER_READ,
-        );
 
         let vertex_count = NUM_PARTICLES * 6; // 6 vertices per particle quad
         renderer.draw_vertex_count(&self.render_pipeline, vertex_count, |gpu| {
