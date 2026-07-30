@@ -1,5 +1,6 @@
 pub mod app;
 pub mod editor;
+pub mod env_config;
 pub mod game;
 pub mod generated;
 pub mod ktx;

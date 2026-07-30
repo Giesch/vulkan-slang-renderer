@@ -4,7 +4,8 @@ use facet::Facet;
 use sdl3::keyboard::Scancode as SDLScancode;
 
 use crate::app::App;
-use crate::renderer::{DrawError, FrameRenderer, Renderer};
+use crate::env_config::{EnvConfig, exit_code};
+use crate::renderer::{self, DrawError, FrameRenderer, Renderer};
 
 const DEFAULT_FRAME_DELAY: Duration = Duration::from_millis(15); // about 60 fps
 const DEFAULT_WINDOW_SIZE: (u32, u32) = (800, 600);
@@ -88,6 +89,21 @@ pub trait Game {
     {
         pretty_env_logger::init();
 
+        let env = EnvConfig::from_env();
+        log::debug!("{env:?}");
+
+        // A sweep of a build with validation compiled out passes everything it
+        // is looking for, which is worse than not running: fail before the
+        // window exists rather than report a vacuous success.
+        if env.sweep && !crate::renderer::ENABLE_VALIDATION {
+            eprintln!(
+                "VKR_SWEEP is set, but ENABLE_VALIDATION is false. \
+                 It is cfg!(debug_assertions), so this is a release build \
+                 and nothing would be validated."
+            );
+            std::process::exit(exit_code::VALIDATION_DISABLED);
+        }
+
         // NOTE: this can cause swapchain starvation, which is why it's not a default
         #[cfg(target_os = "linux")]
         sdl3::hint::set("SDL_VIDEO_DRIVER", "wayland,x11");
@@ -110,7 +126,13 @@ pub trait Game {
             None => compute_render_scale_for_display(&window),
         };
         let max_msaa_samples = Self::max_msaa_samples();
-        let mut renderer = Renderer::init(window, enable_egui, render_scale, max_msaa_samples)?;
+        let mut renderer = Renderer::init(
+            window,
+            env.clone(),
+            enable_egui,
+            render_scale,
+            max_msaa_samples,
+        )?;
         let game = Self::setup(&mut renderer)?;
         let app = App::init(renderer, game)?;
 
@@ -119,7 +141,29 @@ pub trait Game {
         }
 
         let event_pump = sdl.event_pump()?;
-        app.run_loop(event_pump)
+        let result = app.run_loop(event_pump);
+
+        // run_loop consumes the App, so the Renderer is already dropped here.
+        // That is deliberate: destroy_device reports leaked objects, and it runs
+        // before the debug messenger is destroyed, so teardown is counted too.
+        let validation_messages = renderer::debug::validation_message_count();
+        let stats = match (result, validation_messages) {
+            (Ok(stats), 0) => stats,
+            (Ok(_), n) => anyhow::bail!("{n} vulkan validation message(s); see the log above"),
+            (Err(err), 0) => return Err(err),
+            (Err(err), n) => {
+                return Err(err.context(format!("{n} vulkan validation message(s)")));
+            }
+        };
+
+        // An example that exits cleanly without drawing anything is a pass by
+        // every other measure, and covers none of what the sweep is checking.
+        if env.sweep && stats.frames == 0 {
+            eprintln!("VKR_SWEEP is set, but the run ended without presenting a frame.");
+            std::process::exit(exit_code::NO_FRAMES);
+        }
+
+        Ok(())
     }
 
     fn input(&mut self, _input: Input) {}

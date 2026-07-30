@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Headless validation sweep — prototype for `just headless-all`
+# Headless validation sweep — run it as `just sweep`
 #
 # Usage, and when it is worth running: docs/testing.md
 # Design: llm_notes/offscreen_testing.md. Findings: build_reproducibility.md §7.
@@ -10,8 +10,10 @@
 #
 #   scripts/headless-sweep.sh                 # all examples
 #   scripts/headless-sweep.sh basic_triangle  # just these
+#   scripts/headless-sweep.sh --self-test     # only prove the detector works
 #   SWEEP_TIMEOUT=20 scripts/headless-sweep.sh
 #   SWEEP_SKIP="toon_link watercolor" scripts/headless-sweep.sh   # force a skip
+#   SWEEP_SELF_TEST=0 scripts/headless-sweep.sh                   # skip the self-test
 #
 # Examples needing machine-local, gitignored assets are skipped or swept based
 # on whether those assets are actually present (see assets_missing below), so
@@ -21,19 +23,20 @@
 #   mesa-vulkan-drivers vulkan-validationlayers libvulkan-dev
 # No audio package is needed; sdf_2d degrades to silent playback.
 #
-# Verified to catch injected faults at all three points in the lifecycle
-# (device init, per-frame command recording, and teardown) — see §7.2.
-# If you change this script, re-check that it still DETECTS a fault: a sweep
-# that has silently stopped working looks exactly like a passing one.
+# The verdict comes from each example's EXIT CODE (see the table below), which
+# the renderer now makes meaningful: renderer/debug.rs counts validation
+# messages by severity and Game::run turns a nonzero count into a nonzero exit.
+# The log is still grepped, but as a cross-check -- if the two detectors ever
+# disagree, that is itself reported as a failure.
 
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 export SLANG_LIB_DIR="$PWD/slang/build/Release/lib"
 export SLANG_INCLUDE_DIR="$PWD/slang/build/Release/include"
 export SLANG_EXTERNAL_DIR="$PWD/slang/build/external"
 
-# --- the four settings this sweep must OWN rather than inherit --------------
+# --- the settings this sweep must OWN rather than inherit -------------------
 # Each of these, left to the ambient environment, makes a broken example pass
 # silently. See build_reproducibility.md §7.3 for the measurements.
 #
@@ -53,28 +56,44 @@ if [ -z "$lvp_icd" ]; then
 fi
 export VK_ICD_FILENAMES=$lvp_icd
 #
-# 2. RUST_LOG. The debug callback routes WARNING-severity validation through
-#    log::warn! (renderer/debug.rs), and env_logger's default with RUST_LOG
-#    unset keeps only error! -- so warnings vanish. An inherited RUST_LOG
-#    naming some other module (or `off`) hides *everything*, errors included.
+# 2. RUST_LOG, for a readable log. No longer load-bearing for the verdict:
+#    the validation count keys off the severity Vulkan reports rather than the
+#    log level, so a filtered RUST_LOG can hide the detail of a failure but not
+#    the failure itself.
 export RUST_LOG=warn
 #
 # 3. SDL's signal handlers must stay ON. SDL converts SIGTERM into SDL_QUIT,
 #    which is what makes `timeout` below a *clean* shutdown -- and teardown is
 #    where leaked-object errors (tech_debt.md §1) report themselves. With
-#    SDL_NO_SIGNAL_HANDLERS=1, or under SIGKILL, they are never seen.
+#    SDL_NO_SIGNAL_HANDLERS=1, or under SIGKILL, they are never seen. This no
+#    longer fails silently: the exit code distinguishes the two (see 143 below).
 unset SDL_NO_SIGNAL_HANDLERS
 #
-# 4. Debug build only: ENABLE_VALIDATION is cfg!(debug_assertions), so a
-#    --release sweep validates nothing and passes everything. No --release below.
+# 4. VKR_SWEEP turns on the checks that are right for an automated sweep and
+#    wrong interactively: exit 2 if validation is compiled out (a --release
+#    build validates nothing and would pass everything), exit 3 if the example
+#    ends without drawing a frame.
+export VKR_SWEEP=1
 
 : "${SWEEP_TIMEOUT:=10}"
 : "${SWEEP_LOG_DIR:=/tmp/sweep-logs}"
+: "${SWEEP_SELF_TEST:=1}"
+: "${SWEEP_SELF_TEST_TIMEOUT:=5}"
 # Force-skip by name, space separated. Empty by default: an example that cannot
 # run here is detected below rather than listed here, so this is only for
 # temporarily excluding one that otherwise would run.
 : "${SWEEP_SKIP:=}"
 mkdir -p "$SWEEP_LOG_DIR"
+
+self_test_only=0
+examples=()
+for arg in "$@"; do
+  case "$arg" in
+    --self-test) self_test_only=1 ;;
+    -*) echo "unknown option: $arg" >&2; exit 1 ;;
+    *) examples+=("$arg") ;;
+  esac
+done
 
 # True when $1 needs machine-local assets that aren't on this machine.
 #
@@ -95,12 +114,66 @@ assets_missing() {
   esac
 }
 
-if [ "$#" -gt 0 ]; then
-  examples=("$@")
-else
-  mapfile -t examples < <(ls examples/*.rs | xargs -n1 basename | sed 's/\.rs$//')
-fi
+# Run one example binary, capturing its log. Echoes the exit code; sets
+# $elapsed. --preserve-status is what makes the exit code reach us at all:
+# plain `timeout` reports 124 whenever the window is used up, discarding
+# whatever the process exited with, which is why this sweep used to have no
+# choice but to grep. -k covers a process that ignores SIGTERM outright.
+run_example() {
+  local bin=$1 log=$2 window=$3
+  local start=$SECONDS
+  timeout --preserve-status -k 5 -s TERM "$window" "./$bin" >"$log" 2>&1
+  local code=$?
+  elapsed=$((SECONDS - start))
+  return $code
+}
 
+# Count of lines the old log-grep detector would have caught.
+validation_lines() {
+  grep -ciE '\[Validation\]|VUID-' "$1"
+}
+
+# Prove the sweep still detects a fault, by injecting one.
+#
+# This matters more than it sounds: a sweep that has silently stopped working
+# looks exactly like a passing one, which is why this used to be a manual
+# procedure in docs/testing.md that someone had to remember. VKR_INJECT_-
+# VALIDATION_FAULT records an invalid viewport width (renderer.rs
+# viewport_width), so a detector in working order reports exit 1 with
+# VUID-VkViewport-width-01771.
+self_test() {
+  local bin="target/debug/examples/basic_triangle"
+  local log="$SWEEP_LOG_DIR/self-test.log"
+
+  if [ ! -x "$bin" ]; then
+    echo "FAIL: self-test: no $bin"
+    return 1
+  fi
+
+  # exported rather than prefixed onto the call: a `VAR=x func` prefix sets the
+  # variable for the shell function, not for the process it spawns.
+  local code=0
+  export VKR_INJECT_VALIDATION_FAULT=1
+  run_example "$bin" "$log" "$SWEEP_SELF_TEST_TIMEOUT" || code=$?
+  unset VKR_INJECT_VALIDATION_FAULT
+
+  if [ "$code" -eq 0 ]; then
+    echo "FAIL: self-test: the injected fault was NOT detected."
+    echo "    The sweep is not currently checking anything. Fix this before"
+    echo "    trusting a pass; see docs/testing.md."
+    return 1
+  fi
+
+  if ! grep -q 'VUID-VkViewport-width' "$log"; then
+    echo "FAIL: self-test: exit $code, but not from the injected viewport fault."
+    echo "    Something else is broken; see $log."
+    return 1
+  fi
+
+  echo "self-test ok: injected fault detected (exit $code)"
+}
+
+echo "building examples..."
 # Build FIRST, untimed, and run the binaries directly below.
 #
 # `timeout N cargo run` times the compile as well as the run. On a cold build
@@ -108,20 +181,38 @@ fi
 # indistinguishable from "the example ran for its whole window" -- and the log
 # is empty. Every example then reports ok and the whole sweep is vacuous. This
 # is easy to hit, since any source edit immediately before a sweep triggers it.
-echo "building examples..."
 if ! cargo build --examples; then
   echo "FAIL: examples did not build" >&2
   exit 1
 fi
 
+if [ "$self_test_only" -eq 1 ]; then
+  self_test || exit 1
+  exit 0
+fi
+
+if [ "$SWEEP_SELF_TEST" != "0" ]; then
+  # Abort rather than continue: a sweep whose detector is broken would report
+  # a clean pass for every example, which is worse than not running at all.
+  self_test || exit 1
+fi
+
+if [ "${#examples[@]}" -eq 0 ]; then
+  mapfile -t examples < <(ls examples/*.rs | xargs -n1 basename | sed 's/\.rs$//')
+fi
+
 fail=0
+ran=0
+passed=0
+skipped=0
 for e in "${examples[@]}"; do
-  case " $SWEEP_SKIP " in *" $e "*) echo "skip: $e (SWEEP_SKIP)"; continue ;; esac
+  case " $SWEEP_SKIP " in *" $e "*) echo "skip: $e (SWEEP_SKIP)"; skipped=$((skipped + 1)); continue ;; esac
 
   # A skip, not a failure, even when named explicitly on the command line: in a
   # container there is nothing to fix, and a red sweep there would be noise.
   if assets_missing "$e"; then
     echo "skip: $e (assets absent; run \`just extract-link && just convert-link\`)"
+    skipped=$((skipped + 1))
     continue
   fi
 
@@ -134,36 +225,87 @@ for e in "${examples[@]}"; do
     continue
   fi
 
-  # SIGTERM (timeout's default) on purpose -- see note 3 above. Timing the
-  # binary rather than `cargo run` keeps the compile out of the budget.
-  timeout -s TERM "$SWEEP_TIMEOUT" "./$bin" >"$log" 2>&1
-  code=$?
+  elapsed=0
+  code=0
+  run_example "$bin" "$log" "$SWEEP_TIMEOUT" || code=$?
+  ran=$((ran + 1))
+  lines=$(validation_lines "$log")
 
-  # The debug callback returns VK_FALSE, so the process exits 0 even with
-  # hundreds of validation errors. Grep the log; the exit code says nothing
-  # about validation.
-  if grep -qiE '\[Validation\]|VUID-' "$log"; then
-    n=$(grep -ciE '\[Validation\]|VUID-' "$log")
-    echo "FAIL(validation, $n lines): $e"
-    grep -oiE 'VUID-[A-Za-z0-9_-]+' "$log" | sort -u | head -3 | sed 's/^/    /'
-    fail=1
-    continue
-  fi
-
-  # 124 == timed out == ran its whole window without dying, which is success
-  # for an example that would otherwise loop forever. Anything else nonzero is
-  # a crash or an early bail, reported separately from a validation failure.
-  # Every example that reaches here has the assets it needs, so an early bail
-  # is a real failure rather than a missing-asset message.
-  if [ "$code" -ne 124 ] && [ "$code" -ne 0 ]; then
-    echo "FAIL(exit $code): $e"
-    grep -viE '^ +[0-9]+:|^ +at |ALSA lib' "$log" | tail -2 | sed 's/^/    /'
-    fail=1
-    continue
-  fi
-
-  echo "ok: $e"
+  case $code in
+    0)
+      # The two detectors must agree. If the log has validation output the exit
+      # code didn't account for, one of them is broken, and a sweep whose
+      # detector is broken reports a clean pass for everything.
+      if [ "$lines" -gt 0 ]; then
+        echo "FAIL(detector disagreement): $e exited 0 with $lines validation lines in $log"
+        fail=1
+        continue
+      fi
+      # A clean exit well inside the window means it quit on its own rather
+      # than on SIGTERM, so most of the run wasn't observed. --preserve-status
+      # gives up 124-means-full-window, so the duration is what tells us.
+      if [ "$elapsed" -lt "$((SWEEP_TIMEOUT - 1))" ]; then
+        echo "FAIL(exited early): $e ran ${elapsed}s of its ${SWEEP_TIMEOUT}s window"
+        grep -viE '^ +[0-9]+:|^ +at |ALSA lib' "$log" | tail -2 | sed 's/^/    /'
+        fail=1
+        continue
+      fi
+      echo "ok: $e"
+      passed=$((passed + 1))
+      ;;
+    1)
+      # Exit 1 is any error out of main; the log says which kind.
+      if [ "$lines" -gt 0 ]; then
+        echo "FAIL(validation, $lines lines): $e"
+        grep -oiE 'VUID-[A-Za-z0-9_-]+' "$log" | sort -u | head -3 | sed 's/^/    /'
+      else
+        echo "FAIL(error): $e"
+        grep -viE '^ +[0-9]+:|^ +at |ALSA lib' "$log" | tail -2 | sed 's/^/    /'
+      fi
+      fail=1
+      ;;
+    2)
+      echo "FAIL(validation disabled): $e — a --release build validates nothing"
+      fail=1
+      ;;
+    3)
+      echo "FAIL(no frames): $e exited without drawing"
+      grep -viE '^ +[0-9]+:|^ +at |ALSA lib' "$log" | tail -2 | sed 's/^/    /'
+      fail=1
+      ;;
+    124)
+      # Only reachable if --preserve-status stopped working.
+      echo "FAIL(timeout, no status): $e — the exit code did not survive \`timeout\`"
+      fail=1
+      ;;
+    143 | 137)
+      # SIGTERM/SIGKILL reached the process itself, so SDL never turned it into
+      # SDL_QUIT: the loop didn't exit normally, drain_gpu and Drop for Renderer
+      # never ran, and teardown -- where leaked objects report -- went unchecked.
+      # This was indistinguishable from a pass before --preserve-status.
+      echo "FAIL(no clean teardown): $e died on a signal (exit $code)"
+      fail=1
+      ;;
+    101)
+      echo "FAIL(panic): $e"
+      grep -viE '^ +[0-9]+:|^ +at |ALSA lib' "$log" | tail -2 | sed 's/^/    /'
+      fail=1
+      ;;
+    *)
+      echo "FAIL(exit $code): $e"
+      grep -viE '^ +[0-9]+:|^ +at |ALSA lib' "$log" | tail -2 | sed 's/^/    /'
+      fail=1
+      ;;
+  esac
 done
 
-echo "--- sweep $([ $fail -eq 0 ] && echo PASS || echo FAIL) ---"
+# A sweep that ran nothing is not a pass. Reachable via a typo in an example
+# name, or a skip list that swallowed everything.
+if [ "$ran" -eq 0 ]; then
+  echo "FAIL: no examples ran"
+  fail=1
+fi
+
+echo "--- sweep $([ $fail -eq 0 ] && echo PASS || echo FAIL):" \
+  "$passed ok / $skipped skip / $((ran - passed)) fail ---"
 exit $fail

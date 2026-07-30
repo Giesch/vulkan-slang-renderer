@@ -6,7 +6,7 @@ overlap less than you'd expect:
 | | what it covers | command |
 |---|---|---|
 | **Snapshot tests** | generated Rust and shader reflection JSON. No GPU involved. | `just test` |
-| **Validation sweep** | every example actually running, checked for Vulkan validation errors. | `scripts/headless-sweep.sh` |
+| **Validation sweep** | every example actually running, checked for Vulkan validation errors. | `just sweep` |
 
 `just test` passing says nothing about whether the renderer works, and the sweep
 says nothing about whether codegen is correct. A renderer change wants both.
@@ -39,14 +39,16 @@ import placement and signature wrapping. Not yet fixed; see
 
 `scripts/headless-sweep.sh` runs every example under a software Vulkan driver
 (lavapipe) with no window and no display, and exits nonzero if any of them emits
-Vulkan validation output. Not yet wired to a `just` recipe.
+Vulkan validation output.
 
 ```bash
-scripts/headless-sweep.sh                          # all examples (~10s each + a build)
-scripts/headless-sweep.sh sprite_batch             # just these
+just sweep                                         # all examples (~10s each + a build)
+just sweep sprite_batch                            # just these
+just sweep-self-test                               # only prove the detector works
 SWEEP_TIMEOUT=30 scripts/headless-sweep.sh         # longer window per example
 SWEEP_SKIP=watercolor scripts/headless-sweep.sh    # force-skip by name
 SWEEP_LOG_DIR=/tmp/logs scripts/headless-sweep.sh  # where per-example logs go
+SWEEP_SELF_TEST=0 scripts/headless-sweep.sh        # skip the self-test
 ```
 
 Requires `mesa-vulkan-drivers vulkan-validationlayers libvulkan-dev`. It needs no
@@ -62,43 +64,59 @@ comparable across machines.
 you add or rework an example. It's fast enough to be the default check on
 renderer work.
 
-`timeout 3 just dev EXAMPLE` remains the quicker single-example look when you
-want to *watch* one run, but it is not a substitute: it covers one example, and
-several of the traps below apply to it.
+`just watch EXAMPLE` remains the quicker single-example look when you want to
+*watch* one run, but it is not a substitute: it covers one example.
+
+### How it decides
+
+The verdict is each example's **exit code**. `src/renderer/debug.rs` counts
+validation messages by the severity Vulkan reports, and `Game::run` reads that
+count once the `Renderer` has been dropped — which is after `vkDestroyDevice`
+and its leaked-object report, so teardown is included.
+
+| exit | meaning |
+|---|---|
+| 0 | drew at least one frame, shut down cleanly, no validation output |
+| 1 | validation messages, or any other error out of `main` |
+| 2 | validation is compiled out — a `--release` build validates nothing |
+| 3 | exited without ever drawing a frame |
+| 143 / 137 | died on a signal, so `Drop for Renderer` never ran and teardown went unchecked |
+| 101 | panic |
+
+Codes 2 and 3 apply only under `VKR_SWEEP=1`, which the script exports; they'd
+be wrong interactively, where closing a window immediately is not an error.
+
+Because the count keys off severity rather than the log level, `RUST_LOG` can
+hide the *detail* of a failure but not the failure itself. The script still
+greps each log, but as a cross-check: a log and an exit code that disagree are
+reported as `FAIL(detector disagreement)` rather than quietly resolved either
+way.
 
 ### Traps
 
-All of these are measured rather than assumed — the evidence is in
+Both are measured rather than assumed — the evidence is in
 `llm_notes/build_reproducibility.md` §7.3. They share one shape: **a broken
-example passes silently.** An empty log and a green run look exactly like a clean
-pass, so each of these hides a failure rather than reporting one.
+example passes silently**, hiding a failure rather than reporting one. The rest
+of what used to be on this list is now enforced by the exit codes above.
 
-- **An example's exit code says nothing about validation.** The debug callback
-  returns `VK_FALSE`, so a run with 500 validation errors still exits 0, and a
-  run that used its whole window exits 124. The script greps the log; don't judge
-  a hand-run example by its status.
-- **`--release` validates nothing.** `ENABLE_VALIDATION` is
-  `cfg!(debug_assertions)`, so a release run passes everything, always.
-- **`RUST_LOG` must be `warn` or lower**, which the script sets itself. Unset,
-  env_logger keeps only `error!` and WARNING-severity validation vanishes —
-  including everything the debug callback routes through `warn!`. Pointed at
-  another module, as `.env` does, *all* of it vanishes.
 - **Never wrap a validation check in `timeout N cargo run`.** That times the
   *compile* as well as the run, so on a cold build the timeout expires during
   compilation, cargo exits 124 with an empty log, and every example looks fine.
   One `touch src/renderer.rs` was once enough to make all 16 report `ok` with 16
-  empty logs. The script builds up front, then times the binary directly.
+  empty logs. Both the sweep and `just watch` build up front, then time the
+  binary directly.
 - **Don't use `timeout --foreground`** on an example launched through `just` or
   `cargo`. Plain `timeout` signals the whole process group, so the example gets
   SIGTERM; `--foreground` signals only `just`, orphaning the example to run
   forever.
 
-Two things that are *not* traps, contrary to what older notes in `llm_notes/`
+One thing that is *not* a trap, contrary to what older notes in `llm_notes/`
 claim: `timeout` does **not** skip `Drop`. It sends SIGTERM, SDL converts that to
 `SDL_QUIT`, and the loop exits normally, so `drain_gpu()` and `Drop for Renderer`
 both run and `vkDestroyDevice` reports leaked objects. Teardown is covered on
 every example on every run. What *does* break it is `timeout -s KILL` or
-`SDL_NO_SIGNAL_HANDLERS=1`; the script avoids both. See
+`SDL_NO_SIGNAL_HANDLERS=1`; the script avoids both, and a run that dies on a
+signal anyway now reports 143 rather than looking like a pass. See
 `llm_notes/build_reproducibility.md` §7.4 for the measurement matrix.
 
 ### Machine-local assets
@@ -112,13 +130,16 @@ example loads from tracked `textures/`, `models/` or `audio/`.
 
 ### If you change the script
 
-**Re-check that it still detects a fault.** Set a viewport width to `1e9` in
-`record_command_buffer`, confirm `VUID-VkViewport-width-01771` is reported, and
-revert. Worth doing after significant renderer changes too, not just script
-edits.
+Run `just sweep-self-test`. It injects a fault
+(`VKR_INJECT_VALIDATION_FAULT=1` makes `Renderer::viewport_width` record an
+invalid width) and fails unless the sweep reports it. A full sweep runs the same
+check first and aborts if the injected fault goes undetected, since a sweep
+whose detector is broken reports a clean pass for everything.
 
 This matters more than it sounds: a sweep that has silently stopped working looks
 exactly like a passing one. Detection has been verified against injected faults
 at all three points in the lifecycle — device init, per-frame command recording,
 and teardown-only — since "when does the error happen" is the axis a
-timeout-based sweep is most likely to be blind to.
+timeout-based sweep is most likely to be blind to. The self-test covers the
+command-recording point; the other two are in
+`llm_notes/build_reproducibility.md` §7.2.

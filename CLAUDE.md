@@ -21,8 +21,8 @@ just shaders               # Generate shader bindings (MUST run after .slang cha
 just test                  # Run tests (snapshot testing via insta)
 cargo insta test --accept  # accept all modified snapshots
 just lint                  # Clippy with warnings as errors
-timeout 3 just dev EXAMPLE # run one example in a window, watch for validation errors
-scripts/headless-sweep.sh  # run EVERY example headlessly, fail on validation output
+just watch EXAMPLE         # build, then run one example for a few seconds
+just sweep                 # run EVERY example headlessly, fail on validation output
 cat shaders/compiled/EXAMPLE.json | jq '.' # inspect shader reflection json
 ```
 
@@ -36,6 +36,8 @@ cat shaders/compiled/EXAMPLE.json | jq '.' # inspect shader reflection json
 - Always use `just test` when making changes to shaders/build_tasks.rs
 - Run `cargo fmt` after a set of rust file changes are complete
 - Never edit `src/generated/` by hand — `just shaders` regenerates it.
+- Never call `std::env::var` outside `src/env_config.rs`. Every variable is
+  parsed once at startup into `EnvConfig` and passed down from there.
 
 ## Shader System
 
@@ -46,26 +48,16 @@ cat shaders/compiled/EXAMPLE.json | jq '.' # inspect shader reflection json
 
 ## Testing
 
-See [`docs/testing.md`](docs/testing.md) — **read it before writing a validation
-check or accepting a snapshot**, since both have traps that make a broken check
-look like a passing one.
+```bash
+just test                  # Non-interactive (CI)
+just insta                 # Interactive review
+cargo insta test --accept  # Re-run and accept every changed snapshot
+just sweep                 # run all examples, checking for vulkan validation errors
+just sweep-self-test       # check that the sweep still detects an injected fault
+```
 
-Two independent things, and they overlap less than you'd expect:
+Always run `just test` when changing `src/shaders/build_tasks.rs`.
 
-- `just test` — insta snapshots of generated Rust and reflection JSON. No GPU.
-  Always run it when changing `src/shaders/build_tasks.rs`. Note
-  `cargo insta accept` alone does nothing afterwards; use
-  `cargo insta test --accept`.
-- `scripts/headless-sweep.sh` — runs every example headlessly under lavapipe and
-  fails on Vulkan validation output. **Run it when a change could affect what the
-  renderer records or destroys** (`src/renderer.rs` command recording,
-  synchronization or teardown; `src/app.rs`; descriptors and resource lifetimes;
-  adding or reworking an example).
+Run `just sweep` when a change could affect what the renderer records or destroys.
 
-`just test` passing says nothing about whether the renderer works, and the sweep
-says nothing about whether codegen is correct. A renderer change wants both.
-
-Two traps worth knowing even if you don't read further: **a validation run's exit
-code carries no validation signal** (the debug callback returns `VK_FALSE`, so 500
-errors still exit 0), and **`--release` validates nothing at all**
-(`ENABLE_VALIDATION` is `cfg!(debug_assertions)`).
+See [`docs/testing.md`](docs/testing.md) before writing a validation check or accepting a snapshot.

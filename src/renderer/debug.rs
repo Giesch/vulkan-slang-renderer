@@ -4,9 +4,30 @@ use std::ffi::CStr;
 use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ash::ext::debug_utils;
 use log::*;
+
+/// Validation messages seen so far, counted by the callback below.
+///
+/// The callback returns `VK_FALSE`, so nothing about a validation error is
+/// visible to the process that caused it — historically the only way to notice
+/// one was to grep the log, which made every check depend on the log actually
+/// containing it. Counting here instead means the process can exit nonzero.
+static VALIDATION_MESSAGES: AtomicU64 = AtomicU64::new(0);
+
+/// How many validation messages this process has seen.
+///
+/// Counts `VALIDATION`-type messages at `ERROR` or `WARNING` severity, keyed off
+/// the severity Vulkan reports rather than the log level, so `RUST_LOG` can hide
+/// the *detail* of a failure but never the failure itself.
+///
+/// Read this after the `Renderer` has been dropped to include teardown:
+/// `destroy_device` reports leaked objects before the messenger goes away.
+pub fn validation_message_count() -> u64 {
+    VALIDATION_MESSAGES.load(Ordering::Relaxed)
+}
 
 // based on the logging callback here:
 // https://github.com/unknownue/vulkan-tutorial-rust/blob/master/src/utility/debug.rs#L8
@@ -17,7 +38,15 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut c_void,
 ) -> vk::Bool32 {
+    use vk::DebugUtilsMessageSeverityFlagsEXT as Severity;
     use vk::DebugUtilsMessageTypeFlagsEXT as MessageType;
+
+    if message_type == MessageType::VALIDATION
+        && matches!(message_severity, Severity::ERROR | Severity::WARNING)
+    {
+        VALIDATION_MESSAGES.fetch_add(1, Ordering::Relaxed);
+    }
+
     let message_type = match message_type {
         MessageType::GENERAL => "[General]",
         MessageType::PERFORMANCE => "[Performance]",
@@ -29,7 +58,6 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
     let message = message.to_string_lossy();
     let prefixed_message = format!("{message_type} {message}");
 
-    use vk::DebugUtilsMessageSeverityFlagsEXT as Severity;
     match message_severity {
         Severity::ERROR => error!("{prefixed_message}"),
         Severity::WARNING => warn!("{prefixed_message}"),

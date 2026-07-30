@@ -12,6 +12,7 @@ use sdl3::sys::vulkan::SDL_Vulkan_DestroySurface;
 use sdl3::video::Window;
 use vk_mem::Alloc as _;
 
+use crate::env_config::EnvConfig;
 use crate::game::MaxMSAASamples;
 use crate::shaders;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader, ShaderAtlasEntry};
@@ -58,7 +59,7 @@ mod picking;
 use picking::PickingResources;
 
 /// enables both the validation layer and debug utils logging
-const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
+pub const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
 /// applies MSAA-like sampling within textures
 const ENABLE_SAMPLE_SHADING: bool = false;
 
@@ -88,6 +89,8 @@ const COLOR_SUBRESOURCE_RANGE: vk::ImageSubresourceRange = vk::ImageSubresourceR
 
 pub struct Renderer {
     // fields that are created once
+    /// the environment, parsed once at startup; see `env_config`
+    env: EnvConfig,
     aspect_ratio: f32,
     width: f32,
     height: f32,
@@ -233,6 +236,7 @@ fn create_resolve_images(
 impl Renderer {
     pub fn init(
         window: Window,
+        env: EnvConfig,
         enable_egui: bool,
         render_scale: f32,
         max_msaa_samples: MaxMSAASamples,
@@ -388,6 +392,7 @@ impl Renderer {
         let storage_buffers = StorageBufferStorage::new();
 
         Ok(Self {
+            env,
             aspect_ratio,
             width: window_width as f32,
             height: window_height as f32,
@@ -1433,6 +1438,24 @@ impl Renderer {
         }
     }
 
+    /// The viewport width to record; normally `render_extent.width`.
+    ///
+    /// With `VKR_INJECT_VALIDATION_FAULT` set this is deliberately invalid, so
+    /// that `scripts/headless-sweep.sh --self-test` can confirm the sweep still
+    /// detects a fault. Worth the branch: a sweep that has silently stopped
+    /// detecting looks exactly like a passing one, and the alternative is a
+    /// procedure someone has to remember to run by hand.
+    ///
+    /// Debug builds only, like validation itself.
+    fn viewport_width(&self) -> f32 {
+        if cfg!(debug_assertions) && self.env.inject_validation_fault {
+            // exceeds maxViewportDimensions: VUID-VkViewport-width-01771
+            1e9
+        } else {
+            self.render_extent.width as f32
+        }
+    }
+
     fn record_command_buffer(
         &mut self,
         pending_draws: &[PendingDrawCommand],
@@ -1767,7 +1790,7 @@ impl Renderer {
         let viewport = vk::Viewport::default()
             .x(0.0)
             .y(0.0)
-            .width(self.render_extent.width as f32)
+            .width(self.viewport_width())
             .height(self.render_extent.height as f32)
             .min_depth(0.0)
             .max_depth(1.0);
