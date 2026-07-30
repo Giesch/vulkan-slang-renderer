@@ -43,6 +43,9 @@ static const uint DEBUG_TEX0 = 6;        // raw tex0 at texcoord 0
 static const uint DEBUG_TEX1 = 7;        // raw tex1 at texcoord 1
 static const uint DEBUG_CHAN_PER_PIXEL = 8;  // channel recomputed per fragment
 static const uint DEBUG_IDENTITY_TEXMTX = 9; // texgen matrices forced to identity
+// Not part of the R/F cycle — `Key::M` forces it, and only the four `*damA`
+// mask batches draw while it is live. See RenderMode::MaskWhite.
+static const uint DEBUG_WHITE = 10;      // solid white wherever TEV alpha > 0
 
 struct Vertex {
     float3 position;
@@ -177,6 +180,18 @@ float4 fragMain(FragVertex fragVertex) : SV_TARGET {
         break;
     case DEBUG_TEX1:
         color = params.tex1.Sample(texcoord01.zw).rgb;
+        break;
+    case DEBUG_WHITE:
+        // The mask view (`Key::M`). The `*damA` materials compare Always, so
+        // their silhouette lives entirely in alpha and the GX alpha test above
+        // never discards; this discard is what makes the shape visible. It is
+        // the same predicate the composite pass runs (`Greater 0` on the same
+        // texel of the same texture through the same texcoord), so what is
+        // white here is exactly what composites there.
+        if (tevOut.a <= 0.0) {
+            discard;
+        }
+        color = float3(1.0);
         break;
     default:
         // final TEV output (modes 0, 8 and 9)

@@ -1,12 +1,16 @@
-//! Renders Toon Link from The Wind Waker — P8 of the link rendering plan
+//! Renders Toon Link from The Wind Waker — P9 of the link rendering plan
 //! (`llm_notes/link_rendering.md`): all 24 batches drawn from one shared mesh
 //! through 24 per-material pipelines, with the model's real albedo textures,
-//! complete per-material raster state, a J3D opaque-before-translucent draw
-//! order, gamma-correct output, and — new in P8 — the **full GX TEV
-//! interpreter**: a real color channel driving the `ZBtoonEX` ramp through an
+//! complete per-material raster state, gamma-correct output, the **full GX TEV
+//! interpreter** (a real color channel driving the `ZBtoonEX` ramp through an
 //! SRTG texgen, the stage chain with its swap tables and konst selects, and the
-//! `TEXMTX1` pupil offset. Both lights are fixed in world space and the model
-//! turns under them, as in the game — which sweeps the terminator across Link.
+//! `TEXMTX1` pupil offset), and — new in P9 — the **eye/brow write-mask
+//! multi-pass**: a five-group draw order in which the eye and brow decals
+//! deposit their coverage in destination alpha, the bangs draw over them without
+//! touching alpha, and the features then composite *through* the hair via
+//! `BlendMode::DstAlpha`. See `llm_notes/link_rendering/phase_09_eyes.md`.
+//! Both lights are fixed in world space and the model turns under them, as in
+//! the game — which sweeps the terminator across Link.
 //!
 //! Requires converted assets on disk (gitignored — you need the disc image):
 //! `just extract-link && just convert-link`.
@@ -17,6 +21,7 @@
 //! - Num1 / Num2 / Num3 / Num4: jump to mode 0 / 1 / 2 / 3
 //! - Q / E: isolate previous / next batch (prints its TEV state to stdout)
 //! - Space: clear isolation, draw all batches
+//! - M: toggle the eye/brow mask view — the mask coverage as solid white on black
 //!
 //! Debug modes: 0 final TEV, 1 world normals, 2 uv0, 3 final TEV alpha,
 //! 4 rasterized COLOR0, 5 texgen-1 coord, 6 raw tex0, 7 raw tex1,
@@ -125,6 +130,89 @@ fn pe_mode(material: &MaterialEntry) -> anyhow::Result<PeMode> {
     }
 }
 
+/// The face. Matched by name because no state signature separates it from the
+/// other eight opaque materials — `hideHatAndBackle`
+/// (`../tww/src/d/actor/d_a_player_main.cpp:1509-1531`) names both material
+/// strings verbatim at `:1512-1514`, so this is the game's own contract, not our
+/// convention. P6's per-batch isolation map independently confirms batches 4
+/// and 1. See `llm_notes/link_rendering/phase_09_eyes.md` decision 2.
+const FACE_MATERIAL: &str = "face";
+/// The bangs, which the eye composite reads *through*.
+const HAIR_MATERIAL: &str = "ear(2)";
+
+/// One of GX's three eye/brow decal passes, as `daPy_lk_c` names them:
+/// `mpZOnShape` / `mpZOffBlendShape` / `mpZOffNoneShape`.
+///
+/// The twelve translucent batches are **3 passes × 4 features**, not 12 BTP
+/// frames — the three shapes of a feature are byte-identical geometry, authored
+/// three times so the material state can differ. The game draws all twelve every
+/// frame too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DecalRole {
+    /// `*damA` — z-tested, source-alpha blended, color writes off: deposits the
+    /// feature's coverage in destination alpha. The z-test against what was
+    /// already drawn is what stops eyes appearing through walls.
+    Mask,
+    /// `eyeL`/`eyeR`/`mayuL`/`mayuR` — dst-alpha blended, depth test off:
+    /// composites the feature *through* whatever was drawn over it.
+    ///
+    /// Its `Greater 0` alpha compare is load-bearing for correctness, not an
+    /// optimization. Our clear is alpha 1.0 (GX's is 0), so the mask pass leaves
+    /// destination alpha ≥ 0.75 across the *whole* quad — including fully
+    /// transparent texels. Only the shader-side discard stops this pass
+    /// repainting an opaque rectangle there, which would be the black quad again
+    /// by another route.
+    Composite,
+    /// `*damB` — blending off, TEV alpha identically 0: zeroes the mask so it
+    /// cannot leak into later alpha-buffer effects. Its RGB is the black we used
+    /// to draw.
+    Erase,
+}
+
+/// Classify by state, never by name. `playerInit`
+/// (`../tww/src/d/actor/d_a_player_main.cpp:12150-12178`) derives its three
+/// arrays from `(z_compare_enable, blend_type)` on the materials under the
+/// `CL_EYE` and `CL_MAYU` joints and asserts 4/4/4; the names serve only as the
+/// assertion message. See phase_09_eyes.md decision 1.
+///
+/// `Ok(None)` for every opaque material.
+fn decal_role(material: &MaterialEntry) -> anyhow::Result<Option<DecalRole>> {
+    if pe_mode(material)? != PeMode::Translucent {
+        return Ok(None);
+    }
+    if material.z_test {
+        return Ok(Some(DecalRole::Mask));
+    }
+    // Keyed on the blend *mode*, not the factors: GX ignores src/dst when the
+    // mode is None_, so the `*damB` materials still carry
+    // Source_Alpha/Inverse_Source_Alpha in MAT3 despite not blending at all.
+    match material.blend.as_ref().map(|blend| blend.mode) {
+        Some(mm::BlendMode::Blend) => Ok(Some(DecalRole::Composite)),
+        Some(mm::BlendMode::None) | None => Ok(Some(DecalRole::Erase)),
+        Some(other @ (mm::BlendMode::Logic | mm::BlendMode::Subtract)) => anyhow::bail!(
+            "translucent material {:?} has unclassifiable GX blend mode {other}",
+            material.name
+        ),
+    }
+}
+
+/// Every batch drawn exactly once. The one invariant a mis-grouped batch would
+/// otherwise break silently — a duplicated decal would double-composite, a
+/// dropped one would just vanish.
+fn check_permutation(order: &[BatchIndex], batch_count: usize, what: &str) -> anyhow::Result<()> {
+    let mut seen: Vec<BatchIndex> = order.to_vec();
+    seen.sort_unstable();
+    seen.dedup();
+    anyhow::ensure!(
+        order.len() == batch_count && seen.len() == batch_count,
+        "{what} draw order is not a permutation of the {batch_count} batches: \
+         {} entries, {} distinct",
+        order.len(),
+        seen.len()
+    );
+    Ok(())
+}
+
 /// GX alpha-compare state as the raw codes the shader's `switch`es expect:
 /// `[comp0, ref0, comp1, ref1]` plus the combiner op.
 #[derive(Debug, Clone, Copy)]
@@ -171,6 +259,12 @@ const DEBUG_MODE_NAMES: [&str; 10] = [
     "channel per-fragment",
     "texgen matrices = identity",
 ];
+
+/// `DEBUG_WHITE` in `toon_link.shader.slang`: solid white wherever TEV alpha is
+/// non-zero. Deliberately *not* an entry in [`DEBUG_MODE_NAMES`] — `R`/`F` wrap
+/// on that array's length, and cycling into a mode that paints the whole model
+/// white is noise. [`RenderMode::MaskWhite`] is the only thing that selects it.
+const DEBUG_WHITE: u32 = 10;
 
 /// Radians per second the model turns about Y. Both lights are fixed in world
 /// space, so this is what sweeps the terminator — and it replaces the camera
@@ -467,7 +561,31 @@ fn resolve_texmap<'a>(
         .unwrap_or(dummy)
 }
 
-fn raster_state(material: &MaterialEntry) -> anyhow::Result<RasterState> {
+/// Which raster-state translation and draw order are live.
+///
+/// `MaskWhite` draws *only* the four `*damA` mask batches, as solid white on
+/// black: it is the one view that makes the eye/brow coverage visible at all,
+/// since under `Hardware` that pass runs with color writes off and deposits its
+/// result in destination alpha, which nothing can read back.
+///
+/// What is white is exactly what composites: the mask's TEV alpha is `eyeh.a` /
+/// `mayuh.a`, and the composite pass tests that same value with `Greater 0`, so
+/// this is the eye silhouette itself rather than an approximation of it.
+///
+/// The same enum bakes the pipelines and selects them at draw time, so a
+/// pipeline built with a mode is exactly the one that mode draws. See
+/// `llm_notes/link_rendering/phase_09_eyes.md` step 5.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderMode {
+    Hardware,
+    MaskWhite,
+}
+
+fn raster_state(
+    material: &MaterialEntry,
+    role: Option<DecalRole>,
+    mode: RenderMode,
+) -> anyhow::Result<RasterState> {
     let cull = match CULL_OVERRIDE {
         Some(cull) => cull,
         None => match material.cull {
@@ -478,6 +596,23 @@ fn raster_state(material: &MaterialEntry) -> anyhow::Result<RasterState> {
             mm::CullMode::All => anyhow::bail!("unmapped GX cull mode {}", material.cull),
         },
     };
+
+    // The mask view answers "where is the coverage", not "what would the
+    // hardware do", so it deliberately drops the material's own state: `Opaque`
+    // rather than the material's source-alpha blend, because blending white by
+    // the coverage would put back the antialiased grey the shader's discard is
+    // there to remove; and no depth test, because nothing else is drawn in this
+    // mode and an occluded mask would just be an invisible one. The alpha it
+    // leaves in the framebuffer is unread — the swapchain is OPAQUE.
+    if mode == RenderMode::MaskWhite {
+        return Ok(RasterState {
+            blend: BlendMode::Opaque,
+            cull,
+            depth_test: DepthCompare::Always,
+            depth_write: false,
+            color_write: [true; 4],
+        });
+    }
 
     // Depth test: honor z_func exactly when the test is enabled, else pass
     // unconditionally. All 24 materials are Less_Equal in practice (this makes
@@ -501,12 +636,27 @@ fn raster_state(material: &MaterialEntry) -> anyhow::Result<RasterState> {
     // what lets those layered decals composite at all).
     let depth_write = material.z_write;
 
+    // One rule with no exceptions (phase_09_eyes.md decision 3): alpha writes
+    // are on for exactly the mask and erase passes and off everywhere else.
+    // That is what the game does — `l_onCupOffAupPacket2` is the last P0 packet
+    // (`../tww/src/m_Do/m_Do_ext.cpp:1845-1853`), so all of P1 runs with
+    // alphaUpdate = 0 too. Masking alpha globally is safe here: the swapchain is
+    // created with CompositeAlphaFlagsKHR::OPAQUE, so nothing outside the frame
+    // observes framebuffer alpha.
+    let color_write = match role {
+        Some(DecalRole::Mask | DecalRole::Erase) => [false, false, false, true],
+        Some(DecalRole::Composite) | None => [true, true, true, false],
+    };
+
+    // NOTE every field listed rather than `..Default::default()`: each one now
+    // has a phase-9 reason, and a future RasterState field should be a compile
+    // error here rather than silently defaulted.
     Ok(RasterState {
         blend: blend_mode(material)?,
         cull,
         depth_test,
         depth_write,
-        ..Default::default()
+        color_write,
     })
 }
 
@@ -523,17 +673,11 @@ fn blend_mode(material: &MaterialEntry) -> anyhow::Result<BlendMode> {
         use mm::BlendFactor::*;
         match (blend.src, blend.dst) {
             (SourceAlpha, InverseSourceAlpha) => return Ok(BlendMode::Alpha),
-            // GX's dst-alpha blend, dst_alpha·src + (1−dst_alpha)·dst, reduces
-            // *exactly* to src wherever the framebuffer alpha is 1 — and it is 1
-            // at these pixels today: the clear is alpha 1.0, every opaque albedo
-            // is alpha-255, and the four dst-alpha materials (eyeL/eyeR/mayuL/
-            // mayuR) are the first translucent batches drawn, before anything
-            // writes a non-1 alpha over the face. So Opaque is exact here.
-            // PRECONDITION: a new albedo with alpha<255, a different draw order,
-            // or --casual textures silently break this; real BlendMode::DstAlpha
-            // lands with the eye write-mask pass in P9. See phase_07.md
-            // decision 2 / risk 3.
-            (DestinationAlpha, InverseDestinationAlpha) => return Ok(BlendMode::Opaque),
+            // GX's dst-alpha blend, and it is real now: the mask pass writes the
+            // eye/brow coverage into destination alpha and this composites
+            // through it, which is how the eyes read through the hair. See
+            // `llm_notes/link_rendering/phase_09_eyes.md`.
+            (DestinationAlpha, InverseDestinationAlpha) => return Ok(BlendMode::DstAlpha),
             _ => {}
         }
     }
@@ -561,10 +705,22 @@ pub struct ToonLink {
     /// `pipelines`. Everything except `mvp`, the two light fields and
     /// `debug_mode` is static, so `draw` patches those four and writes.
     params: Vec<ToonLinkParams>,
-    /// Batches partitioned opaque-before-translucent, INF1 order within each
-    /// group (J3D two-pass draw ordering). Walked by `draw` instead of the raw
-    /// manifest order.
+    /// The [`RenderMode::MaskWhite`] pipeline, parallel to [`Self::pipelines`]
+    /// and indexed by [`MaterialSlot`] — `Some` for exactly the four
+    /// [`DecalRole::Mask`] slots, `None` everywhere else, since no other
+    /// material is drawn in that mode.
+    ///
+    /// Deliberately stores no [`UniformBufferHandle`] of its own: `pipelines`
+    /// stays the single owner, so the per-frame zip against `params` in `draw`
+    /// cannot desync no matter how this vector changes.
+    mask_pipelines: Vec<Option<PipelineHandle<DrawIndexed>>>,
+    /// The hardware's five-group order ([`RenderMode::Hardware`]): mask,
+    /// face+hair, composite, erase, then the rest of the model.
     draw_order: Vec<BatchIndex>,
+    /// The four mask batches, and nothing else ([`RenderMode::MaskWhite`]).
+    /// Unlike [`Self::draw_order`] this is *not* a permutation of the batches.
+    mask_draw_order: Vec<BatchIndex>,
+    mode: RenderMode,
     debug_mode: u32,
     isolate: Option<BatchIndex>,
     light: LightRig,
@@ -579,8 +735,22 @@ impl ToonLink {
         &self.manifest.materials[slot.raw()]
     }
 
-    fn pipeline(&self, slot: MaterialSlot) -> &PipelineHandle<DrawIndexed> {
-        &self.pipelines[slot.raw()].0
+    /// `None` when the slot has no pipeline in the active mode, which under
+    /// [`RenderMode::MaskWhite`] is every slot that is not a mask decal.
+    fn pipeline(&self, slot: MaterialSlot) -> Option<&PipelineHandle<DrawIndexed>> {
+        match self.mode {
+            RenderMode::Hardware => Some(&self.pipelines[slot.raw()].0),
+            RenderMode::MaskWhite => self.mask_pipelines[slot.raw()].as_ref(),
+        }
+    }
+
+    /// Deliberately *not* named `draw_order`: `self.draw_order` and
+    /// `self.draw_order()` differing by two characters in one function is a trap.
+    fn active_draw_order(&self) -> &[BatchIndex] {
+        match self.mode {
+            RenderMode::Hardware => &self.draw_order,
+            RenderMode::MaskWhite => &self.mask_draw_order,
+        }
     }
 
     fn print_isolation(&self) {
@@ -600,6 +770,25 @@ impl ToonLink {
             batch.first_index,
             batch.index_count
         );
+        // Both modes have a way to legitimately render nothing, and during
+        // bring-up that is indistinguishable from a bug. Say which one it is.
+        let role = decal_role(material).ok().flatten();
+        println!("  mode {:?}, role {:?}", self.mode, role);
+        match self.mode {
+            // The mask and erase passes draw with color writes off, so
+            // isolating one of those eight batches yields a *black frame*.
+            RenderMode::Hardware if matches!(role, Some(DecalRole::Mask | DecalRole::Erase)) => {
+                println!(
+                    "  -> expect a black frame: this pass touches destination alpha and nothing else"
+                );
+            }
+            // MaskWhite draws only the four mask batches; anything else
+            // isolated there is filtered out before it reaches a pipeline.
+            RenderMode::MaskWhite if role != Some(DecalRole::Mask) => {
+                println!("  -> expect a black frame: MaskWhite draws only the four mask batches");
+            }
+            _ => {}
+        }
         self.print_tev_state(material);
     }
 
@@ -800,22 +989,51 @@ impl Game for ToonLink {
             },
         )?;
 
-        // push order defines MaterialSlot: pipelines[slot] is materials[slot]
+        // push order defines MaterialSlot: pipelines[slot] is materials[slot],
+        // and mask_pipelines[slot] is its MaskWhite twin where it has one
         let mut pipelines = vec![];
+        let mut mask_pipelines = vec![];
         let mut params = vec![];
         for material in &manifest.materials {
+            let role = decal_role(material)?;
             let params_buffer = renderer.create_uniform_buffer::<ToonLinkParams>()?;
-            let resources = Resources {
-                tex0: resolve_texmap(material, 0, &textures, &white_square),
-                tex1: resolve_texmap(material, 1, &textures, &white_square),
-                params_buffer: &params_buffer,
-            };
+            let tex0 = resolve_texmap(material, 0, &textures, &white_square);
+            let tex1 = resolve_texmap(material, 1, &textures, &white_square);
             let pipeline_config = Shader::init()
-                .pipeline_config(resources)
+                .pipeline_config(Resources {
+                    tex0,
+                    tex1,
+                    params_buffer: &params_buffer,
+                })
                 .with_shared_mesh(&mesh)
-                .with_raster_state(raster_state(material)?);
+                .with_raster_state(raster_state(material, role, RenderMode::Hardware)?);
             let pipeline = renderer.create_pipeline(pipeline_config)?;
+
+            // Only the mask decals are ever drawn under MaskWhite, so only they
+            // get a second pipeline — 28 total rather than 48.
+            //
+            // The *same* uniform buffer, deliberately. `Resources` only borrows
+            // it and `RawUniformBufferHandle::from_typed` copies an index
+            // (`src/renderer/uniform_buffer.rs:83`), so the two pipelines get
+            // separate descriptor sets pointing at one `vk::Buffer` per ring
+            // slot, and `write_uniform` writes that buffer's mapped memory,
+            // which both then read. `draw`'s uniform loop is unchanged.
+            let mask_pipeline = if role == Some(DecalRole::Mask) {
+                let mask_config = Shader::init()
+                    .pipeline_config(Resources {
+                        tex0,
+                        tex1,
+                        params_buffer: &params_buffer,
+                    })
+                    .with_shared_mesh(&mesh)
+                    .with_raster_state(raster_state(material, role, RenderMode::MaskWhite)?);
+                Some(renderer.create_pipeline(mask_config)?)
+            } else {
+                None
+            };
+
             pipelines.push((pipeline, params_buffer));
+            mask_pipelines.push(mask_pipeline);
 
             // The whole per-material uniform, built once. `tev_pack::pack` is a
             // second gate on top of the converter's `tev_ir.rs`: this example
@@ -835,19 +1053,94 @@ impl Game for ToonLink {
             });
         }
 
-        // J3D two-pass order: opaque batches and then translucent ones,
-        // both in INF1 scene graph order.
-        let mut opaque = vec![];
-        let mut translucent = vec![];
+        // The hardware's five-group order (phase_09_eyes.md, "What the game
+        // does"). One pass over the batches, so INF1 order is preserved within
+        // each group for free.
+        let material_of = |batch: &Batch| -> &MaterialEntry {
+            &manifest.materials[MaterialSlot::from_manifest(batch.material).raw()]
+        };
+        let (mut mask, mut early, mut composite, mut erase, mut rest) =
+            (vec![], vec![], vec![], vec![], vec![]);
         for (i, batch) in manifest.batches.iter().enumerate() {
-            let material = &manifest.materials[MaterialSlot::from_manifest(batch.material).raw()];
-            match pe_mode(material)? {
-                PeMode::Opaque => opaque.push(BatchIndex::from_raw(i)),
-                PeMode::Translucent => translucent.push(BatchIndex::from_raw(i)),
+            let index = BatchIndex::from_raw(i);
+            let material = material_of(batch);
+            match decal_role(material)? {
+                Some(DecalRole::Mask) => mask.push(index),
+                Some(DecalRole::Composite) => composite.push(index),
+                Some(DecalRole::Erase) => erase.push(index),
+                // Pulled ahead of the composite so the mask survives *under*
+                // the bangs, which is how the eyes read through the hair. The
+                // game hides both for P1 so they still draw exactly once.
+                None if matches!(material.name.as_str(), FACE_MATERIAL | HAIR_MATERIAL) => {
+                    early.push(index)
+                }
+                None => rest.push(index),
             }
         }
-        let draw_order: Vec<BatchIndex> = opaque.iter().chain(&translucent).copied().collect();
 
+        // The same assertion `playerInit` makes. This is what fires loudly if
+        // --casual or a converter change perturbs the material table. It also
+        // subsumes "every translucent batch was consumed": `decal_role` returns
+        // `Some` for every translucent material or bails.
+        anyhow::ensure!(
+            mask.len() == 4 && composite.len() == 4 && erase.len() == 4,
+            "expected 4 mask / 4 composite / 4 erase eye-brow decals covering all 12 \
+             translucent batches, got {} / {} / {} (total {}); `playerInit` asserts \
+             zon_cnt == 4 && zoff_blend_cnt == 4 && zoff_none_cnt == 4",
+            mask.len(),
+            composite.len(),
+            erase.len(),
+            mask.len() + composite.len() + erase.len()
+        );
+
+        // Bail on a missing *or duplicated* name rather than silently degrading:
+        // getting this wrong moves the wrong batch into the early group and the
+        // symptom (eyes compositing over the wrong surface) is subtle.
+        let early_names: Vec<&str> = early
+            .iter()
+            .map(|&b| material_of(&manifest.batches[b.raw()]).name.as_str())
+            .collect();
+        anyhow::ensure!(
+            early_names.len() == 2
+                && early_names.contains(&FACE_MATERIAL)
+                && early_names.contains(&HAIR_MATERIAL),
+            "expected exactly one {FACE_MATERIAL:?} batch and one {HAIR_MATERIAL:?} batch \
+             to pull ahead of the eye composite, found {early_names:?}"
+        );
+
+        // 1 mask deposits the eye/brow coverage in destination alpha, z-tested
+        // against what is already drawn. 2 draws the bangs *without* touching
+        // alpha, so the mask survives underneath them. 3 composites
+        // `out = eye·dstA + fb·(1−dstA)` with the depth test off — the eyes read
+        // through the hair. 4 zeroes the mask. 5 is the rest of the model (P1).
+        let draw_order: Vec<BatchIndex> = mask
+            .iter()
+            .chain(&early)
+            .chain(&composite)
+            .chain(&erase)
+            .chain(&rest)
+            .copied()
+            .collect();
+
+        // The `M` view: the mask group alone. Not a permutation of the batches,
+        // so `check_permutation` does not apply — the 4/4/4 assertion above is
+        // what guarantees its contents.
+        let mask_draw_order = mask.clone();
+
+        check_permutation(&draw_order, manifest.batches.len(), "five-group")?;
+
+        // `draw`'s uniform loop zips the first two and would silently skip the
+        // tail if they ever diverged.
+        anyhow::ensure!(
+            pipelines.len() == params.len() && mask_pipelines.len() == pipelines.len(),
+            "pipeline/params/mask arrays desynced ({} / {} / {})",
+            pipelines.len(),
+            params.len(),
+            mask_pipelines.len()
+        );
+
+        let group =
+            |batches: &[BatchIndex]| -> Vec<usize> { batches.iter().map(|b| b.raw()).collect() };
         // NOTE keep in sync with the module doc comment
         let modes: Vec<String> = DEBUG_MODE_NAMES
             .iter()
@@ -856,18 +1149,30 @@ impl Game for ToonLink {
             .collect();
         println!(
             "toon_link: {} batches, {} materials, {} vertices\n\
-             draw order (batch idx): {:?}\n\
+             draw order (batch idx):\n\
+             \x20  1 mask       {:?}   alpha-only writes, z-tested\n\
+             \x20  2 face+hair  {:?}   color + depth, no alpha\n\
+             \x20  3 composite  {:?}   dst-alpha blend, no depth test\n\
+             \x20  4 erase      {:?}   alpha-only writes, zeroes the mask\n\
+             \x20  5 rest       {:?}\n\
+             mask-view draw order: {:?}\n\
              controls:\n\
              \x20 T                          toggle the eflight (green light)\n\
              \x20 R / F                      next / previous debug mode\n\
              \x20 Num1..Num4                 jump to debug mode 0..3\n\
              \x20 Q / E                      isolate previous / next batch\n\
              \x20 Space                      clear isolation, draw all batches\n\
+             \x20 M                          toggle the eye/brow mask as solid white\n\
              debug modes: {}",
             manifest.batches.len(),
             manifest.materials.len(),
             manifest.buffers.vertex_count,
-            draw_order.iter().map(|b| b.raw()).collect::<Vec<_>>(),
+            group(&mask),
+            group(&early),
+            group(&composite),
+            group(&erase),
+            group(&rest),
+            group(&mask_draw_order),
             modes.join(", "),
         );
 
@@ -876,8 +1181,11 @@ impl Game for ToonLink {
             manifest,
             mesh,
             pipelines,
+            mask_pipelines,
             params,
             draw_order,
+            mask_draw_order,
+            mode: RenderMode::Hardware,
             debug_mode: 0,
             isolate: None,
             light: LightRig::default(),
@@ -902,18 +1210,25 @@ impl Game for ToonLink {
         let view = Mat4::look_at_rh(eye, target, Vec3::Y);
         let proj = Mat4::perspective_rh(45f32.to_radians(), renderer.aspect_ratio(), 0.1, 20.0);
 
-        // one index-range draw per batch, in opaque-before-translucent order
-        for &index in &self.draw_order {
+        // one index-range draw per batch, in the active mode's order
+        for &index in self.active_draw_order() {
             if self.isolate.is_some_and(|only| only != index) {
                 continue;
             }
             let batch = self.batch(index);
-            let pipeline = self.pipeline(MaterialSlot::from_manifest(batch.material));
+            let Some(pipeline) = self.pipeline(MaterialSlot::from_manifest(batch.material)) else {
+                continue;
+            };
             renderer.queue_draw_index_range(pipeline, batch.first_index, batch.index_count);
         }
 
         let mvp = MVPMatrices { model, view, proj };
-        let debug_mode = self.debug_mode;
+        // MaskWhite forces its own view; `self.debug_mode` keeps whatever R/F
+        // last set it to, so toggling back with `M` restores it.
+        let debug_mode = match self.mode {
+            RenderMode::Hardware => self.debug_mode,
+            RenderMode::MaskWhite => DEBUG_WHITE,
+        };
         let light_dir = self.light.directions(spin);
         let light_color = self.light.colors();
         let eflight = self.light.eflight;
@@ -993,6 +1308,25 @@ impl Game for ToonLink {
                 Key::Space => {
                     self.isolate = None;
                     self.print_isolation();
+                }
+
+                // The mask view (phase_09_eyes.md step 5). Under Hardware the
+                // mask pass is invisible by construction — colour writes off,
+                // result in destination alpha — so this is the only way to see
+                // what coverage it actually deposits.
+                Key::M => {
+                    self.mode = match self.mode {
+                        RenderMode::Hardware => RenderMode::MaskWhite,
+                        RenderMode::MaskWhite => RenderMode::Hardware,
+                    };
+                    println!(
+                        "toon_link: render mode {:?}\n  draw order (batch idx): {:?}",
+                        self.mode,
+                        self.active_draw_order()
+                            .iter()
+                            .map(|b| b.raw())
+                            .collect::<Vec<_>>(),
+                    );
                 }
 
                 _ => {}
