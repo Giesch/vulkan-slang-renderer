@@ -9,6 +9,11 @@
 #   scripts/headless-sweep.sh                 # all examples
 #   scripts/headless-sweep.sh basic_triangle  # just these
 #   SWEEP_TIMEOUT=20 scripts/headless-sweep.sh
+#   SWEEP_SKIP="toon_link watercolor" scripts/headless-sweep.sh   # force a skip
+#
+# Examples needing machine-local, gitignored assets are skipped or swept based
+# on whether those assets are actually present (see assets_missing below), so
+# the same invocation is correct on a dev machine and in a bare container.
 #
 # Container packages required (see build_reproducibility.md §4):
 #   mesa-vulkan-drivers vulkan-validationlayers libvulkan-dev
@@ -30,9 +35,21 @@ export SLANG_EXTERNAL_DIR="$PWD/slang/build/external"
 # Each of these, left to the ambient environment, makes a broken example pass
 # silently. See build_reproducibility.md §7.3 for the measurements.
 #
-# 1. No GPU and no display: software ICD + offscreen SDL video driver.
+# 1. No GPU and no display: software ICD + offscreen SDL video driver. Pinning
+#    the ICD keeps the sweep on lavapipe even on a machine that has a real GPU,
+#    so results are comparable across machines. Bail rather than let the loader
+#    fall back to the system default: an unreadable VK_ICD_FILENAMES turns into
+#    16 identical device-init failures that read like a renderer bug.
 export SDL_VIDEODRIVER=offscreen
-export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+lvp_icd=
+for candidate in /usr/share/vulkan/icd.d/lvp_icd*.json; do
+  [ -r "$candidate" ] && lvp_icd=$candidate && break
+done
+if [ -z "$lvp_icd" ]; then
+  echo "FAIL: no lavapipe ICD in /usr/share/vulkan/icd.d (install mesa-vulkan-drivers)" >&2
+  exit 1
+fi
+export VK_ICD_FILENAMES=$lvp_icd
 #
 # 2. RUST_LOG. The debug callback routes WARNING-severity validation through
 #    log::warn! (renderer/debug.rs), and env_logger's default with RUST_LOG
@@ -51,13 +68,30 @@ unset SDL_NO_SIGNAL_HANDLERS
 
 : "${SWEEP_TIMEOUT:=10}"
 : "${SWEEP_LOG_DIR:=/tmp/sweep-logs}"
-# Examples that cannot run on a machine without machine-local assets.
-# toon_link needs assets/link/converted, which are gitignored and derived from
-# a Wind Waker disc image (llm_notes/link_rendering/follow_up.md) -- it bails
-# with a helpful message anywhere else. Set SWEEP_SKIP= to sweep it anyway on
-# a machine where `just convert-link` has been run.
-: "${SWEEP_SKIP:=toon_link}"
+# Force-skip by name, space separated. Empty by default: an example that cannot
+# run here is detected below rather than listed here, so this is only for
+# temporarily excluding one that otherwise would run.
+: "${SWEEP_SKIP:=}"
 mkdir -p "$SWEEP_LOG_DIR"
+
+# True when $1 needs machine-local assets that aren't on this machine.
+#
+# /assets/ is gitignored wholesale, so an example fed from it runs on a machine
+# where the assets have been generated and cannot run anywhere else. Testing for
+# the assets beats a hard-coded skip list: the same sweep covers toon_link on a
+# dev machine and skips it in a container, with no env var to remember.
+#
+# Every other example loads from tracked textures/, models/ or audio/, so this
+# is the whole set. Add a case here alongside any new gitignored-asset example.
+assets_missing() {
+  case "$1" in
+    # examples/toon_link.rs:155 reads this first and bails if it is absent;
+    # produced by `just extract-link && just convert-link` from a Wind Waker
+    # disc image (llm_notes/link_rendering/phase_00.md).
+    toon_link) [ ! -f assets/link/converted/link.manifest.json ] ;;
+    *) return 1 ;;
+  esac
+}
 
 if [ "$#" -gt 0 ]; then
   examples=("$@")
@@ -80,7 +114,14 @@ fi
 
 fail=0
 for e in "${examples[@]}"; do
-  case " $SWEEP_SKIP " in *" $e "*) echo "skip: $e (needs machine-local assets)"; continue ;; esac
+  case " $SWEEP_SKIP " in *" $e "*) echo "skip: $e (SWEEP_SKIP)"; continue ;; esac
+
+  # A skip, not a failure, even when named explicitly on the command line: in a
+  # container there is nothing to fix, and a red sweep there would be noise.
+  if assets_missing "$e"; then
+    echo "skip: $e (assets absent; run \`just extract-link && just convert-link\`)"
+    continue
+  fi
 
   log="$SWEEP_LOG_DIR/$e.log"
   bin="target/debug/examples/$e"
@@ -110,7 +151,8 @@ for e in "${examples[@]}"; do
   # 124 == timed out == ran its whole window without dying, which is success
   # for an example that would otherwise loop forever. Anything else nonzero is
   # a crash or an early bail, reported separately from a validation failure.
-  # (toon_link legitimately exits 1 without its gitignored converted assets.)
+  # Every example that reaches here has the assets it needs, so an early bail
+  # is a real failure rather than a missing-asset message.
   if [ "$code" -ne 124 ] && [ "$code" -ne 0 ]; then
     echo "FAIL(exit $code): $e"
     grep -viE '^ +[0-9]+:|^ +at |ALSA lib' "$log" | tail -2 | sed 's/^/    /'
