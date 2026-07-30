@@ -671,8 +671,9 @@ pub struct ToonLink {
         UniformBufferHandle<ToonLinkParams>,
     )>,
     /// One fully-built uniform block per material slot, parallel to
-    /// `pipelines`. Everything except `mvp`, the two light fields and
-    /// `debug_mode` is static, so `draw` patches those four and writes.
+    /// `pipelines`. The manifest's values verbatim, never mutated after
+    /// construction: `draw` copies each one and patches `mvp`, the two light
+    /// fields, `debug_mode` and the environment override onto the copy.
     params: Vec<ToonLinkParams>,
     /// The [`RenderMode::MaskWhite`] pipeline, parallel to [`Self::pipelines`]
     /// and indexed by [`MaterialSlot`] — `Some` for exactly the four
@@ -1268,11 +1269,11 @@ impl Game for ToonLink {
         let light_dir = light.directions(spin);
         let light_color = light.colors();
         let eflight = light.eflight;
+
         renderer.submit_draws(|gpu| {
-            // Everything else in `params` was built once from the manifest.
-            for ((_, params_buffer), params) in
-                self.pipelines.iter_mut().zip(self.params.iter_mut())
-            {
+            for ((_, params_buffer), base) in self.pipelines.iter_mut().zip(&self.params) {
+                let mut params = *base;
+
                 params.mvp = mvp;
                 params.tev.light_dir = light_dir;
                 params.tev.light_color = light_color;
@@ -1284,12 +1285,6 @@ impl Game for ToonLink {
                 // so the manifest's `reg_colors[0]` / `konst_colors[0]` are only
                 // the defaults J3D loaded.
                 //
-                // Applied to a *copy*, so `self.params` keeps the manifest's
-                // values verbatim. Writing back in place would work for the two
-                // unconditional colors but would make the eflight's K1 sticky —
-                // toggling it off could not restore `konst_colors[1]`.
-                let mut params = *params;
-
                 // Gated on the color channel actually being lit, as the game
                 // gates on `mLightMode != 0`: the eye and brow decals keep their
                 // MAT3 values. RGB only — the game copies the existing alpha back
