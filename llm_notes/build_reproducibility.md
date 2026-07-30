@@ -597,11 +597,16 @@ so a machine with a real GPU still sweeps on lavapipe and stays comparable to th
 container; an unreadable `VK_ICD_FILENAMES` otherwise produces 16 identical
 device-init failures that read like a renderer bug.
 
-**Documented in `CLAUDE.md`** (§"Vulkan validation sweep"): how to invoke it,
-when it is worth running, the required packages, and the four traps from 7.3 that
-make a hand-run validation check lie — the exit code meaning nothing, `--release`
-validating nothing, `RUST_LOG` swallowing warnings, and `timeout N cargo run`
-timing the compile. Those are the ones that cost real time to rediscover.
+**Documented in [`docs/testing.md`](../docs/testing.md)** (§"Validation sweep"),
+with a summary and a pointer in `CLAUDE.md`: how to invoke it, when it is worth
+running, the required packages, and the traps from 7.3 that make a hand-run
+validation check lie — the exit code meaning nothing, `--release` validating
+nothing, `RUST_LOG` swallowing warnings, and `timeout N cargo run` timing the
+compile. Those are the ones that cost real time to rediscover.
+
+Note the direction of that reference: `docs/` is the current-state document and
+this note is the historical one. Where they disagree, `docs/testing.md` wins, and
+this file should be read as what was believed while §7 was being built.
 
 Remaining work:
 

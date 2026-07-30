@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # Headless validation sweep — prototype for `just headless-all`
-# (design: llm_notes/offscreen_testing.md; findings: llm_notes/build_reproducibility.md §7)
+#
+# Usage, and when it is worth running: docs/testing.md
+# Design: llm_notes/offscreen_testing.md. Findings: build_reproducibility.md §7.
 #
 # Runs each example under a software Vulkan driver with no display, and fails
 # if any of them emits Vulkan validation output.

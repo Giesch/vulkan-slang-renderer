@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Where the docs are
+
+- **`docs/`** — current reference material, kept up to date. Trust it, and update
+  it when you change what it describes.
+- **`llm_notes/`** — historical plans and phase records, written before or during
+  a piece of work. **Treat as possibly out of date**: much of it is a snapshot of
+  what was believed at the time, some of it was superseded by the work it
+  describes, and a few claims turned out to be wrong (those are annotated in
+  place rather than deleted, so the record stays honest). Useful for *why* a
+  thing is the way it is; verify against the code before acting on it.
+
 ## Build Commands
 
 ```bash
@@ -35,63 +46,26 @@ cat shaders/compiled/EXAMPLE.json | jq '.' # inspect shader reflection json
 
 ## Testing
 
-Uses insta for snapshot testing of generated code:
-```bash
-just test                  # Non-interactive (CI)
-just insta                 # Interactive review
-cargo insta test --accept  # Re-run and accept every changed snapshot
-```
+See [`docs/testing.md`](docs/testing.md) — **read it before writing a validation
+check or accepting a snapshot**, since both have traps that make a broken check
+look like a passing one.
 
-NOTE `cargo insta accept` on its own does nothing after `just test`: that recipe
-sets `INSTA_UPDATE=no`, so no `.snap.new` files are written for it to review.
-Use `cargo insta test --accept`, which re-runs the tests and writes the
-snapshots in one step. Review the diffs `just test` prints before accepting.
+Two independent things, and they overlap less than you'd expect:
 
-## Vulkan validation sweep
+- `just test` — insta snapshots of generated Rust and reflection JSON. No GPU.
+  Always run it when changing `src/shaders/build_tasks.rs`. Note
+  `cargo insta accept` alone does nothing afterwards; use
+  `cargo insta test --accept`.
+- `scripts/headless-sweep.sh` — runs every example headlessly under lavapipe and
+  fails on Vulkan validation output. **Run it when a change could affect what the
+  renderer records or destroys** (`src/renderer.rs` command recording,
+  synchronization or teardown; `src/app.rs`; descriptors and resource lifetimes;
+  adding or reworking an example).
 
-`just test` does not touch the GPU. To check for Vulkan validation errors, run
-`scripts/headless-sweep.sh` — it runs every example under a software driver
-(lavapipe) with no window and no display, and exits nonzero if any of them emits
-validation output. Not yet wired to a `just` recipe.
+`just test` passing says nothing about whether the renderer works, and the sweep
+says nothing about whether codegen is correct. A renderer change wants both.
 
-```bash
-scripts/headless-sweep.sh                    # all examples (~10s each + a build)
-scripts/headless-sweep.sh sprite_batch       # just these
-SWEEP_TIMEOUT=30 scripts/headless-sweep.sh   # longer window per example
-SWEEP_SKIP=watercolor scripts/headless-sweep.sh   # force-skip by name
-```
-
-**Run it when a change could affect what the renderer records or destroys** —
-`src/renderer.rs` (especially command recording, synchronization or teardown),
-`src/app.rs`, anything touching descriptors or resource lifetimes, and after
-adding or reworking an example. It is fast enough to be the default check on
-renderer work; `timeout 3 just dev EXAMPLE` remains the quicker single-example
-look when you also want to *see* the output.
-
-Requires `mesa-vulkan-drivers vulkan-validationlayers libvulkan-dev`. It needs
-no GPU, no display and no sound card, so it works in a container.
-
-Things that will mislead you if you don't know them (all measured — see
-`llm_notes/build_reproducibility.md` §7.3):
-
-- **An example's exit code says nothing about validation.** The debug callback
-  returns `VK_FALSE`, so a run with 500 errors still exits 0, and a run that
-  used its whole window exits 124. The script greps the log; don't judge a
-  hand-run example by its status.
-- **Don't check validation with `--release`.** `ENABLE_VALIDATION` is
-  `cfg!(debug_assertions)`, so a release run validates nothing and passes
-  everything.
-- **`RUST_LOG` must be set to `warn` or lower**, which the script does itself.
-  Unset, env_logger keeps only `error!` and WARNING-severity validation
-  disappears; set to another module (as `.env` does) everything disappears.
-- **Never wrap a validation check in `timeout N cargo run`** — that times the
-  *compile* too, so on a cold build the timeout expires during compilation,
-  cargo exits 124 with an empty log, and every example looks fine. The script
-  builds first, then times the binary.
-- `toon_link` skips itself where its gitignored assets are absent, and sweeps
-  normally where `just extract-link && just convert-link` has been run.
-
-**If you change the script, re-check that it still detects a fault** — e.g. set
-a viewport width to `1e9` in `record_command_buffer`, confirm
-`VUID-VkViewport-width-01771` is reported, and revert. A sweep that has silently
-stopped working looks exactly like a passing one.
+Two traps worth knowing even if you don't read further: **a validation run's exit
+code carries no validation signal** (the debug callback returns `VK_FALSE`, so 500
+errors still exit 0), and **`--release` validates nothing at all**
+(`ENABLE_VALIDATION` is `cfg!(debug_assertions)`).
