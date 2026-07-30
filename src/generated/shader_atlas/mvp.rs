@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 
+#[allow(unused_imports)]
 use crate::renderer::gpu_write::GPUWrite;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)

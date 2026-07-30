@@ -227,16 +227,24 @@ structurally wrong. Worth flagging because during P8 verification you need to
 attribute differences correctly: "the *banding* is right but the *tint* is
 off" is a lighting-constants problem to be tuned, not a TEV bug to be chased.
 
-But there's a cheap upgrade from tuning to **ground truth**: rather than
-excavating the kankyo tables statically, read the *computed* values out of
-the running game. **dolphin-memory-engine** (pip-installable) reads emulated
-RAM from outside Dolphin, and the tww decomp gives exact symbol addresses —
-so a small script attached to Dolphin on noon-Outset reads Link's live
-`dKy_tevstr_c` light/ambient colors directly (and can force the time-of-day
-variable to exactly noon first). An hour of work, and the constants become
-extracted facts instead of eyeballed approximations. Alternatively, the FIFO
-analyzer shows the same values as the C0/K0/K1 register writes in a recorded
-frame. See [`tests.md`](tests.md) §"Dolphin as an automated oracle".
+There's a cheap upgrade from tuning to **ground truth**, but as of P8 it is
+**optional and not scheduled** ([`phase_08.md`](phase_08.md) decision 7;
+[`follow_up.md`](follow_up.md) §5). Rather than excavating the kankyo tables
+statically, read the *computed* values out of the running game:
+**dolphin-memory-engine** (pip-installable) reads emulated RAM from outside
+Dolphin, and the tww decomp gives exact symbol addresses — so a small script
+attached to Dolphin on noon-Outset reads Link's live `dKy_tevstr_c`
+light/ambient colors directly (and can force the time-of-day variable to
+exactly noon first). An hour of work, and the constants become extracted facts
+instead of eyeballed approximations. Alternatively, the FIFO analyzer shows the
+same values as the C0/K0/K1 register writes in a recorded frame. See
+[`tests.md`](tests.md) §"Dolphin as an automated oracle". **Take this
+escalation when a color mismatch is the thing blocking progress** — P8 ships
+the seeds and adjudicates on band structure instead.
+
+*P8 measurement*: the ambient half of this risk turns out not to need tuning at
+all — `ambient_colors[0]` is `[50,50,50,50]` on all 24 materials in the
+manifest, so only the two light colors (`lit_mask` is 3) are seeds.
 
 ---
 

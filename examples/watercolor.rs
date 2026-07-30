@@ -17,7 +17,7 @@ use vulkan_slang_renderer::renderer::{
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
 use vulkan_slang_renderer::generated::shader_atlas::paint_brush_compute;
-use vulkan_slang_renderer::generated::shader_atlas::paint_display;
+use vulkan_slang_renderer::generated::shader_atlas::paint_display::{self, DebugView};
 use vulkan_slang_renderer::generated::shader_atlas::wc_advect_and_transfer_pigment_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_capillary_flow_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_divergence_compute;
@@ -37,16 +37,6 @@ pub struct EditState {
     fps: Label,
     brush_concentration: Slider,
     debug_view: DebugView,
-}
-
-#[derive(Default, Clone, Copy, Facet)]
-#[repr(u32)]
-enum DebugView {
-    /// The view of the actual painting
-    #[default]
-    Pigments = 0,
-    /// The debug view of wet areas as white and dry areas as black
-    WetAreaMask = 1,
 }
 
 const FRAME_HISTORY_SIZE: usize = 60;
@@ -411,8 +401,6 @@ impl Game for Watercolor {
     }
 
     fn setup(renderer: &mut Renderer) -> anyhow::Result<Self> {
-        renderer.enable_pipelined_compute();
-
         // Create all ping-pong textures
         let velocity_u = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
         let velocity_v = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
@@ -1022,10 +1010,6 @@ impl Game for Watercolor {
         self.sim_parity = !self.sim_parity;
         self.deposit_parity = !self.deposit_parity;
 
-        // Pipelined: graphics reads previous frame's results, so no compute→frag
-        // barrier needed. A compute→compute barrier suffices for next frame's reads.
-        compute_barrier(&mut renderer);
-
         // 11. Display
         let grid_size = Vec2::new(CANVAS_WIDTH as f32, CANVAS_HEIGHT as f32);
         let texel_size = Vec2::new(1.0 / CANVAS_WIDTH as f32, 1.0 / CANVAS_HEIGHT as f32);
@@ -1188,7 +1172,7 @@ impl Game for Watercolor {
                 display_params_buffer,
                 paint_display::DisplayParams {
                     texel_size,
-                    debug_view: self.edit_state.debug_view as u32,
+                    debug_view: self.edit_state.debug_view,
                     canvas_aspect: grid_size.x / grid_size.y,
                     window_aspect: window_size.x / window_size.y,
                     _padding_0: Default::default(),

@@ -1,22 +1,33 @@
 # Offscreen testing: validation errors and golden images
 
-Status: **design, 2026-07-25. Not yet implemented.** Code references verified
-against `link-phase-07-plan` @ 6b1868c. Measurements (driver capabilities,
-session type) taken on Dan's laptop on the same date.
+Status: **design, 2026-07-27.** Supersedes the 2026-07-25 version, which was
+built around Xvfb and treated validation and goldens as one deliverable. Code
+references verified against `main` @ `aae5b71`. Driver and environment
+measurements taken on Dan's laptop the same day.
+
+**Split into two phases:**
+
+- **Phase 1 — windowless validation gate.** Designed to completion below. Runs
+  an example with no window and no display server and exits nonzero on any
+  Vulkan validation error. This is what gets built next.
+- **Phase 2 — golden images.** Kept as a sketch (§9-§12). Its central problem —
+  which driver goldens are blessed on — is now *documented* and **deliberately
+  left open**; see §12.
 
 Companion documents: [`tech_debt.md`](tech_debt.md) — its §1 catalogues the
-teardown-time object leaks that produce validation errors at
-`vkDestroyDevice`, which is exactly the class this harness would catch
-automatically instead of by eye. This note supersedes the scattered `todo.org`
-entries on the subject (lines 5-7, 156-160, 224-227, 249-253, and 494) as the
-detailed design; those entries can point here.
+teardown-time object leaks that produce validation errors at `vkDestroyDevice`,
+which is exactly the class phase 1 catches automatically instead of by eye.
+[`link_rendering/phase_07.md`](link_rendering/phase_07.md) is the worked example
+of why this note exists at all. This note supersedes the scattered `todo.org`
+entries on the subject (lines 5-7, 156-160, 224-227, 249-253, and 494); those
+entries can point here.
 
 ---
 
 ## Why
 
 Today the only way to check an example for Vulkan validation errors is
-`timeout 3 just dev EXAMPLE`, documented in `CLAUDE.md:17`. That has three
+`timeout 3 just dev EXAMPLE`, documented in `CLAUDE.md`. That has three
 problems:
 
 1. It opens a window on the dev machine.
@@ -25,16 +36,20 @@ problems:
    precisely where the `tech_debt.md` §1 leaks report themselves.
 3. **There is no signal.** `vulkan_debug_utils_callback`
    (`src/renderer/debug.rs:14-49`) only calls `log::error!` and returns
-   `vk::FALSE`. A run with 500 validation errors exits 0. Catching them means
-   a human reading stderr.
+   `vk::FALSE`. A run with 500 validation errors exits 0. Catching them means a
+   human reading stderr.
 
-This note also settles a question that comes up whenever "run it in CI" is
-proposed: **which cloud service is needed.** The answer is none, for either
-half of the problem. See [Why not a cloud GPU](#why-not-a-cloud-gpu).
+**P7 turned that from a nuisance into a blocked phase.** `toon_link`'s albedo
+work was implemented in a Claude Code web container with no video device — SDL
+failed at init for *every* example, not just `toon_link` — so the phase landed
+with all static gates green and **every runtime gate marked NOT RUN**, including
+the validation sweep and the numeric gamma check that the plan called its
+primary gate. See phase_07.md's Recorded facts. A phase can be written in a
+container; it currently cannot be *verified* in one.
 
-**Outcome.** `just headless-all` sweeps every example under a software driver
-and exits nonzero on any validation error. `just golden-all` captures frames
-and diffs them against images blessed on the RTX 3070 Ti.
+**Outcome of phase 1.** `just headless EXAMPLE` and `just headless-all` run with
+no window and no display server, on the laptop and in the container, and exit
+nonzero on any validation error.
 
 ---
 
@@ -57,40 +72,54 @@ The layer keeps a shadow copy of every object, handle lifetime, image layout,
 descriptor binding, and sync scope, and checks calls against the spec before
 they reach the driver. That bookkeeping is entirely CPU-side and ICD-agnostic.
 
-Lavapipe — Mesa's Vulkan frontend over llvmpipe, already installed at
-`/usr/share/vulkan/icd.d/lvp_icd.json` — reports **Vulkan 1.4.318** and
-satisfies every feature `choose_physical_device` requires (`src/renderer.rs:3127`):
+Lavapipe — Mesa's Vulkan frontend over llvmpipe, installed at
+`/usr/share/vulkan/icd.d/lvp_icd.json` — reports **Vulkan 1.4.318**,
+`driverInfo = Mesa 25.2.8 (LLVM 20.1.2)`, `deviceType = CPU`, and satisfies
+every feature `choose_physical_device` requires (`src/renderer.rs:3071`):
 `samplerAnisotropy`, `shaderDrawParameters`, `timelineSemaphore`,
-`bufferDeviceAddress`, `dynamicRendering`, `synchronization2`. It also exposes
-`VK_KHR_swapchain`, `VK_KHR_xlib_surface`, and `VK_EXT_headless_surface`.
+`bufferDeviceAddress`, `dynamicRendering`, `synchronization2`.
 `choose_physical_device` sorts `PHYSICAL_DEVICE_TYPE_CPU` last but does accept
-it (`:3163`), so lavapipe is selected when it's the only ICD offered.
+it, so lavapipe is selected when it's the only ICD offered.
 
-So validation testing runs on any x86 CPU — this laptop, a free GitHub Actions
-runner, anything.
+Critically for phase 1, **lavapipe advertises `VK_EXT_headless_surface` on its
+own** — confirmed by running `vulkaninfo` with
+`VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json`, which still lists the
+extension when lavapipe is the only ICD in play. That is what makes a run with
+no display server at all possible; see §Approach.
 
-**What lavapipe does *not* cover.** Worth stating so the harness isn't
-oversold:
+So validation testing runs on any x86 CPU — this laptop, a Claude Code web
+container, a GitHub Actions runner.
+
+**What the container needs installed.** Recorded from the P7 run (phase_07.md
+deviation 3) plus what this design adds:
+
+```
+libasound2-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
++ git submodule update --init --recursive   (slang)
++ a from-source slang build configured with -DSLANG_ENABLE_SLANG_RHI=OFF
+    (slang-rhi's CMake tries to fetch OptiX and fails behind the proxy)
+```
+
+The slang build is the expensive step and is required regardless of profile —
+`sdl3` is built from source statically and the renderer links slang either way.
+Debug builds additionally *invoke* slang at pipeline-creation time
+(`dev_compile_slang_shaders`), so `.env`'s `SLANG_LIB_DIR` must be present.
+
+**What lavapipe does *not* cover.** Worth stating so the harness isn't oversold:
 
 - **Limit- and format-dependent checks.** Validation compares usage against the
   *actual* device's `VkPhysicalDeviceLimits` and per-format
   `VK_FORMAT_FEATURE_*` bits. Lavapipe's differ from NVIDIA's, so a bug that
   only manifests at a limit NVIDIA has and lavapipe doesn't is structurally
-  invisible. See the MSAA measurement below for a concrete instance.
-- **Real-driver misbehavior.** Validation-clean code can still render garbage
-  or hang on NVIDIA — uninitialized reads, races that a software rasterizer's
+  invisible. See the MSAA measurement in §12.
+- **Real-driver misbehavior.** Validation-clean code can still render garbage or
+  hang on NVIDIA — uninitialized reads, races that a software rasterizer's
   serialized execution never exposes.
+- **Anything visual.** Phase 1 does not replace `just dev` or the P7-style
+  eyeball gates. It answers one question: is the API usage legal?
 - **Speed.** llvmpipe is a JIT'd CPU rasterizer; cost scales with
   pixels × fragment-shader complexity. `basic_triangle` is trivial;
   `ray_marching`, `sdf_2d`, and `watercolor` will be slow.
-
-**Golden images are a different problem that lavapipe does not solve.**
-Floating-point precision (fma contraction, transcendental ULP tolerances the
-spec permits), texture filtering and mip selection, and MSAA all diverge
-legitimately between implementations. Goldens are per-driver, full stop. But
-this machine has an **RTX 3070 Ti**, so goldens run on real hardware locally —
-the same harness pointed at a different `VK_DRIVER_FILES`. No cloud GPU for
-either half.
 
 **On Modal specifically** (asked about directly, so recorded here): Modal's GPU
 containers run under gVisor, whose `nvproxy` forwards NVIDIA ioctls selectively
@@ -101,58 +130,202 @@ that aside, Vulkan in an NVIDIA container needs `NVIDIA_DRIVER_CAPABILITIES` to
 include `graphics` so the toolkit mounts `nvidia_icd.json`, which Modal doesn't
 document exposing. It is the wrong tool. The same reasoning rules out most
 serverless-GPU vendors; if a cloud runner is ever wanted, a plain Docker
-container on a non-gVisor host (self-hosted runner, GitHub GPU runner) is the
-shape that works.
+container on a non-gVisor host is the shape that works.
+
+---
+
+## The reproducibility contract
+
+The question this design has to answer is: *does a green run on the laptop mean
+anything about the container, and vice versa?*
+
+**The gate is "zero validation errors", not "identical validation output."**
+Phase 1 does not pin the Vulkan stack and does not compare error text across
+machines. Consequences, stated plainly so nobody re-litigates them later:
+
+- A newer validation layer that finds **more** errors is a feature, not drift to
+  suppress. The fix is the error, not the layer version.
+- A run that fails in one place and passes in the other is a **real bug** —
+  either in our code or in an assumption about limits — and gets investigated,
+  not pinned around.
+- Therefore: **no pinned container, no version assert, no blessed-stack file.**
+  That machinery is only justified once pixels are being compared, which is
+  phase 2's problem (§12).
+
+What the harness *does* owe you is that any result is **explicable**. The dev
+machine has ambient Vulkan configuration that can silently change which layer
+runs, none of which exists in a fresh container:
+
+- `.zshrc` sets `VK_ADD_LAYER_PATH` to a LunarG SDK 1.4.328 install, while apt
+  also ships `vulkan-validationlayers` 1.3.275. Two manifests provide the same
+  layer name; which one the loader picks is search-order dependent.
+- Implicit layers load without the app asking: `nvidia_layers.json` and
+  `VkLayer_MESA_device_select.json` are both present, and the latter exists
+  specifically to reorder physical devices.
+- `vkconfig` is installed and writes `~/.local/share/vulkan/settings.d/`, which
+  can enable or disable validation features process-wide. Currently empty — but
+  one GUI click away from not being.
+
+So the recipes (§5) pin the *environment*, not the versions:
+
+- `VK_DRIVER_FILES` set explicitly to the lavapipe ICD — never inherit ICD
+  choice from whatever the machine has installed.
+- `VK_LOADER_LAYERS_DISABLE=~implicit~` so `nvidia_layers` and
+  `MESA_device_select` cannot participate. The loader is 1.4.328, which supports
+  both this and `VK_DRIVER_FILES`.
+- `VK_ADD_LAYER_PATH` cleared for the run, so the validation layer in use is the
+  one the recipe's environment names rather than whichever the interactive shell
+  happened to add.
+
+…and the harness prints a **stack fingerprint** (§4) identifying exactly which
+loader, layer, and ICD produced the result. It never fails a run. Its whole job
+is to turn "it fails in the container but not on my laptop" from an
+investigation into a five-second diff.
+
+**If that ever proves insufficient**, the escalation is a pinned container image
+used in both places — *not* a fingerprint assert, which would only convert an
+interesting failure into a confusing one.
 
 ---
 
 ## Approach
 
-One shared substrate — headless mode, frame limit, deterministic clock —
-feeding two consumers:
-
 ```
-just headless EXAMPLE   → Xvfb + lavapipe    → validation counter → exit 1 on error
-just golden   EXAMPLE   → XWayland + NVIDIA  → resolve_image → PNG → tolerance diff
+just headless EXAMPLE  →  no SDL video subsystem
+                       →  VK_EXT_headless_surface + lavapipe
+                       →  N frames  →  validation counters  →  exit 1 on error
 ```
 
 The codebase is most of the way there already. Game rendering targets an
 offscreen `resolve_image` (`src/renderer.rs:138`) that is already
-`TRANSFER_SRC | COLOR_ATTACHMENT` (`:216`), MSAA-resolved (`:1761`), and
-egui-free — egui draws to the *swapchain* image afterward (`:2036`). The
-swapchain is touched in exactly two places: the upscale blit (`:1991`) and that
-egui pass. `src/renderer/picking.rs` is a working template for
-`cmd_copy_image_to_buffer` → `BufferMemory::Readback` → mapped read.
+`TRANSFER_SRC | COLOR_ATTACHMENT` (`:216`), MSAA-resolved, and egui-free — egui
+draws to the *swapchain* image afterward (`:1999`). `src/renderer/picking.rs` is
+a working template for readback, which phase 2 will need.
 
-**No surfaceless refactor.** Threading `Option<Surface>`/`Option<Swapchain>`
-through `init`, `check_required_extensions`, `QueueFamilyIndices::find`,
-`choose_physical_device`, `create_swapchain`, `recreate_swapchain`,
-`record_command_buffer`, and `draw_frame` was considered and rejected: it costs
-~10 call sites in `renderer.rs`, and skipping the present path means the
-harness can't catch present-related validation errors or exercise `Drop`
-honestly. Run the real swapchain under a virtual X server instead.
+### Why not Xvfb (reversal from the 2026-07-25 design)
+
+The previous version ran the real SDL/X11 window under a virtual X server. That
+was a reasonable answer when the only requirement was "no window on Dan's
+screen." It is the wrong answer now:
+
+- The cloud target is a Claude Code web container: no X server, no GPU, no
+  display of any kind, and `xvfb` is one more thing to install and keep working
+  in an environment where package installs already caused friction (phase_07.md
+  deviation 3).
+- Xvfb reintroduces display-derived state — screen geometry feeding
+  `compute_render_scale_for_display` (`src/game/traits.rs:121`), window mapping
+  semantics, WSI paths that differ per ICD — every bit of which is variance
+  between the two machines for no benefit.
+- `Xvfb` is not installed here and, under this design, never needs to be.
+
+The old design's two Xvfb-specific risk sections ("Window mapping", "NVIDIA may
+not be selectable under Xvfb") are deleted with it, as is the
+`SDL_VIDEODRIVER=x11` requirement — with no SDL video subsystem initialized,
+there is no SDL backend to force. That variable was load-bearing before and is
+now moot; noted here so its disappearance doesn't read as an oversight.
+
+### The narrow refactor: `WindowTarget`
+
+The old note rejected threading `Option<Surface>` / `Option<Swapchain>` through
+~10 call sites, and **that rejection still stands.** The swapchain and present
+path stay fully alive — present-path validation and an honest `Drop` are half
+the value of the harness. What changes is only *where the surface comes from*:
+
+```rust
+// src/renderer.rs, replacing the `window: Window` field at :102
+enum WindowTarget {
+    Sdl(sdl3::video::Window),
+    Headless { width: u32, height: u32 },
+}
+
+impl WindowTarget {
+    fn size(&self) -> (u32, u32);
+    fn size_in_pixels(&self) -> (u32, u32);
+    fn instance_extensions(&self) -> anyhow::Result<Vec<CString>>;
+    fn create_surface(&self, entry: &ash::Entry, instance: &ash::Instance)
+        -> anyhow::Result<vk::SurfaceKHR>;
+    fn as_sdl(&self) -> Option<&sdl3::video::Window>;
+}
+```
+
+Nothing becomes optional; one enum absorbs the difference. Call sites:
+
+| site | today | change |
+|---|---|---|
+| `renderer.rs:102` | `window: Window` field | `window: WindowTarget` |
+| `:241` | `init(window: Window, …)` | takes `WindowTarget` |
+| `:250` | `window.size()` | through the enum |
+| `:266-267` | `window.vulkan_instance_extensions()` | headless → `[VK_KHR_surface, VK_EXT_headless_surface]` |
+| `:303` | `window.vulkan_create_surface(instance.handle())` | headless → `ash::ext::headless_surface::Instance::create_headless_surface` (present in ash 0.38) |
+| `:411` | `window: window.clone()` | `Sdl` arm clones; `Headless` is `Copy`-cheap |
+| `:2078` | `self.window.raw()` for SDL text input | `as_sdl()`; unreachable headless (egui off) but must compile |
+| `:2493` | `create_swapchain(&self.window, …)` in `recreate_swapchain` (`:2462`) | takes `&WindowTarget` |
+| `:2971` | `check_required_extensions` hardcodes `platform::OS_SURFACE_EXT` | takes the target's required set instead |
+| `:3239` | `choose_swap_extent(window: &Window, …)` | takes `&WindowTarget` |
+| `:3266` | `create_swapchain(window: &Window, …)` | takes `&WindowTarget` |
+
+`src/renderer/platform.rs` keeps `OS_SURFACE_EXT` for the SDL path; the headless
+path bypasses it entirely, so the `#[cfg(target_os)]` table is untouched.
+
+### No SDL video subsystem at all
+
+In `Game::run()` (`src/game/traits.rs:80`), headless mode skips `sdl.video()`
+and window creation **entirely** — no display server is contacted. This is safe
+by construction: `sdl3::init()` calls `SDL_Init(0)` with **no** subsystem flags
+(`sdl3-0.14.42/src/sdl3/sdl.rs:92`), and `Sdl::video()` (`:147`) is what
+actually brings up the video subsystem. Nothing else in `run()` needs it.
+
+- **Extent** comes from `Self::initial_window_size()` (`traits.rs:42`), which is
+  deterministic and is already what `sprite_batch` and `space_invaders` build
+  their projection matrices from. No display geometry anywhere.
+- **Render scale**: `compute_render_scale_for_display` (`traits.rs:121`) queries
+  the display and must not run. `VKR_HEADLESS_RENDER_SCALE` (default 1.0)
+  replaces it; a `Game::render_scale()` override still wins, because the
+  example's own intent is part of what's being tested.
+- **egui** stays off: `enable_egui = cfg!(debug_assertions) && headless.is_none()`
+  (`traits.rs:98`).
+- **Events**: there is no `EventPump`, so `App::run_loop` takes
+  `Option<EventPump>` (§3).
+
+`Renderer::init` keeps its 4-arg signature; the headless bits arrive through the
+`WindowTarget` it is handed plus the config read in `run()`.
+
+### Probe lavapipe's headless WSI before writing recipes
+
+This is the one genuinely unknown piece — Mesa's headless WSI is far less
+travelled than its X11 path. Treat it as an explicit step, not an assumption,
+and record the answers in this file:
+
+- Does it offer `B8G8R8A8_SRGB` (`PREFERRED_SURFACE_FORMAT`, `:3196`)? If not,
+  `choose_swap_surface_format` (`:3201`) silently takes `fallback_format` —
+  fine for phase 1, but it changes what phase 2 would capture.
+- Which present modes? `choose_swap_present_mode` (`:3209`) prefers MAILBOX and
+  falls back to FIFO. FIFO against a headless surface should not throttle, but
+  confirm — a 60-frame run that takes 60 vsyncs would be a clue that something
+  is emulating a display.
+- Is `capabilities.current_extent` the `u32::MAX` sentinel or a fixed value?
+  `choose_swap_extent` (`:3239`) handles both; record which path runs, because
+  it decides whether `initial_window_size()` is honored or overridden.
+- Does `get_physical_device_surface_support` (`:3037`, inside
+  `QueueFamilyIndices::find` at `:3014`) return true? If not,
+  `choose_physical_device` silently `continue`s past lavapipe (`:3099`) and the
+  run dies at the no-suitable-device `bail!` — a confusing failure worth
+  recognizing on sight.
 
 ---
 
 ## 1. Configuration — env vars read inside `Game::run()`
 
 Every example's `main()` is just `Foo::run()`, so env vars read inside `run()`
-(`src/game/traits.rs:80`) are the only non-invasive knob. **Nothing in
-`examples/` changes for validation testing.**
+are the only non-invasive knob. **Nothing in `examples/` changes.**
 
 New module `src/headless.rs` (`pub mod headless;` in `src/lib.rs`):
 
 ```rust
 pub struct HeadlessConfig {
     pub frames: usize,
-    pub capture_frame: Option<usize>,
-    pub capture_path: Option<PathBuf>,
     pub render_scale: f32,
-    pub max_msaa: Option<MaxMSAASamples>,
-    pub show_window: bool,
-    pub fail_on_warnings: bool,
-    pub frame_delay: Option<Duration>,
-    pub require_device: Option<String>,
+    pub strict: bool,
 }
 
 impl HeadlessConfig {
@@ -165,29 +338,29 @@ impl HeadlessConfig {
 
 | var | default | meaning |
 |---|---|---|
-| `VKR_HEADLESS` | unset | master switch |
+| `VKR_HEADLESS` | unset | master switch: no SDL video, headless surface, frame limit |
 | `VKR_HEADLESS_FRAMES` | `60` | frames to submit, then quit |
-| `VKR_HEADLESS_CAPTURE` | unset | output PNG path; enables capture |
-| `VKR_HEADLESS_CAPTURE_FRAME` | `= FRAMES` | 1-based frame to capture |
-| `VKR_HEADLESS_RENDER_SCALE` | `1.0` | pins scale when `Game::render_scale()` is `None` |
-| `VKR_HEADLESS_MSAA` | unset | `1｜2｜4｜8` override |
-| `VKR_HEADLESS_FRAME_DELAY_MS` | unset | virtual clock step override |
-| `VKR_HEADLESS_HIDE_WINDOW` | `0` | skip `startup_window.show()` |
-| `VKR_HEADLESS_ALLOW_WARNINGS` | `0` | don't fail on validation WARNINGs |
-| `VKR_REQUIRE_DEVICE` | unset | substring assert on `deviceName` |
-| `VKR_VALIDATION` | `cfg!(debug_assertions)` | force validation on/off (see §6) |
+| `VKR_HEADLESS_RENDER_SCALE` | `1.0` | replaces the display query |
+| `VKR_HEADLESS_STRICT` | `0` | also fail on validation WARNINGs |
 
-**Deliberately no window-size override.** `examples/sprite_batch.rs:130` and
+**Deferred to phase 2, with reasons:** `VKR_HEADLESS_CAPTURE` /
+`_CAPTURE_FRAME` (need `capture.rs`, §9); `VKR_HEADLESS_MSAA` (only matters when
+comparing pixels, and pinning it risks the `TYPE_1` trap in §6);
+`VKR_HEADLESS_FRAME_DELAY_MS` (the virtual clock, §10); `VKR_VALIDATION` (§11);
+`VKR_REQUIRE_DEVICE` (guards *blessing* on the wrong device — a goldens
+concern). `VKR_HEADLESS_HIDE_WINDOW` is gone as a concept: there is no window.
+
+**Deliberately no window-size override.** `examples/sprite_batch.rs` and
 `examples/space_invaders.rs` derive their projection matrix from
-`Self::initial_window_size()`; overriding the actual window size would desync
-projection from viewport. Goldens use each example's natural size.
+`Self::initial_window_size()`; overriding the extent independently would desync
+projection from viewport.
 
 ---
 
 ## 2. Validation counters — `src/renderer/debug.rs`
 
-Two `static AtomicUsize` counters incremented in the existing severity match
-arms of `vulkan_debug_utils_callback` (`:33-46`):
+Two `static AtomicUsize` counters incremented in the existing severity match arms
+of `vulkan_debug_utils_callback` (`:14-49`, arms at `:34-46`):
 
 ```rust
 static VALIDATION_ERRORS: AtomicUsize = AtomicUsize::new(0);
@@ -202,270 +375,367 @@ The return value stays `vk::FALSE` and the `DebugPrintf` INFO special case
 safe — debug-utils delivers exactly one severity bit per callback, and the
 existing code already relies on that.
 
-**Count unconditionally; gate only the check.** Two relaxed atomic increments
-on a path that already does `format!` + `CStr::from_ptr` + a log call cost
-nothing, and unconditional counting makes the counters usable from anywhere
-later (e.g. an assertion inside an example) without plumbing a flag.
+**Count unconditionally; gate only the check.** Two relaxed atomic increments on
+a path that already does `format!` + `CStr::from_ptr` + a log call cost nothing,
+and unconditional counting makes the counters usable from anywhere later (e.g.
+an assertion inside an example) without plumbing a flag.
 
 **Where the check runs.** `HeadlessConfig::check_validation()` is called from
 `Game::run()` *after* `app.run_loop(...)` returns. `run_loop` takes `self` by
 value, so `App` — and therefore `Renderer` — has already dropped, and
-`Renderer::drop` (`:2782`) does its `device_wait_idle` plus every destroy call.
-Teardown errors are counted, and the whole log has already printed, before the
-check fires. It returns `Err`, which gives exit code 1 from `main()` with
+`Renderer::drop` (`:2782`) has done its `device_wait_idle` plus every destroy
+call. Teardown errors are counted, and the whole log has already printed, before
+the check fires. It returns `Err`, which gives exit code 1 from `main()` with
 `Error: …`. No `std::process::exit`, nothing skipped.
 
-**WARNING is a failure by default.** Only core validation is enabled
-(`get_required_layers`, `:2942`) — not best-practices — so warnings are rare
-and generally real. `VKR_HEADLESS_ALLOW_WARNINGS=1` is the escape hatch,
-needed because lavapipe may emit warnings NVIDIA doesn't.
+**Errors always fail; warnings only under `--strict`.** This inverts the
+2026-07-25 design, which failed on WARNING by default with an
+`ALLOW_WARNINGS=1` escape hatch. The reasoning changed with the reproducibility
+contract: errors are the category we've committed to treating as failures
+regardless of layer version, while warnings are exactly the version-sensitive,
+advisory category that would otherwise make a layer upgrade look like a
+regression. Only core validation is enabled (`get_required_layers`, `:2940`) —
+not best-practices — so warnings stay rare and are worth printing in the summary
+either way.
 
-**Known trap:** `get_max_usable_sample_count` (`:5001`) falls through to
-`TYPE_1` with a comment noting it triggers a validation error. Never pin
-`VKR_HEADLESS_MSAA=2` under lavapipe, which lacks 2× — see §9.
+Summary line on failure, so the exit code is never the only signal:
+
+```
+vulkan validation failed: 3 error(s), 1 warning(s) over 60 frames
+```
 
 ---
 
 ## 3. Frame limit and loop — `src/game/traits.rs:80` + `src/app.rs:29`
 
-`run_loop` gains `max_frames: Option<usize>` and returns
-`anyhow::Result<Option<image::RgbaImage>>`, so the capture is read out before
-`self` (and thus `Renderer`) drops at end of function while all file IO stays
-in `traits.rs`. `image` is a normal dependency, so `app.rs` can name the type.
+`run_loop` becomes
+`run_loop(self, event_pump: Option<EventPump>, max_frames: Option<usize>)`.
 
 - **Limit on `renderer.total_frames()`, not a local counter.** `draw_frame`
-  increments `total_frames` *after* a successful `acquire_next_image`
-  (`:2206`); the `ERROR_OUT_OF_DATE_KHR` early-return at `:2198` does not. A
-  local iteration count would let the loop limit and
-  `VKR_HEADLESS_CAPTURE_FRAME` disagree. Using `total_frames` makes the capture
-  frame number mean the same thing inside `record_command_buffer`.
+  increments `total_frames` (`:2205`) *after* a successful
+  `acquire_next_image`; the `ERROR_OUT_OF_DATE_KHR` early-return does not. A
+  local iteration count would drift from the frame number the renderer reports —
+  and phase 2's capture-frame selection depends on those being the same thing.
 - **`iteration_cap` (`frames * 4`)** that `bail!`s on a swapchain-recreation
   spin rather than looping forever.
-- **Skip the `SDL_DelayPrecise` pacing** (`:52-57`) in headless mode.
-- **Keep event pumping.** Under Xvfb SDL has a real X connection; `poll_iter`
-  just yields nothing, it costs nothing to keep, and it preserves the
-  Quit/Escape path for debugging a mapped headless run.
-- **The clock tick lives inside `if !self.minimized`**, paired 1:1 with a draw,
-  so elapsed time and frame index stay locked together.
-
-In `run()`:
-
-- `enable_egui = cfg!(debug_assertions) && headless.is_none()`
-- `render_scale` falls back to `cfg.render_scale` instead of
-  `compute_render_scale_for_display` (`src/game/traits.rs:121`), which returns
-  0.5/0.75/1.0 depending on **display** resolution and would otherwise make
-  `render_extent` machine-dependent. A `Game::render_scale()` override still
-  wins — the example's own intent is part of what's being tested.
-- `max_msaa` honors the env override.
-
-**`Renderer::init` keeps its 4-arg signature.** The headless bits arrive via
-three post-init setters (`use_virtual_clock`, `enable_frame_capture`,
-`assert_device_name_contains`) rather than threading an `Option<&HeadlessConfig>`
-into a 250-line constructor.
+- **Skip the `SDL_DelayPrecise` pacing** (`src/app.rs:52-57`) in headless mode.
+- **Skip `handle_events`** when there's no pump (`app.rs:68`). With no video
+  subsystem there is no window to close and no Quit event to receive; the frame
+  limit is the only exit condition, backed by `timeout` in the recipe.
+- The `minimized` path is unreachable headless and stays as-is.
 
 ---
 
-## 4. Virtual clock
+## 4. Stack fingerprint
 
-Golden images require frame N to be identical every run. Today 11 examples
-animate off their own `start_time: Instant`.
+One line, logged at `info` during `Renderer::init`, in both windowed and
+headless mode:
 
-New `Renderer` fields beside `total_frames` (`:90`):
-
-```rust
-clock_elapsed: Duration,   // wall time windowed; frame_count * frame_delay headless
-clock_delta:   Duration,
-virtual_clock: bool,       // set by Renderer::use_virtual_clock()
-
-pub(crate) fn tick_clock(&mut self, wall_delta: Duration, fixed_delta: Duration) {
-    self.clock_delta = if self.virtual_clock { fixed_delta } else { wall_delta };
-    self.clock_elapsed += self.clock_delta;
-}
+```
+vk stack: loader 1.4.328 | layer VK_LAYER_KHRONOS_validation spec 1.4.328 impl 1
+        | icd llvmpipe "Mesa 25.2.8 (LLVM 20.1.2)" api 1.4.318
+        | device "llvmpipe (LLVM 20.1.2, 256 bits)"
 ```
 
-`tick_clock` is `pub(crate)` — `app.rs` is in-crate, examples can't desync it.
-Accumulating deltas rather than `start.elapsed()` means both modes share one
-code path and it stays monotonic.
+Sources: `entry.try_enumerate_instance_version()`;
+`entry.enumerate_instance_layer_properties()` filtered to the validation layer
+(the loader reports the manifest it would actually load, which is what makes
+this worth printing given the dual-install hazard in §Reproducibility);
+`VkPhysicalDeviceDriverProperties` (`driverName` / `driverInfo`) chained onto
+the existing `physical_device_properties` query; and `deviceName`.
 
-`FrameRenderer` accessors beside `render_scale()` (`:5517`): `elapsed()`,
-`elapsed_secs() -> f32`, `frame_delta()`, `frame_delta_secs() -> f32`,
-`frame_index() -> usize`.
-
-Migration shape — drop the local field, read from the renderer:
-
-```rust
-// examples/dragon.rs
-- let time = (Instant::now() - self.start_time).as_secs_f32();
-+ let time = renderer.elapsed_secs();
-```
-
-`elapsed_secs()` takes `&self` and `renderer` isn't moved until the following
-`draw_vertex_count(...)`, so this has the same shape as the existing
-`window_resolution()` call and compiles as-is.
-
-| file | change |
-|---|---|
-| `dragon.rs`, `sdf_2d.rs`, `koch_curve.rs`, `serenity_crt.rs`, `multi_mesh.rs`, `ray_marching.rs` | `renderer.elapsed_secs()` |
-| `viking_room.rs`, `suzanne.rs`, `depth_texture.rs` | `renderer.elapsed()`, `Duration` signatures unchanged |
-| `toon_link.rs` | same; migrated so it keeps compiling even though its assets are gitignored |
-| `particles.rs` | `renderer.frame_delta_secs()` for the compute `SimParams.delta_time`; drop `last_frame` |
-| `sprite_batch.rs`, `watercolor.rs` | **leave alone** — their `Instant` is in `update()` (no `FrameRenderer` in scope) and only feeds an egui FPS label |
-| `basic_triangle.rs`, `gpu_picking.rs`, `space_invaders.rs` | no change needed |
-
-Two intentional behavior changes, worth calling out in the commit message:
-
-- Time starts at 0 on the **first frame**, not at `setup()`. Examples with slow
-  asset loads (`viking_room`, `suzanne`, `multi_mesh`, `toon_link`) no longer
-  jump-start mid-animation. An improvement.
-- Time **freezes while minimized** instead of continuing, so there's no
-  animation jump on restore. Also an improvement.
+**Diagnostic only — it never fails a run.** Recipes echo it into the sweep
+output so a per-example failure carries its environment with it.
 
 ---
 
-## 5. Capture — new `src/renderer/capture.rs`
+## 5. justfile recipes
+
+No `xvfb-run`, no `sudo apt install xvfb`, no `SDL_VIDEODRIVER`.
+
+```just
+LVP_ICD := "/usr/share/vulkan/icd.d/lvp_icd.json"
+
+# toon_link needs gitignored Wind Waker assets
+HEADLESS_EXAMPLES := "basic_triangle depth_texture dragon gpu_picking koch_curve \
+multi_mesh particles ray_marching sdf_2d serenity_crt space_invaders sprite_batch \
+suzanne viking_room watercolor"
+
+# run one example windowless under lavapipe; nonzero exit on validation errors
+[unix]
+headless example frames="60":
+    env -u VK_ADD_LAYER_PATH \
+      VKR_HEADLESS=1 VKR_HEADLESS_FRAMES={{frames}} \
+      VK_DRIVER_FILES={{LVP_ICD}} \
+      VK_LOADER_LAYERS_DISABLE=~implicit~ \
+      RUST_LOG=vulkan_slang_renderer=info \
+      timeout 300 cargo run --example {{example}}
+```
+
+`headless-all FRAMES` is a shell loop over `HEADLESS_EXAMPLES` collecting
+failures and printing a final tally — not an in-process runner, because
+`pretty_env_logger::init()` (`traits.rs:84`) panics on a second call.
+
+Load-bearing details:
+
+- **Recipes set `RUST_LOG` explicitly.** `.env` sets a good default but direnv
+  may not be loaded under a bare `just`, and env_logger defaults to `error`. The
+  *counters* are filter-independent, so a wrong filter still yields a correct
+  exit code with an unhelpfully empty log — annoying, not wrong.
+- **Every run wrapped in `timeout 300`.** `acquire_next_image` uses `u64::MAX`
+  (`:2191`), so any WSI stall is an unkillable hang. This matters more with an
+  unfamiliar WSI backend, not less.
+- **Debug builds need the slang env from `.env`** (`SLANG_LIB_DIR` etc.), since
+  they recompile `.slang` at pipeline-creation time.
+- `toon_link` is excluded from `HEADLESS_EXAMPLES` because `/assets/` is
+  gitignored, but `just headless toon_link` works wherever
+  `just extract-link && just convert-link` has run — which makes it the natural
+  home for P7's outstanding sweep line.
+
+---
+
+## 6. Phase 1 risks
+
+### lavapipe's headless WSI is the new unknown
+
+The probe list at the end of §Approach is the mitigation: run it first, record
+the answers here, and only then write recipes around it. The plausible failure
+modes are a missing preferred surface format (harmless, `fallback_format`
+covers it), a surprising `current_extent`, or no presentation-queue support at
+all (loud and immediate).
+
+Fallback if headless surfaces turn out to be a dead end: SDL's X11 backend under
+a virtual X server, i.e. the old design, resurrected from git history. Do not
+build both up front.
+
+### MSAA
+
+`get_max_usable_sample_count` (`:4973`) falls through to `TYPE_1` (`:5002`) with
+a comment noting that triggers a validation error. Lavapipe offers `{1×, 4×}`
+(measured, §12), so the default `Max8` path lands on 4× and never reaches the
+fallthrough. **Don't pin MSAA in phase 1** — pinning a count the ICD lacks is
+the one way to walk into that trap deliberately.
+
+### No real-driver coverage
+
+Validation-clean under llvmpipe is not the same as render-correct on NVIDIA.
+`just dev` remains the eyeball path, and phase 1 does not discharge any of the
+P7-style manual gates. What it does discharge is the "was there a validation
+error?" line item, which is currently the most tedious and least reliable one.
+
+### Examples that can't participate cleanly
+
+- **`toon_link`** — gitignored assets; excluded from the sweep list, runnable
+  locally.
+- **`gpu_picking`** — its readback depends on mouse position, which is absent
+  headless. Fine for validation; the picking path still records and reads back.
+- **`watercolor`** — needs mouse input to produce content, so it renders a blank
+  canvas. Still exercises the compute ping-pong, which is the interesting part
+  for validation.
+- **`sprite_batch`**, **`particles`** — nondeterministic content
+  (`SDL_rand`-seeded, GPU state integrated across frames). Irrelevant to
+  validation; both matter in phase 2 (§12).
+
+### Smaller items
+
+- `pretty_env_logger::init()` (`traits.rs:84`) panics on a second call — rules
+  out an in-process multi-example runner, hence the shell-loop sweep.
+- `just lint` runs clippy `--all-targets` in both debug and release; the new
+  `WindowTarget` enum and `headless.rs` must be clean in both.
+- **`just test` stays GPU-free and untouched.** `INSTA_UPDATE=no cargo test`
+  currently runs with no GPU, no X server, and no Vulkan loader, and
+  `pre-commit` depends on it. All GPU work lives in new recipes.
+
+---
+
+## 7. Phase 1 implementation order
+
+Each step independently verifiable; `cargo check --all-targets` after every
+Rust change, `just lint` + `cargo fmt` at the end of each.
+
+1. **Validation counters** (`src/renderer/debug.rs`) — self-contained, no
+   behavior change.
+2. **`WindowTarget` enum, SDL arm only** — pure refactor; every example still
+   opens a window and behaves identically.
+3. **Headless surface creation** + run the §Approach probe list; record results
+   in this file.
+4. **`HeadlessConfig`, frame limit, `Option<EventPump>`** — the harness works.
+5. **Stack fingerprint** line.
+6. **`just headless` / `just headless-all`.**
+
+## 8. Phase 1 verification
+
+```bash
+just headless basic_triangle 30 ; echo "exit=$?"   # expect 0, and no window appears
+just headless dragon 5 2>&1 | grep "vk stack:"     # confirm lavapipe, not NVIDIA
+just headless-all 30
+```
+
+- **Negative control — required, not optional.** Temporarily break a barrier
+  (e.g. revert one of the `:1731` / `:1918` stage masks phase 2 wants widened,
+  or drop a layout transition), confirm `exit=1` and the
+  `vulkan validation failed: N error(s)` summary, then revert. A gate that has
+  never failed is not a gate; this is the same discipline P5 used for raster
+  state ("every artifact perturbed and reverted; none proved nothing").
+- **Teardown coverage**: confirm the counter catches a leak reported at
+  `vkDestroyDevice` — `tech_debt.md` §1 lists the known ones, so if the sweep
+  comes back green everywhere, check that those are actually fixed rather than
+  assuming the harness works.
+- **Cross-machine**: run `just headless-all 30` on the laptop, then in a
+  container with no video device. That is the entire point of the exercise.
+- **Regression guard — the existing workflow must be untouched:**
+
+```bash
+env -u DISPLAY -u WAYLAND_DISPLAY just test   # still passes with no GPU/X at all
+just lint
+just dev basic_triangle                       # still opens a window, same animation speed
+```
+
+---
+
+# Phase 2 — golden images (sketch, not designed to completion)
+
+Everything below is deferred. It is kept because the analysis is done and
+re-deriving it would be waste, not because it is ready to build. §12's driver
+question is **deliberately open**.
+
+## 9. Capture — new `src/renderer/capture.rs`
 
 Modeled on `picking.rs` but **single-buffered**, not
 `[_; MAX_FRAMES_IN_FLIGHT]` — one capture per process, so there's no slot reuse
-to guard.
-
-```rust
-pub(super) struct CaptureResources {
-    pub target_frame: usize,   // the total_frames value to copy
-    pub buffer: vk::Buffer,
-    pub memory: vk_mem::Allocation,
-    pub mapped: *mut u8,
-    pub byte_len: usize,
-    pub extent: vk::Extent2D,
-    pub format: vk::Format,
-    pub recorded: bool,        // set once the copy is actually recorded
-}
-```
-
-Built with `create_memory_buffer(allocator, byte_len, TRANSFER_DST,
-BufferMemory::Readback)` (`:3857`), then
+to guard. Built with `create_memory_buffer(allocator, byte_len, TRANSFER_DST,
+BufferMemory::Readback)` (`:3856`), then
 `allocator.get_allocation_info(&memory).mapped_data`. `BufferMemory::Readback`
-(`:3823`) is `AutoPreferHost + HOST_ACCESS_RANDOM | MAPPED` with
-`HOST_COHERENT` forced, so no `invalidate` is ever needed.
+(`:3819`, match arm `:3841`) is `AutoPreferHost + HOST_ACCESS_RANDOM | MAPPED`
+with `HOST_COHERENT` forced, so no `invalidate` is ever needed.
 
-### Three required changes to existing code
+**Three required changes to existing code:**
 
-**1. `format_block_info` (`:4118`) must accept BGRA.** It currently matches
-only `R8G8B8A8_{SRGB,UNORM}` and returns `None` otherwise — but
-`PREFERRED_SURFACE_FORMAT` is `B8G8R8A8_SRGB` (`:3197`), so capture silently
-fails without this. It's a size/alignment table, not a decode table, so adding
-`B8G8R8A8_{SRGB,UNORM}` is safe for the existing mip-upload caller. Widen its
-doc comment to mention frame-capture readback.
+1. **`format_block_info` (`:4117`) must accept BGRA.** It currently matches only
+   `R8G8B8A8_{SRGB,UNORM}` — but `PREFERRED_SURFACE_FORMAT` is `B8G8R8A8_SRGB`
+   (`:3196`), so capture silently fails without this. It's a size/alignment
+   table, not a decode table, so adding `B8G8R8A8_{SRGB,UNORM}` is safe for the
+   existing mip-upload caller.
+2. **Widen two barrier stage masks.** `:1731` sets `src_stage_mask(BLIT)` and
+   `:1918` sets `dst_stage_mask(BLIT)`. `BLIT` and `COPY` are distinct
+   `PipelineStageFlags2` bits, so a `cmd_copy_image_to_buffer` under those
+   barriers is *itself* a sync-validation error — the harness would fail on its
+   own capture path. Both become `ALL_TRANSFER`. **Land this and confirm a clean
+   `just headless` run before adding the copy** — phase 1 makes that check
+   trivial, which is a good argument for this ordering.
+3. **`recreate_swapchain` (`:2462`) drops `self.capture`** with a `log::warn!`,
+   turning a wrong-sized image into a clean "capture frame never reached" error.
 
-**2. Widen two barrier stage masks.** `:1732` sets `src_stage_mask(BLIT)` and
-`:1919` sets `dst_stage_mask(BLIT)`. `BLIT` and `COPY` are distinct
-`PipelineStageFlags2` bits, so a `cmd_copy_image_to_buffer` under those
-barriers is *itself* a sync-validation error — the harness would fail on its
-own capture path. Both become `ALL_TRANSFER` (which covers
-`COPY | BLIT | RESOLVE | CLEAR`; cost is nil). **Land this and verify a clean
-`just headless` run before adding the copy.**
+**Where the copy goes:** at `:1921`, immediately after the `resolve_to_blit_src`
+barrier (`:1909`, submitted `:1920`) and *before* the blit (`:1960`). The
+resolve image is already in `TRANSFER_SRC_OPTIMAL`; it captures pre-upscale,
+pre-egui pixels at exactly `render_extent`; and `total_frames` is already
+incremented at that point, so the capture-frame number means the same thing
+inside `record_command_buffer`.
 
-**3. `recreate_swapchain` (`:2463`) drops `self.capture`** with a
-`log::warn!`. It recreates resolve images at a possibly-new `render_extent`, so
-a spurious resize would otherwise yield a wrong-sized image; this turns it into
-the clean "capture frame never reached" error instead.
+**Readback synchronization: `drain_gpu()`, not the timeline wait.** Picking
+tolerates 2-frame staleness by design; capture must not. `run_loop` already
+calls `drain_gpu()` (`device_wait_idle`) after the loop, which establishes the
+host-domain dependency; read the mapping right after. BGRA→RGBA swizzle
+(`px.swap(0, 2)`) before `image::RgbaImage::from_raw`. Destroy in `Drop` beside
+the existing `picking.take()` block (`:2827`), which already establishes the
+ordering before `ManuallyDrop::drop(&mut self.allocator)` (`:2869`).
 
-### Where the copy goes
+## 10. Virtual clock
 
-**At `:1921`, immediately after the `resolve_to_blit_src` barrier and *before*
-the blit.** Three reasons:
+Golden images require frame N to be identical every run; 11 examples animate off
+their own `start_time: Instant`. New `Renderer` fields beside `total_frames`,
+ticked once per drawn frame with a fixed delta in headless mode, exposed as
+`FrameRenderer::elapsed()` / `elapsed_secs()` / `frame_delta_secs()` /
+`frame_index()`. `tick_clock` stays `pub(crate)` so examples can't desync it,
+and accumulating deltas rather than `start.elapsed()` keeps both modes on one
+monotonic path.
 
-- The resolve image is already in `TRANSFER_SRC_OPTIMAL` from the barrier one
-  line above — zero extra transitions.
-- It captures pre-upscale, pre-egui pixels at exactly `render_extent`, which is
-  the deterministic quantity. The blit at `:1991` is a `Filter::LINEAR` upscale
-  to `image_extent`, which would bake in driver-dependent filtering.
-- `total_frames` is already incremented at this point (`:2206`, before
-  `record_command_buffer` is called at `:2276`/`:2347`), so
-  `target_frame == self.total_frames` compares against the true frame number.
+Migration: `dragon`, `sdf_2d`, `koch_curve`, `serenity_crt`, `multi_mesh`,
+`ray_marching` → `elapsed_secs()`; `viking_room`, `suzanne`, `depth_texture` →
+`elapsed()`; `particles` → `frame_delta_secs()` for `SimParams.delta_time`;
+`toon_link` likewise, so it keeps compiling. Leave `sprite_batch` and
+`watercolor` alone — their `Instant` lives in `update()` with no `FrameRenderer`
+in scope and only feeds an egui FPS label.
 
-The `is_capture_frame` / `as_ref` / `as_mut` dance is needed because
-`record_command_buffer` takes `&mut self` and `self.device` is used in the same
-expression.
+Two intentional behavior changes worth a commit-message callout: time starts at
+0 on the first frame rather than at `setup()` (so slow-loading examples no
+longer jump-start mid-animation), and time freezes while minimized (so there's
+no jump on restore). Both are improvements.
 
-### Readback synchronization: `drain_gpu()`, not the timeline wait
+## 11. `ENABLE_VALIDATION` becomes env-driven
 
-Picking reads through `frame_timeline` (`:2221`) and tolerates 2-frame
-staleness by design. Capture must not. `run_loop` already calls
-`self.renderer.drain_gpu()?` (`device_wait_idle`) after the loop, which is
-spec-equivalent to waiting on fences for all submissions and establishes the
-host-domain memory dependency; `take_captured_frame()` runs right after. With
-`HOST_COHERENT` memory that's the whole story — no timeline reasoning, no
-staleness window, no extra submit.
+`ENABLE_VALIDATION: bool = cfg!(debug_assertions)` (`:61`) couples validation to
+profile. Goldens want reproducible SPIR-V, i.e. a release build using the
+committed `shaders/compiled/` bytecode — which today has no validation at all.
+Debug builds recompile `.slang` at pipeline creation, and
+`assert_shader_interface_unchanged` (`:5041`) guards only the reflection
+*interface*, not the bytecode, so a local Slang bump can shift pixels without
+tripping anything.
 
-A blocking `begin/end_single_time_commands` copy after the loop was considered
-and rejected: the resolve image's layout isn't tracked across frames (each
-frame re-transitions from `UNDEFINED`), `flight_slot` has already advanced past
-the captured frame, and `end_single_time_commands` (`:4538`) does a
-`device_wait_idle` anyway. The in-frame copy is simpler and captures the frame
-the app actually presented.
+Replace with an `enable_validation()` function backed by a `OnceLock` reading
+`VKR_VALIDATION` (`1`/`0`, defaulting to `cfg!(debug_assertions)`). **The
+`OnceLock` is essential** — `Drop` must observe the same value as init, or you
+destroy a null messenger or leak one. Four call sites: `get_required_layers`
+(`:2940`), `Renderer::init`, `maybe_create_debug_messager_extension`
+(`debug.rs:51`), and `Drop`. (The 2026-07-25 version said to update `CLAUDE.md`'s
+"Key Constants" section — no such section exists, and `CLAUDE.md` never mentions
+`ENABLE_VALIDATION`. Nothing to update there.)
 
-BGRA→RGBA swizzle (`px.swap(0, 2)`) before `image::RgbaImage::from_raw`.
-Destroy in `Drop` beside the existing `picking.take()` block (`:2827`), which
-already establishes the required ordering before
-`ManuallyDrop::drop(&mut self.allocator)` at `:2868`.
+Phase 1 does not need this: it runs debug, where validation is already on.
 
----
+## 12. The goldens determinism problem — **decision deferred**
 
-## 6. `ENABLE_VALIDATION` becomes env-driven
+Two independent obstacles, both measured rather than assumed.
 
-`ENABLE_VALIDATION: bool = cfg!(debug_assertions)` (`:61`) forces an unwanted
-coupling. Debug builds recompile `.slang` at pipeline-creation time via
-`dev_compile_slang_shaders` (`ShaderPipelineLayout::create_from_atlas`,
-`:5071`), and `assert_shader_interface_unchanged` (`:5041`) guards only the
-reflection *interface*, not the bytecode — so a local Slang version bump can
-change codegen and shift pixels without tripping any assert. Goldens need
-reproducible SPIR-V, i.e. a release build, which today has no validation at all.
-
-```rust
-fn enable_validation() -> bool {
-    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CACHED.get_or_init(|| match std::env::var("VKR_VALIDATION").as_deref() {
-        Ok("1") | Ok("true")  => true,
-        Ok("0") | Ok("false") => false,
-        _ => cfg!(debug_assertions),
-    })
-}
-```
-
-**The `OnceLock` is essential** — `Drop` (`:2879`) must observe the same value
-as init, or you destroy a null messenger (or leak one). Four call sites:
-`get_required_layers` (`:2942`), `Renderer::init` (`:2814`),
-`maybe_create_debug_messager_extension` (`src/renderer/debug.rs:59`), and
-`Drop` (`:2879`).
-
-This unlocks the right combination for goldens: **release build (committed,
-reproducible SPIR-V; no `shader_watcher`; no `old_pipelines`) with
-`VKR_VALIDATION=1`**. Validation sweeps still run in debug so the debug-only
-paths get exercised too. The cost is two build caches — worth it.
-
-Update the "Key Constants" section of `CLAUDE.md`, which documents
-`ENABLE_VALIDATION` as a constant.
-
----
-
-## 7. Comparison harness
+**Cross-driver goldens are impossible.**
 
 ```
-goldens/rtx3070ti/*.png      # committed; device slug in the path
-goldens/manifest.json        # device, profile, render_scale, msaa, frames,
-                             # tolerance, per-example sha256 + extent
-src/bin/image_diff.rs        # new bin
-target/golden/               # gitignored: .actual.png, .diff.png
+lavapipe   framebufferColorSampleCounts = {1×, 4×}
+NVIDIA     framebufferColorSampleCounts = {1×, 2×, 4×, 8×}
+Intel Xe   framebufferColorSampleCounts = {1×, 2×, 4×, 8×, 16×}
 ```
 
-The device slug is in the path because cross-driver goldens are not achievable
-(§9) — this makes it structurally impossible to compare an NVIDIA golden
-against a lavapipe run, and leaves room for a `goldens/lavapipe/` set later.
+With the default `MaxMSAASamples`, `get_max_usable_sample_count` (`:4973`) picks
+a different count per driver — different coverage, different resolve. Pinning
+equalizes the *count* but not rasterization tie-breaks, float precision (llvmpipe
+vs NVIDIA transcendentals in the SDF and ray-marching examples differ by far more
+than 4/255), texture filtering, or anisotropy.
 
-**The manifest refuses to compare** if the live config (device name, extent,
-frames, MSAA) doesn't match what was blessed. That's the single
-highest-value safeguard against silently blessing garbage. It mirrors the
-existing `scripts/link_converted.sha256` convention.
+**Cross-*machine* lavapipe goldens are also not free** — this is the new
+finding, and the reason the driver question isn't being answered yet. Lavapipe
+reports itself as `llvmpipe (LLVM 20.1.2, **256 bits**)`. That vector width is
+derived from the host CPU's ISA: this i7-12700H has no AVX-512, so llvmpipe JITs
+256-bit vectors, while a cloud CPU that does (Sapphire Rapids, Zen 4/5) would
+JIT 512-bit — different codegen, potentially different pixels in exactly the
+float-heavy shaders goldens are most valuable for. `LP_NATIVE_VECTOR_WIDTH=256`
+pins it. Mesa and LLVM versions also move with the distro and would need pinning
+too — i.e. the container that phase 1 deliberately avoids.
+
+The three options, with costs:
+
+| option | gates in CI? | real-driver coverage? | cost |
+|---|---|---|---|
+| lavapipe only (`goldens/lavapipe/`) | yes | none | pin `LP_NATIVE_VECTOR_WIDTH` + Mesa/LLVM versions, i.e. a container |
+| NVIDIA only (`goldens/rtx3070ti/`) | no | yes | goldens can only ever be checked on Dan's laptop |
+| both sets | yes | yes | double the blessing work and double the PNG churn |
+
+**Deliberately open**, pending phase 1 experience — in particular, whether the
+container turns out to be a place we actually want pixel comparison to happen,
+or just a place we want API-legality checked.
+
+Whatever is chosen, the device slug belongs in the path
+(`goldens/<device>/*.png`) so it is structurally impossible to compare a golden
+against a run from a different driver, and a `goldens/manifest.json` should
+**refuse to compare** when the live config (device name, extent, frames, MSAA)
+doesn't match what was blessed — mirroring the existing
+`scripts/link_converted.sha256` convention.
+
+## 13. Comparison harness
+
+`src/bin/image_diff.rs`, a new bin (`image = "0.25.6"` is already a dependency
+and `src/bin/*.rs` is an established pattern, which keeps decode consistent with
+encode):
 
 ```
 image_diff <actual.png> <expected.png>
@@ -481,269 +751,36 @@ if any single pixel exceeds the hard limit. On failure write a diff PNG —
 expected image at 25% luminance, differing pixels painted red at intensity
 `delta` — and print `differing=N/total max_delta=M mean_delta=…`.
 
-A Rust bin rather than a script: `image = "0.25.6"` is already a normal
-dependency used for PNG writing in `src/bin/generate_paper_texture.rs:90`,
-`src/bin/*.rs` is an established pattern here, and it keeps decode consistent
-with encode.
+`just bless EXAMPLE` captures into `goldens/<device>/<example>.png` and
+regenerates the manifest entry; review with `git diff --stat goldens/` and by
+eyeballing, the same workflow as insta snapshots.
 
-**Blessing.** `just bless EXAMPLE` captures straight into
-`goldens/rtx3070ti/<example>.png` guarded by `VKR_REQUIRE_DEVICE=NVIDIA`, then
-regenerates the manifest entry. Review with `git diff --stat goldens/` and by
-eyeballing — the same workflow as insta snapshots.
-
-**`just test` is untouched and stays GPU-free.** `INSTA_UPDATE=no cargo test`
-currently runs on any machine with no GPU, no X server, and no Vulkan loader,
-and `pre-commit` depends on it (`pre-commit: shaders && lint test`). Making it
-GPU-dependent would break the hook everywhere. All GPU work lives in new
-recipes. If `cargo test` ergonomics are wanted later, the shape is
-`tests/golden.rs` with `#[ignore]`d tests shelling out to the recipes, invoked
-as `cargo test --test golden -- --include-ignored` — mirroring the existing
-`link-verify-p1` gate. Defer it; plain recipes are less machinery.
-
----
-
-## 8. justfile recipes
-
-Prereq (one-time, needs sudo): `sudo apt install xvfb` — not currently
-installed.
-
-```just
-# toon_link needs gitignored Wind Waker assets
-HEADLESS_EXAMPLES := "basic_triangle depth_texture dragon gpu_picking koch_curve \
-multi_mesh particles ray_marching sdf_2d serenity_crt space_invaders sprite_batch \
-suzanne viking_room watercolor"
-
-# deterministic subset, safe to compare against goldens
-GOLDEN_EXAMPLES := "basic_triangle depth_texture dragon gpu_picking koch_curve \
-multi_mesh ray_marching sdf_2d serenity_crt space_invaders suzanne viking_room"
-```
-
-- `headless EXAMPLE FRAMES` — Xvfb + lavapipe, debug build; fails on any
-  validation error
-- `headless-nvidia EXAMPLE FRAMES` — real XWayland display + NVIDIA ICD, window
-  hidden
-- `headless-all FRAMES` — shell loop over `HEADLESS_EXAMPLES`, each under
-  `timeout 300`, collecting failures
-- `golden EXAMPLE` / `golden-all` — release + `VKR_VALIDATION=1` + NVIDIA,
-  capture then `image_diff`
-- `bless EXAMPLE` / `bless-all` — capture into `goldens/rtx3070ti/`, guarded by
-  `VKR_REQUIRE_DEVICE=NVIDIA`
-
-Load-bearing environment details:
-
-- **`SDL_VIDEODRIVER=x11` is mandatory.** This is a Wayland session
-  (`XDG_SESSION_TYPE=wayland`, `WAYLAND_DISPLAY=wayland-1`, `DISPLAY=:1`
-  XWayland). Without it SDL3 sees `WAYLAND_DISPLAY`, connects to the real
-  compositor, and silently bypasses Xvfb — opening a real window. Worse, an SDL
-  Wayland surface that is never committed never receives a frame callback, so
-  FIFO present blocks forever.
-- **`VK_DRIVER_FILES`**, not the deprecated `VK_ICD_FILENAMES` — the installed
-  loader is 1.4.328 and supports it.
-- Recipes set `RUST_LOG` explicitly. `.env` sets a good default but direnv may
-  not be loaded under a bare `just`, and env_logger defaults to `error`. The
-  *counters* are filter-independent, so a wrong `RUST_LOG` still gives a
-  correct exit code with an empty log — annoying, not wrong.
-- Every run wrapped in `timeout 300`. `acquire_next_image` uses `u64::MAX`
-  (`:2191`), so any WSI stall is an unkillable hang.
-- Debug recipes need the Slang build env from `.env` (`SLANG_LIB_DIR` etc.)
-  because debug builds recompile `.slang` at pipeline-creation time. Release
-  recipes still link Slang but never invoke it.
-- `choose_swap_present_mode` (`:3210`) prefers `MAILBOX`. Under Xvfb + lavapipe
-  that should be offered, so runs aren't vsync-throttled. Falling back to FIFO
-  costs ~1 s at 60 frames — fine.
-
----
-
-## 9. Risks
-
-### Window mapping
-
-Under Xvfb the screen is already invisible, so mapping the window costs
-nothing — while presenting to an *unmapped* X11 window is where WSI behavior
-gets driver-specific. Mesa's x11 software path generally handles
-`xcb_put_image` to a non-viewable drawable, but NVIDIA's X11 WSI is a black
-box, and a `PresentCompleteNotify` that never arrives means
-`acquire_next_image(u64::MAX, …)` hangs forever.
-
-**So: map the window by default in headless mode; `VKR_HEADLESS_HIDE_WINDOW=1`
-is opt-in.** Hiding is genuinely useful for the NVIDIA path, which runs on the
-real XWayland display where a mapped window would pop up. If that hangs, drop
-the flag and accept a flashing window, or run NVIDIA under Xvfb too.
-
-**Corollary: never run headless mode under the SDL Wayland backend.**
-`SDL_VIDEODRIVER=x11` is load-bearing, per §8.
-
-### NVIDIA may not be selectable under Xvfb
-
-`QueueFamilyIndices::find` (`:3015`) requires
-`get_physical_device_surface_support`, and `choose_physical_device` silently
-`continue`s a device with no presentation queue (`:3099`). If NVIDIA's WSI
-declines to present to an Xvfb screen it doesn't drive, the NVIDIA device is
-skipped and you either fall through to llvmpipe or hit the `bail!` at `:3170` —
-either way you could bless goldens on the wrong device without noticing.
-`VKR_REQUIRE_DEVICE` + `assert_device_name_contains` exists specifically to
-turn that into a hard error. NVIDIA has supported PRIME-offload presentation to
-non-NVIDIA X screens since 435.x so this probably works, but **verify before
-building recipes around it.** Fallback: the real XWayland `:1` display with
-`VKR_HEADLESS_HIDE_WINDOW=1`.
-
-Note this machine also has an Intel Iris Xe iGPU. `choose_physical_device`
-sorts DISCRETE first (`:3158-3167`), so NVIDIA wins when it's eligible — but
-"eligible" is exactly what's in doubt here.
-
-### Cross-driver goldens are impossible — measured, not theoretical
-
-```
-lavapipe   framebufferColorSampleCounts = {1×, 4×}
-NVIDIA     framebufferColorSampleCounts = {1×, 2×, 4×, 8×}
-Intel Xe   framebufferColorSampleCounts = {1×, 2×, 4×, 8×, 16×}
-```
-
-With the default `MaxMSAASamples`, `get_max_usable_sample_count` (`:4974`)
-picks different counts per driver — different geometry coverage, different
-resolve. Pinning `VKR_HEADLESS_MSAA=4` equalizes the *count*, but not
-rasterization tie-breaks, shader float precision (llvmpipe vs NVIDIA
-transcendentals in the SDF and ray-marching examples differ by far more than
-4/255), texture filtering, or anisotropy.
-
-**Accept the split: lavapipe does validation only; goldens are NVIDIA-only, in
-`goldens/rtx3070ti/`.** Pin `VKR_HEADLESS_MSAA=4` for goldens anyway so a
-future GPU swap doesn't silently change the sample count.
-
-### Examples that can't participate
-
-- **`toon_link`** — requires `assets/link/`, which `.gitignore` excludes
-  wholesale (`/assets/`). Excluded from both lists. Its `Instant` usage is
-  still migrated so it keeps compiling.
-- **`sprite_batch`** — `randomize_sprite` (`:153`) calls `SDL_rand`/`SDL_randf`
-  every frame from SDL's global time-seeded state. Validation-only.
-- **`particles`** — integrates GPU state across frames. The virtual clock makes
-  `delta_time` deterministic, but verify the initial particle state isn't
-  randomized before promoting it to `GOLDEN_EXAMPLES`.
-- **`watercolor`** — needs mouse input to produce content; the no-input frame
-  should be a constant blank canvas, but it's a compute ping-pong, so confirm
-  two runs match before promoting.
-- **`gpu_picking`** — deterministic, but its readback depends on mouse
-  position, which is (0,0) headless. Fine; the golden just shows the un-picked
-  state.
-
-### Golden churn
-
-At 800×600 RGBA a fractal PNG is ~150-400 KB; 12 goldens ≈ 2-4 MB per bless.
-`.git` is already 2.1 GB so absolute size is a non-issue, but **churn** isn't:
-PNGs don't delta-compress, so every re-bless adds a full blob per image.
-Mitigations: bless rarely and deliberately; start with 4-6 curated examples
-(`dragon`, `sdf_2d`, `viking_room`, `suzanne`, `koch_curve`, `basic_triangle`)
-and grow only when a golden has actually caught something; optionally
-`VKR_HEADLESS_RENDER_SCALE=0.5` to quarter the pixel count, at the cost of
-hiding fine-detail regressions. Do **not** reach for git-lfs — there's no
-`.gitattributes` today and it would complicate every clone.
-
-### Smaller items
-
-- **`pretty_env_logger::init()`** (`src/game/traits.rs:84`) panics on a second
-  call. Irrelevant for one-example-per-process, but it rules out an in-process
-  multi-example runner — hence the shell-loop sweep.
-- **`just lint` runs clippy `--all-targets` in both debug and release.** The new
-  `enable_validation()` fn and the raw-pointer `mapped: *mut u8` in
-  `CaptureResources` must be clean in both. `picking.rs` already carries a
-  `*mut u32` field, so the pattern is precedented (and `CaptureResources`
-  becomes `!Send` the same way — irrelevant, `Renderer` is single-threaded).
-- **Xvfb screen size feeds `compute_render_scale_for_display`** via
-  `display.get_bounds()`. At `-screen 0 1920x1080x24` that yields 1.0 anyway,
-  but headless must not depend on it — `VKR_HEADLESS_RENDER_SCALE` (default
-  1.0) short-circuits it entirely. Note `watercolor` already pins
-  `render_scale() == Some(1.0)`.
-
----
-
-## Implementation order
-
-Each step is independently verifiable.
-
-1. **Validation counters** (`src/renderer/debug.rs`) — self-contained, no
-   behavior change
-2. **`HeadlessConfig` + `run()`/`run_loop()` frame limit** — the validation
-   harness now works on the real display
-3. **Xvfb + lavapipe recipes** — `just headless`, `just headless-all`
-4. **Virtual clock** + the example migrations
-5. **`enable_validation()`** env switch
-6. **Barrier widening** (verify a clean run *before* proceeding), then
-   `src/renderer/capture.rs` + `format_block_info` BGRA
-7. **`src/bin/image_diff.rs`**, `goldens/`, `just golden` / `just bless`
-
-## Verification
-
-Prereq:
-
-```bash
-sudo apt install xvfb
-```
-
-Run `cargo check --all-targets` after every Rust change; `just lint` and
-`cargo fmt` at the end of each step.
-
-**Validation harness (steps 2-3):**
-
-```bash
-just headless basic_triangle 30 ; echo "exit=$?"            # expect 0
-just headless dragon 5 2>&1 | grep -i "llvmpipe\|device"    # confirm lavapipe chosen
-just headless-all 30
-```
-
-Negative control: temporarily break a barrier, confirm `exit=1` and
-`"vulkan validation failed: N error(s)"`.
-
-**Determinism (steps 4 + 6) — the key test.** Two identical runs must be
-byte-identical:
-
-```bash
-for i in 1 2; do
-  SDL_VIDEODRIVER=x11 VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json \
-    VKR_HEADLESS=1 VKR_HEADLESS_FRAMES=30 VKR_HEADLESS_MSAA=4 \
-    VKR_HEADLESS_CAPTURE=/tmp/dragon_$i.png \
-    xvfb-run -a -s "-screen 0 1920x1080x24" cargo run --example dragon
-done
-sha256sum /tmp/dragon_1.png /tmp/dragon_2.png   # MUST match
-```
-
-Negative controls for the virtual clock: `FRAMES=31` must produce a *different*
-image (time advanced one step), and injecting an artificial 200 ms sleep into a
-`FRAMES=30` run must still match. Also `file /tmp/dragon_1.png` should report
-`PNG image data, 800 x 600, 8-bit/color RGBA` — and eyeball it, since swapped
-red and blue means the BGRA swizzle is inverted.
-
-**Golden harness (step 7):**
-
-```bash
-just bless dragon
-just golden dragon ; echo "exit=$?"                          # expect 0
-cargo run --release --bin image_diff -- \
-  /tmp/dragon_1.png goldens/rtx3070ti/suzanne.png            # expect 1
-just golden-all
-```
-
-**Regression guard — the existing workflow must be untouched:**
-
-```bash
-env -u DISPLAY -u WAYLAND_DISPLAY just test   # must still pass with no GPU/X at all
-just lint
-just dev basic_triangle                        # windowed path, animation speed unchanged
-```
+**Golden churn** is the one sizing concern: PNGs don't delta-compress, so every
+re-bless adds a full blob. Bless rarely, start with 4-6 curated examples
+(`dragon`, `sdf_2d`, `viking_room`, `suzanne`, `koch_curve`, `basic_triangle`),
+and grow only when a golden has actually caught something. Do **not** reach for
+git-lfs — there's no `.gitattributes` today and it would complicate every clone.
 
 ---
 
 ## Critical files
 
-- `src/renderer.rs` — `capture` field (~`:189`), `enable_frame_capture` /
-  `take_captured_frame` / clock accessors, copy at `:1921`, barrier widening at
-  `:1732` and `:1919`, `format_block_info` BGRA at `:4118`,
-  `enable_validation()` replacing the const at `:61`, `Drop` at `:2827`
-- `src/game/traits.rs` — `run()` at `:80-114`
-- `src/app.rs` — `run_loop()` at `:29-70`
-- `src/renderer/debug.rs` — counters in `vulkan_debug_utils_callback` at
-  `:14-49`
-- `src/renderer/picking.rs` — the readback template for the new
-  `src/renderer/capture.rs`
-- `src/headless.rs`, `src/bin/image_diff.rs` — new
-- `justfile`, `CLAUDE.md` — new recipes; `ENABLE_VALIDATION` doc update
+Phase 1:
+
+- `src/renderer.rs` — `WindowTarget` replacing `window: Window` (`:102`),
+  `init` (`:241`), instance extensions (`:266`), surface creation (`:303`),
+  stored window (`:411`), SDL text input (`:2078`), `recreate_swapchain`
+  (`:2462`), `check_required_extensions` (`:2971`), `choose_swap_extent`
+  (`:3239`), `create_swapchain` (`:3266`), fingerprint in `init`
+- `src/renderer/debug.rs` — counters in `vulkan_debug_utils_callback` (`:14-49`)
+- `src/game/traits.rs` — `run()` (`:80`), `enable_egui` (`:98`),
+  `compute_render_scale_for_display` (`:121`)
+- `src/app.rs` — `run_loop` (`:29`), pacing (`:52-57`), `handle_events` (`:68`)
+- `src/renderer/platform.rs` — `OS_SURFACE_EXT` stays, SDL path only
+- `src/headless.rs` — new
+- `justfile`, `CLAUDE.md` — new recipes; document the headless flag
+
+Phase 2 additionally: `src/renderer/capture.rs` (new, templated on
+`src/renderer/picking.rs`), `src/bin/image_diff.rs` (new), `goldens/`,
+`format_block_info` (`:4117`), the barrier masks (`:1731`, `:1918`), and
+`ENABLE_VALIDATION` (`:61`).

@@ -112,14 +112,27 @@
             }
           },
           {
-            "kind": "scalar",
+            "kind": "enum",
             "fieldName": "debugView",
             "binding": {
               "kind": "uniform",
               "offset": 8,
               "size": 4
             },
-            "scalarType": "uint32"
+            "enumType": {
+              "typeName": "DebugView",
+              "tagType": "uint32",
+              "cases": [
+                {
+                  "name": "Pigments",
+                  "value": 0
+                },
+                {
+                  "name": "WetAreaMask",
+                  "value": 1
+                }
+              ]
+            }
           },
           {
             "kind": "scalar",

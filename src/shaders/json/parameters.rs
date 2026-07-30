@@ -89,6 +89,7 @@ pub enum StructField {
     Resource(ResourceStructField),
     Pointer(PointerStructField),
     Array(ArrayStructField),
+    Enum(EnumStructField),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -285,4 +286,69 @@ pub enum ScalarType {
     Int32,
     Uint32,
     Uint64,
+}
+
+/// A slang enum field. Slang lays an enum out as its tag type, so the GPU bytes
+/// are identical to the equivalent scalar field; the enum identity survives only
+/// on the declared type, and is carried here so codegen can emit a Rust enum.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnumStructField {
+    pub field_name: String,
+    pub binding: Binding,
+    pub enum_type: EnumFieldType,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnumFieldType {
+    pub type_name: String,
+    pub tag_type: EnumTagType,
+    pub cases: Vec<EnumCase>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnumCase {
+    pub name: String,
+    /// normalized to the tag type's range by the reflection layer, so an
+    /// unsigned case never arrives here sign-extended
+    pub value: i64,
+}
+
+/// The integer type a slang enum is laid out as.
+///
+/// 32-bit tags only. A `uint8_t`/`uint16_t` tag would be laid out at its natural
+/// 1/2-byte alignment, but reading one makes slang emit Int8/Int16 and the
+/// UniformAndStorageBuffer{8,16}BitAccess capabilities — optional Vulkan feature
+/// bits the renderer deliberately does not require. See `enum_tag_from_slang`.
+///
+/// Deliberately separate from ScalarType: widening ScalarType to carry Int32
+/// would also start accepting plain `int` *scalar* fields, which codegen's
+/// vk::Format and vector-type matches do not support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EnumTagType {
+    Uint32,
+    Int32,
+}
+
+impl EnumTagType {
+    pub fn rust_type_name(self) -> &'static str {
+        match self {
+            Self::Uint32 => "u32",
+            Self::Int32 => "i32",
+        }
+    }
+
+    pub fn repr(self) -> String {
+        format!("#[repr({})]", self.rust_type_name())
+    }
+
+    /// Alignment equals size for every tag type.
+    pub fn size(self) -> usize {
+        match self {
+            Self::Uint32 | Self::Int32 => 4,
+        }
+    }
 }

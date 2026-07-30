@@ -174,6 +174,29 @@ fn reflect_struct_fields(
 
         let binding = param_binding(field);
 
+        // Slang lays an enum out as its tag type (slang-type-layout.cpp), so
+        // field_type_layout.kind() reports Scalar here and the match below would
+        // silently degrade the field to its tag. The enum identity survives only
+        // on the *declared* type, reached through the variable.
+        if let Some(declared) = field.ty()
+            && declared.kind() == slang::TypeKind::Enum
+        {
+            // A vertex input field reflects as VaryingInput, not Uniform. Codegen
+            // has no vk::Format for a generated enum, so reject it here with a
+            // message that names the field rather than in the format match.
+            let Some(binding @ Binding::Uniform(_)) = binding else {
+                anyhow::bail!(
+                    "enum field '{field_name}': enums are only supported in \
+                    uniform/pointee struct fields, not vertex inputs"
+                );
+            };
+
+            fields.push(StructField::Enum(reflect_enum_field(
+                field_name, binding, declared,
+            )?));
+            continue;
+        }
+
         let field_json = match field_type_layout.kind() {
             slang::TypeKind::Scalar => {
                 let slang_scalar_type = field_type_layout.scalar_type().unwrap();
@@ -493,6 +516,131 @@ fn validate_array_element(
     }
 
     Ok(())
+}
+
+/// Reflects a slang enum field off its *declared* type. On an Enum-kind Type,
+/// slang overloads the struct-field API to mean enum cases: `fields()` yields
+/// the cases and `element_type()` yields the tag type
+/// (see spReflectionType_GetFieldByIndex / _GetElementType).
+fn reflect_enum_field(
+    field_name: String,
+    binding: Binding,
+    enum_type: &slang::reflection::Type,
+) -> anyhow::Result<EnumStructField> {
+    // slang synthesizes a name for an anonymous enum rather than reporting none,
+    // and that name is neither meaningful to a caller nor a legal Rust type name
+    // under clippy's non_camel_case_types
+    let Some(type_name) = enum_type
+        .name()
+        .filter(|n| !n.starts_with("SLANG_anonymous"))
+    else {
+        anyhow::bail!(
+            "enum field '{field_name}' has an anonymous enum type; give the enum a \
+            name so the generated Rust enum has one too"
+        );
+    };
+    let type_name = type_name.to_string();
+
+    let Some(tag_type_layout) = enum_type.element_type() else {
+        anyhow::bail!("enum '{type_name}' (field '{field_name}') has no reflected tag type");
+    };
+    let tag_type = enum_tag_from_slang(tag_type_layout.scalar_type(), &type_name)?;
+
+    let mut cases: Vec<EnumCase> = vec![];
+    for case in enum_type.fields() {
+        let Some(name) = case.name() else {
+            anyhow::bail!("enum '{type_name}' has a case with no name");
+        };
+        let Some(raw_value) = case.default_value_int() else {
+            anyhow::bail!(
+                "enum '{type_name}' case '{name}' has no constant value; only \
+                compile-time constant cases can cross the reflection boundary"
+            );
+        };
+        let value = normalize_case_value(raw_value, tag_type, &type_name, name)?;
+
+        if let Some(clash) = cases.iter().find(|c| c.value == value) {
+            anyhow::bail!(
+                "enum '{type_name}' cases '{}' and '{name}' share the value {value}; \
+                duplicate discriminants cannot be generated as a Rust enum",
+                clash.name,
+            );
+        }
+
+        cases.push(EnumCase {
+            name: name.to_string(),
+            value,
+        });
+    }
+
+    if cases.is_empty() {
+        anyhow::bail!(
+            "enum '{type_name}' has no cases; the generated Rust enum needs at \
+            least one case for Default and TryFrom"
+        );
+    }
+
+    Ok(EnumStructField {
+        field_name,
+        binding,
+        enum_type: EnumFieldType {
+            type_name,
+            tag_type,
+            cases,
+        },
+    })
+}
+
+/// NOTE deliberately not `scalar_from_slang`: widening that one would also start
+/// accepting plain `int` scalar fields that codegen does not support.
+fn enum_tag_from_slang(scalar: slang::ScalarType, type_name: &str) -> anyhow::Result<EnumTagType> {
+    match scalar {
+        slang::ScalarType::Uint32 => Ok(EnumTagType::Uint32),
+        slang::ScalarType::Int32 => Ok(EnumTagType::Int32),
+
+        // A uint8_t/uint16_t tag lays out fine, but *reading* one makes slang
+        // emit Int8/Int16 and UniformAndStorageBuffer{8,16}BitAccess. Those are
+        // optional Vulkan feature bits, and requiring them would narrow the
+        // supported hardware for a tag width no shader here needs.
+        slang::ScalarType::Uint8 | slang::ScalarType::Uint16 | slang::ScalarType::Int16 => {
+            anyhow::bail!(
+                "enum '{type_name}' has a sub-32-bit tag type {scalar:?}; only uint \
+                and int tags are supported, because reading a narrower tag requires \
+                the 8/16-bit storage device features"
+            )
+        }
+
+        other => anyhow::bail!(
+            "enum '{type_name}' has an unsupported tag type {other:?}; supported \
+            tags are uint and int (or none, which means int)"
+        ),
+    }
+}
+
+/// `default_value_int` returns i64, so an unsigned case may arrive sign-extended
+/// (a `uint` case of 0xFFFFFFFF as -1). Emitting that verbatim into a
+/// `match value: u32` would not compile, so normalize into the tag's range here.
+fn normalize_case_value(
+    raw: i64,
+    tag_type: EnumTagType,
+    type_name: &str,
+    case_name: &str,
+) -> anyhow::Result<i64> {
+    let normalized = match tag_type {
+        EnumTagType::Int32 => i32::try_from(raw).map(i64::from).ok(),
+        EnumTagType::Uint32 => u32::try_from(raw)
+            .map(i64::from)
+            .ok()
+            .or_else(|| i32::try_from(raw).map(|v| i64::from(v as u32)).ok()),
+    };
+
+    normalized.ok_or_else(|| {
+        anyhow::anyhow!(
+            "enum '{type_name}' case '{case_name}' has value {raw}, which does not \
+            fit its {} tag",
+            tag_type.rust_type_name(),
+        )
+    })
 }
 
 fn scalar_from_slang(scalar: slang::ScalarType) -> ScalarType {

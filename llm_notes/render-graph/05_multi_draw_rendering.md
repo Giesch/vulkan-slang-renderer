@@ -5,6 +5,13 @@
 > of pipeline identity so pipeline count collapses. Written 2026-07 against the post-BDA,
 > post-multi-draw-queue (P4/P5) renderer.
 >
+> **Amended 2026-07-28** by
+> [../remove_pipelined_compute.md](../remove_pipelined_compute.md). Ring
+> arithmetic in §13 predates the collapse: `PRE_WAIT_RING_LEN` is gone, so
+> the BDA handle ring is `M = MAX_FRAMES_IN_FLIGHT = 2` slots indexed by
+> `flight_slot`, and there is only one command stream. The §13.2 formulas
+> themselves still hold — see the inline notes there, §13.4 and §13.5.
+>
 > **Relaxes** `04_design.md` §2's "**v1 constraint:** … exactly one terminal draw in
 > rendering" and supersedes the single-draw framing of the rendering section there. The
 > compute/simulation half of 04 is untouched.
@@ -459,11 +466,13 @@ on the app-declared `graph::Write::{Storage, Current, Previous}` enum over the e
 - `StorageBufferHandle` still mints `Addr<T>` — GPU-**writable** — over an allocation that
   rotates every frame (`Gpu::addr`, `src/renderer.rs:5401`; `create_storage_buffers_per_frame`,
   `:882-916`). A compute shader that writes through it cannot see those writes next frame:
-  frame N+1 binds a physically different `VkBuffer` holding whatever was there `PRE_WAIT_RING_LEN`
-  executes ago. Only `GpuOnlyBufferHandle` + `previous_addr` (`:5423`) escapes this, and only
+  frame N+1 binds a physically different `VkBuffer` holding whatever was there
+  `MAX_FRAMES_IN_FLIGHT` executes ago (`PRE_WAIT_RING_LEN` before 2026-07-28 — the
+  ring shrank from 3 to 2, so the staleness is nearer but no less wrong). Only `GpuOnlyBufferHandle` + `previous_addr` (`:5423`) escapes this, and only
   for strict full-rewrite ping-pong.
 - **Hazard-identity mismatch (the dangerous one).** 04 §6 keys the last-writer table on the
-  *handle*; the actual memory identity is `(handle, ring_slot)`. A write recorded at slot N
+  *handle*; the actual memory identity is `(handle, flight_slot)` (`ring_slot` before
+  2026-07-28). A write recorded at slot N
   and a read at slot N+1 look *ordered* to the graph while touching different allocations —
   so the graph will certify a dependency that does not exist. That is strictly worse than
   today, where the app at least knows it is hand-rolling.
@@ -472,9 +481,10 @@ on the app-declared `graph::Write::{Storage, Current, Previous}` enum over the e
   data" (which pays 3x memory and a per-frame address mint for data that never changes).
 
 **Owed:** a non-ringed, GPU-owned buffer resource — one allocation, stable address, seeded at
-setup. This needs *no new synchronization*: compute submits are already strictly serialized
-frame-to-frame on `compute_timeline` (`renderer.rs:2257-2262` pipelined, `:2371-2385`
-combined), so the ring is the only thing preventing it. Alternatively extend rotation to
+setup. This needs *no new synchronization*: consecutive frames' compute is ordered by the
+barrier at the top of each command buffer (was `compute_timeline` before 2026-07-28 —
+a stronger guarantee, so the conclusion is unchanged), so the ring is the only thing
+preventing it. Alternatively extend rotation to
 buffers so the graph owns it. Either way, hazard-table identity must become per-slot.
 
 ### 13.2 `ExtraSlot` sizing is wrong past one advance per frame
@@ -498,8 +508,16 @@ mode, since `SameFrame` orders it ahead.
 | 2 | **5** | 4 — **wrong** | **3** | "no memory cost" — **wrong** |
 
 Two things the design never states and must: every hardcoded 3/4 silently assumes `M = 2`, so
-raising `MAX_FRAMES_IN_FLIGHT` invalidates the whole document; and `PRE_WAIT_RING_LEN = M + 1`
-(`renderer.rs:69-74`) is simply the `A = 1` instance of the same formula.
+raising `MAX_FRAMES_IN_FLIGHT` invalidates the whole document; and the old
+`PRE_WAIT_RING_LEN = M + 1` was simply the `A = 1, PreviousFrame` instance of the same
+formula.
+
+> **2026-07-28:** the renderer is now unconditionally `SameFrame` — compute and graphics
+> share one submit, ordered by a barrier — so the live row is `SameFrame`, `R >= A*(M-1) + 1`,
+> which at `A = 1, M = 2` gives `R = 2`. That is exactly the collapse
+> [../remove_pipelined_compute.md](../remove_pipelined_compute.md) performed:
+> `PRE_WAIT_RING_LEN` deleted, one 2-slot ring. The `A = 2` cell still stands as a warning:
+> a ping-pong advanced twice per execute needs 3 slots and would have to manage its own.
 
 ### 13.3 Advance count is runtime-variable; 04 §4/§6/§8 precompute against a static one
 
@@ -531,7 +549,13 @@ advancing node compiles to a copy pass). For `repeat`, the loop group's advance 
 `iterations mod R` as well as by frame-start state — 04 §6's "simulate the node sequence once
 per reachable frame-start state" is under-specified as written.
 
-### 13.4 `SyncWait` is declared per-resource but costs the whole frame
+### 13.4 `SyncWait` is declared per-resource but costs the whole frame — **moot 2026-07-28**
+
+> `SyncWait` is no longer a mode: it is the only behavior, and it costs nothing, because
+> compute and graphics share one submit ordered by a barrier rather than by a submit-level
+> semaphore. There is no pipelining left for it to serialize against. The critique below
+> stands as reasoning about any future reintroduction of a per-resource sync knob.
+
 
 04 §8 puts `CrossFrameMode` on the ping-pong, but `SyncWait` is implemented as a submit-level
 semaphore wait (graphics N waits compute N). Selecting it for a single resource serializes the
@@ -542,7 +566,16 @@ is a footgun.
 **Owed:** move the sync mode to graph scope, or document the frame-wide effect in the §8 table
 and have `build()` warn when `SyncWait` is mixed with `ExtraSlot` resources.
 
-### 13.5 The frame stream is never analyzed
+### 13.5 The frame stream is never analyzed — **the hazard was real; fixed 2026-07-28**
+
+> This section identified the exact hazard that
+> [../remove_pipelined_compute.md](../remove_pipelined_compute.md) Phase 3 had to solve, and
+> it is no longer hypothetical: with pipelining gone, *all* compute is frame-stream compute.
+> The fix is a barrier at the top of every command buffer whose first synchronization scope
+> covers all commands earlier in submission order on the queue, which orders frame N+1's
+> compute after frame N's compute *and* graphics — so `R = A*(M-1) + 1 = 2` holds without
+> growing the ring. The "Owed" item below is discharged for the renderer; a graph would
+> still owe the static check over its own declared writers.
 
 04 §8 examines only the pipelined-queue boundary. After Phase 0.5
 (`watercolor_race_fixes.md`), frame-stream compute for execute N+1 is recorded at the top of

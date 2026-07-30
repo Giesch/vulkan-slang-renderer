@@ -1,5 +1,18 @@
 # Shader enums: implementation plan
 
+> **STATUS: implemented, with §7 deliberately NOT taken.** Only `uint` and `int`
+> tags are supported; `uint8_t`/`uint16_t` are rejected at reflection, so
+> `src/renderer.rs` is untouched and no new device features are required. This is
+> the alternative §7 itself offers, chosen because narrow tags would add optional
+> Vulkan feature requirements for a width no shader here needs.
+>
+> Other deviations, forced by what slang actually does, are recorded inline in §11:
+> array/anonymous/empty enums and enum-typed vertex inputs are all *rejected* rather
+> than degraded; `try_add_enum_def` dedups within one shader only (matching
+> `try_add_struct_def`), with cross-shader agreement enforced in
+> `collect_shared_modules`; and shared modules carry a `GeneratedTypeDefs` bundle
+> rather than two parallel maps.
+
 ## Context
 
 Slang shaders can declare C-style enums, but today they cannot cross the reflection boundary.
@@ -24,24 +37,25 @@ type safety and readability in the generated bindings.
 
 ## Settled decisions
 
-- **Tag types supported**: `uint` → `#[repr(u32)]`, `int` → `#[repr(i32)]`, `uint16_t` →
-  `#[repr(u16)]`, `uint8_t` → `#[repr(u8)]`. A bare `enum X { .. }` (no tag annotation) reflects as
-  `int32` and is therefore accepted as `#[repr(i32)]`.
+- **Tag types supported**: ~~`uint` → `#[repr(u32)]`, `int` → `#[repr(i32)]`, `uint16_t` →
+  `#[repr(u16)]`, `uint8_t` → `#[repr(u8)]`.~~ **As built: `uint` → `#[repr(u32)]` and `int` →
+  `#[repr(i32)]` only.** A bare `enum X { .. }` (no tag annotation) reflects as `int32` and is
+  therefore accepted as `#[repr(i32)]`. `uint8_t`/`uint16_t` are rejected — see the §7 note.
 - **Scope**: enum fields are allowed anywhere a scalar is allowed today — std140 ParameterBlock
   structs, nested structs inside them, and std430 BDA pointee structs. Enums declared in shared
   `.slang` modules get hoisted into the shared generated module exactly like shared structs.
 - **Generated shape**: derives + `repr` + `Default` (first case) + `From<E> for <tag>` +
   `TryFrom<tag> for E`. See §3.
 - **New `EnumTagType` in the JSON schema, separate from `ScalarType`.** Widening `ScalarType`
-  (`json/parameters.rs:267`) to add `Int32`/`Uint16`/`Uint8` would, as a side effect, silently start
+  (`json/parameters.rs:283`) to add `Int32`/`Uint16`/`Uint8` would, as a side effect, silently start
   accepting plain `int`/`uint16_t`/`uint8_t` *scalar* fields that `scalar_from_slang`
-  (`reflection/parameters.rs:428`) deliberately rejects today. Keep the blast radius on enums.
+  (`reflection/parameters.rs:498`) deliberately rejects today. Keep the blast radius on enums.
 - **Out of scope**: enum-typed *vertex input* attributes. They would reach the `vk::Format` match at
-  `build_tasks.rs:316` and hit its existing `todo!()`; that is an acceptable, loud failure.
+  `build_tasks.rs:305` and hit its existing `todo!()`; that is an acceptable, loud failure.
 
 ## Verified facts
 
-All line numbers verified at `27b6a98`; re-verify before editing.
+All line numbers verified at `00b8d59`; re-verify before editing.
 
 1. **Slang lays an enum out as its tag type, discarding the enum identity.**
    `slang/source/slang/slang-type-layout.cpp:6128-6137`:
@@ -97,20 +111,22 @@ All line numbers verified at `27b6a98`; re-verify before editing.
    OpCapability Int16
    OpCapability Int8
    ```
-   `src/renderer.rs:3373-3382` enables only `storage_buffer8_bit_access`, and only under
+   `src/renderer.rs:3396-3408` enables only `storage_buffer8_bit_access`, and only under
    `cfg!(debug_assertions)`. See §7 — this is a real deliverable, not a footnote.
 
-6. **Two alignment helpers will silently do the wrong thing for a new type name.**
-   - `field_alignment` (`build_tasks.rs:1180-1195`) falls through to `_ => 16`. An enum field named
+6. **Two alignment helpers will silently do the wrong thing for a new type name.** Both recurse
+   through `parse_array_type` before their `match`, then fall through on an unrecognized name:
+   - `field_alignment` (`build_tasks.rs:1195-1215`) falls through to `_ => 16`. An enum field named
      `DebugView` would be treated as 16-byte aligned, inflating `max_alignment` and therefore
-     `expected_size` in `generate_std430_struct_fields` (`:714-776`) — which then trips the
-     `assert_eq!(expected_size, ptr.pointee_size)` at `:878`.
-   - `rust_type_alignment` (`build_tasks.rs:1205-1223`) returns `None` for unknown names, so
-     `check_rust_placeable` (`:1228`) skips the check entirely rather than enforcing it.
+     `expected_size` in `generate_std430_struct_fields` (`:699-761`) — which then trips the
+     `assert_eq!(expected_size, ptr.pointee_size)` at `:865`.
+   - `rust_type_alignment` (`build_tasks.rs:1225-1254`) returns `None` for unknown names, so
+     `check_rust_placeable` (`:1259`) skips the check entirely rather than enforcing it.
 
 7. **Shared-module hoisting only looks at structs.** `reflect_shared_module_types`
-   (`src/shaders.rs:241-247`) filters `child.kind() == slang::DeclKind::Struct`. `DeclKind::Enum`
-   exists in the generated bindings (value 7) and is re-exported by the crate.
+   (`src/shaders.rs:207`) builds `type_to_module` at `:237-250`, filtering
+   `child.kind() == slang::DeclKind::Struct` at `:244`. `DeclKind::Enum` exists in the generated
+   bindings (value 7) and is re-exported by the crate.
 
 ## 1. Reflection: detect enum fields
 
@@ -144,7 +160,7 @@ for field in struct_type_layout.fields() {
 }
 ```
 
-New helper in the same file, next to `scalar_from_slang` (`:428`):
+New helper in the same file, next to `scalar_from_slang` (`:498`):
 
 ```rust
 fn reflect_enum_field(
@@ -168,12 +184,12 @@ It must:
 
 Do **not** reuse `scalar_from_slang` — it deliberately rejects `int32`/`uint16`/`uint8`.
 
-Compute shaders reach the same function via `reflect_compute_entry_point` (`:439`), so they are
+Compute shaders reach the same function via `reflect_compute_entry_point` (`:510`), so they are
 covered for free.
 
 ## 2. JSON schema
 
-`src/shaders/json/parameters.rs`. Add a variant to `StructField` (`:80`) and three new types:
+`src/shaders/json/parameters.rs`. Add a variant to `StructField` (`:84`) and three new types:
 
 ```rust
 pub enum StructField {
@@ -183,6 +199,7 @@ pub enum StructField {
     Matrix(MatrixStructField),
     Resource(ResourceStructField),
     Pointer(PointerStructField),
+    Array(ArrayStructField),
     Enum(EnumStructField),          // new
 }
 
@@ -243,14 +260,14 @@ Serialized shape:
 `EnumTagType` should carry `rust_type_name()` (`"u32"` / `"i32"` / `"u16"` / `"u8"`), `repr()`
 (`"#[repr(u32)]"` …) and `size()` (4/4/2/1) helpers — every downstream consumer wants one of them.
 
-Also extend `field_offset_size` (`build_tasks.rs:1161`) with
+Also extend `field_offset_size` (`build_tasks.rs:1168`) with
 `StructField::Enum(e) => Some(&e.binding)`. It matches exhaustively, so the compiler will find it.
 
 ## 3. Codegen: enum definitions
 
 `src/shaders/build_tasks.rs`.
 
-New definition type, mirroring `GeneratedStructDefinition` (`:1023`):
+New definition type, mirroring `GeneratedStructDefinition` (`:1033`):
 
 ```rust
 #[derive(Debug, Clone, PartialEq)]
@@ -269,10 +286,10 @@ Variant names come from `heck`'s `to_upper_camel_case`, matching how field names
 `to_snake_case`.
 
 Thread a `enum_defs: &mut Vec<GeneratedEnumDefinition>` alongside the existing
-`struct_defs: &mut Vec<GeneratedStructDefinition>` through `gather_struct_defs` (`:847`),
-`generate_std140_struct_fields` (`:781`), `generate_std430_struct_fields` (`:714`) and both
-`collect_*_shader_data` entry points (`:259`, `:564`). Add a `try_add_enum_def` mirroring
-`try_add_struct_def` (`:1249`) that panics when two shaders define the same enum name with
+`struct_defs: &mut Vec<GeneratedStructDefinition>` through `gather_struct_defs` (`:832`),
+`generate_std140_struct_fields` (`:766`), `generate_std430_struct_fields` (`:699`) and both
+`collect_*_shader_data` entry points (`:258`, `:551`). Add a `try_add_enum_def` mirroring
+`try_add_struct_def` (`:1280`) that panics when two shaders define the same enum name with
 different cases.
 
 New arm in `gather_struct_defs`:
@@ -321,7 +338,7 @@ impl TryFrom<u32> for DebugView {
 }
 ```
 
-`Debug, Clone, Serialize` match what generated structs already derive (`:890`, `:965`); `Copy`,
+`Debug, Clone, Copy, Serialize` match what generated structs already derive (`:878`, `:960`);
 `PartialEq`, `Eq` and `Default` are added because an enum is a value type callers will compare and
 construct. `#[default]` goes on the first case as declared in Slang, not the numerically smallest.
 
@@ -330,20 +347,22 @@ construct. `#[default]` goes on the first case as declared in Slang, not the num
 Per Verified fact 6, a bare type-name lookup cannot classify an enum. Add an explicit alignment to
 the field definition rather than teaching the name-based helpers about enum names:
 
-- `GeneratedStructFieldDefinition` (`:1088`) gains `rust_align: Option<usize>`, set only by the new
+- `GeneratedStructFieldDefinition` (`:1098`) gains `rust_align: Option<usize>`, set only by the new
   `new_with_align` constructor (`None` from `new` and `padding`). It derives `PartialEq` and feeds
-  `struct_defs_compatible` (`:1243`), so this also strengthens the shared-type layout check.
-- `field_alignment` (`:1180`) becomes `field_alignment(field: &GeneratedStructFieldDefinition)`,
+  `struct_defs_compatible` (`:1274`), so this also strengthens the shared-type layout check.
+- `field_alignment` (`:1195`) becomes `field_alignment(field: &GeneratedStructFieldDefinition)`,
   returning `field.rust_align.unwrap_or_else(|| field_alignment_by_name(&field.type_name))` with the
-  existing body renamed. Only call site: `:746`.
-- `check_rust_placeable` (`:1228`) consults `gen_field.rust_align` before falling back to
+  existing body renamed. The renamed body must keep its `parse_array_type` recursion, and the
+  recursive call stays on the by-name form. Only call site: `:731`.
+- `check_rust_placeable` (`:1259`) consults `gen_field.rust_align` before falling back to
   `rust_type_alignment(&gen_field.type_name)`, so an enum field at a misaligned offset now fails
   loudly instead of being skipped.
 
-Also add `"u16" => 2` and `"u8" => 1` (and `"i32" => 4`) to `rust_type_alignment` (`:1205`) so the
-fallback path is right even if a future caller constructs the field without an explicit alignment.
+Also add `"u16" => 2` and `"u8" => 1` to `rust_type_alignment` (`:1225`) so the fallback path is
+right even if a future caller constructs the field without an explicit alignment. (`"i32"` is
+already present in both helpers.)
 
-Test-side: `check_field_sizes` (`:1618`) matches `StructField` exhaustively and needs a
+Test-side: `check_field_sizes` (`:1704`) matches `StructField` exhaustively and needs a
 `StructField::Enum(_) => {}` arm. The enum's own size is covered by the emitted
 `size_of::<DebugView>() == 4` assert, which `alignment_tests` compiles for real (see §8).
 
@@ -352,7 +371,7 @@ Test-side: `check_field_sizes` (`:1618`) matches `StructField` exhaustively and 
 `templates/shader_atlas_entry.rs.askama`, `templates/shader_compute_entry.rs.askama`,
 `templates/shader_shared_module.rs.askama` each gain an `enum_defs` loop immediately *before* the
 existing `{% for def in struct_defs %}` block. The three template structs
-(`ShaderAtlasEntryModule` `:502`, `ShaderComputeEntryModule` `:512`, `SharedModuleTemplate` `:1447`)
+(`ShaderAtlasEntryModule` `:482`, `ShaderComputeEntryModule` `:492`, `SharedModuleTemplate` `:1482`)
 each gain `enum_defs: Vec<GeneratedEnumDefinition>`.
 
 The struct-emitting block is already duplicated verbatim across all three templates; duplicate the
@@ -361,33 +380,74 @@ style beats a one-off refactor here.
 
 Precompute `trait_derive_line()`, `repr()` and the `TryFrom` arms as methods on
 `GeneratedEnumDefinition` so the templates stay dumb, matching how `GeneratedStructDefinition`
-exposes `trait_derive_line()` / `repr()` / `layout_assert_lines()` (`:1034-1086`).
+exposes `trait_derive_line()` / `repr()` / `layout_assert_lines()` (`:1044-1095`).
 
 ## 6. Shared modules
 
-- `src/shaders.rs:241-247`: accept `slang::DeclKind::Enum` in addition to `DeclKind::Struct` when
+- `src/shaders.rs:244`: accept `slang::DeclKind::Enum` in addition to `DeclKind::Struct` when
   building `type_to_module`. This is the whole hook — the map is keyed by bare type name, so an enum
   declared in e.g. `particle.slang` will be tagged and hoisted like any shared struct.
-- `tag_source_modules` (`:1320`) takes `&mut [GeneratedStructDefinition]`; add a sibling for enum
+- `tag_source_modules` (`:1353`) takes `&mut [GeneratedStructDefinition]`; add a sibling for enum
   defs (or make it generic over a small `HasSourceModule` trait — two tiny functions is fine).
-- `collect_shared_modules` (`:1341`) returns `BTreeMap<String, Vec<GeneratedStructDefinition>>`;
+- `collect_shared_modules` (`:1374`) returns `BTreeMap<String, Vec<GeneratedStructDefinition>>`;
   widen it to carry enums per module too, and include enum names in `SharedModuleImport.type_names`
-  (`:1334`) so `pub use super::<module>::{ .. }` covers them.
-- `render_graphics_shader_file` (`:454`) / `render_compute_shader_file` (`:677`) filter
+  (`:1367`) so `pub use super::<module>::{ .. }` covers them.
+- `render_graphics_shader_file` (`:432`) / `render_compute_shader_file` (`:662`) filter
   `source_module.is_none()`; apply the same filter to `enum_defs`.
 
 Note that `DebugView` in `paint_display.shader.slang` is declared in the *shader* module itself, so
 it stays local (`source_module: None`) and is emitted directly into
 `src/generated/shader_atlas/paint_display.rs`.
 
-## 7. Renderer device features (uint8/uint16 tags)
+## 7. Renderer device features (uint8/uint16 tags) — NOT TAKEN
+
+> **Decision: this section was deliberately skipped.** `src/renderer.rs` is unchanged, and
+> `uint8_t`/`uint16_t` tags are rejected in `enum_tag_from_slang` instead — the alternative this
+> section offers in its closing paragraph.
+>
+> The rationale: these are not extensions (`REQUIRED_DEVICE_EXTENSIONS` is untouched, and nothing
+> here needs an extension string). `shaderInt16` is a core Vulkan 1.0 feature bool and the 8/16-bit
+> access features are core Vulkan 1.2, promoted from `VK_KHR_8bit_storage` / `VK_KHR_16bit_storage`.
+> But they are all still *optional* feature bits that a conformant device may report as false, so
+> requiring them is a real narrowing of supported hardware — bought for a tag width no shader in
+> this repo uses. Every enum here (`DebugView`, `DebugMode`, and the GX vocabulary a future
+> `GXCompare` would cover) fits a 32-bit tag.
+>
+> Rejecting at reflection turns a would-be device-creation failure into a build-time error naming
+> the offending enum. Pinned by `sub_32_bit_enum_tags_are_rejected`.
+>
+> If narrow tags are ever genuinely wanted, this section is the recipe — plus the two corrections
+> below it missed: the `missing_features` list in `choose_physical_device` (`src/renderer.rs:3148`)
+> and the `anyhow::bail!` at `:3191` are hand-maintained and must be updated in lockstep, and
+> `generate_std430_struct_fields`'s `max_alignment` floor of 4 must drop to 1, or a pointee whose
+> members are all sub-4-byte enums computes a size that disagrees with slang's reflected
+> `pointee_size`.
+
+The original plan follows, for reference.
+
 
 Per Verified fact 5, a `uint8_t`/`uint16_t`-tagged enum read in a shader forces
 `UniformAndStorageBuffer8BitAccess` / `UniformAndStorageBuffer16BitAccess` / `Int8` / `Int16`.
-`src/renderer.rs:3373-3382` currently enables only `storage_buffer8_bit_access`, under
-`cfg!(debug_assertions)`.
+`src/renderer.rs:3396-3408` currently reads:
 
-Move these out of the debug-only block and enable unconditionally:
+```rust
+let mut vulkan_11_features =
+    vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
+
+let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default()
+    .timeline_semaphore(true)
+    .buffer_device_address(true);
+if cfg!(debug_assertions) {
+    // features used by shader println
+    vulkan_12_features = vulkan_12_features
+        .vulkan_memory_model(true)
+        .vulkan_memory_model_device_scope(true)
+        .storage_buffer8_bit_access(true);
+}
+```
+
+so the only 8-bit feature present is `storage_buffer8_bit_access`, and it is debug-only. Add the
+uniform-buffer variants unconditionally:
 
 ```rust
 let mut vulkan_11_features = vk::PhysicalDeviceVulkan11Features::default()
@@ -402,8 +462,9 @@ let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default()
 ```
 
 plus `shader_int16(true)` on the base `vk::PhysicalDeviceFeatures` — `shaderInt16` is a core 1.0
-feature and lives there, not in the 1.1/1.2 structs. `storage_buffer8_bit_access` stays where it is
-for shader println.
+feature and lives there, not in the 1.1/1.2 structs. The `cfg!(debug_assertions)` block stays as
+it is: `storage_buffer8_bit_access` and the two `vulkan_memory_model` calls are shader println's,
+not ours.
 
 These are all Vulkan 1.2 roadmap-2024 features and universally available on desktop, but they are a
 real device requirement — if that is unwelcome, the alternative is to reject `uint8_t`/`uint16_t`
@@ -411,18 +472,18 @@ tags in §1 and ship only `uint`/`int`. Decide before P3; P0–P2 are unaffected
 
 ## 8. Test shaders and snapshots
 
-- Add `shaders/test/` coverage — that directory feeds `alignment_tests` (`:1495`), which copies the
+- Add `shaders/test/` coverage — that directory feeds `alignment_tests` (`:1550`), which copies the
   generated `.rs` into `shaders/test/check_crate` and runs a real `cargo check`, so the emitted
   `size_of` / `offset_of` asserts are actually compiled. Cover in one or two test shaders:
   - all four tag types in one std140 ParameterBlock struct, with the small ones adjacent so the
     tight packing from Verified fact 4 is exercised
   - an enum field inside a std430 BDA pointee (this is the case that Verified fact 6's
-    `field_alignment` bug would break, via the `expected_size` assert at `:878`)
+    `field_alignment` bug would break, via the `expected_size` assert at `:865`)
   - an enum field in a nested struct
   - a non-zero-based / non-contiguous case list (e.g. `= 7`) and a negative value on an `: int` enum
-- Add negative tests next to `small_matrix_fields_are_rejected` (`:1582`) and
-  `default_layout_pointer_is_rejected` (`:1829`), using the same inline-source fixture pattern as
-  `structured_buffer` (`:1885`): duplicate case values, empty enum, `uint64_t` tag.
+- Add negative tests next to `small_matrix_fields_are_rejected` (`:1641`) and
+  `default_layout_pointer_is_rejected` (`:1920`), using the same inline-source fixture pattern as
+  `structured_buffer_is_rejected` (`:1970`): duplicate case values, empty enum, `uint64_t` tag.
 - Snapshot churn to expect, and nothing else: new `.snap` files for the new test shaders, plus the
   `paint_display` `.rs` and `.json` snapshots changing in P5. Every other snapshot must stay
   byte-identical.
@@ -457,15 +518,26 @@ enums to add:
   so the two compares and their two reference values become named fields rather than `xyzw` — is a
   prerequisite, and is not part of this document's work.
 
-The CPU-side payoff is the concrete reason to want both. `examples/toon_link.rs:113-160` hand-rolls
-an `AlphaCompareCodes` struct plus a `compare_code()` string→code mapping that the generated
-`TryFrom` would replace. That is also where raw manifest bytes must be *validated* rather than cast:
-the codes come from MAT3 as untrusted integers, so they have to go through `TryFrom`, never a
-`transmute` or `as` — see the UB note in §11.
+The CPU side has since been handled by hand, which narrows what this feature buys. `aae5b71` added
+a `gx_enum!` macro (`src/model_manifest.rs:46`) that declares the GX vocabulary — `CompareType`,
+`AlphaOp`, `WrapMode`, … — each with `TryFrom<u8>`, `Display` and serde. So the untrusted-MAT3-bytes
+problem is already solved: `examples/toon_link.rs:119-149` still hand-rolls an `AlphaCompareCodes`
+struct, but `alpha_compare_codes` (`:127`) now reads typed `mm::CompareType` / `mm::AlphaOp` off the
+manifest and casts them `as u32` into the `UVec4`. What remains is purely shader-side type safety:
+the `switch`es in the shader still take bare `uint`s.
+
+That creates an ownership question this plan does not answer. A generated `GXCompare` would overlap
+`mm::CompareType`, and the two disagree on spelling (`CompareType::LessEqual = 0x3` vs the proposed
+`GXCompare::Lequal = 3`). Decide before migrating: either the generated enum replaces
+`mm::CompareType` at the manifest boundary, or the two coexist and `alpha_compare_codes` converts
+between them. Either way the codes must keep going through `TryFrom`, never a `transmute` or `as`
+into the enum — see the UB note in §11.
 
 ## 10. Phases & verification
 
-Every phase leaves the repo green: `cargo check --all`, `just shaders`, `just test`, `just lint`.
+Every phase leaves the repo green: `cargo check --all-targets`, `just shaders`, `just test`,
+`just lint`. Note `--all-targets`, not `--all`: `--all` means all workspace members and silently
+skips the examples.
 
 | Phase | Deliverable | Verify | Est. |
 |---|---|---|---|
@@ -480,12 +552,13 @@ Full verification at the end:
 
 ```sh
 just shaders && git diff --stat src/generated   # only expected files changed
-cargo check --all
+cargo check --all-targets
 just test
 just lint
 cargo fmt
-for ex in basic_triangle depth_texture dragon koch_curve ray_marching sdf_2d \
-          serenity_crt space_invaders sprite_batch viking_room watercolor; do
+for ex in basic_triangle depth_texture dragon gpu_picking koch_curve multi_mesh particles \
+          ray_marching sdf_2d serenity_crt space_invaders sprite_batch suzanne toon_link \
+          viking_room watercolor; do
     timeout 3 just dev "$ex" || echo "FAILED: $ex"
 done
 ```
@@ -497,13 +570,34 @@ done
   into a uniform buffer and nothing reads it back — so the CPU never materializes a value it did not
   construct. If a readback path (GPU picking, compute → CPU) ever wants an enum field, it must go
   through the generated `TryFrom` rather than `transmute`. Worth a comment in the generated file.
-- **`field.ty()` on non-enum fields.** The new check calls `VariableLayout::ty()` on every field,
-  including resources and pointers. It should be a cheap declared-type lookup, but if it turns out
-  to be `None` or surprising for some existing field kind, the guard is `if let Some(..) && kind ==
-  Enum`, which degrades to today's behavior. Confirm during P0 that no existing snapshot changes.
-- **Enum inside a resource result type.** `ResourceResultType` (`json/parameters.rs:157`) has its
-  own `Scalar`/`Vector`/`Struct` shape reached from `reflect_struct_fields` at `:284-320`. A struct
+- **`field.ty()` on non-enum fields.** *(SETTLED — no effect.)* The guard calls
+  `VariableLayout::ty()` on every field, including resources and pointers. Every pre-existing
+  snapshot stayed byte-identical after P0, and both `paint_display.spv` and `toon_link.spv` were
+  unchanged by the P5 migration — only the reflection JSON gained the enum node.
+- **Enum inside a resource result type.** `ResourceResultType` (`json/parameters.rs:183`) has its
+  own `Scalar`/`Vector`/`Struct` shape reached from `reflect_struct_fields` at `:284-319`. A struct
   result type recurses through `reflect_struct_fields`, so an enum there is handled; a bare enum
   result type is not. Not worth supporting — the existing `todo!()` at `:319` is the right failure.
+- **Array of enums.** *(SETTLED — rejected, loudly.)* `DebugView modes[4]` falls through to the
+  array path as predicted, but does **not** degrade to `[u32; 4]`: the element's *layout* is its tag
+  type's, i.e. a scalar, and `validate_array_element` accepts only 4-component vector elements. So it
+  bails with "array field 'modes': only float4/int4/uint4 element arrays are supported". Pinned by
+  `enum_arrays_are_rejected`, because the failure mode if that gate ever loosens is a silent degrade.
+- **Anonymous enums.** *(SETTLED — rejected.)* Slang accepts `enum { A = 0 } bad;` and synthesizes
+  the name `SLANG_anonymous_0` rather than reporting no name, so the `name()`-is-`None` check the
+  plan assumed is unreachable. Codegen would emit a Rust type named `SLANG_anonymous_0`, which trips
+  clippy's `non_camel_case_types` under `just lint`'s `-D warnings` — and which no caller could
+  meaningfully name. Reflection now rejects the synthesized prefix explicitly.
+- **Empty enums.** *(SETTLED — rejected.)* Slang also accepts `enum Bad : uint {}`; `Default` and
+  `TryFrom` both need a first case, so reflection bails.
+- **Enum-typed vertex inputs.** *(SETTLED — rejected in reflection, not codegen.)* The plan expected
+  these to reach the `vk::Format` `todo!()` at `build_tasks.rs:305`. They do not: a vertex input
+  field reflects with a `VaryingInput` binding, so the guard requires `Binding::Uniform` and bails
+  with a message naming the field.
+- **Sign extension on unsigned tags.** `default_value_int()` returns `i64`, so a `uint` case may
+  arrive sign-extended; emitting `-1 => ..` into a `match value: u32` would not compile. Values are
+  normalized into the tag's range at reflection time.
+- **`GXCompare` / `mm::CompareType` ownership** is untouched — `toon_link`'s migration covered only
+  `DebugMode`, per §9. Reshaping `uint4 alphaCompare` into named fields remains the prerequisite.
 - **Askama duplication.** Three near-identical enum blocks across templates. Accepted deliberately
   (§5), but if a fourth template appears, factor all of it out at once.

@@ -103,9 +103,11 @@ trivially to uniform arrays.
   they'd be whitelisted; P2 decodes everything to RGBA8, so Link never
   needs them). (phase_05.)
 - **Render-graph integration** — `../render-graph/04_design.md` is an
-  independent design touching pipeline creation, gated on
-  `../bda_footguns/03_pipelined_current_read_plan.md`. P4/P5 stayed
-  additive so the graph work doesn't have to undo them. (phase_05 risk #6.)
+  independent design touching pipeline creation, ~~gated on
+  `../bda_footguns/03_pipelined_current_read_plan.md`~~ (ungated since
+  2026-07-28: that plan is superseded by `../remove_pipelined_compute.md`).
+  P4/P5 stayed additive so the graph work doesn't have to undo them.
+  (phase_05 risk #6.)
 
 ## 3. Converter gaps (one-model converter by design)
 
@@ -169,15 +171,24 @@ trivially to uniform arrays.
   (tests.md; phase_02/03.)
 - **Stored-AABB cross-check dropped as redundant** — revisit only if a
   geometry discrepancy ever appears. (phase_03.)
-- **Dolphin oracle suite mostly unexercised** — the savestate + FIFO
+- **Dolphin oracle suite — optional, not scheduled.** The savestate + FIFO
   capture (phase_00 flagged "capture them any time before P7/P8 — early is
-  better"), golden reference frames (`just link-dolphin-refs`), FIFO
-  analyzer TEV state, software-renderer tiebreaker, and
-  dolphin-memory-engine lighting ground truth are all one-time-manual
-  setups not yet run; they become load-bearing in P7/P8. Also noted:
-  mainline Dolphin has no per-TEV-stage intermediate dump — stage-level
-  debugging falls to the optional CPU reference evaluator (P8). (tests.md;
-  phase_00.)
+  better"), golden reference frames (`just link-dolphin-refs` — a recipe that
+  does not exist yet), FIFO analyzer TEV state, software-renderer tiebreaker,
+  and dolphin-memory-engine lighting ground truth are all one-time-manual
+  setups, none of them run. **P8 explicitly does not use them**
+  (phase_08 decision 7): its oracle is per-feature noclip comparison plus the
+  converter gate, the `tev_pack` unit tests and the in-example debug modes.
+  Two things therefore ship reasoned rather than measured, and this is the
+  entry that owns them: the **S10 clamp semantics** (master plan risk #6 — the
+  software renderer is the only literal reference) and the exact daytime
+  **`dKy_tevstr_c` light/ambient values** (risk #8 — dolphin-memory-engine
+  reads them from emulated RAM). Also noted: mainline Dolphin has no
+  per-TEV-stage intermediate dump either, so stage-level debugging falls to the
+  optional CPU reference evaluator regardless. **Revisit when:** a specific
+  feature is genuinely in dispute between us and noclip, or the hand-tuned
+  lighting seeds become the thing blocking a color match. (tests.md §P8;
+  phase_00; phase_08.)
 - **toon_link is not CI-verifiable** — assets are machine-local
   (gitignored, disc-image-derived); the example bails without them, so the
   validation sweep's toon_link line only means something on a machine where
@@ -255,8 +266,13 @@ Original entry preserved below.
 
 ## 6. Doc reconciliation
 
-- **Where does `tev_ir.rs` land?** phase_02's "Out of scope" says the
-  TevMaterialDesc IR is built in *P6*; the master plan §6 puts the full
-  interpreter + final subset gate in *P8* (and P6 as implemented builds no
-  TEV code). When planning P8, reconcile phase_02's forward reference —
-  P8 is the operative answer.
+- ~~**Where does `tev_ir.rs` land?**~~ **Answered by
+  [`phase_08.md`](phase_08.md) decision 1: P8.** phase_02's "Out of scope"
+  said the TevMaterialDesc IR is built in *P6*; the master plan §6 puts the
+  full interpreter + final subset gate in *P8*, and P6 as implemented builds
+  no TEV code. P8 owns it, as a **validation-only** converter module — it
+  changes no manifest bytes, so `scripts/link_converted.sha256` is its own
+  correctness gate. It also has to live converter-side rather than in the
+  example, because three of the fields the gate must assert on
+  (`TexMatrix::projection`/`map_mode`/`is_maya`, `fog`, `indirect`) are parsed
+  from MAT3 but dropped before the manifest.

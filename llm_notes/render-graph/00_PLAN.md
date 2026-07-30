@@ -22,7 +22,7 @@ Add compute shader support to the Vulkan renderer, enabling GPU compute workload
 - **`ReflectedStageFlags::Compute`** - Stage flag enum already includes compute
 - **Descriptor/binding system** - Generic, works for any shader stage
 - **`PipelineHandle<T>` pattern** - Marker-based type safety, extensible
-- **Per-frame resource management** - `MAX_FRAMES_IN_FLIGHT` double-buffering works identically
+- **Per-frame resource management** - `MAX_FRAMES_IN_FLIGHT` double-buffering works identically (and since 2026-07-28 it is the *only* ring: `PRE_WAIT_RING_LEN` is gone)
 - **Slang compiler integration** - Supports `slang::Stage::Compute`
 
 ### Current Limitations

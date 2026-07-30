@@ -1,5 +1,15 @@
 # FrameInputs: declarative per-frame buffer inputs
 
+> **Amended 2026-07-28** by
+> [remove_pipelined_compute.md](remove_pipelined_compute.md). Two premises this
+> design leans on have changed: there is no pipelined compute (so the
+> pipelined current-read race in §1 does not exist, and the **universal
+> graphics-`current()` ban loses its motivation** — a same-frame `current()`
+> read is now always safe, behind the renderer's compute→graphics barrier), and
+> there is one 2-slot ring indexed by `flight_slot`, written *after* the
+> timeline wait, so every "N mod 3" and "pre-wait write" argument below needs
+> re-deriving. The design is still unimplemented; treat those parts as open.
+
 Status: **Design approved 2026-07-20, revised 2026-07-21 — not yet
 implemented.** Decisions below were settled in a design interview; the
 2026-07-21 revision corrected factual errors found in a code-grounded review
@@ -19,28 +29,32 @@ Three footgun classes survive the current API. Each was established with a
 concrete failure mode during the 2026-07 safety reviews:
 
 **Occasional-write flicker.** Per-frame CPU writes touch only ring slot
-N mod 3 (`PRE_WAIT_RING_LEN = 3`). A buffer written *sometimes* — the natural
-dirty-flag pattern — leaves the three slot copies holding different
-generations. Timeline: camera moves at frame 100 → slot 1 updated; no further
-writes; frames render *new, old, old, new, old, old…* — a permanent 20 Hz
-flicker at 60 fps. The only coherent disciplines are write-every-frame or
+N mod 2 (`MAX_FRAMES_IN_FLIGHT = 2`; this was N mod 3 before 2026-07-28). A
+buffer written *sometimes* — the natural dirty-flag pattern — leaves the slot
+copies holding different generations. Timeline: camera moves at frame 100 →
+slot 1 updated; no further writes; frames render *new, old, new, old…* — a
+permanent 30 Hz flicker at 60 fps. Halving the ring halved the period, not the
+problem. The only coherent disciplines are write-every-frame or
 write-only-at-setup; the API currently allows the incoherent middle.
 
 **Address stashing.** `Addr<T>`/`ReadAddr<T>`/`ImmutableAddr<T>` are `Copy`,
 `'static`, and encode a slot chosen at mint time. An addr stashed at frame N
 and embedded at frame N+1 points at the wrong slot. For a gpu-only buffer
 that's a writable pointer to the history slot in-flight graphics may be
-reading; for a CPU-written buffer, the stale slot is one the CPU will rewrite
-pre-wait while an in-flight frame reads it (frame N reads slot N−1's stash;
-frame N+2's pre-wait write hits that slot while frame N — unproven until this
-frame's wait — may still be executing).
+reading; for a CPU-written buffer, it simply reads the wrong generation.
+(The original argument here — that the CPU rewrites that slot *pre-wait* while
+an unproven frame may still be executing — no longer applies since 2026-07-28:
+CPU writes happen after the frame_timeline wait.)
 
-**Pipelined current-read race.** Under pipelined compute (now declared at
-setup via `Renderer::enable_pipelined_compute`), frame N's graphics submit
-waits only on compute N−1, so compute N runs concurrently with graphics N.
-A graphics shader reading a gpu-only buffer's *current* slot (this frame's
-compute output) races. The types can't see where an address lands after
-`.into()`, so today this is doc-comment-only.
+**~~Pipelined current-read race.~~ Removed 2026-07-28** with pipelined compute;
+see [remove_pipelined_compute.md](remove_pipelined_compute.md). Compute now
+always runs before graphics in the same command buffer, with a
+renderer-emitted compute→graphics barrier, so a graphics shader reading a
+gpu-only buffer's *current* slot reads already-visible output. *Original text:*
+under pipelined compute, frame N's graphics submit waits only on compute N−1,
+so compute N runs concurrently with graphics N; a graphics shader reading the
+*current* slot races, and the types can't see where an address lands after
+`.into()`.
 
 The fixes converge on one design: **the renderer becomes the sole authority on
 addresses, timing, and completeness.** User code never holds an address, never
@@ -70,7 +84,7 @@ Three principles:
    variant, no copy-forward.
 3. **Addresses are resolved at write time.** Pointer fields hold
    *handle references*, not addresses; `frame_inputs` resolves them against
-   its own `ring_slot` as it writes. Staleness isn't merely prevented — it's
+   its own `flight_slot` as it writes (`ring_slot` before 2026-07-28). Staleness isn't merely prevented — it's
    unrepresentable: a handle ref kept across frames still resolves to the
    correct current slot, and the borrow checker already stops the game struct
    from storing refs to its own handles (self-referential).
@@ -178,11 +192,15 @@ per-block struct is the dedup comparison unit):
   shared via slang modules, and codegen panics on incompatible same-name
   defs), so "a block shared across stages" cannot arise today; if shared
   blocks ever become possible, they take the stricter (graphics) typing.
-- **The graphics `current()` ban is universal**, including apps that never
+- ~~**The graphics `current()` ban is universal**, including apps that never
   enable pipelined compute (where a same-frame `current()` read is actually
   safe). Accepted tradeoff: one set of rules the type system can state without
   seeing the runtime pipelining flag, at the cost of one frame of staleness —
-  invisible at 60 fps — for non-pipelined apps.
+  invisible at 60 fps — for non-pipelined apps.~~ **Unmotivated since
+  2026-07-28**: there is no pipelining flag and no pipelined app, so a
+  same-frame `current()` read is always safe. Banning it would buy nothing and
+  cost every app a frame of staleness. Revisit this decision before
+  implementing.
 - **Write function replaces memcpy**: Input structs no longer match GPU
   layout (ref fields differ in size, padding fields are gone), so codegen
   emits a per-block write function — a fully unrolled sequence of field
@@ -265,11 +283,13 @@ Per-frame state in the renderer:
   writes (order-independent transparency, GPU-side stats counters,
   picking-style buffer writes) are inexpressible under this design.
 - **One graphics draw per frame stays.** The terminal draw call takes `self`
-  by value and performs acquire + timeline wait + record + submit; this
-  single-terminal structure is load-bearing for the "frame_inputs writes are
-  always pre-wait" ring argument.
-- **Graphics reads of gpu-only state are always one frame stale**, even in
-  non-pipelined apps where a fresh read would be safe (see §4).
+  by value and performs timeline wait + acquire + record + submit. (The
+  "frame_inputs writes are always pre-wait" ring argument this structure was
+  load-bearing for is void since 2026-07-28: writes now happen after the wait,
+  which is what let the ring shrink to 2.)
+- ~~**Graphics reads of gpu-only state are always one frame stale**, even in
+  non-pipelined apps where a fresh read would be safe (see §4).~~ Follows from
+  the universal `current()` ban, which is now unmotivated — see §4.
 
 ## 7. Migration notes (big-bang: all examples in one change)
 
