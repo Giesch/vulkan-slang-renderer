@@ -390,7 +390,7 @@ pub struct ToonLink {
 /// `debug_mode` is the shader's own generated enum, so its variants render as
 /// radio buttons without a parallel list here to keep in sync.
 #[derive(Facet)]
-struct EditState {
+pub struct EditState {
     debug_mode: DebugMode,
     isolate_batch: Checkbox,
     /// A [`BatchIndex`] in disguise: 0..=batches-1, only read when
