@@ -31,9 +31,14 @@ Today the only way to check an example for Vulkan validation errors is
 problems:
 
 1. It opens a window on the dev machine.
-2. `timeout` SIGKILLs the process, so `drain_gpu()` (`src/app.rs:62`) and
-   `Drop for Renderer` (`src/renderer.rs:2782`) never run — and teardown is
-   precisely where the `tech_debt.md` §1 leaks report themselves.
+2. ~~`timeout` SIGKILLs the process, so `drain_gpu()` (`src/app.rs:62`) and
+   `Drop for Renderer` never run.~~ **False; corrected 2026-07-29.** `timeout`
+   sends SIGTERM, SDL turns it into `SDL_QUIT`, and the loop exits normally, so
+   both *do* run and `vkDestroyDevice` reports leaked objects. Teardown coverage
+   is therefore free rather than blocked — see `build_reproducibility.md` §7.4
+   for the measurements. What remains true is the narrower point: the teardown
+   window is where the `tech_debt.md` §1 leaks report themselves, and a harness
+   must not break it (SIGKILL and `SDL_NO_SIGNAL_HANDLERS=1` both do).
 3. **There is no signal.** `vulkan_debug_utils_callback`
    (`src/renderer/debug.rs:14-49`) only calls `log::error!` and returns
    `vk::FALSE`. A run with 500 validation errors exits 0. Catching them means a
@@ -580,7 +585,9 @@ just headless-all 30
 - **Teardown coverage**: confirm the counter catches a leak reported at
   `vkDestroyDevice` — `tech_debt.md` §1 lists the known ones, so if the sweep
   comes back green everywhere, check that those are actually fixed rather than
-  assuming the harness works.
+  assuming the harness works. Already done once, by skipping a
+  `destroy_image_view` and watching `VUID-vkDestroyDevice-device-05137` appear
+  (`build_reproducibility.md` §7.2); redo it if the harness changes shape.
 - **Cross-machine**: run `just headless-all 30` on the laptop, then in a
   container with no video device. That is the entire point of the exercise.
 - **Regression guard — the existing workflow must be untouched:**

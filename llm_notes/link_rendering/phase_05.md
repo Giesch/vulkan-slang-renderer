@@ -400,7 +400,9 @@ recording what was actually seen — plus:
    this is risk #2's live check).
 4. Clean exit with **no VMA leak report**: the new textures must be reaped.
    Requires a real window close (`WM_DELETE_WINDOW`); `timeout`'s SIGTERM
-   skips `Drop`, as P4 recorded.
+   skips `Drop`, as P4 recorded. [Superseded 2026-07-29: the manual close is
+   not required — `timeout`'s SIGTERM becomes `SDL_QUIT` and `Drop` runs. See
+   this file's Recorded facts and `build_reproducibility.md` §7.4.]
 
 ## Verification (exit checklist)
 
@@ -522,6 +524,17 @@ VMA leak:                 clean exit, status 0, zero output. Verified the check 
                           in app.rs — SDL3 posts no Quit event on SIGINT/SIGTERM here, so
                           P4's note that `timeout` skips Drop understates it; there is no
                           signal that works. Both temporary edits reverted.
+                          [Superseded 2026-07-29: "there is no signal that works" is wrong.
+                          `timeout -s TERM` on the example, on the default Wayland session
+                          and under SDL_VIDEODRIVER=offscreen, and through `just dev` and
+                          `cargo run` alike, runs drain_gpu() and Drop for Renderer every
+                          time — confirmed with eprintln! markers, against SIGKILL and
+                          SDL_NO_SIGNAL_HANDLERS=1 as negative controls, which produce no
+                          markers. build_reproducibility.md §7.4. What went wrong here was
+                          never diagnosed; one candidate is the cold-build trap in §7.3
+                          (the timeout expiring during compilation gives exit 124 with an
+                          empty log, indistinguishable from a run whose Drop was skipped).
+                          The frame-limit escape was not necessary.]
 
 deviations discovered:    1. PipelineConfigBuilder gained NO raster_state field, contrary to
                              Step 2. templates/shader_atlas_entry.rs.askama:126 emits a

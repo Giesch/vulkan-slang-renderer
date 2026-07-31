@@ -170,9 +170,14 @@
   - panic on validation error, based on an environment variable?
   - set up a just command that runs an exammple with this env var
   - add instructions about this just command to CLAUDE.md
-  - [ ] build a better timeout into a cli
-    i think the current 'timeout' version doesn't test/exercise drop impls correctly
-    this could also be used by game-level tests
+  - [X] build a better timeout into a cli
+    the premise was wrong: 'timeout' does exercise drop impls. it sends SIGTERM,
+    SDL turns that into SDL_QUIT, and drain_gpu + Drop for Renderer both run
+    (measured 2026-07-29; llm_notes/build_reproducibility.md §7.4). so no cli is
+    needed for this. scripts/headless-sweep.sh is the sweep;
+    llm_notes/offscreen_testing.md is the design for folding it into just.
+    two things do break drop, and the sweep owns both: SIGKILL, and
+    SDL_NO_SIGNAL_HANDLERS=1.
 
 - [-] frame rate improvements on sprite batch example
   - [X] fence wating at frame start

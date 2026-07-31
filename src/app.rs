@@ -16,6 +16,14 @@ pub struct App {
     pub quit: bool,
 }
 
+/// What the loop did, for callers that need to judge the run afterwards.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunStats {
+    /// Frames handed to the game to draw. Zero means the app bailed before
+    /// rendering anything, which is a clean exit but not a successful run.
+    pub frames: u64,
+}
+
 impl App {
     pub fn init(renderer: Renderer, game: impl RuntimeGame + 'static) -> anyhow::Result<App> {
         Ok(Self {
@@ -26,8 +34,9 @@ impl App {
         })
     }
 
-    pub fn run_loop(mut self, mut event_pump: EventPump) -> anyhow::Result<()> {
+    pub fn run_loop(mut self, mut event_pump: EventPump) -> anyhow::Result<RunStats> {
         let mut end_of_last_frame = Instant::now();
+        let mut stats = RunStats::default();
 
         loop {
             let Ok(()) = self.handle_events(&mut event_pump) else {
@@ -47,6 +56,7 @@ impl App {
 
                 let frame_renderer = FrameRenderer::new(&mut self.renderer);
                 self.game.draw_frame(frame_renderer)?;
+                stats.frames += 1;
             }
 
             let spent_frame_time = (Instant::now() - end_of_last_frame).as_nanos() as u64;
@@ -61,7 +71,7 @@ impl App {
 
         self.renderer.drain_gpu()?;
 
-        Ok(())
+        Ok(stats)
     }
 
     // https://wiki.libsdl.org/SDL3/SDL_EventType

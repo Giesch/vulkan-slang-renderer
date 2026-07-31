@@ -394,6 +394,13 @@ deviations discovered:    - shader_branching_snapshots churn (above)
                             form and was corrected during P4 close-out
                           - clean-exit/VMA verification needed a WM_DELETE_WINDOW
                             close (timeout's SIGTERM skips Drop)
+                            [Superseded 2026-07-29: the parenthetical is wrong.
+                            timeout's SIGTERM becomes SDL_QUIT and Drop does run;
+                            re-measured in both directions with SIGKILL and
+                            SDL_NO_SIGNAL_HANDLERS=1 as negative controls. See
+                            build_reproducibility.md §7.4. Why the close was
+                            needed here was never established. The observation
+                            stands as recorded; the explanation does not.]
                           - example restructured post-verification: DRAWS stores
                             (count, pipeline) with first_index derived as a running
                             sum (contiguity by construction); coverage is a const

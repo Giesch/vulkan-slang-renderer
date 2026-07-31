@@ -49,7 +49,7 @@ release: shaders
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
 [unix]
 shaders:
-    GENERATE_RUST_SOURCE=true cargo run --bin prepare_shaders
+    cargo run --bin prepare_shaders
     cargo fmt
 
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
@@ -57,7 +57,6 @@ shaders:
 shaders:
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      $env:GENERATE_RUST_SOURCE='true'; \
       cargo run --bin prepare_shaders; \
       cargo fmt; \
     }
@@ -74,6 +73,28 @@ sprites:
         --data sprite_sheet.json \
         --filename-format "{title} {frame}" \
         --format json-array
+
+# build one example, then run it for a few seconds and exit
+#
+# NOTE build and run are separate on purpose. `timeout N cargo run` times the
+# compile as well as the run, so on a cold build the timeout expires during
+# compilation and the example never starts -- with no output to say so.
+[unix]
+watch example="basic_triangle" seconds="5":
+    cargo build --example {{example}}
+    timeout --preserve-status -k 5 -s TERM {{seconds}} ./target/debug/examples/{{example}}
+
+
+# run every example headlessly, failing on vulkan validation output
+[unix]
+sweep *examples:
+    ./scripts/headless-sweep.sh {{examples}}
+
+# check that the sweep still detects an injected validation fault
+[unix]
+sweep-self-test:
+    ./scripts/headless-sweep.sh --self-test
+
 
 # run all unit tests
 test:

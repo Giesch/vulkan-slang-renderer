@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Where the docs are
+
+- **`docs/`** — current reference material, kept up to date. Trust it, and update
+  it when you change what it describes.
+- **`llm_notes/`** — historical plans and phase records, written before or during
+  a piece of work. **Treat as possibly out of date**: much of it is a snapshot of
+  what was believed at the time, some of it was superseded by the work it
+  describes, and a few claims turned out to be wrong (those are annotated in
+  place rather than deleted, so the record stays honest). Useful for *why* a
+  thing is the way it is; verify against the code before acting on it.
+
 ## Build Commands
 
 ```bash
@@ -10,7 +21,8 @@ just shaders               # Generate shader bindings (MUST run after .slang cha
 just test                  # Run tests (snapshot testing via insta)
 cargo insta test --accept  # accept all modified snapshots
 just lint                  # Clippy with warnings as errors
-timeout 3 just dev EXAMPLE # run an example to check for vulkan validation errors
+just watch EXAMPLE         # build, then run one example for a few seconds
+just sweep                 # run EVERY example headlessly, fail on validation output
 cat shaders/compiled/EXAMPLE.json | jq '.' # inspect shader reflection json
 ```
 
@@ -24,6 +36,8 @@ cat shaders/compiled/EXAMPLE.json | jq '.' # inspect shader reflection json
 - Always use `just test` when making changes to shaders/build_tasks.rs
 - Run `cargo fmt` after a set of rust file changes are complete
 - Never edit `src/generated/` by hand — `just shaders` regenerates it.
+- Never call `std::env::var` outside `src/env_config.rs`. Every variable is
+  parsed once at startup into `EnvConfig` and passed down from there.
 
 ## Shader System
 
@@ -34,14 +48,16 @@ cat shaders/compiled/EXAMPLE.json | jq '.' # inspect shader reflection json
 
 ## Testing
 
-Uses insta for snapshot testing of generated code:
 ```bash
 just test                  # Non-interactive (CI)
 just insta                 # Interactive review
 cargo insta test --accept  # Re-run and accept every changed snapshot
+just sweep                 # run all examples, checking for vulkan validation errors
+just sweep-self-test       # check that the sweep still detects an injected fault
 ```
 
-NOTE `cargo insta accept` on its own does nothing after `just test`: that recipe
-sets `INSTA_UPDATE=no`, so no `.snap.new` files are written for it to review.
-Use `cargo insta test --accept`, which re-runs the tests and writes the
-snapshots in one step. Review the diffs `just test` prints before accepting.
+Always run `just test` when changing `src/shaders/build_tasks.rs`.
+
+Run `just sweep` when a change could affect what the renderer records or destroys.
+
+See [`docs/testing.md`](docs/testing.md) before writing a validation check or accepting a snapshot.

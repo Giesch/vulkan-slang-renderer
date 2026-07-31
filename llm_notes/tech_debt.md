@@ -13,6 +13,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 2. [Dangling pipeline when a hot reload's `create_graphics_pipeline` fails](#2-dangling-pipeline-when-a-hot-reloads-create_graphics_pipeline-fails) — **correctness bug**, debug builds only
 3. [Remove the legacy `disable_depth_test` flag](#3-remove-the-legacy-disable_depth_test-flag) — carries a **behavior-change trap**, see §3.1
 4. [Duplicate struct names across shared slang modules resolve by silent last-write-wins](#4-duplicate-struct-names-across-shared-slang-modules-resolve-by-silent-last-write-wins) — latent **silent-wrong-output** hazard in codegen
+5. [Validation and fault injection cannot run in release builds](#5-validation-and-fault-injection-cannot-run-in-release-builds) — release builds are unsweepable, coverage gap
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -75,6 +76,13 @@ temporarily forcing a failure at each `?` and confirming a clean
 `vkDestroyDevice`. A `destroy`-shaped method on `ShaderPipelineLayout` would
 help; `destroy_compute_pipeline` (`src/renderer.rs:1247`) already shows the
 teardown order.
+
+The confirming half of that is already automated: `scripts/headless-sweep.sh`
+exits every example through `timeout`'s SIGTERM, which SDL turns into
+`SDL_QUIT`, so `Drop` runs and `vkDestroyDevice` reports any survivors. Verified
+non-vacuous by skipping a `destroy_image_view` and watching
+`VUID-vkDestroyDevice-device-05137` appear (`build_reproducibility.md` §7.2/§7.4).
+Only the forcing-a-failure-at-each-`?` half is still manual.
 
 ## 2. Dangling pipeline when a hot reload's `create_graphics_pipeline` fails
 
@@ -283,3 +291,63 @@ this case **cannot** live in `shaders/test/` as an atlas fixture, because a
 fixture that fails would break `alignment_tests` for every other case in the
 directory. It needs a unit test that writes two colliding modules into a temp dir
 and calls `reflect_shared_module_types` directly.
+
+## 5. Validation and fault injection cannot run in release builds
+
+**The problem.** Validation is gated by a single compile-time switch,
+`ENABLE_VALIDATION: bool = cfg!(debug_assertions)` (`src/renderer.rs:61`), and
+fault injection piggybacks on it via the `cfg!(debug_assertions) &&` conjunct
+in `Renderer::viewport_width` (`src/renderer.rs:1441`). The consequence is that
+a release build validates nothing and cannot be swept: `game/traits.rs:98`
+self-reports `exit_code::VALIDATION_DISABLED` under `VKR_SWEEP`, and
+`scripts/headless-sweep.sh` is structurally debug-only anyway (it hardcodes
+`target/debug/examples/` and `cargo build --examples`). Release builds get zero
+validation coverage — a release-only regression (e.g. from the release half of
+the debug/release `create_from_atlas` pair, `src/renderer.rs:5026`) would ship
+silently.
+
+**Why it's tolerable today.** Nothing ships from this repo; release builds are
+used mostly for `just lint`'s second clippy pass and `just paper-texture`
+(which never constructs a `Renderer`). The debug sweep covers the shared code
+paths, and the debug/release divergences are few.
+
+**Fix.** Three pieces:
+
+1. **EnvConfig setting.** Add a `validation` field to `EnvConfig` (e.g.
+   `VKR_VALIDATION`, the design sketched in `offscreen_testing.md` §11):
+   default on in debug, off in release, overridable either way. Replace the
+   five `ENABLE_VALIDATION` consumers (`get_required_layers`,
+   `check_required_layers` transitively, the `push_next` at
+   `src/renderer.rs:291`, `maybe_create_debug_messager_extension` at
+   `renderer/debug.rs:80`, and `Drop` at `src/renderer.rs:2739`) with the
+   runtime value. **Trap:** the const is what keeps messenger creation and
+   `Drop` in agreement; a runtime value must be read once and stored (on
+   `Renderer`, which already holds `env: EnvConfig`) or `Drop` will destroy a
+   null messenger / leak a real one (flagged in `offscreen_testing.md:684`).
+   The message-counting path (`renderer/debug.rs` statics,
+   `game/traits.rs:145`) is already unconditional and needs no change.
+2. **Fault injection in release.** Drop the `cfg!(debug_assertions) &&`
+   conjunct at `src/renderer.rs:1441` — the branch is `cfg!` (an expression),
+   so the code already compiles in release and the env var is already parsed
+   there; only the conjunct blocks it.
+3. **Sweep release flag.** Teach `scripts/headless-sweep.sh` (and
+   `just sweep`) a `--release` flag: build with `--release`, run
+   `target/release/examples/`, and update the `VALIDATION_DISABLED` check at
+   `game/traits.rs:98` to key off the runtime setting rather than the const.
+
+Watch for: `VK_LAYER_KHRONOS_validation` becomes a *runtime* requirement of any
+release run that opts in (`check_required_layers` bails if the layer package is
+missing — see `build_reproducibility.md:348`); the shader-`println` device
+features (`src/renderer.rs:3211`, `:3228`) are gated on the same
+`cfg!(debug_assertions)` but are logically independent — committed SPIR-V using
+`println` on a release device without those features can itself trip
+validation, so decide whether they follow the new setting or stay debug-only;
+and `docs/testing.md`'s exit-code table plus the `env_config.rs` doc comments
+("Debug builds only, like validation itself") both assert the old model and
+must be updated.
+
+**Done means.** `just sweep --release` runs every example under lavapipe with
+validation active and passes; `just sweep-self-test --release` proves the
+injected fault is still detected in a release binary; a plain release run with
+the setting unset behaves exactly as today (no layer loaded, no messenger, no
+new runtime dependency).
