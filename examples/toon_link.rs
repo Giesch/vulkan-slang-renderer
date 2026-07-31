@@ -29,7 +29,7 @@ use std::time::Instant;
 
 use anyhow::Context;
 use facet::Facet;
-use glam::{Mat3, Mat4, UVec4, Vec2, Vec3, Vec4};
+use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use image::{DynamicImage, ImageReader, Rgba, RgbaImage};
 
 use vulkan_slang_renderer::editor::{Checkbox, ColorPicker, IntSlider, Label, Slider};
@@ -60,6 +60,12 @@ const CULL_OVERRIDE: Option<CullMode> = None;
 
 /// Link is ~124 model units tall (feet at Y ≈ 0); scale to ~1.24 world units.
 const MODEL_SCALE: f32 = 0.01;
+
+/// Radians per second the model turns about Y. Both lights are fixed in world
+/// space, so this is what sweeps the terminator — and it replaces the camera
+/// orbit that used to sit here, which showed every side of Link but never moved
+/// the shading.
+const MODEL_SPIN: f32 = 20.0 * (PI / 180.0);
 
 /// `link.vtx.bin` is interleaved little-endian f32: pos[3] nrm[3] uv0[2].
 const VERTEX_STRIDE: usize = 32;
@@ -103,17 +109,12 @@ impl BatchIndex {
     }
 }
 
-/// J3D pixel-engine mode, reduced to the two-pass ordering key P7 needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PeMode {
-    Opaque,
-    Translucent,
-}
-
-fn pe_mode(material: &MaterialEntry) -> anyhow::Result<PeMode> {
+/// Whether the J3D pixel-engine mode is translucent, the two-pass ordering key
+/// P7 needs.
+fn is_translucent(material: &MaterialEntry) -> anyhow::Result<bool> {
     match material.pe_mode {
-        mm::PixelEngineMode::Opaque => Ok(PeMode::Opaque),
-        mm::PixelEngineMode::Translucent => Ok(PeMode::Translucent),
+        mm::PixelEngineMode::Opaque => Ok(false),
+        mm::PixelEngineMode::Translucent => Ok(true),
         // cl.bdl has none
         other => anyhow::bail!("unmapped pe_mode {other} on material {:?}", material.name),
     }
@@ -166,7 +167,7 @@ enum DecalRole {
 ///
 /// `Ok(None)` for every opaque material.
 fn decal_role(material: &MaterialEntry) -> anyhow::Result<Option<DecalRole>> {
-    if pe_mode(material)? != PeMode::Translucent {
+    if !is_translucent(material)? {
         return Ok(None);
     }
     if material.z_test {
@@ -185,60 +186,177 @@ fn decal_role(material: &MaterialEntry) -> anyhow::Result<Option<DecalRole>> {
     }
 }
 
-/// Every batch drawn exactly once. The one invariant a mis-grouped batch would
-/// otherwise break silently — a duplicated decal would double-composite, a
-/// dropped one would just vanish.
-fn check_permutation(order: &[BatchIndex], batch_count: usize, what: &str) -> anyhow::Result<()> {
-    let mut seen: Vec<BatchIndex> = order.to_vec();
-    seen.sort_unstable();
-    seen.dedup();
-    anyhow::ensure!(
-        order.len() == batch_count && seen.len() == batch_count,
-        "{what} draw order is not a permutation of the {batch_count} batches: \
-         {} entries, {} distinct",
-        order.len(),
-        seen.len()
-    );
-    Ok(())
+/// The five groups of the hardware's draw order (phase_09_eyes.md, "What the
+/// game does"), each in INF1 order.
+struct DrawGroups {
+    /// 1: deposits the eye/brow coverage in destination alpha, z-tested
+    /// against what is already drawn.
+    mask: Vec<BatchIndex>,
+    /// 2: the face and the bangs, drawn with color + depth but *no* alpha
+    /// writes, so the mask survives underneath them. Pulled ahead of the
+    /// composite; the game hides both for P1 so they still draw exactly once.
+    face_hair: Vec<BatchIndex>,
+    /// 3: composites `out = eye·dstA + fb·(1−dstA)` with the depth test off —
+    /// the eyes read through the hair.
+    composite: Vec<BatchIndex>,
+    /// 4: zeroes the mask so it cannot leak into later alpha-buffer effects.
+    erase: Vec<BatchIndex>,
+    /// 5: the rest of the model (P1).
+    rest: Vec<BatchIndex>,
 }
 
-/// GX alpha-compare state as the raw codes the shader's `switch`es expect:
-/// `[comp0, ref0, comp1, ref1]` plus the combiner op.
-#[derive(Debug, Clone, Copy)]
-struct AlphaCompareCodes {
-    compare: UVec4,
-    op: u32,
-}
+impl DrawGroups {
+    /// The five groups concatenated. A permutation of the batches by
+    /// construction — [`group_batches`]'s single pass pushes each index into
+    /// exactly one group — so only a group forgotten *here* could break that,
+    /// which `setup`'s length check catches.
+    fn draw_order(&self) -> Vec<BatchIndex> {
+        [
+            &self.mask,
+            &self.face_hair,
+            &self.composite,
+            &self.erase,
+            &self.rest,
+        ]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect()
+    }
 
-fn alpha_compare_codes(material: &MaterialEntry) -> AlphaCompareCodes {
-    // No record → GX's default "Always OR Always", a no-op that keeps every fragment.
-    let Some(ac) = &material.alpha_compare else {
-        return AlphaCompareCodes {
-            compare: UVec4::new(
-                mm::CompareType::Always as u32,
-                0,
-                mm::CompareType::Always as u32,
-                0,
-            ),
-            op: mm::AlphaOp::Or as u32,
+    fn print_summary(&self, manifest: &Manifest) {
+        let raw = |batches: &[BatchIndex]| -> Vec<usize> {
+            batches.iter().map(|b| b.raw()).collect()
         };
-    };
-    AlphaCompareCodes {
-        compare: UVec4::new(
-            ac.comp0 as u32,
-            ac.ref0 as u32,
-            ac.comp1 as u32,
-            ac.ref1 as u32,
-        ),
-        op: ac.op as u32,
+        println!(
+            "toon_link: {} batches, {} materials, {} vertices\n\
+             draw order (batch idx):\n\
+             \x20  1 mask       {:?}   alpha-only writes, z-tested\n\
+             \x20  2 face+hair  {:?}   color + depth, no alpha\n\
+             \x20  3 composite  {:?}   dst-alpha blend, no depth test\n\
+             \x20  4 erase      {:?}   alpha-only writes, zeroes the mask\n\
+             \x20  5 rest       {:?}\n\
+             debug controls are in the egui window",
+            manifest.batches.len(),
+            manifest.materials.len(),
+            manifest.buffers.vertex_count,
+            raw(&self.mask),
+            raw(&self.face_hair),
+            raw(&self.composite),
+            raw(&self.erase),
+            raw(&self.rest),
+        );
     }
 }
 
-/// Radians per second the model turns about Y. Both lights are fixed in world
-/// space, so this is what sweeps the terminator — and it replaces the camera
-/// orbit that used to sit here, which showed every side of Link but never moved
-/// the shading.
-const MODEL_SPIN: f32 = 20.0 * (PI / 180.0);
+/// Classify every batch into its five-group role, preserving INF1 order within
+/// each group.
+fn group_batches(manifest: &Manifest) -> anyhow::Result<DrawGroups> {
+    let material_of = |batch: &Batch| -> &MaterialEntry {
+        &manifest.materials[MaterialSlot::from_manifest(batch.material).raw()]
+    };
+    let (mut mask, mut face_hair, mut composite, mut erase, mut rest) =
+        (vec![], vec![], vec![], vec![], vec![]);
+    for (i, batch) in manifest.batches.iter().enumerate() {
+        let index = BatchIndex::from_raw(i);
+        let material = material_of(batch);
+        match decal_role(material)? {
+            Some(DecalRole::Mask) => mask.push(index),
+            Some(DecalRole::Composite) => composite.push(index),
+            Some(DecalRole::Erase) => erase.push(index),
+            None if matches!(material.name.as_str(), FACE_MATERIAL | HAIR_MATERIAL) => {
+                face_hair.push(index)
+            }
+            None => rest.push(index),
+        }
+    }
+
+    // The same assertion `playerInit` makes. This is what fires loudly if
+    // --casual or a converter change perturbs the material table. It also
+    // subsumes "every translucent batch was consumed": `decal_role` returns
+    // `Some` for every translucent material or bails.
+    anyhow::ensure!(
+        mask.len() == 4 && composite.len() == 4 && erase.len() == 4,
+        "expected 4 mask / 4 composite / 4 erase eye-brow decals covering all 12 \
+         translucent batches, got {} / {} / {} (total {}); `playerInit` asserts \
+         zon_cnt == 4 && zoff_blend_cnt == 4 && zoff_none_cnt == 4",
+        mask.len(),
+        composite.len(),
+        erase.len(),
+        mask.len() + composite.len() + erase.len()
+    );
+
+    // Bail on a missing *or duplicated* name rather than silently degrading:
+    // getting this wrong moves the wrong batch into the face+hair group and the
+    // symptom (eyes compositing over the wrong surface) is subtle.
+    let face_hair_names: Vec<&str> = face_hair
+        .iter()
+        .map(|b: &BatchIndex| material_of(&manifest.batches[b.raw()]).name.as_str())
+        .collect();
+    anyhow::ensure!(
+        face_hair_names.len() == 2
+            && face_hair_names.contains(&FACE_MATERIAL)
+            && face_hair_names.contains(&HAIR_MATERIAL),
+        "expected exactly one {FACE_MATERIAL:?} batch and one {HAIR_MATERIAL:?} batch \
+         to pull ahead of the eye composite, found {face_hair_names:?}"
+    );
+
+    Ok(DrawGroups {
+        mask,
+        face_hair,
+        composite,
+        erase,
+        rest,
+    })
+}
+
+/// The manifest's GX alpha-compare state as the shader's `AlphaCompare` block.
+/// No record → GX's default "Always OR Always", a no-op that keeps every
+/// fragment.
+fn alpha_compare(material: &MaterialEntry) -> AlphaCompare {
+    let (comp0, ref0, comp1, ref1, op) = match &material.alpha_compare {
+        None => (GXCompare::Always, 0, GXCompare::Always, 0, GXAlphaOp::Or),
+        Some(ac) => (
+            gx_compare(ac.comp0),
+            ac.ref0 as u32,
+            gx_compare(ac.comp1),
+            ac.ref1 as u32,
+            gx_alpha_op(ac.op),
+        ),
+    };
+    AlphaCompare {
+        comp0,
+        ref0,
+        comp1,
+        ref1,
+        op,
+    }
+}
+
+/// `mm::CompareType` (the manifest boundary) → the shader's generated
+/// `GXCompare`. An exhaustive match rather than a numeric cast: a `repr(u32)`
+/// enum holding an undeclared value is UB, so codes never cross by value.
+fn gx_compare(comp: mm::CompareType) -> GXCompare {
+    match comp {
+        mm::CompareType::Never => GXCompare::Never,
+        mm::CompareType::Less => GXCompare::Less,
+        mm::CompareType::Equal => GXCompare::Equal,
+        mm::CompareType::LessEqual => GXCompare::LessEqual,
+        mm::CompareType::Greater => GXCompare::Greater,
+        mm::CompareType::NotEqual => GXCompare::NotEqual,
+        mm::CompareType::GreaterEqual => GXCompare::GreaterEqual,
+        mm::CompareType::Always => GXCompare::Always,
+    }
+}
+
+fn gx_alpha_op(op: mm::AlphaOp) -> GXAlphaOp {
+    match op {
+        mm::AlphaOp::And => GXAlphaOp::And,
+        mm::AlphaOp::Or => GXAlphaOp::Or,
+        mm::AlphaOp::Xor => GXAlphaOp::Xor,
+        mm::AlphaOp::Xnor => GXAlphaOp::Xnor,
+    }
+}
 
 /// The two GX lights `lit_mask == 3` selects. **Each carries exactly one
 /// channel**, and that is not a simplification — it is how the game does it.
@@ -353,7 +471,7 @@ const fn rgb8(r: u8, g: u8, b: u8) -> Vec3 {
 /// Overwrite a GX color register's RGB and leave its alpha alone, the way
 /// `setLightTevColorType_sub` does.
 fn set_rgb(dst: &mut Vec4, rgb: Vec3) {
-    *dst = Vec4::new(rgb.x, rgb.y, rgb.z, dst.w);
+    *dst = rgb.extend(dst.w);
 }
 
 /// Light 0 is fixed in the world and the eflight is fixed relative to Link, so
@@ -391,13 +509,13 @@ impl LightRig {
         let dir = |az: f32, el: f32| {
             Vec3::new(el.cos() * az.sin(), el.sin(), el.cos() * az.cos()).normalize()
         };
-        let world = |d: Vec3| Vec4::new(d.x, d.y, d.z, 0.0);
         [
-            world(dir(LIGHT0_AZIMUTH, LIGHT0_ELEVATION)),
+            dir(LIGHT0_AZIMUTH, LIGHT0_ELEVATION).extend(0.0),
             // Model space → world by the same Y rotation the vertices get, which
             // is what pins it to Link. It only shows up when `eflight` is on,
             // since otherwise its color is black.
-            world(Mat3::from_rotation_y(spin) * dir(EFLIGHT_AZIMUTH, self.eflight_elevation)),
+            (Mat3::from_rotation_y(spin) * dir(EFLIGHT_AZIMUTH, self.eflight_elevation))
+                .extend(0.0),
         ]
     }
 
@@ -407,10 +525,7 @@ impl LightRig {
         } else {
             LIGHT1_COLOR
         };
-        [
-            Vec4::new(LIGHT0_COLOR.x, LIGHT0_COLOR.y, LIGHT0_COLOR.z, 1.0),
-            Vec4::new(light1.x, light1.y, light1.z, 1.0),
-        ]
+        [LIGHT0_COLOR.extend(1.0), light1.extend(1.0)]
     }
 }
 
@@ -431,41 +546,92 @@ fn load_manifest(dir: &Path) -> anyhow::Result<Manifest> {
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<Vertex>> {
+/// Read a whole binary file, checking it holds exactly `count` records of
+/// `stride` bytes.
+fn read_records(path: &Path, count: u32, stride: usize, what: &str) -> anyhow::Result<Vec<u8>> {
     let bytes = std::fs::read(path)?;
     anyhow::ensure!(
-        bytes.len() == expected_count as usize * VERTEX_STRIDE,
-        "{}: expected {} vertices × {VERTEX_STRIDE} bytes, got {} bytes",
+        bytes.len() == count as usize * stride,
+        "{}: expected {count} {what} × {stride} bytes, got {} bytes",
         path.display(),
-        expected_count,
         bytes.len()
     );
-    let f = |b: &[u8], i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
+    Ok(bytes)
+}
+
+fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<Vertex>> {
+    let bytes = read_records(path, expected_count, VERTEX_STRIDE, "vertices")?;
+    let read_f32 =
+        |b: &[u8], i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
     let vertices = bytes
         .chunks_exact(VERTEX_STRIDE)
         .map(|v| Vertex {
-            position: Vec3::new(f(v, 0), f(v, 1), f(v, 2)),
-            normal: Vec3::new(f(v, 3), f(v, 4), f(v, 5)),
-            uv0: Vec2::new(f(v, 6), f(v, 7)),
+            position: Vec3::new(read_f32(v, 0), read_f32(v, 1), read_f32(v, 2)),
+            normal: Vec3::new(read_f32(v, 3), read_f32(v, 4), read_f32(v, 5)),
+            uv0: Vec2::new(read_f32(v, 6), read_f32(v, 7)),
         })
         .collect();
     Ok(vertices)
 }
 
 fn load_indices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<u32>> {
-    let bytes = std::fs::read(path)?;
-    anyhow::ensure!(
-        bytes.len() == expected_count as usize * 4,
-        "{}: expected {} u32 indices, got {} bytes",
-        path.display(),
-        expected_count,
-        bytes.len()
-    );
-    let indicies = bytes
+    let bytes = read_records(path, expected_count, 4, "u32 indices")?;
+    let indices = bytes
         .chunks_exact(4)
         .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
         .collect();
-    Ok(indicies)
+    Ok(indices)
+}
+
+/// Sanity-check the manifest against the loaded buffers before building
+/// anything from it.
+fn validate_manifest(
+    manifest: &Manifest,
+    vertices: &[Vertex],
+    indices: &[u32],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(indices.len() % 3 == 0, "index count not a triangle list");
+    // the debug window's isolation slider indexes this
+    anyhow::ensure!(!manifest.batches.is_empty(), "manifest has no batches");
+    let max_index = indices.iter().copied().max().unwrap_or(0);
+    anyhow::ensure!(
+        (max_index as usize) < vertices.len(),
+        "index {max_index} out of range for {} vertices",
+        vertices.len()
+    );
+
+    let mut next_first_index = 0;
+    for (i, batch) in manifest.batches.iter().enumerate() {
+        anyhow::ensure!(
+            batch.first_index == next_first_index,
+            "batch {i} starts at {} but the previous batch ended at {next_first_index}",
+            batch.first_index
+        );
+        anyhow::ensure!(
+            MaterialSlot::from_manifest(batch.material).raw() < manifest.materials.len(),
+            "batch {i} references material {} of {}",
+            batch.material,
+            manifest.materials.len()
+        );
+        next_first_index += batch.index_count;
+    }
+    anyhow::ensure!(
+        next_first_index == manifest.buffers.index_count,
+        "batches cover {next_first_index} of {} indices",
+        manifest.buffers.index_count
+    );
+
+    // P7 binds exactly two texmap slots; a future model that uses a third
+    // should say so loudly rather than have its texture silently dropped
+    // (decision 1).
+    for material in &manifest.materials {
+        anyhow::ensure!(
+            material.texmaps.iter().skip(2).all(Option::is_none),
+            "material {:?} uses a texmap slot >= 2; P7 binds only slots 0 and 1",
+            material.name
+        );
+    }
+    Ok(())
 }
 
 fn texture_options(entry: &TextureEntry) -> anyhow::Result<TextureOptions> {
@@ -647,28 +813,78 @@ fn blend_mode(material: &MaterialEntry) -> anyhow::Result<BlendMode> {
     )
 }
 
+/// Bake one pipeline, uniform buffer and base uniform block per material, in
+/// `MaterialSlot` order: push order is what defines the slot.
+fn build_material_pipelines(
+    renderer: &mut Renderer,
+    manifest: &Manifest,
+    mesh: &MeshHandle<Vertex>,
+    textures: &[Option<TextureHandle>],
+    dummy: &TextureHandle,
+) -> anyhow::Result<Vec<MaterialPipeline>> {
+    let mut pipelines = Vec::with_capacity(manifest.materials.len());
+    for material in &manifest.materials {
+        let role = decal_role(material)?;
+        let params_buffer = renderer.create_uniform_buffer::<ToonLinkParams>()?;
+        let pipeline_config = Shader::init()
+            .pipeline_config(Resources {
+                tex0: resolve_texmap(material, 0, textures, dummy),
+                tex1: resolve_texmap(material, 1, textures, dummy),
+                params_buffer: &params_buffer,
+            })
+            .with_shared_mesh(mesh)
+            .with_raster_state(raster_state(material, role)?);
+        let pipeline = renderer.create_pipeline(pipeline_config)?;
+
+        // The whole per-material uniform, built once. `tev_pack::pack` is a
+        // second gate on top of the converter's `tev_ir.rs`: this example
+        // loads whatever manifest is on disk, which may predate it.
+        let base_params = ToonLinkParams {
+            mvp: MVPMatrices {
+                model: Mat4::IDENTITY,
+                view: Mat4::IDENTITY,
+                proj: Mat4::IDENTITY,
+            },
+            tev: tev_pack::pack(material)?,
+            alpha_compare: alpha_compare(material),
+            // patched every frame from the debug window; this is only the
+            // value the buffer holds before the first `draw`
+            debug_mode: DebugMode::default(),
+            _padding_0: [0; 12],
+        };
+
+        pipelines.push(MaterialPipeline {
+            pipeline,
+            params_buffer,
+            base_params,
+        });
+    }
+    Ok(pipelines)
+}
+
+/// Everything baked for one material slot. Building all three together makes
+/// "pipeline and params out of sync" unrepresentable.
+struct MaterialPipeline {
+    pipeline: PipelineHandle<DrawIndexed>,
+    params_buffer: UniformBufferHandle<ToonLinkParams>,
+    /// The manifest's values verbatim, never mutated after construction:
+    /// `draw` copies this and patches `mvp`, the two light fields,
+    /// `debug_mode` and the environment override onto the copy.
+    base_params: ToonLinkParams,
+}
+
 pub struct ToonLink {
     start_time: Instant,
     manifest: Manifest,
-    #[allow(unused)]
-    mesh: MeshHandle<Vertex>,
     /// One per material slot, in `MaterialSlot` order — index with
     /// [`Self::pipeline`], never with a [`BatchIndex`].
-    pipelines: Vec<(
-        PipelineHandle<DrawIndexed>,
-        UniformBufferHandle<ToonLinkParams>,
-    )>,
-    /// One fully-built uniform block per material slot, parallel to
-    /// `pipelines`. The manifest's values verbatim, never mutated after
-    /// construction: `draw` copies each one and patches `mvp`, the two light
-    /// fields, `debug_mode` and the environment override onto the copy.
-    params: Vec<ToonLinkParams>,
+    pipelines: Vec<MaterialPipeline>,
     /// The hardware's five-group order: mask, face+hair, composite, erase, then
     /// the rest of the model.
     draw_order: Vec<BatchIndex>,
-    /// Which batch [`Self::update`] last dumped TEV state for, so the dump
-    /// happens on a change rather than every frame.
-    dumped: Option<BatchIndex>,
+    /// The selection [`Self::update`] last refreshed the label and dumped TEV
+    /// state for, so both happen on a change rather than every frame.
+    last_selection: Option<BatchIndex>,
     edit_state: EditState,
 }
 
@@ -710,7 +926,7 @@ impl ToonLink {
     }
 
     fn pipeline(&self, slot: MaterialSlot) -> &PipelineHandle<DrawIndexed> {
-        &self.pipelines[slot.raw()].0
+        &self.pipelines[slot.raw()].pipeline
     }
 
     /// The batch the debug window has selected, or `None` while it's drawing
@@ -728,13 +944,11 @@ impl ToonLink {
         BatchIndex::from_raw(self.edit_state.batch.value as usize)
     }
 
-    /// Refresh the read-only description of the selected batch — the debug
-    /// window's replacement for the old Q/E printouts.
-    fn update_batch_info(&mut self) {
-        let index = self.selected();
+    /// One line describing a batch: index, shape, material, index range.
+    fn describe_batch(&self, index: BatchIndex) -> String {
         let batch = self.batch(index);
         let slot = MaterialSlot::from_manifest(batch.material);
-        let text = format!(
+        format!(
             "batch {}: shape {} material {} {:?} [{}..+{}]",
             index.raw(),
             batch.shape,
@@ -742,32 +956,23 @@ impl ToonLink {
             self.material(slot).name,
             batch.first_index,
             batch.index_count
-        );
+        )
+    }
+
+    /// Refresh the read-only description of the selected batch.
+    fn update_batch_info(&mut self) {
+        let text = self.describe_batch(self.selected());
         self.edit_state.batch_info.set(text);
     }
 
-    /// The full TEV dump, which is far too much text for the label. Gated on the
-    /// selection actually changing: `update` runs every frame, and dumping a
-    /// material's whole TEV state at frame rate would bury the terminal.
+    /// The full TEV dump, which is far too much text for the label. `update`
+    /// gates this on the selection actually changing: dumping a material's
+    /// whole TEV state at frame rate would bury the terminal.
     fn dump_selection(&mut self) {
         let index = self.selected();
-        if self.dumped == Some(index) {
-            return;
-        }
-        self.dumped = Some(index);
-
-        let batch = self.batch(index);
-        let slot = MaterialSlot::from_manifest(batch.material);
+        let slot = MaterialSlot::from_manifest(self.batch(index).material);
         let material = self.material(slot);
-        println!(
-            "batch {}: shape {} material {} {:?} [{}..+{}]",
-            index.raw(),
-            batch.shape,
-            slot.raw(),
-            material.name,
-            batch.first_index,
-            batch.index_count
-        );
+        println!("{}", self.describe_batch(index));
         // Isolating a batch has a way to legitimately render nothing, and during
         // bring-up that is indistinguishable from a bug. Say when it is the
         // former: the mask and erase passes draw with color writes off, so
@@ -917,46 +1122,7 @@ impl Game for ToonLink {
             manifest.buffers.index_count,
         )?;
 
-        anyhow::ensure!(indices.len() % 3 == 0, "index count not a triangle list");
-        // the debug window's isolation slider indexes this
-        anyhow::ensure!(!manifest.batches.is_empty(), "manifest has no batches");
-        let max_index = indices.iter().copied().max().unwrap_or(0);
-        anyhow::ensure!(
-            (max_index as usize) < vertices.len(),
-            "index {max_index} out of range for {} vertices",
-            vertices.len()
-        );
-        let mut next_first_index = 0;
-        for (i, batch) in manifest.batches.iter().enumerate() {
-            anyhow::ensure!(
-                batch.first_index == next_first_index,
-                "batch {i} starts at {} but the previous batch ended at {next_first_index}",
-                batch.first_index
-            );
-            anyhow::ensure!(
-                MaterialSlot::from_manifest(batch.material).raw() < manifest.materials.len(),
-                "batch {i} references material {} of {}",
-                batch.material,
-                manifest.materials.len()
-            );
-            next_first_index += batch.index_count;
-        }
-        anyhow::ensure!(
-            next_first_index == manifest.buffers.index_count,
-            "batches cover {next_first_index} of {} indices",
-            manifest.buffers.index_count
-        );
-
-        // P7 binds exactly two texmap slots; a future model that uses a third
-        // should say so loudly rather than have its texture silently dropped
-        // (decision 1).
-        for material in &manifest.materials {
-            anyhow::ensure!(
-                material.texmaps.iter().skip(2).all(Option::is_none),
-                "material {:?} uses a texmap slot >= 2; P7 binds only slots 0 and 1",
-                material.name
-            );
-        }
+        validate_manifest(&manifest, &vertices, &indices)?;
 
         let mesh = renderer.create_mesh(&vertices, &indices)?;
 
@@ -975,146 +1141,19 @@ impl Game for ToonLink {
             },
         )?;
 
-        // push order defines MaterialSlot: pipelines[slot] is materials[slot]
-        let mut pipelines = vec![];
-        let mut params = vec![];
-        for material in &manifest.materials {
-            let role = decal_role(material)?;
-            let params_buffer = renderer.create_uniform_buffer::<ToonLinkParams>()?;
-            let tex0 = resolve_texmap(material, 0, &textures, &white_square);
-            let tex1 = resolve_texmap(material, 1, &textures, &white_square);
-            let pipeline_config = Shader::init()
-                .pipeline_config(Resources {
-                    tex0,
-                    tex1,
-                    params_buffer: &params_buffer,
-                })
-                .with_shared_mesh(&mesh)
-                .with_raster_state(raster_state(material, role)?);
-            let pipeline = renderer.create_pipeline(pipeline_config)?;
+        let pipelines =
+            build_material_pipelines(renderer, &manifest, &mesh, &textures, &white_square)?;
 
-            pipelines.push((pipeline, params_buffer));
-
-            // The whole per-material uniform, built once. `tev_pack::pack` is a
-            // second gate on top of the converter's `tev_ir.rs`: this example
-            // loads whatever manifest is on disk, which may predate it.
-            let codes = alpha_compare_codes(material);
-            params.push(ToonLinkParams {
-                mvp: MVPMatrices {
-                    model: Mat4::IDENTITY,
-                    view: Mat4::IDENTITY,
-                    proj: Mat4::IDENTITY,
-                },
-                tev: tev_pack::pack(material)?,
-                alpha_compare: codes.compare,
-                alpha_compare_op: codes.op,
-                // patched every frame from the debug window; this is only the
-                // value the buffer holds before the first `draw`
-                debug_mode: DebugMode::default(),
-                _padding_0: [0; 8],
-            });
-        }
-
-        // The hardware's five-group order (phase_09_eyes.md, "What the game
-        // does"). One pass over the batches, so INF1 order is preserved within
-        // each group for free.
-        let material_of = |batch: &Batch| -> &MaterialEntry {
-            &manifest.materials[MaterialSlot::from_manifest(batch.material).raw()]
-        };
-        let (mut mask, mut early, mut composite, mut erase, mut rest) =
-            (vec![], vec![], vec![], vec![], vec![]);
-        for (i, batch) in manifest.batches.iter().enumerate() {
-            let index = BatchIndex::from_raw(i);
-            let material = material_of(batch);
-            match decal_role(material)? {
-                Some(DecalRole::Mask) => mask.push(index),
-                Some(DecalRole::Composite) => composite.push(index),
-                Some(DecalRole::Erase) => erase.push(index),
-                // Pulled ahead of the composite so the mask survives *under*
-                // the bangs, which is how the eyes read through the hair. The
-                // game hides both for P1 so they still draw exactly once.
-                None if matches!(material.name.as_str(), FACE_MATERIAL | HAIR_MATERIAL) => {
-                    early.push(index)
-                }
-                None => rest.push(index),
-            }
-        }
-
-        // The same assertion `playerInit` makes. This is what fires loudly if
-        // --casual or a converter change perturbs the material table. It also
-        // subsumes "every translucent batch was consumed": `decal_role` returns
-        // `Some` for every translucent material or bails.
+        let groups = group_batches(&manifest)?;
+        let draw_order = groups.draw_order();
+        // A dropped decal would just vanish; see DrawGroups::draw_order.
         anyhow::ensure!(
-            mask.len() == 4 && composite.len() == 4 && erase.len() == 4,
-            "expected 4 mask / 4 composite / 4 erase eye-brow decals covering all 12 \
-             translucent batches, got {} / {} / {} (total {}); `playerInit` asserts \
-             zon_cnt == 4 && zoff_blend_cnt == 4 && zoff_none_cnt == 4",
-            mask.len(),
-            composite.len(),
-            erase.len(),
-            mask.len() + composite.len() + erase.len()
+            draw_order.len() == manifest.batches.len(),
+            "draw order covers {} of {} batches",
+            draw_order.len(),
+            manifest.batches.len()
         );
-
-        // Bail on a missing *or duplicated* name rather than silently degrading:
-        // getting this wrong moves the wrong batch into the early group and the
-        // symptom (eyes compositing over the wrong surface) is subtle.
-        let early_names: Vec<&str> = early
-            .iter()
-            .map(|&b| material_of(&manifest.batches[b.raw()]).name.as_str())
-            .collect();
-        anyhow::ensure!(
-            early_names.len() == 2
-                && early_names.contains(&FACE_MATERIAL)
-                && early_names.contains(&HAIR_MATERIAL),
-            "expected exactly one {FACE_MATERIAL:?} batch and one {HAIR_MATERIAL:?} batch \
-             to pull ahead of the eye composite, found {early_names:?}"
-        );
-
-        // 1 mask deposits the eye/brow coverage in destination alpha, z-tested
-        // against what is already drawn. 2 draws the bangs *without* touching
-        // alpha, so the mask survives underneath them. 3 composites
-        // `out = eye·dstA + fb·(1−dstA)` with the depth test off — the eyes read
-        // through the hair. 4 zeroes the mask. 5 is the rest of the model (P1).
-        let draw_order: Vec<BatchIndex> = mask
-            .iter()
-            .chain(&early)
-            .chain(&composite)
-            .chain(&erase)
-            .chain(&rest)
-            .copied()
-            .collect();
-
-        check_permutation(&draw_order, manifest.batches.len(), "five-group")?;
-
-        // `draw`'s uniform loop zips these two and would silently skip the tail
-        // if they ever diverged.
-        anyhow::ensure!(
-            pipelines.len() == params.len(),
-            "pipeline/params arrays desynced ({} / {})",
-            pipelines.len(),
-            params.len()
-        );
-
-        let group =
-            |batches: &[BatchIndex]| -> Vec<usize> { batches.iter().map(|b| b.raw()).collect() };
-        println!(
-            "toon_link: {} batches, {} materials, {} vertices\n\
-             draw order (batch idx):\n\
-             \x20  1 mask       {:?}   alpha-only writes, z-tested\n\
-             \x20  2 face+hair  {:?}   color + depth, no alpha\n\
-             \x20  3 composite  {:?}   dst-alpha blend, no depth test\n\
-             \x20  4 erase      {:?}   alpha-only writes, zeroes the mask\n\
-             \x20  5 rest       {:?}\n\
-             debug controls are in the egui window",
-            manifest.batches.len(),
-            manifest.materials.len(),
-            manifest.buffers.vertex_count,
-            group(&mask),
-            group(&early),
-            group(&composite),
-            group(&erase),
-            group(&rest),
-        );
+        groups.print_summary(&manifest);
 
         let last_batch = manifest.batches.len() as i64 - 1;
         let edit_state = EditState {
@@ -1133,11 +1172,9 @@ impl Game for ToonLink {
         let mut game = Self {
             start_time: Instant::now(),
             manifest,
-            mesh,
             pipelines,
-            params,
             draw_order,
-            dumped: None,
+            last_selection: None,
             edit_state,
         };
         game.update_batch_info();
@@ -1146,6 +1183,11 @@ impl Game for ToonLink {
     }
 
     fn update(&mut self) {
+        let selection = self.selected();
+        if self.last_selection == Some(selection) {
+            return;
+        }
+        self.last_selection = Some(selection);
         self.update_batch_info();
         self.dump_selection();
     }
@@ -1155,8 +1197,7 @@ impl Game for ToonLink {
         // game's arrangement: the sun does not move, Link does. It also sweeps
         // the toon terminator across him, which is what the old W/A/S/D light
         // controls were for.
-        let elapsed = (Instant::now() - self.start_time).as_secs_f32();
-        let spin = elapsed * MODEL_SPIN;
+        let spin = self.start_time.elapsed().as_secs_f32() * MODEL_SPIN;
 
         // Uniform scale commutes with rotation, so the order is readability only.
         // Normals survive this: `rotateDirection` (shaders/source/mvp.slang) is
@@ -1199,8 +1240,8 @@ impl Game for ToonLink {
             self.edit_state.eflight_konst.to_vec3() * self.edit_state.eflight_falloff.value;
 
         renderer.submit_draws(|gpu| {
-            for ((_, params_buffer), base) in self.pipelines.iter_mut().zip(&self.params) {
-                let mut params = *base;
+            for material in &mut self.pipelines {
+                let mut params = material.base_params;
 
                 params.mvp = mvp;
                 params.tev.light_dir = light_dir;
@@ -1226,7 +1267,7 @@ impl Game for ToonLink {
                     }
                 }
 
-                gpu.write_uniform(params_buffer, params);
+                gpu.write_uniform(&mut material.params_buffer, params);
             }
         })
     }
