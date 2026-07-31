@@ -25,8 +25,8 @@ You'll need the following dependencies installed:
 Then run:
 
 ``` sh
-direnv allow # allow loading env vars
+direnv allow     # allow loading env vars
 just build-slang # build slang from source (this will take a while)
-just dev # run the default triangle example
+just dev         # run the default triangle example
 ```
 

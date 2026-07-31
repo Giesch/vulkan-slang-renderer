@@ -10,11 +10,6 @@ use ash::ext::debug_utils;
 use log::*;
 
 /// Validation messages seen so far, counted by the callback below.
-///
-/// The callback returns `VK_FALSE`, so nothing about a validation error is
-/// visible to the process that caused it — historically the only way to notice
-/// one was to grep the log, which made every check depend on the log actually
-/// containing it. Counting here instead means the process can exit nonzero.
 static VALIDATION_MESSAGES: AtomicU64 = AtomicU64::new(0);
 
 /// How many validation messages this process has seen.
@@ -41,9 +36,6 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
     use vk::DebugUtilsMessageSeverityFlagsEXT as Severity;
     use vk::DebugUtilsMessageTypeFlagsEXT as MessageType;
 
-    // contains/intersects rather than equality: messageTypes is a bitmask and
-    // the spec allows a message to carry more than one bit, which must still
-    // count — this counter decides the process exit code.
     if message_type.contains(MessageType::VALIDATION)
         && message_severity.intersects(Severity::ERROR | Severity::WARNING)
     {
