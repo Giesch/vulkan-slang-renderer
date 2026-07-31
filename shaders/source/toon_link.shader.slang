@@ -5,9 +5,9 @@ module toon_link;
 import mvp;
 import tev;
 
-// Keep in sync with examples/toon_link.rs's module doc comment. The variant
-// names are what the debug window's radio buttons are labelled with, via
-// `pascal_to_display` — there is no parallel list of names on the Rust side.
+// The variant names are what the debug window's radio buttons are labelled
+// with, via `pascal_to_display` — there is no parallel list of names on the
+// Rust side.
 //
 // Three things hold in *every* mode, so the notes below only cover the rgb:
 // the GX alpha test still runs on the TEV output before the switch, the output
@@ -208,13 +208,11 @@ bool gxAlphaTest(AlphaCompare ac, float alpha) {
     return gxAlphaOp(ac.op, keep0, keep1);
 }
 
-// sRGB → linear on one channel. The color target is _SRGB, so the hardware
-// applies linear → sRGB *encode* on store; we hold raw GX values that must
-// reach the stored bits unchanged, so we apply the *decode* first and the two
-// transfers cancel. Applied to RGB only, never alpha.
-//
-// Verified numerically in P7 (2026-07-27): a flat tunic texel round-trips to the
-// source PNG's byte value with 0 LSB error.
+// sRGB → linear. The color target is _SRGB, so the hardware applies
+// linear → sRGB *encode* on store; we hold raw GX values that must reach the
+// stored bits unchanged, so we apply the *decode* first and the two transfers
+// cancel. Applied to RGB only, never alpha. Verified numerically in P7: a flat
+// tunic texel round-trips to the source PNG's byte value with 0 LSB error.
 float3 srgbDecode(float3 c) {
     return select(c <= 0.04045, c / 12.92, pow((c + 0.055) / 1.055, 2.4));
 }

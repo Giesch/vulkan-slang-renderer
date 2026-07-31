@@ -1,27 +1,19 @@
-//! Renders Toon Link from The Wind Waker — P9 of the link rendering plan
-//! (`llm_notes/link_rendering.md`): all 24 batches drawn from one shared mesh
-//! through 24 per-material pipelines, with the model's real albedo textures,
-//! complete per-material raster state, gamma-correct output, the **full GX TEV
-//! interpreter** (a real color channel driving the `ZBtoonEX` ramp through an
-//! SRTG texgen, the stage chain with its swap tables and konst selects, and the
-//! `TEXMTX1` pupil offset), and — new in P9 — the **eye/brow write-mask
-//! multi-pass**: a five-group draw order in which the eye and brow decals
-//! deposit their coverage in destination alpha, the bangs draw over them without
-//! touching alpha, and the features then composite *through* the hair via
-//! `BlendMode::DstAlpha`. See `llm_notes/link_rendering/phase_09_eyes.md`.
+//! Renders Toon Link from The Wind Waker: all 24 batches drawn from one shared
+//! mesh through 24 per-material pipelines, with the model's real albedo
+//! textures, complete per-material raster state, gamma-correct output, the full
+//! GX TEV interpreter (`shaders/source/tev.slang`), and the eye/brow write-mask
+//! multi-pass, in which the decals deposit coverage in destination alpha and
+//! composite *through* the hair via `BlendMode::DstAlpha` (see [`DrawGroups`]).
 //! Both lights are fixed in world space and the model turns under them, as in
 //! the game — which sweeps the terminator across Link.
+//! Plan and decision log: `llm_notes/link_rendering.md`.
 //!
 //! Requires converted assets on disk (gitignored — you need the disc image):
 //! `just extract-link && just convert-link`.
 //!
-//! Controls live in the egui debug window (debug builds only):
-//! - `debug_mode`: the ten `DebugMode` variants from the shader, as radio
-//!   buttons
-//! - `eflight`: toggle the second, green-channel light
-//! - `isolate_batch` + `batch`: draw one batch instead of all of them
-//! - `batch_info`: what the `batch` slider is currently pointing at; selecting a
-//!   batch also dumps its TEV state to stdout
+//! Controls live in the egui debug window (debug builds only) and are
+//! documented on [`EditState`]; the debug views are documented on the shader's
+//! `DebugMode` enum.
 
 use std::f32::consts::PI;
 use std::path::{Path, PathBuf};
@@ -62,9 +54,7 @@ const CULL_OVERRIDE: Option<CullMode> = None;
 const MODEL_SCALE: f32 = 0.01;
 
 /// Radians per second the model turns about Y. Both lights are fixed in world
-/// space, so this is what sweeps the terminator — and it replaces the camera
-/// orbit that used to sit here, which showed every side of Link but never moved
-/// the shading.
+/// space, so this is what sweeps the terminator.
 const MODEL_SPIN: f32 = 20.0 * (PI / 180.0);
 
 /// `link.vtx.bin` is interleaved little-endian f32: pos[3] nrm[3] uv0[2].
@@ -109,8 +99,8 @@ impl BatchIndex {
     }
 }
 
-/// Whether the J3D pixel-engine mode is translucent, the two-pass ordering key
-/// P7 needs.
+/// Whether the J3D pixel-engine mode is translucent — the key that separates
+/// the eye/brow decals from the opaque model.
 fn is_translucent(material: &MaterialEntry) -> anyhow::Result<bool> {
     match material.pe_mode {
         mm::PixelEngineMode::Opaque => Ok(false),
@@ -122,10 +112,9 @@ fn is_translucent(material: &MaterialEntry) -> anyhow::Result<bool> {
 
 /// The face. Matched by name because no state signature separates it from the
 /// other eight opaque materials — `hideHatAndBackle`
-/// (`../tww/src/d/actor/d_a_player_main.cpp:1509-1531`) names both material
-/// strings verbatim at `:1512-1514`, so this is the game's own contract, not our
-/// convention. P6's per-batch isolation map independently confirms batches 4
-/// and 1. See `llm_notes/link_rendering/phase_09_eyes.md` decision 2.
+/// (`../tww/src/d/actor/d_a_player_main.cpp:1512-1514`) names both material
+/// strings verbatim, so this is the game's own contract, not our convention.
+/// See `llm_notes/link_rendering/phase_09_eyes.md` decision 2.
 const FACE_MATERIAL: &str = "face";
 /// The bangs, which the eye composite reads *through*.
 const HAIR_MATERIAL: &str = "ear(2)";
@@ -150,8 +139,7 @@ enum DecalRole {
     /// optimization. Our clear is alpha 1.0 (GX's is 0), so the mask pass leaves
     /// destination alpha ≥ 0.75 across the *whole* quad — including fully
     /// transparent texels. Only the shader-side discard stops this pass
-    /// repainting an opaque rectangle there, which would be the black quad again
-    /// by another route.
+    /// repainting an opaque rectangle there.
     Composite,
     /// `*damB` — blending off, TEV alpha identically 0: zeroes the mask so it
     /// cannot leak into later alpha-buffer effects. Its RGB is the black we used
@@ -359,58 +347,38 @@ fn gx_alpha_op(op: mm::AlphaOp) -> GXAlphaOp {
 }
 
 /// The two GX lights `lit_mask == 3` selects. **Each carries exactly one
-/// channel**, and that is not a simplification — it is how the game does it.
+/// channel**, as in the game: `ZBtoonEX` is a *separable* 2D ramp — its red
+/// varies only with u and its green only with v, both stepping sharply at
+/// ≈0.49 — and the SRTG texgen feeds it `(color0.r, color0.g)`, so the two
+/// axes are independent lookups only because the lights write to different
+/// channels.
 ///
-/// `ZBtoonEX` is a *separable* 2D ramp (phase_08 risk #1): its red varies only
-/// with u and its green only with v, both stepping sharply at ≈0.49. The SRTG
-/// texgen feeds it `(color0.r, color0.g)`, so the two axes are two independent
-/// lookups — which only works if the lights write to different channels. They do:
-///
-/// - **Light 0 is red-only.** `../tww/src/d/d_kankyo.cpp:1494-1499` sets
-///   `mColor.r` (255 with no nearby point light and no flicker) and `:1545-1547`
-///   hard-zero green and blue; `dKy_tevstr_init` repeats it at `:3410-3412`.
-///   Its ramp axis drives stage 0's toon band.
+/// - **Light 0 is red-only** (`../tww/src/d/d_kankyo.cpp:1494-1499`, green and
+///   blue hard-zeroed at `:1545-1547`). Its ramp axis drives stage 0's toon
+///   band.
 /// - **Light 1 is green-only, and dark unless an "eflight" (torch, sword glow)
-///   is nearby** — `:2557-2559`, gated by `lightMask = 1` with no eflight versus
-///   `3` with one (`:2527-2531`). Its ramp axis drives stage 2's warm additive
-///   highlight. Black here makes the manifest's `lit_mask == 3` behave exactly
-///   like the runtime's `setLightMask(1)`; [`LightRig::eflight`] toggles it on.
+///   is nearby** (`:2557-2559`, gated at `:2527-2531`). Its ramp axis drives
+///   stage 2's warm additive highlight; [`LightRig::eflight`] toggles it on.
 ///
-/// Getting this wrong is what made the first pass strongly yellow: near-neutral
-/// light colors give `r ≈ g`, so green saturated wherever red did and stage 2's
-/// `konst1 = (160,90,0)` fired over the *whole* lit band instead of nothing.
-///
-/// With ambient fixed at 50/255 ≈ 0.196 on every channel, `illum.r` crosses the
-/// ramp's 0.49 step at `N·L ≈ 0.294` and `illum.g` stays at 0.196 — below it,
-/// always, until the eflight comes on.
+/// With ambient fixed at 50/255 ≈ 0.196 on every channel, `illum.r` crosses
+/// the ramp's 0.49 step at `N·L ≈ 0.294` and `illum.g` stays below it until
+/// the eflight comes on.
 const LIGHT0_COLOR: Vec3 = Vec3::new(1.0, 0.0, 0.0);
 const LIGHT1_COLOR: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 /// Light 1 with the eflight on. The game ramps the green byte with distance and
 /// flicker (`d_kankyo.cpp:2542-2557`); we take it at full.
 const EFLIGHT_COLOR: Vec3 = Vec3::new(0.0, 1.0, 0.0);
 /// Stage 2's additive tint while the eflight is on, replacing the manifest's
-/// `konst_colors[1]`. `setLightTevColorType_sub` overwrites K1 with the eflight's
-/// own color whenever that stage runs at all (`d_kankyo.cpp:1780`), so the
-/// manifest value is a default the game never actually shows.
-///
-/// The treasure chest's glow, verbatim from `d_a_tbox.cpp:302-304`. A chest is a
-/// steady eflight rather than a decaying flash, so this is one stable value
-/// instead of a row picked off a decay curve.
-///
-/// The debug window's `eflight_konst` picker starts here; it, and not this
-/// constant, is what `draw` writes.
+/// `konst_colors[1]`: `setLightTevColorType_sub` overwrites K1 whenever that
+/// stage runs at all (`d_kankyo.cpp:1780`). The value is the treasure chest's
+/// steady glow, verbatim from `d_a_tbox.cpp:302-304`. Seeds the debug window's
+/// `eflight_konst` picker, which is what `draw` actually writes.
 const EFLIGHT_KONST: Vec3 = rgb8(255, 255, 100);
-/// How much of [`EFLIGHT_KONST`] actually reaches K1.
-///
-/// **A demo choice, but a grounded one.** The game never writes the registered
-/// color straight through: `settingTevStruct_eflightcol_plus` scales it by
-/// `bright²` where `bright = 1 - distance/power` (`d_kankyo.cpp:1567-1584`), so
-/// the full value only appears standing exactly at the light. This is that factor
-/// at half the light's radius — `(1 - 0.5)² = 0.25`. Unscaled, the chest's near-
-/// white glow saturates the tunic and the ramp's second axis stops being legible.
-///
-/// The debug window's `eflight_falloff` slider starts here, so the whole `bright²`
-/// range is walkable without a rebuild.
+/// How much of [`EFLIGHT_KONST`] actually reaches K1. The game scales the
+/// registered color by `bright²` where `bright = 1 - distance/power`
+/// (`d_kankyo.cpp:1567-1584`); this is that factor at half the light's radius,
+/// `(1 - 0.5)² = 0.25`. Unscaled, the near-white glow saturates the tunic.
+/// Seeds the debug window's `eflight_falloff` slider.
 const EFLIGHT_FALLOFF: f32 = 0.25;
 
 /// Light 0's fixed orientation, **world space**. The game's key light does not
@@ -420,45 +388,33 @@ const EFLIGHT_FALLOFF: f32 = 0.25;
 const LIGHT0_AZIMUTH: f32 = 0.6;
 const LIGHT0_ELEVATION: f32 = 0.7;
 
-/// The eflight's orientation, **model space** — it rotates with Link rather than
-/// staying put in the world, so the highlight stays pinned to his front while
-/// light 0's terminator sweeps past. That is the arrangement when the glow comes
-/// from something he is facing: `d_a_tbox.cpp:301` puts the chest's light 50
-/// units above the chest, and Link stands in front of it during the opening.
+/// The eflight's orientation, **model space** — it rotates with Link, so the
+/// highlight stays pinned to his front while light 0's terminator sweeps past:
+/// the arrangement when the glow comes from something he is facing, like the
+/// chest's light 50 units above the chest (`d_a_tbox.cpp:301`). Azimuth 0 is
+/// straight ahead — the model faces **+Z**, measured off `cl.bdl` itself.
 ///
-/// Azimuth 0 is straight ahead: the model faces **+Z**, measured off `cl.bdl`
-/// itself — the `mouth` batch's mean vertex normal is `+0.82` in Z and `mayuL`'s
-/// is `+0.90`, with the eyes at `z = +16.2`.
-///
-/// The elevation is **negative**, which the `+50` above is easy to misread: that
-/// offset is off the chest's origin sitting on the floor, and `cl.bdl` spans
-/// `y = 0..124`, so the light lands around Link's waist and shines *up* at the
-/// torso it lights. `-0.35` is `atan2(50 - 85, 90)` — the light at 50, his upper
-/// chest at 85, standing about a body length away. The distance is the soft part
-/// of that, so the debug window's `eflight_elevation` slider walks the whole
-/// plausible range without a rebuild; this constant only seeds it.
+/// The elevation is **negative** because that light lands around Link's waist
+/// (`cl.bdl` spans `y = 0..124`) and shines *up* at the torso: `-0.35` is
+/// `atan2(50 - 85, 90)` — the light at 50, his upper chest at 85, standing
+/// about a body length away. Seeds the debug window's `eflight_elevation`
+/// slider, which walks the plausible range without a rebuild.
 const EFLIGHT_AZIMUTH: f32 = 0.0;
 const EFLIGHT_ELEVATION: f32 = -0.35;
 
 /// The two endpoints of stage 0's toon lerp, `PREV = mix(REG0, K0, ramp.r)`.
 ///
-/// Measured, not seeded: `scripts/link_env_colors.py` reads them out of the ocean
-/// stage's `Pale` chunk (`just link-env-colors`) at `EnvR[0][0] → Colo[0][2] →
-/// Pale[2]`, the 150–270 schedule plateau — roughly 10:00–18:00, the widest
-/// daytime band and the only one whose two schedule endpoints name the same slot,
-/// so it needs no time-of-day blend.
+/// Measured, not seeded: `scripts/link_env_colors.py` reads them out of the
+/// ocean stage's `Pale` chunk (`just link-env-colors`) at the 150–270 schedule
+/// plateau — roughly 10:00–18:00, the one band that needs no time-of-day
+/// blend. The game overwrites both registers every frame in
+/// `setLightTevColorType_sub` (`../tww/src/d/d_kankyo.cpp:1817-1829`), so the
+/// manifest's values are only the defaults J3D loaded; the Pale →
+/// `dKy_tevstr_c` wiring is `setLight_actor`, `d_kankyo.cpp:1328-1353`.
 ///
-/// The game overwrites both every frame in `setLightTevColorType_sub`
-/// (`../tww/src/d/d_kankyo.cpp:1817-1829`), which is why the manifest's values
-/// (`reg_colors[0]` = mid-gray, `konst_colors[0]` = white) are only defaults.
-/// Note that the lit end really is pure white at midday — the manifest's default
-/// happens to be right here, and would not be at dawn or sunset.
-///
-/// Pale → `dKy_tevstr_c` wiring is `setLight_actor`, `d_kankyo.cpp:1328-1353`.
-///
-/// These two seed the debug window's `env_actor_c0` / `env_actor_k0` pickers,
-/// which are what `draw` actually writes — so another time of day's plateau can
-/// be dialed in and compared without a rebuild.
+/// These seed the debug window's `env_actor_c0` / `env_actor_k0` pickers,
+/// which are what `draw` actually writes — so another time of day's plateau
+/// can be dialed in without a rebuild.
 const ENV_ACTOR_C0: Vec3 = rgb8(156, 140, 134);
 const ENV_ACTOR_K0: Vec3 = rgb8(255, 255, 255);
 
@@ -740,8 +696,7 @@ fn raster_state(material: &MaterialEntry, role: Option<DecalRole>) -> anyhow::Re
     };
 
     // Depth test: honor z_func exactly when the test is enabled, else pass
-    // unconditionally. All 24 materials are Less_Equal in practice (this makes
-    // P6's `Less` placeholder correct).
+    // unconditionally. All 24 materials are Less_Equal in practice.
     let depth_test = if material.z_test {
         match material.z_func {
             mm::CompareType::LessEqual => DepthCompare::LessEqual,
@@ -756,9 +711,8 @@ fn raster_state(material: &MaterialEntry, role: Option<DecalRole>) -> anyhow::Re
         DepthCompare::Always
     };
 
-    // Honor z_write directly rather than tying it to z_test (P6 did the latter,
-    // which forced the four *damA eye/brow decals to write depth; not writing is
-    // what lets those layered decals composite at all).
+    // Honor z_write directly rather than tying it to z_test: not writing depth
+    // is what lets the layered *damA eye/brow decals composite at all.
     let depth_write = material.z_write;
 
     // One rule with no exceptions (phase_09_eyes.md decision 3): alpha writes
@@ -798,10 +752,9 @@ fn blend_mode(material: &MaterialEntry) -> anyhow::Result<BlendMode> {
         use mm::BlendFactor::*;
         match (blend.src, blend.dst) {
             (SourceAlpha, InverseSourceAlpha) => return Ok(BlendMode::Alpha),
-            // GX's dst-alpha blend, and it is real now: the mask pass writes the
-            // eye/brow coverage into destination alpha and this composites
-            // through it, which is how the eyes read through the hair. See
-            // `llm_notes/link_rendering/phase_09_eyes.md`.
+            // GX's dst-alpha blend: the mask pass writes the eye/brow coverage
+            // into destination alpha and this composites through it, which is
+            // how the eyes read through the hair.
             (DestinationAlpha, InverseDestinationAlpha) => return Ok(BlendMode::DstAlpha),
             _ => {}
         }
@@ -946,7 +899,6 @@ impl ToonLink {
         BatchIndex::from_raw(self.edit_state.batch.value as usize)
     }
 
-    /// One line describing a batch: index, shape, material, index range.
     fn describe_batch(&self, index: BatchIndex) -> String {
         let batch = self.batch(index);
         let slot = MaterialSlot::from_manifest(batch.material);
@@ -1196,9 +1148,7 @@ impl Game for ToonLink {
 
     fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
         // The model turns under a fixed camera and a fixed light, which is the
-        // game's arrangement: the sun does not move, Link does. It also sweeps
-        // the toon terminator across him, which is what the old W/A/S/D light
-        // controls were for.
+        // game's arrangement: the sun does not move, Link does.
         let spin = self.start_time.elapsed().as_secs_f32() * MODEL_SPIN;
 
         // Uniform scale commutes with rotation, so the order is readability only.
