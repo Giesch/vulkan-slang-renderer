@@ -83,7 +83,7 @@ sprites:
 [unix]
 watch example="basic_triangle" seconds="5":
     cargo build --example {{example}}
-    timeout --preserve-status -s TERM {{seconds}} ./target/debug/examples/{{example}}
+    timeout --preserve-status -k 5 -s TERM {{seconds}} ./target/debug/examples/{{example}}
 
 
 # run every example headlessly, failing on vulkan validation output

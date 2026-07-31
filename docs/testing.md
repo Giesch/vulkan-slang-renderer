@@ -85,6 +85,9 @@ and its leaked-object report, so teardown is included.
 
 Codes 2 and 3 apply only under `VKR_SWEEP=1`, which the script exports; they'd
 be wrong interactively, where closing a window immediately is not an error.
+Code 1 is **not** sweep-gated, on purpose: an interactive run that emitted any
+validation message — including warning severity — exits 1 at window close, so a
+`just dev` or `just watch` session fails loudly rather than looking clean.
 
 Because the count keys off severity rather than the log level, `RUST_LOG` can
 hide the *detail* of a failure but not the failure itself. The script still

@@ -149,10 +149,10 @@ pub trait Game {
         let validation_messages = renderer::debug::validation_message_count();
         let stats = match (result, validation_messages) {
             (Ok(stats), 0) => stats,
-            (Ok(_), n) => anyhow::bail!("{n} vulkan validation message(s); see the log above"),
+            (Ok(_), n) => anyhow::bail!(validation_failure_message(n, &env)),
             (Err(err), 0) => return Err(err),
             (Err(err), n) => {
-                return Err(err.context(format!("{n} vulkan validation message(s)")));
+                return Err(err.context(validation_failure_message(n, &env)));
             }
         };
 
@@ -167,6 +167,20 @@ pub trait Game {
     }
 
     fn input(&mut self, _input: Input) {}
+}
+
+/// The count keys off the severity Vulkan reports, but the *text* of each
+/// message still goes through `log`, and with `RUST_LOG` unset env_logger
+/// keeps only `error!` — so "see the log above" would point at a log the
+/// warning-severity detail never reached. Say so instead.
+fn validation_failure_message(count: u64, env: &EnvConfig) -> String {
+    match &env.rust_log {
+        Some(_) => format!("{count} vulkan validation message(s); see the log above"),
+        None => format!(
+            "{count} vulkan validation message(s); RUST_LOG is unset, so any \
+             warning-severity detail was filtered out — re-run with RUST_LOG=warn"
+        ),
+    }
 }
 
 /// Compute render scale based on display resolution.

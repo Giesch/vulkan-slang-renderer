@@ -425,6 +425,13 @@ propagates. Detection must grep the log. (Exit codes are still worth checking
 for the *separate* case of a crash or an early bail, which the sweep reports
 distinctly from a validation failure.)
 
+[Superseded on this same branch: the exit code is now the signal.
+`renderer/debug.rs` counts validation messages and `Game::run` exits nonzero on
+a nonzero count, with `timeout --preserve-status` letting that code through —
+see `docs/testing.md` §"How it decides". The paragraph above describes what was
+true while §7.3 was being measured, and the grep survives only as a cross-check
+for detector disagreement.]
+
 ### 7.4 Correction: `timeout` does **not** skip `Drop`
 
 Nine files in this repo asserted, in one form or another, that `timeout`

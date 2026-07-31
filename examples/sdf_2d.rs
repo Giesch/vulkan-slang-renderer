@@ -35,8 +35,9 @@ struct SDF2D {
     /// Playback only — the visuals are driven by `beats` plus elapsed time, not
     /// by the audio stream — so this is `None` on a machine with no output
     /// device (containers, CI, `scripts/headless-sweep.sh`) and the example
-    /// still renders correctly. Held solely to keep the stream alive; dropped
-    /// in declaration order, sink before device.
+    /// still renders correctly. Held solely to keep the stream alive; the tuple
+    /// drops in declaration order, device sink before player, same as the two
+    /// fields it replaced.
     #[expect(unused)]
     audio: Option<(MixerDeviceSink, rodio::Player)>,
 }

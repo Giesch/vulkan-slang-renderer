@@ -41,8 +41,11 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
     use vk::DebugUtilsMessageSeverityFlagsEXT as Severity;
     use vk::DebugUtilsMessageTypeFlagsEXT as MessageType;
 
-    if message_type == MessageType::VALIDATION
-        && matches!(message_severity, Severity::ERROR | Severity::WARNING)
+    // contains/intersects rather than equality: messageTypes is a bitmask and
+    // the spec allows a message to carry more than one bit, which must still
+    // count — this counter decides the process exit code.
+    if message_type.contains(MessageType::VALIDATION)
+        && message_severity.intersects(Severity::ERROR | Severity::WARNING)
     {
         VALIDATION_MESSAGES.fetch_add(1, Ordering::Relaxed);
     }
