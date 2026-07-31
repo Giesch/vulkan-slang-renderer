@@ -225,3 +225,9 @@ link-verify-geometry:
 link-verify-p3: link-verify-geometry
     cargo test --bin convert_link -- --include-ignored
     echo "P3 VERIFIED"
+
+# resolve the actor lighting colors examples/toon_link.rs lerps between; pass
+# --room/--weather/--time to read a different palette slot
+[unix]
+link-env-colors *args:
+    ./scripts/link_env_colors.py assets/link/raw/sea_stage.dzs {{args}}

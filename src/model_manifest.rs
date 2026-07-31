@@ -213,6 +213,282 @@ gx_enum! {
     }
 }
 
+// --- TEV / texgen vocabulary -------------------------------------------------
+//
+// The manifest carries these as raw `u8`, not as typed fields, so strictly
+// speaking they are parse-only. They live here anyway because the *library* side
+// needs them too: `tev_pack` re-checks every byte on its way to the GPU
+// (parse-don't-validate, the same discipline the converter uses) and renders the
+// per-stage equations in `mat3_dump.txt`'s notation for the example's isolation
+// printout. One `Display` literal per value means the printout and the dump
+// cannot spell the same GX value two different ways.
+
+gx_enum! {
+    /// GXTexGenType (GXEnum.h:576–586)
+    TexGenType {
+        Mtx3x4 = 0x0 => "MTX3x4",
+        Mtx2x4 = 0x1 => "MTX2x4",
+        Bump0 = 0x2 => "BUMP0",
+        Bump1 = 0x3 => "BUMP1",
+        Bump2 = 0x4 => "BUMP2",
+        Bump3 = 0x5 => "BUMP3",
+        Bump4 = 0x6 => "BUMP4",
+        Bump5 = 0x7 => "BUMP5",
+        Bump6 = 0x8 => "BUMP6",
+        Bump7 = 0x9 => "BUMP7",
+        Srtg = 0xA => "SRTG",
+    }
+}
+
+gx_enum! {
+    /// GXTexGenSrc (GXEnum.h:590–610)
+    TexGenSrc {
+        Pos = 0x00 => "POS",
+        Nrm = 0x01 => "NRM",
+        Binrm = 0x02 => "BINRM",
+        Tangent = 0x03 => "TANGENT",
+        Tex0 = 0x04 => "TEX0",
+        Tex1 = 0x05 => "TEX1",
+        Tex2 = 0x06 => "TEX2",
+        Tex3 = 0x07 => "TEX3",
+        Tex4 = 0x08 => "TEX4",
+        Tex5 = 0x09 => "TEX5",
+        Tex6 = 0x0A => "TEX6",
+        Tex7 = 0x0B => "TEX7",
+        Texcoord0 = 0x0C => "TEXCOORD0",
+        Texcoord1 = 0x0D => "TEXCOORD1",
+        Texcoord2 = 0x0E => "TEXCOORD2",
+        Texcoord3 = 0x0F => "TEXCOORD3",
+        Texcoord4 = 0x10 => "TEXCOORD4",
+        Texcoord5 = 0x11 => "TEXCOORD5",
+        Texcoord6 = 0x12 => "TEXCOORD6",
+        Color0 = 0x13 => "COLOR0",
+        Color1 = 0x14 => "COLOR1",
+    }
+}
+
+gx_enum! {
+    /// GXTexMtx / GXPosNrmMtx (GXEnum.h:729–747); PNMTXn = 3n, TEXMTXn = 30+3n
+    TexGenMatrix {
+        Pnmtx0 = 0 => "PNMTX0",
+        Pnmtx1 = 3 => "PNMTX1",
+        Pnmtx2 = 6 => "PNMTX2",
+        Pnmtx3 = 9 => "PNMTX3",
+        Pnmtx4 = 12 => "PNMTX4",
+        Pnmtx5 = 15 => "PNMTX5",
+        Pnmtx6 = 18 => "PNMTX6",
+        Pnmtx7 = 21 => "PNMTX7",
+        Pnmtx8 = 24 => "PNMTX8",
+        Texmtx0 = 30 => "TEXMTX0",
+        Texmtx1 = 33 => "TEXMTX1",
+        Texmtx2 = 36 => "TEXMTX2",
+        Texmtx3 = 39 => "TEXMTX3",
+        Texmtx4 = 42 => "TEXMTX4",
+        Texmtx5 = 45 => "TEXMTX5",
+        Texmtx6 = 48 => "TEXMTX6",
+        Texmtx7 = 51 => "TEXMTX7",
+        Texmtx8 = 54 => "TEXMTX8",
+        Texmtx9 = 57 => "TEXMTX9",
+        Identity = 60 => "IDENTITY",
+    }
+}
+
+gx_enum! {
+    /// GXTevColorArg (GXEnum.h:294–309)
+    CombineColor {
+        CPrev = 0x0 => "CPREV",
+        APrev = 0x1 => "APREV",
+        C0 = 0x2 => "C0",
+        A0 = 0x3 => "A0",
+        C1 = 0x4 => "C1",
+        A1 = 0x5 => "A1",
+        C2 = 0x6 => "C2",
+        A2 = 0x7 => "A2",
+        TexC = 0x8 => "TEXC",
+        TexA = 0x9 => "TEXA",
+        RasC = 0xA => "RASC",
+        RasA = 0xB => "RASA",
+        One = 0xC => "ONE",
+        Half = 0xD => "HALF",
+        Konst = 0xE => "KONST",
+        Zero = 0xF => "ZERO",
+    }
+}
+
+gx_enum! {
+    /// GXTevAlphaArg (GXEnum.h:336–343)
+    CombineAlpha {
+        APrev = 0x0 => "APREV",
+        A0 = 0x1 => "A0",
+        A1 = 0x2 => "A1",
+        A2 = 0x3 => "A2",
+        TexA = 0x4 => "TEXA",
+        RasA = 0x5 => "RASA",
+        Konst = 0x6 => "KONST",
+        Zero = 0x7 => "ZERO",
+    }
+}
+
+gx_enum! {
+    /// GXTevOp (GXEnum.h:272–283)
+    TevOp {
+        Add = 0x0 => "ADD",
+        Sub = 0x1 => "SUB",
+        CompR8Gt = 0x8 => "COMP_R8_GT",
+        CompR8Eq = 0x9 => "COMP_R8_EQ",
+        CompGr16Gt = 0xA => "COMP_GR16_GT",
+        CompGr16Eq = 0xB => "COMP_GR16_EQ",
+        CompBgr24Gt = 0xC => "COMP_BGR24_GT",
+        CompBgr24Eq = 0xD => "COMP_BGR24_EQ",
+        CompRgb8Gt = 0xE => "COMP_RGB8_GT",
+        CompRgb8Eq = 0xF => "COMP_RGB8_EQ",
+    }
+}
+
+gx_enum! {
+    /// GXTevBias (GXEnum.h:287–289) + J3D's 0x3 "compare mode" marker
+    TevBias {
+        Zero = 0x0 => "ZERO",
+        AddHalf = 0x1 => "ADDHALF",
+        SubHalf = 0x2 => "SUBHALF",
+        HwbCompare = 0x3 => "HWB_COMPARE",
+    }
+}
+
+gx_enum! {
+    /// GXTevScale (GXEnum.h:320–323)
+    TevScale {
+        Scale1 = 0x0 => "SCALE_1",
+        Scale2 = 0x1 => "SCALE_2",
+        Scale4 = 0x2 => "SCALE_4",
+        Divide2 = 0x3 => "DIVIDE_2",
+    }
+}
+
+gx_enum! {
+    /// GXTevRegID (GXEnum.h:328–331). NOTE the MAT3 `reg_colors` list does *not*
+    /// line up with these: entry *i* loads register *i+1*, so `reg_colors[0]` is
+    /// `Reg0` and `Prev` gets no MAT3 value. See [`TevConfig::reg_colors`].
+    Register {
+        Prev = 0x0 => "PREV",
+        Reg0 = 0x1 => "REG0",
+        Reg1 = 0x2 => "REG1",
+        Reg2 = 0x3 => "REG2",
+    }
+}
+
+gx_enum! {
+    /// GXTevKColorSel (GXEnum.h:537–564)
+    KonstColorSel {
+        One = 0x00 => "_1",
+        SevenEighths = 0x01 => "_7_8th",
+        SixEighths = 0x02 => "_6_8th",
+        FiveEighths = 0x03 => "_5_8th",
+        FourEighths = 0x04 => "_4_8th",
+        ThreeEighths = 0x05 => "_3_8th",
+        TwoEighths = 0x06 => "_2_8th",
+        OneEighth = 0x07 => "_1_8th",
+        K0 = 0x0C => "K0",
+        K1 = 0x0D => "K1",
+        K2 = 0x0E => "K2",
+        K3 = 0x0F => "K3",
+        K0R = 0x10 => "K0_R",
+        K1R = 0x11 => "K1_R",
+        K2R = 0x12 => "K2_R",
+        K3R = 0x13 => "K3_R",
+        K0G = 0x14 => "K0_G",
+        K1G = 0x15 => "K1_G",
+        K2G = 0x16 => "K2_G",
+        K3G = 0x17 => "K3_G",
+        K0B = 0x18 => "K0_B",
+        K1B = 0x19 => "K1_B",
+        K2B = 0x1A => "K2_B",
+        K3B = 0x1B => "K3_B",
+        K0A = 0x1C => "K0_A",
+        K1A = 0x1D => "K1_A",
+        K2A = 0x1E => "K2_A",
+        K3A = 0x1F => "K3_A",
+    }
+}
+
+gx_enum! {
+    /// GXTevKAlphaSel (GXEnum.h:509–533)
+    KonstAlphaSel {
+        One = 0x00 => "_1",
+        SevenEighths = 0x01 => "_7_8th",
+        SixEighths = 0x02 => "_6_8th",
+        FiveEighths = 0x03 => "_5_8th",
+        FourEighths = 0x04 => "_4_8th",
+        ThreeEighths = 0x05 => "_3_8th",
+        TwoEighths = 0x06 => "_2_8th",
+        OneEighth = 0x07 => "_1_8th",
+        K0R = 0x10 => "K0_R",
+        K1R = 0x11 => "K1_R",
+        K2R = 0x12 => "K2_R",
+        K3R = 0x13 => "K3_R",
+        K0G = 0x14 => "K0_G",
+        K1G = 0x15 => "K1_G",
+        K2G = 0x16 => "K2_G",
+        K3G = 0x17 => "K3_G",
+        K0B = 0x18 => "K0_B",
+        K1B = 0x19 => "K1_B",
+        K2B = 0x1A => "K2_B",
+        K3B = 0x1B => "K3_B",
+        K0A = 0x1C => "K0_A",
+        K1A = 0x1D => "K1_A",
+        K2A = 0x1E => "K2_A",
+        K3A = 0x1F => "K3_A",
+    }
+}
+
+gx_enum! {
+    /// GXTexCoordID (GXEnum.h:66–75)
+    TexCoordId {
+        Texcoord0 = 0x00 => "TEXCOORD0",
+        Texcoord1 = 0x01 => "TEXCOORD1",
+        Texcoord2 = 0x02 => "TEXCOORD2",
+        Texcoord3 = 0x03 => "TEXCOORD3",
+        Texcoord4 = 0x04 => "TEXCOORD4",
+        Texcoord5 = 0x05 => "TEXCOORD5",
+        Texcoord6 = 0x06 => "TEXCOORD6",
+        Texcoord7 = 0x07 => "TEXCOORD7",
+        Null = 0xFF => "TEXCOORD_NULL",
+    }
+}
+
+gx_enum! {
+    /// GXTexMapID (GXEnum.h:32–41)
+    TexMapId {
+        Texmap0 = 0x00 => "TEXMAP0",
+        Texmap1 = 0x01 => "TEXMAP1",
+        Texmap2 = 0x02 => "TEXMAP2",
+        Texmap3 = 0x03 => "TEXMAP3",
+        Texmap4 = 0x04 => "TEXMAP4",
+        Texmap5 = 0x05 => "TEXMAP5",
+        Texmap6 = 0x06 => "TEXMAP6",
+        Texmap7 = 0x07 => "TEXMAP7",
+        Null = 0xFF => "TEXMAP_NULL",
+    }
+}
+
+gx_enum! {
+    /// GXChannelID (GXEnum.h:83–88). MAT3's four `color_channels` slots are
+    /// *pairs*: slot 0 is `Color0`, slot 1 is `Alpha0`, slot 2 `Color1`, slot 3
+    /// `Alpha1` — which is why `num_color_chans` counts pairs, not channels.
+    ColorChannelId {
+        Color0 = 0x00 => "COLOR0",
+        Color1 = 0x01 => "COLOR1",
+        Alpha0 = 0x02 => "ALPHA0",
+        Alpha1 = 0x03 => "ALPHA1",
+        Color0A0 = 0x04 => "COLOR0A0",
+        Color1A1 = 0x05 => "COLOR1A1",
+        ColorZero = 0x06 => "COLOR_ZERO",
+        AlphaBump = 0x07 => "ALPHA_BUMP",
+        AlphaBumpN = 0x08 => "ALPHA_BUMP_N",
+        Null = 0xFF => "COLOR_NULL",
+    }
+}
+
 // --- manifest ---------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,7 +614,21 @@ pub struct TevConfig {
     pub orders: Vec<Option<TevOrderState>>,
     /// KONST colors (rgba u8), 4 slots.
     pub konst_colors: Vec<Option<[u8; 4]>>,
-    /// TEV register colors (rgba s16), 4 slots (PREV/REG0/REG1/REG2).
+    /// TEV register colors (rgba s16), 4 slots in **MAT3 list order, which is
+    /// not register order**: entry *i* loads `GX_TEVREG{i}`, i.e. `[0]` → REG0,
+    /// `[1]` → REG1, `[2]` → REG2, and `[3]` is **never loaded at all**.
+    /// `GX_TEVPREV` gets no MAT3 value.
+    ///
+    /// From `J3DMatBlock.cpp`: `loadTevColor(reg, c)` is
+    /// `J3DGDSetTevColorS10(GXTevRegID(reg + 1), c)`, and `patchTevReg`'s loop
+    /// runs to `ARRAY_SIZE(mTevColor) - 1`. Consistent with the data —
+    /// `reg_colors[3]` is `[0,0,0,0]` on all 24 cl.bdl materials. (An earlier
+    /// version of this comment claimed `PREV/REG0/REG1/REG2`; reading it that
+    /// way is silent, since it degenerates the toon materials' stage 0 into
+    /// `lerp(white, white, ramp)` and the cel bands just vanish.)
+    ///
+    /// The konst path has no such shift: `loadTevKColor` is
+    /// `J3DGDSetTevKColor(GXTevKColorID(reg), …)`.
     pub reg_colors: Vec<Option<[i16; 4]>>,
     /// Per-stage konst color/alpha selects (raw GX values), 16 slots.
     pub kcsels: Vec<u8>,

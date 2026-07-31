@@ -151,8 +151,11 @@ trivially to uniform arrays.
   controls. `scripts/headless-sweep.sh` exercises teardown on every example, so
   this check is automated rather than merely automatable. (phase_04, phase_05,
   now closed.)
-- **`color_write` is plumbed and unit-tested but has no runtime test
-  object** — first real exercise is the P9 eye trick. (phase_05.)
+- ~~**`color_write` is plumbed and unit-tested but has no runtime test
+  object**~~ — **CLOSED by P9** ([`phase_09_eyes.md`](phase_09_eyes.md)): the
+  eye/brow mask and erase passes draw with `[false, false, false, true]` and
+  every other material with `[true, true, true, false]`, which is its first
+  runtime exercise. (phase_05.)
 - ~~**`uint4`/`UVec4` uniform codegen unproven**~~ — proven by the §1
   mini-phase (`0d08a7d`): bare `uint4`/`int4` fields have committed
   test-shader coverage (std140_arrays' `flags`/`bias`) and passed the
@@ -187,26 +190,80 @@ trivially to uniform arrays.
   converter gate, the `tev_pack` unit tests and the in-example debug modes.
   Two things therefore ship reasoned rather than measured, and this is the
   entry that owns them: the **S10 clamp semantics** (master plan risk #6 — the
-  software renderer is the only literal reference) and the exact daytime
-  **`dKy_tevstr_c` light/ambient values** (risk #8 — dolphin-memory-engine
-  reads them from emulated RAM). Also noted: mainline Dolphin has no
+  software renderer is the only literal reference) and ~~the exact daytime
+  `dKy_tevstr_c` light/ambient values (risk #8 — dolphin-memory-engine reads
+  them from emulated RAM)~~. Also noted: mainline Dolphin has no
   per-TEV-stage intermediate dump either, so stage-level debugging falls to the
-  optional CPU reference evaluator regardless. **Revisit when:** a specific
-  feature is genuinely in dispute between us and noclip, or the hand-tuned
-  lighting seeds become the thing blocking a color match. (tests.md §P8;
-  phase_00; phase_08.)
+  optional CPU reference evaluator regardless.
+
+  **Risk #8 came off this list on 2026-07-27, and the premise was wrong.**
+  Nothing about the lighting needed emulated RAM. The light *colors* are
+  constants in the decomp — one channel per light, red for the diffuse ramp axis
+  and green for the eflight (`d_kankyo.cpp:1545-1547`, `:2557-2559`) — and the
+  stage-0 lerp endpoints are static stage data, read straight off the disc by
+  `scripts/link_env_colors.py` through the same `dtk vfs cp` path
+  `scripts/extract_link.sh` already used. dolphin-memory-engine would have been
+  the harder route to values that were sitting in a `.dzs`. Only S10 clamp
+  semantics still wants Dolphin.
+
+  **Revisit when:** a specific feature is genuinely in dispute between us and
+  noclip. (tests.md §P8; phase_00; phase_08.)
 - **toon_link is not CI-verifiable** — assets are machine-local
   (gitignored, disc-image-derived); the example bails without them, so the
   validation sweep's toon_link line only means something on a machine where
   `just convert-link` has run. (phase_06 risk #6.)
-- **P7's runtime gates were never run** — the phase was implemented in a
-  headless container (no video device, no converted assets), so the
-  textured render, UV-vs-noclip comparison, alpha-cutout edges, draw-order
-  and `depth_write` effects, validation sweep, hot reload and VMA check are
-  all outstanding. Highest-value one is the **numeric gamma check**: it is
-  the designated gate for the sRGB transfer *direction*, which the plan
-  warns is the easiest thing in the phase to get backwards, and it is
-  currently only reasoned about. (phase_07 Recorded facts.)
+- ~~**P7's runtime gates were never run**~~ — **run 2026-07-27** at the start of
+  P8, on the development machine with a real GPU and the converted assets
+  present. **No code change was needed.** The headline result is the one this
+  entry called highest-value: the **numeric gamma check passes with 0 LSB error
+  on four distinct colors** (the on-screen tunic reads `(90,178,74)`, byte-
+  identical to `34_linktexS3TC.png`'s dominant color; "no transform" and
+  "encode instead of decode" would imply source colors 674 and 9290 squared-
+  distance away). So the sRGB transfer direction — the thing phase_07 warned
+  was easiest to get backwards and had only reasoned about — is now measured.
+  Also passed: texture load (7 of 41), draw-order relocation of batches 16/23,
+  per-material cull, sweep 16/16, hot reload across 24 pipelines with raster
+  state preserved, and a clean close with no VMA leak (done via a real
+  `WM_DELETE_WINDOW`, not SIGTERM, so `Drop` actually ran).
+  **One gate is blocked rather than passing**, and it is worth knowing about
+  because it reads as a bug: an opaque black rectangle surrounds each eye and
+  brow. Traced end to end — `38_eyeh.1.png` is `(0,0,0,0)` over 7703 of 9216
+  pixels, and `eyeLdamB` (`alpha_compare = Always 0`, `blend = None_` → opaque)
+  draws last of the eyeL group, so it paints that black quad. That is the
+  missing BTP frame animation plus P9's deferred `DstAlpha` eye pass, not a P7
+  alpha-compare defect; the materials that *do* carry a cutout compare discard
+  correctly. It will persist through P8.
+  *(P9 correction, [`phase_09_eyes.md`](phase_09_eyes.md): the observation is
+  right, the attribution is wrong. BTP is not implicated — the twelve decal
+  batches are 3 passes × 4 features that the game also draws every frame — and
+  `DstAlpha` was only half the fix. `eyeLdamB` runs `colorUpdate = 0` on
+  hardware; drawing it with color writes on is what painted the quad. **Fixed
+  in P9.**)*
+  The remaining piece is the **formal per-feature noclip side-by-side**, folded
+  into P8's since it uses the same P6 camera angles. (phase_07 Recorded facts,
+  second block.)
+- **A runtime-verification *recipe* discovered while doing the above — recorded
+  prose, NOT committed tooling.** Nothing from this entry exists on disk:
+  `scripts/` contains no capture script and the justfile has no recipe for one,
+  so this has to be re-derived from the description below every time it is
+  needed. Committing it under `scripts/` with a justfile recipe is itself open
+  work, and until that happens no plan should assume a capture harness is on
+  hand. (This entry previously read "Reusable runtime-verification tooling",
+  which misled P9 planning into scheduling verification against a script that
+  does not exist. Compare §5's Dolphin entry, which correctly says
+  `link-dolphin-refs` "does not exist yet".)
+
+  The recipe: this machine is Wayland/COSMIC, so the X11 root is black and
+  `ffmpeg x11grab` captures nothing. What does work: `cosmic-screenshot
+  --interactive=false --modal=false --notify=false -s DIR` for frames, and
+  python-xlib `XTEST fake_input` against a window located by `WM_NAME` (with the
+  example run under `SDL_VIDEODRIVER=x11`) for keystrokes — verified by driving
+  the debug-mode and isolation keys and observing the render change. Together
+  they make the 24-material isolation sweep and the debug-mode sweep scriptable
+  rather than manual, which is what P8's verification leaned on. Note this is a
+  *screenshot* path, not the in-renderer readback that
+  [`../offscreen_testing.md`](../offscreen_testing.md) plans; it is good enough
+  to compare flat interior texels numerically but not to diff whole frames.
 
 ## 5b. ~~Codegen determinism~~ — DONE
 
@@ -273,12 +330,23 @@ Original entry preserved below.
 ## 6. Doc reconciliation
 
 - ~~**Where does `tev_ir.rs` land?**~~ **Answered by
-  [`phase_08.md`](phase_08.md) decision 1: P8.** phase_02's "Out of scope"
-  said the TevMaterialDesc IR is built in *P6*; the master plan §6 puts the
-  full interpreter + final subset gate in *P8*, and P6 as implemented builds
-  no TEV code. P8 owns it, as a **validation-only** converter module — it
-  changes no manifest bytes, so `scripts/link_converted.sha256` is its own
-  correctness gate. It also has to live converter-side rather than in the
-  example, because three of the fields the gate must assert on
-  (`TexMatrix::projection`/`map_mode`/`is_maya`, `fog`, `indirect`) are parsed
-  from MAT3 but dropped before the manifest.
+  [`phase_08.md`](phase_08.md) decision 1: P8, and now shipped there.**
+  phase_02's "Out of scope" said the TevMaterialDesc IR is built in *P6*; the
+  master plan §6 puts the full interpreter + final subset gate in *P8*, and P6
+  as implemented builds no TEV code. P8 owns it, as a **validation-only**
+  converter module — it changes no manifest bytes, and
+  `scripts/link_converted.sha256` staying byte-identical was its correctness
+  gate (it did). It also has to live converter-side rather than in the example,
+  because several of the fields the gate must assert on
+  (`TexMatrix::projection`/`map_mode`/`is_maya`, `fog`, `indirect`,
+  post-texgens, post-texmatrices) are parsed from MAT3 but dropped before the
+  manifest.
+
+  Two things the answer did not anticipate. **The gate has to run earlier than
+  "before `output::build`"** — `main.rs` writes the textures, the standalone
+  BTIs and `mat3_dump.txt` before `pose::bake`, so it runs right after the
+  `--dump-*` early returns instead (which also keeps `--dump-mat3` usable for
+  diagnosing whatever it rejected). And **the gate does not remove the need for
+  a library-side check**: an example loads whatever manifest is on disk, which
+  may predate the gate, so `src/tev_pack.rs` re-validates every byte on its way
+  to the GPU. The two overlap on purpose; what they must not do is disagree.

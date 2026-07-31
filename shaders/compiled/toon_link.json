@@ -103,11 +103,247 @@
             }
           },
           {
+            "kind": "struct",
+            "fieldName": "tev",
+            "binding": {
+              "kind": "uniform",
+              "offset": 192,
+              "size": 1328
+            },
+            "structType": {
+              "typeName": "TevParams",
+              "fields": [
+                {
+                  "kind": "array",
+                  "fieldName": "stageColorIn",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 128
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 8,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "stageColorOp",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 128,
+                    "size": 128
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 8,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "stageAlphaIn",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 256,
+                    "size": 128
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 8,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "stageAlphaOp",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 384,
+                    "size": 128
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 8,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "stageDest",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 512,
+                    "size": 128
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 8,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "stageOrder",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 640,
+                    "size": 128
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 8,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "stageSwap",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 768,
+                    "size": 128
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 8,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "swapTable",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 896,
+                    "size": 64
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 4,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "texgen",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 960,
+                    "size": 32
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 2,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "texgenMtx",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 992,
+                    "size": 64
+                  },
+                  "elementScalarType": "float32",
+                  "elementCount": 4,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "konst",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 1056,
+                    "size": 64
+                  },
+                  "elementScalarType": "float32",
+                  "elementCount": 4,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "reg",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 1120,
+                    "size": 64
+                  },
+                  "elementScalarType": "float32",
+                  "elementCount": 4,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "lightDir",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 1184,
+                    "size": 32
+                  },
+                  "elementScalarType": "float32",
+                  "elementCount": 2,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "lightColor",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 1216,
+                    "size": 32
+                  },
+                  "elementScalarType": "float32",
+                  "elementCount": 2,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "array",
+                  "fieldName": "chanControl",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 1248,
+                    "size": 32
+                  },
+                  "elementScalarType": "uint32",
+                  "elementCount": 2,
+                  "elementStride": 16
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "chanMatColor",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 1280,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "chanAmbColor",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 1296,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "control",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 1312,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "uint32"
+                  }
+                }
+              ]
+            }
+          },
+          {
             "kind": "vector",
             "fieldName": "alphaCompare",
             "binding": {
               "kind": "uniform",
-              "offset": 192,
+              "offset": 1520,
               "size": 16
             },
             "elementCount": 4,
@@ -121,7 +357,7 @@
             "fieldName": "alphaCompareOp",
             "binding": {
               "kind": "uniform",
-              "offset": 208,
+              "offset": 1536,
               "size": 4
             },
             "scalarType": "uint32"
@@ -131,7 +367,7 @@
             "fieldName": "debugMode",
             "binding": {
               "kind": "uniform",
-              "offset": 212,
+              "offset": 1540,
               "size": 4
             },
             "enumType": {
@@ -139,7 +375,7 @@
               "tagType": "uint32",
               "cases": [
                 {
-                  "name": "Albedo",
+                  "name": "FinalTev",
                   "value": 0
                 },
                 {
@@ -151,8 +387,32 @@
                   "value": 2
                 },
                 {
-                  "name": "AlbedoAlpha",
+                  "name": "TevAlpha",
                   "value": 3
+                },
+                {
+                  "name": "RasterColor0",
+                  "value": 4
+                },
+                {
+                  "name": "Texgen1Coord",
+                  "value": 5
+                },
+                {
+                  "name": "RawTex0",
+                  "value": 6
+                },
+                {
+                  "name": "RawTex1",
+                  "value": 7
+                },
+                {
+                  "name": "ChannelPerPixel",
+                  "value": 8
+                },
+                {
+                  "name": "IdentityTexMtx",
+                  "value": 9
                 }
               ]
             }
@@ -231,7 +491,7 @@
         "binding": {
           "kind": "varyingInput",
           "index": 0,
-          "count": 2
+          "count": 4
         },
         "typeName": "FragVertex",
         "fields": [
@@ -272,6 +532,34 @@
               "kind": "scalar",
               "scalarType": "float32"
             }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "color0",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 2,
+              "count": 1
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "texcoord01",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 3,
+              "count": 1
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
           }
         ]
       }
@@ -286,21 +574,21 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 224
+            "size": 1552
           },
           {
             "binding": 1,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 224
+            "size": 1552
           },
           {
             "binding": 2,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 224
+            "size": 1552
           }
         ]
       }

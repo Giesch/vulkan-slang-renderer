@@ -11,6 +11,8 @@
   - [ ] pick up tech_debt.md tasks
   - [ ] roc platform (after render graph)
   - [ ] BDA slices; then sparse sets?
+  - [ ] add an immutable bda buffer variant with no duplication
+    ie, don't need pipelined triple-buffering if it's always the same
 
 - [-] work through the issues in bda_footguns.md
   then consider the api change below if necessary
@@ -123,6 +125,11 @@
 
 * Next
 - [ ] check if the different drop helpers for buffers are used/needed
+
+- [ ] re-confirm the build on windows
+  - [ ] run the examples
+  - [ ] make sure the slang build still works
+  - [ ] get the unit tests working
 
 - [ ] reconsider FLAME GPU-based render graph
   - pipelined compute was removed 2026-07-28 for want of a measurable win.

@@ -3365,6 +3365,52 @@ fn vk_color_write_mask(color_write: [bool; 4]) -> vk::ColorComponentFlags {
     mask
 }
 
+/// The blend half of [`vk::PipelineColorBlendAttachmentState`], split out of
+/// `create_graphics_pipeline` so it is testable without a live device — the
+/// same shape as [`vk_cull_mode`] / [`vk_depth_compare`] / [`vk_color_write_mask`].
+///
+/// The blend op is always ADD; no [`BlendMode`] needs GX's subtract mode yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VkBlendState {
+    enable: bool,
+    src_color: vk::BlendFactor,
+    dst_color: vk::BlendFactor,
+    src_alpha: vk::BlendFactor,
+    dst_alpha: vk::BlendFactor,
+}
+
+/// The factors are ignored when `enable` is false; the disabled case carries the
+/// SRC_ALPHA/ONE_MINUS_SRC_ALPHA pair that was hardcoded before raster state
+/// became configurable, so disabling stays a pure no-op.
+///
+/// NOTE the match is deliberately exhaustive with no `_` arm: this is the one
+/// place a new [`BlendMode`] variant must be a compile error rather than a
+/// silently unblended pipeline.
+fn vk_blend_state(blend: BlendMode) -> VkBlendState {
+    const ALPHA: VkBlendState = VkBlendState {
+        enable: true,
+        src_color: vk::BlendFactor::SRC_ALPHA,
+        dst_color: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        src_alpha: vk::BlendFactor::SRC_ALPHA,
+        dst_alpha: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+    };
+
+    match blend {
+        BlendMode::Alpha => ALPHA,
+        BlendMode::DstAlpha => VkBlendState {
+            enable: true,
+            src_color: vk::BlendFactor::DST_ALPHA,
+            dst_color: vk::BlendFactor::ONE_MINUS_DST_ALPHA,
+            src_alpha: vk::BlendFactor::DST_ALPHA,
+            dst_alpha: vk::BlendFactor::ONE_MINUS_DST_ALPHA,
+        },
+        BlendMode::Opaque => VkBlendState {
+            enable: false,
+            ..ALPHA
+        },
+    }
+}
+
 fn create_graphics_pipeline(
     device: &ash::Device,
     color_format: vk::Format,
@@ -3426,14 +3472,15 @@ fn create_graphics_pipeline(
         .rasterization_samples(msaa_samples);
 
     // color blend per attached framebuffer
+    let blend = vk_blend_state(raster_state.blend);
     let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
-        .blend_enable(raster_state.blend == BlendMode::Alpha)
+        .blend_enable(blend.enable)
         .color_blend_op(vk::BlendOp::ADD)
         .alpha_blend_op(vk::BlendOp::ADD)
-        .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-        .src_alpha_blend_factor(vk::BlendFactor::SRC_ALPHA)
-        .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .src_color_blend_factor(blend.src_color)
+        .dst_color_blend_factor(blend.dst_color)
+        .src_alpha_blend_factor(blend.src_alpha)
+        .dst_alpha_blend_factor(blend.dst_alpha)
         .color_write_mask(vk_color_write_mask(raster_state.color_write));
 
     let color_attachments = [color_blend_attachment];
@@ -5581,8 +5628,8 @@ mod tests {
     use ash::vk;
 
     use super::{
-        BlendMode, CullMode, DepthCompare, RasterState, index_range_in_bounds, vk_color_write_mask,
-        vk_cull_mode, vk_depth_compare,
+        BlendMode, CullMode, DepthCompare, RasterState, VkBlendState, index_range_in_bounds,
+        vk_blend_state, vk_color_write_mask, vk_cull_mode, vk_depth_compare,
     };
 
     #[test]
@@ -5631,6 +5678,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn blend_mode_mapping() {
+        use vk::BlendFactor as F;
+
+        // the renderer's original hardcoded blend
+        assert_eq!(
+            vk_blend_state(BlendMode::Alpha),
+            VkBlendState {
+                enable: true,
+                src_color: F::SRC_ALPHA,
+                dst_color: F::ONE_MINUS_SRC_ALPHA,
+                src_alpha: F::SRC_ALPHA,
+                dst_alpha: F::ONE_MINUS_SRC_ALPHA,
+            }
+        );
+
+        // GX_BL_DSTALPHA / GX_BL_INVDSTALPHA, on color and alpha alike (the eye
+        // composite pass) -- never SRC_ALPHA, which is the bug this guards
+        assert_eq!(
+            vk_blend_state(BlendMode::DstAlpha),
+            VkBlendState {
+                enable: true,
+                src_color: F::DST_ALPHA,
+                dst_color: F::ONE_MINUS_DST_ALPHA,
+                src_alpha: F::DST_ALPHA,
+                dst_alpha: F::ONE_MINUS_DST_ALPHA,
+            }
+        );
+
+        // Opaque disables blending, and the inert factors it still carries must
+        // stay the pre-raster-state hardcoded pair so disabling is a pure no-op
+        assert_eq!(
+            vk_blend_state(BlendMode::Opaque),
+            VkBlendState {
+                enable: false,
+                ..vk_blend_state(BlendMode::Alpha)
+            }
+        );
+    }
+
     /// The default must reproduce the pipeline state that was hardcoded in
     /// create_graphics_pipeline before raster state became configurable.
     #[test]
@@ -5638,7 +5725,11 @@ mod tests {
         let default = RasterState::default();
 
         assert_eq!(vk_cull_mode(default.cull), vk::CullModeFlags::BACK);
-        assert_eq!(default.blend, BlendMode::Alpha); // blend_enable(true)
+        assert_eq!(
+            vk_blend_state(default.blend),
+            vk_blend_state(BlendMode::Alpha)
+        );
+        assert!(vk_blend_state(default.blend).enable);
         assert_eq!(
             vk_color_write_mask(default.color_write),
             vk::ColorComponentFlags::RGBA

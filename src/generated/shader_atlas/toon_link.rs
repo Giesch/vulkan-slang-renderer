@@ -11,6 +11,7 @@ use facet::Facet;
 use serde::Serialize;
 
 pub use super::mvp::MVPMatrices;
+pub use super::tev::TevParams;
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -28,10 +29,16 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[allow(clippy::enum_variant_names)]
 pub enum DebugMode {
     #[default]
-    Albedo = 0,
+    FinalTev = 0,
     WorldNormals = 1,
     Uv0 = 2,
-    AlbedoAlpha = 3,
+    TevAlpha = 3,
+    RasterColor0 = 4,
+    Texgen1Coord = 5,
+    RawTex0 = 6,
+    RawTex1 = 7,
+    ChannelPerPixel = 8,
+    IdentityTexMtx = 9,
 }
 
 const _: () = assert!(std::mem::size_of::<DebugMode>() == 4);
@@ -51,10 +58,16 @@ impl TryFrom<u32> for DebugMode {
 
     fn try_from(value: u32) -> Result<Self, u32> {
         match value {
-            0 => Ok(Self::Albedo),
+            0 => Ok(Self::FinalTev),
             1 => Ok(Self::WorldNormals),
             2 => Ok(Self::Uv0),
-            3 => Ok(Self::AlbedoAlpha),
+            3 => Ok(Self::TevAlpha),
+            4 => Ok(Self::RasterColor0),
+            5 => Ok(Self::Texgen1Coord),
+            6 => Ok(Self::RawTex0),
+            7 => Ok(Self::RawTex1),
+            8 => Ok(Self::ChannelPerPixel),
+            9 => Ok(Self::IdentityTexMtx),
             other => Err(other),
         }
     }
@@ -64,6 +77,7 @@ impl TryFrom<u32> for DebugMode {
 #[repr(C, align(16))]
 pub struct ToonLinkParams {
     pub mvp: MVPMatrices,
+    pub tev: TevParams,
     pub alpha_compare: glam::UVec4,
     pub alpha_compare_op: u32,
     pub debug_mode: DebugMode,
@@ -71,14 +85,16 @@ pub struct ToonLinkParams {
 }
 
 impl GPUWrite for ToonLinkParams {}
-const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 224);
+const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 1552);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
-const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare) == 192);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, tev) == 192);
+const _: () = assert!(std::mem::size_of::<TevParams>() == 1328);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare) == 1520);
 const _: () = assert!(std::mem::size_of::<glam::UVec4>() == 16);
-const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare_op) == 208);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare_op) == 1536);
 const _: () = assert!(std::mem::size_of::<u32>() == 4);
-const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 212);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 1540);
 const _: () = assert!(std::mem::size_of::<DebugMode>() == 4);
 
 #[derive(Debug, Clone, Copy, Serialize)]

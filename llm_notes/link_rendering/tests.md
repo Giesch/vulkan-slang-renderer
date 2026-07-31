@@ -39,7 +39,15 @@ Recurring external references, in rough order of automation strength:
   automated oracle](#dolphin-as-an-automated-oracle) below: headless FIFO-log
   replay for golden reference frames, automated texture dumping, a
   software-renderer tiebreaker for TEV semantics, and runtime RAM extraction
-  via dolphin-memory-engine + tww decomp symbols.
+  via dolphin-memory-engine + tww decomp symbols. *None of it has been set up,
+  and after P8 the software-renderer tiebreaker (risk #6) is the only remaining
+  thing it would buy.*
+- **The `../tww` decomp itself** — added to this list after P8, where it did
+  the work Dolphin was scoped for. Reading it settled the light model, the
+  attenuation coefficients and the per-frame TEV register overrides directly,
+  and it is grep-able rather than needing a running emulator. Reach for it
+  before the emulator whenever the question is "what does the game *set*", as
+  opposed to "what did this frame *compute*".
 - **Our own repo machinery** — insta snapshot tests (already the house style);
   the converter's internal invariant checks, which run against the *real*
   356 KiB file on every conversion (tests with a fixture we never commit); and
@@ -90,13 +98,19 @@ against `Source/Core/UICommon/CommandLineParse.cpp`.
   implementation (slow, per-pixel exact). The tiebreaker when our shader,
   noclip, and Dolphin's hardware backends disagree — e.g. the S10 clamping
   edge cases of risk #6.
-- **Ground-truth lighting values** (risk #8): **dolphin-memory-engine**
-  (pip-installable Python module) reads/writes emulated RAM from outside the
-  process, and the tww decomp provides exact symbol addresses — so a small
-  script attached to Dolphin on noon-Outset reads Link's live
-  `dKy_tevstr_c` light/ambient colors directly, replacing hand-tuned seeds
-  with extracted constants. The same mechanism can *write* the time-of-day
-  variable to force noon before capturing the savestate/FIFO log.
+- ~~**Ground-truth lighting values** (risk #8)~~ — **no longer needed; risk #8
+  was closed without any of this on 2026-07-27.** The plan was:
+  dolphin-memory-engine (pip-installable) reads emulated RAM from outside the
+  process and the tww decomp gives exact symbol addresses, so a script attached
+  to Dolphin on noon-Outset could read Link's live `dKy_tevstr_c` colors and
+  even *write* the time-of-day variable to force noon first. It would have
+  worked, and it was the harder route to values that were sitting in plain
+  sight: the light colors are **constants in the decomp** (one channel per
+  light — red diffuse, green eflight) and the stage-0 lerp endpoints are
+  **static stage data on the disc**, read by `scripts/link_env_colors.py`
+  through the same `dtk vfs cp` path `extract_link.sh` already used. Kept here
+  as a live capability for anything genuinely runtime-only; see
+  [`risks.md`](risks.md) §8 for the trace.
 
 Not available: Dolphin has no per-TEV-stage intermediate dump in mainline
 (checked `VideoConfig.h`) — stage-level debugging stays with our optional CPU
@@ -251,24 +265,49 @@ TEV-interpreter bugs specifically — that was the point of the earlier gates.
 [`phase_08.md`](phase_08.md) decision 7). The savestate/`.dff` capture,
 `just link-dolphin-refs`, the FIFO analyzer and the software-renderer replay
 are an **optional escalation** owned by [`follow_up.md`](follow_up.md) §5,
-invoked only for a specific disputed feature. The cost is recorded honestly:
-the S10 clamp edge cases (risk #6) and the exact `dKy_tevstr_c` light values
-(risk #8) ship reasoned rather than measured.
+invoked only for a specific disputed feature. The cost was recorded honestly as
+two items shipping reasoned rather than measured — ~~the S10 clamp edge cases
+(risk #6) and the exact `dKy_tevstr_c` light values (risk #8)~~ — and **it
+turned out to be one.** Risk #8 was closed from the decomp and the disc instead
+(`risks.md` §8); risk #6 stands, and is the only thing here the software
+renderer would still settle.
 
 - **Structured side-by-side vs noclip**: same camera angles as P6; compare per
   feature (skin tone, tunic two-band boundary, hair highlight, eye whites)
   rather than gestalt.
-- **Light rotation** in the example: terminator bands must sweep smoothly and
-  stay *banded* — the sharpest test of the SRTG ramp path (risk #5). Prefer
-  adjudicating on band *structure*, which the hand-tuned light values do not
-  affect, over band *color*, which they do.
+- **Terminator sweep** in the example: the bands must sweep smoothly and stay
+  *banded* — the sharpest test of the SRTG ramp path (risk #5). ~~Light
+  rotation~~; as shipped the lights are fixed and the *model* spins under them,
+  as in the game, so this needs no keypress.
+  ~~Prefer adjudicating on band *structure*, which the hand-tuned light values
+  do not affect, over band *color*, which they do.~~ **That advice is obsolete
+  and now points the wrong way**: the light values are derived rather than
+  tuned (risk #8), so band *color* is once again real evidence, not a
+  known-unknown to be discounted.
+- **Eflight A/B** (`T` in the example): a sharper test of the same mechanism
+  than the sweep. Light 0 is red-only and light 1 green-only, so toggling the
+  eflight must light stage 2's additive highlight *and nothing else* — with it
+  off, the ramp's G axis must be dead.
 - **Only the lit materials may respond**: the 12 `lighting_enabled: false`
-  eye/brow decals have no SRTG texgen, so if they change under light rotation
-  the channel is leaking (phase_08 measured facts).
+  eye/brow decals have no SRTG texgen, so if they change as the model turns
+  under the light, the channel is leaking (phase_08 measured facts).
 - **Single-material isolation**: P7's Q/E/Space batch keys already are material
   isolation — batches and material slots are bijective — so a wrong material is
   inspected alone rather than through overdraw. P8 adds the stage equations to
   the printout for direct comparison against `mat3_dump.txt`.
+  *As run, this became fully mechanical rather than a per-material eyeball: the
+  window is driven through all 24 batches with synthetic keypresses, the
+  printouts captured from stdout, and each material's equation / order / texgen
+  lines diffed against the matching block of `mat3_dump.txt` — 24 compared, 0
+  mismatched. Comparing **printouts** is what makes this reliable; see the
+  screenshot caveat in [`follow_up.md`](follow_up.md) §5.*
+- **`mat3_dump.txt` is not a complete oracle for the konst path.** It renders
+  every konst input as a bare `KONST`, so it cannot distinguish K0 from K3_A —
+  which is exactly where phase_08's own worked example was wrong. The isolation
+  printout therefore annotates each stage with the *resolved* `kcsel`/`kasel`
+  and the swap-table contents, and `tev_pack`'s `ear_end_to_end` test asserts
+  the selectors rather than the resulting values (the two konst colors involved
+  are both white, so only the selector distinguishes them).
 - **Internal cross-checks that need no emulator**: the converter's subset gate
   (`tev_ir.rs`), the `tev_pack` unit tests, and the debug modes that expose
   `COLOR0` and the SRTG texcoord before the final image is judged.

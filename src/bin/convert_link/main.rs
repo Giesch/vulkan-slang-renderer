@@ -2,7 +2,10 @@
 //! P1: header/chunk-table validation + the canonical `--info` table.
 //! P2: TEX1/BTI texture decode → PNGs + standalone .bti re-emits, full MAT3
 //! parse with the canonical `--dump-mat3` table and mat3_dump.txt report.
-//! Plans: claude_notes/link_rendering/phase_01.md, phase_02.md
+//! P8: the TEV subset gate (`tev_ir`), which runs on every conversion and
+//! changes no output — so a material the shader cannot render never reaches the
+//! manifest.
+//! Plans: claude_notes/link_rendering/phase_01.md, phase_02.md, phase_08.md
 
 mod be;
 mod bmd;
@@ -10,6 +13,7 @@ mod bti;
 mod gx;
 mod output;
 mod pose;
+mod tev_ir;
 
 use std::path::{Path, PathBuf};
 
@@ -77,6 +81,13 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // The TEV subset gate, before the first file is written: a material the
+    // interpreter cannot render must never reach the manifest. Validation-only,
+    // so no output byte depends on it — `scripts/link_converted.sha256` staying
+    // unchanged is the proof. It runs *after* the dump modes return, so
+    // `--dump-mat3` remains usable for diagnosing whatever it rejected.
+    let tev_descs = tev_ir::describe_all(&model.mat3).with_context(|| "TEV subset gate")?;
+
     let tex_dir = out_dir.join("tex");
     bmd::tex1::emit(&model.tex1, &tex_dir)
         .with_context(|| format!("emitting textures to {}", tex_dir.display()))?;
@@ -94,10 +105,12 @@ fn main() -> Result<()> {
 
     let tris = converted.indices.len() / 3;
     eprintln!(
-        "convert_link: {} TEX1 textures + {} standalone, {} materials",
+        "convert_link: {} TEX1 textures + {} standalone, {} materials \
+         ({} passed the TEV subset gate)",
         model.tex1.entries.len(),
         STANDALONE_BTIS.len(),
         model.mat3.materials.len(),
+        tev_descs.len(),
     );
     eprintln!(
         "convert_link: baked {} vertices, {} triangles, {} batches \

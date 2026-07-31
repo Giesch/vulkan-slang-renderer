@@ -182,6 +182,16 @@ pub(super) struct RendererPipeline {
 pub enum BlendMode {
     /// SRC_ALPHA / ONE_MINUS_SRC_ALPHA with BlendOp::ADD, for color and alpha
     Alpha,
+    /// DST_ALPHA / ONE_MINUS_DST_ALPHA with BlendOp::ADD, for color and alpha —
+    /// GX's `GX_BL_DSTALPHA` / `GX_BL_INVDSTALPHA`. GX applies the blend
+    /// expression to alpha as well as color, so both pairs match.
+    ///
+    /// Only meaningful when something earlier in the *same* render pass has
+    /// written destination alpha. The color attachment is cleared to alpha 1.0,
+    /// so against an untouched framebuffer this reduces to a plain source
+    /// write; pair it with a `color_write`-masked pass that deposits the alpha
+    /// first. See `llm_notes/link_rendering/phase_09_eyes.md`.
+    DstAlpha,
     /// blending disabled; the fragment's alpha is ignored
     Opaque,
 }
