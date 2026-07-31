@@ -405,7 +405,9 @@ future non-shader command groups.
     the check_crate fixture test (check_crate must not depend on mltrs, which would drag
     sdl3/slang into a `cargo check` fixture)
   - `--no-rust` replaces the `GENERATE_RUST_SOURCE` env var (inverted: rust generation is now the
-    default; compile-only is the flag)
+    default; compile-only is the flag) *(update 2026-07: the env var was since removed from this
+    repo; `prepare_shaders` now always generates rust source, matching the default sketched here.
+    No `--no-rust` flag exists yet — only the in-process test path uses compile-only)*
   - writes `<compiled>/*.{vert,frag,comp}.spv` + `*.json`, and (unless `--no-rust`)
     `<rust-dir>/generated.rs` + `<rust-dir>/generated/shader_atlas{.rs,/*.rs}`
   - **improvement while here**: delete `<rust-dir>/generated/shader_atlas/` and stale `<compiled>`

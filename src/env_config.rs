@@ -1,3 +1,5 @@
+// TODO review these docs?
+
 //! Every environment variable this process reads, parsed once at startup.
 //!
 //! Nothing outside [`EnvConfig::from_env`] may call `std::env::var`. A variable
@@ -28,9 +30,6 @@ pub struct EnvConfig {
     /// builds only, like validation itself.
     pub inject_validation_fault: bool,
 
-    /// `GENERATE_RUST_SOURCE` — whether `prepare_shaders` writes `src/generated`.
-    pub generate_rust_source: bool,
-
     /// `RUST_LOG` — consumed by `pretty_env_logger`, captured for reporting.
     ///
     /// Not load-bearing: validation counting keys off message severity, not the
@@ -44,7 +43,6 @@ impl EnvConfig {
         Self {
             sweep: flag("VKR_SWEEP"),
             inject_validation_fault: flag("VKR_INJECT_VALIDATION_FAULT"),
-            generate_rust_source: flag("GENERATE_RUST_SOURCE"),
             rust_log: std::env::var("RUST_LOG").ok(),
         }
     }
@@ -64,9 +62,6 @@ pub mod exit_code {
 }
 
 /// Unset, empty and `"false"` are false; anything else is true.
-///
-/// Matches what `GENERATE_RUST_SOURCE` has always accepted, so `just shaders`
-/// keeps working unchanged.
 fn flag(name: &str) -> bool {
     match std::env::var(name) {
         Err(_) => false,

@@ -49,7 +49,7 @@ release: shaders
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
 [unix]
 shaders:
-    GENERATE_RUST_SOURCE=true cargo run --bin prepare_shaders
+    cargo run --bin prepare_shaders
     cargo fmt
 
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
@@ -57,7 +57,6 @@ shaders:
 shaders:
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      $env:GENERATE_RUST_SOURCE='true'; \
       cargo run --bin prepare_shaders; \
       cargo fmt; \
     }
