@@ -225,9 +225,8 @@ impl DrawGroups {
     }
 
     fn print_summary(&self, manifest: &Manifest) {
-        let raw = |batches: &[BatchIndex]| -> Vec<usize> {
-            batches.iter().map(|b| b.raw()).collect()
-        };
+        let raw =
+            |batches: &[BatchIndex]| -> Vec<usize> { batches.iter().map(|b| b.raw()).collect() };
         println!(
             "toon_link: {} batches, {} materials, {} vertices\n\
              draw order (batch idx):\n\
@@ -330,6 +329,7 @@ fn alpha_compare(material: &MaterialEntry) -> AlphaCompare {
         comp1,
         ref1,
         op,
+        _padding_0: [0; 12],
     }
 }
 
@@ -561,8 +561,7 @@ fn read_records(path: &Path, count: u32, stride: usize, what: &str) -> anyhow::R
 
 fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<Vertex>> {
     let bytes = read_records(path, expected_count, VERTEX_STRIDE, "vertices")?;
-    let read_f32 =
-        |b: &[u8], i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
+    let read_f32 = |b: &[u8], i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
     let vertices = bytes
         .chunks_exact(VERTEX_STRIDE)
         .map(|v| Vertex {
@@ -590,7 +589,10 @@ fn validate_manifest(
     vertices: &[Vertex],
     indices: &[u32],
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(indices.len() % 3 == 0, "index count not a triangle list");
+    anyhow::ensure!(
+        indices.len().is_multiple_of(3),
+        "index count not a triangle list"
+    );
     // the debug window's isolation slider indexes this
     anyhow::ensure!(!manifest.batches.is_empty(), "manifest has no batches");
     let max_index = indices.iter().copied().max().unwrap_or(0);

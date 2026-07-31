@@ -339,35 +339,170 @@
             }
           },
           {
-            "kind": "vector",
+            "kind": "struct",
             "fieldName": "alphaCompare",
             "binding": {
               "kind": "uniform",
               "offset": 1520,
-              "size": 16
+              "size": 32
             },
-            "elementCount": 4,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "uint32"
+            "structType": {
+              "typeName": "AlphaCompare",
+              "fields": [
+                {
+                  "kind": "enum",
+                  "fieldName": "comp0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 4
+                  },
+                  "enumType": {
+                    "typeName": "GXCompare",
+                    "tagType": "uint32",
+                    "cases": [
+                      {
+                        "name": "Never",
+                        "value": 0
+                      },
+                      {
+                        "name": "Less",
+                        "value": 1
+                      },
+                      {
+                        "name": "Equal",
+                        "value": 2
+                      },
+                      {
+                        "name": "LessEqual",
+                        "value": 3
+                      },
+                      {
+                        "name": "Greater",
+                        "value": 4
+                      },
+                      {
+                        "name": "NotEqual",
+                        "value": 5
+                      },
+                      {
+                        "name": "GreaterEqual",
+                        "value": 6
+                      },
+                      {
+                        "name": "Always",
+                        "value": 7
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "ref0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 4,
+                    "size": 4
+                  },
+                  "scalarType": "uint32"
+                },
+                {
+                  "kind": "enum",
+                  "fieldName": "comp1",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 4
+                  },
+                  "enumType": {
+                    "typeName": "GXCompare",
+                    "tagType": "uint32",
+                    "cases": [
+                      {
+                        "name": "Never",
+                        "value": 0
+                      },
+                      {
+                        "name": "Less",
+                        "value": 1
+                      },
+                      {
+                        "name": "Equal",
+                        "value": 2
+                      },
+                      {
+                        "name": "LessEqual",
+                        "value": 3
+                      },
+                      {
+                        "name": "Greater",
+                        "value": 4
+                      },
+                      {
+                        "name": "NotEqual",
+                        "value": 5
+                      },
+                      {
+                        "name": "GreaterEqual",
+                        "value": 6
+                      },
+                      {
+                        "name": "Always",
+                        "value": 7
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "ref1",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "uint32"
+                },
+                {
+                  "kind": "enum",
+                  "fieldName": "op",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 4
+                  },
+                  "enumType": {
+                    "typeName": "GXAlphaOp",
+                    "tagType": "uint32",
+                    "cases": [
+                      {
+                        "name": "And",
+                        "value": 0
+                      },
+                      {
+                        "name": "Or",
+                        "value": 1
+                      },
+                      {
+                        "name": "Xor",
+                        "value": 2
+                      },
+                      {
+                        "name": "Xnor",
+                        "value": 3
+                      }
+                    ]
+                  }
+                }
+              ]
             }
-          },
-          {
-            "kind": "scalar",
-            "fieldName": "alphaCompareOp",
-            "binding": {
-              "kind": "uniform",
-              "offset": 1536,
-              "size": 4
-            },
-            "scalarType": "uint32"
           },
           {
             "kind": "enum",
             "fieldName": "debugMode",
             "binding": {
               "kind": "uniform",
-              "offset": 1540,
+              "offset": 1552,
               "size": 4
             },
             "enumType": {
@@ -574,21 +709,21 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 1552
+            "size": 1568
           },
           {
             "binding": 1,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 1552
+            "size": 1568
           },
           {
             "binding": 2,
             "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 1552
+            "size": 1568
           }
         ]
       }
