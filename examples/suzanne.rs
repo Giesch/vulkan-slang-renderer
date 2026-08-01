@@ -8,7 +8,7 @@ use vulkan_slang_renderer::renderer::{
     DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
     UniformBufferHandle,
 };
-use vulkan_slang_renderer::util::manifest_path;
+use vulkan_slang_renderer::manifest_path;
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
 use vulkan_slang_renderer::generated::shader_atlas::suzanne::*;
@@ -27,7 +27,7 @@ pub struct Suzanne {
 
 impl Suzanne {
     fn load_vertices() -> anyhow::Result<(Vec<Vertex>, Vec<u32>)> {
-        let file_path = manifest_path(["models", "suzanne", "suzanne.obj"]);
+        let file_path = manifest_path!["models", "suzanne", "suzanne.obj"];
 
         let (mut models, _materials) = tobj::load_obj(file_path, &tobj::GPU_LOAD_OPTIONS)?;
 
@@ -86,7 +86,7 @@ impl Game for Suzanne {
         let mut textures = Vec::new();
         for i in 0..3 {
             let file_name = format!("suzanne{i}.ktx2");
-            let file_path = manifest_path(["models", "suzanne", &file_name]);
+            let file_path = manifest_path!["models", "suzanne", file_name.as_str()];
             let ktx = load_ktx2(&file_path)?;
             let texture = renderer.create_texture_with_mips(
                 &ktx.source_file_name,

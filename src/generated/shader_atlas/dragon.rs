@@ -126,6 +126,10 @@ impl ShaderAtlasEntry for Shader {
         &self.reflection_json.source_file_name
     }
 
+    fn shaders_source_dir(&self) -> &'static std::path::Path {
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source"))
+    }
+
     fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
         vec![]
     }

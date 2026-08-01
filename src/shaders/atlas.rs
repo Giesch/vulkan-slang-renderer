@@ -12,6 +12,10 @@ pub trait ShaderAtlasEntry {
     // used in hot reload
     fn source_file_name(&self) -> &str;
 
+    /// dev only: absolute path to the slang source dir this entry was
+    /// generated from (baked in with the consuming crate's manifest dir)
+    fn shaders_source_dir(&self) -> &'static std::path::Path;
+
     // used in hot reload to detect interface changes that require a rebuild
     fn reflection_json(&self) -> &ReflectionJson;
 
@@ -42,6 +46,10 @@ pub struct PrecompiledShader {
 
 pub trait ComputeShaderAtlasEntry {
     fn source_file_name(&self) -> &str;
+
+    /// dev only: absolute path to the slang source dir this entry was
+    /// generated from (baked in with the consuming crate's manifest dir)
+    fn shaders_source_dir(&self) -> &'static std::path::Path;
     fn reflection_json(&self) -> &ComputeReflectionJson;
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
     fn precompiled_compute_shader(&self) -> PrecompiledShader;

@@ -20,6 +20,7 @@ use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, RasterState,
     Renderer, TextureFilter, UniformBufferHandle,
 };
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::util::load_image;
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
@@ -74,7 +75,7 @@ impl Game for SpriteBatch {
         let sprites_buffer = renderer.create_immutable_buffer::<Sprite>(sprites.len() as u32)?;
 
         let image_file_name = "ravioli_atlas.bmp";
-        let image = load_image(image_file_name)?;
+        let image = load_image(manifest_path!["textures", image_file_name])?;
         let texture = renderer.create_texture(image_file_name, &image, TextureFilter::Nearest)?;
 
         let resources = Resources {

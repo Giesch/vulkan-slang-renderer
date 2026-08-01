@@ -95,8 +95,12 @@ pub struct Renderer {
     width: f32,
     height: f32,
     total_frames: usize,
+    /// dev only: one watcher per shader source dir, created lazily as
+    /// pipelines are built (each generated atlas entry knows its own dir)
     #[cfg(debug_assertions)]
-    shader_changes: shader_watcher::ShaderChanges,
+    shader_watchers: Vec<shader_watcher::ShaderChanges>,
+    #[cfg(debug_assertions)]
+    watched_shader_dirs: std::collections::BTreeSet<std::path::PathBuf>,
     #[cfg(debug_assertions)]
     old_pipelines: Vec<(
         usize,
@@ -242,8 +246,6 @@ impl Renderer {
         max_msaa_samples: MaxMSAASamples,
     ) -> Result<Self, anyhow::Error> {
         let render_scale = render_scale.clamp(0.25, 1.0);
-        #[cfg(debug_assertions)]
-        let shader_changes = shader_watcher::watch()?;
 
         let (window_width, window_height) = window.size();
         let aspect_ratio = window_width as f32 / window_height as f32;
@@ -398,7 +400,9 @@ impl Renderer {
             height: window_height as f32,
             total_frames: 0,
             #[cfg(debug_assertions)]
-            shader_changes,
+            shader_watchers: vec![],
+            #[cfg(debug_assertions)]
+            watched_shader_dirs: Default::default(),
             #[cfg(debug_assertions)]
             old_pipelines: vec![],
             window: window.clone(),
@@ -960,10 +964,27 @@ impl Renderer {
         &mut self,
         config: PipelineConfig<V, D>,
     ) -> anyhow::Result<PipelineHandle<D>> {
+        #[cfg(debug_assertions)]
+        self.ensure_watching(config.shader.shaders_source_dir())?;
+
         let pipeline = self.init_pipeline(config)?;
         let handle = self.pipelines.add(pipeline);
 
         Ok(handle)
+    }
+
+    /// dev only: start watching a shader source dir the first time a pipeline
+    /// generated from it is created
+    #[cfg(debug_assertions)]
+    fn ensure_watching(&mut self, dir: &std::path::Path) -> anyhow::Result<()> {
+        if self.watched_shader_dirs.contains(dir) {
+            return Ok(());
+        }
+
+        self.shader_watchers.push(shader_watcher::watch(dir)?);
+        self.watched_shader_dirs.insert(dir.to_path_buf());
+
+        Ok(())
     }
 
     /// Create vertex and index buffers that can be shared by multiple
@@ -1013,6 +1034,9 @@ impl Renderer {
         &mut self,
         picking_config: PipelineConfig<V, DrawVertexCount>,
     ) -> anyhow::Result<PickingPipelineHandle> {
+        #[cfg(debug_assertions)]
+        self.ensure_watching(picking_config.shader.shaders_source_dir())?;
+
         // Lazily initialize picking resources on first use
         if self.picking.is_none() {
             self.picking = Some(PickingResources::init(
@@ -1118,6 +1142,9 @@ impl Renderer {
         &mut self,
         config: ComputePipelineConfig,
     ) -> anyhow::Result<PipelineHandle<Compute>> {
+        #[cfg(debug_assertions)]
+        self.ensure_watching(config.shader.shaders_source_dir())?;
+
         let pipeline_layout =
             ComputeShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
 
@@ -2455,7 +2482,10 @@ impl Renderer {
         }
 
         // recompile shaders if necessary
-        let edit_events = self.shader_changes.events()?;
+        let mut edit_events = vec![];
+        for watcher in &mut self.shader_watchers {
+            edit_events.extend(watcher.events()?);
+        }
         if !edit_events.is_empty() {
             info!("recompiling shaders...");
             for &graphics_index in graphics_pipeline_indices {
@@ -4983,7 +5013,10 @@ impl ShaderPipelineLayout {
             vertex_shader,
             fragment_shader,
             reflection_json,
-        } = shaders::dev_compile_slang_shaders(shader.source_file_name())?;
+        } = shaders::dev_compile_slang_shaders(
+            shader.source_file_name(),
+            shader.shaders_source_dir(),
+        )?;
 
         assert_shader_interface_unchanged(
             shader.reflection_json(),
@@ -5049,7 +5082,10 @@ impl ComputeShaderPipelineLayout {
         let shaders::ReflectedComputeShader {
             compute_shader,
             reflection_json,
-        } = shaders::dev_compile_slang_compute_shaders(shader.source_file_name())?;
+        } = shaders::dev_compile_slang_compute_shaders(
+            shader.source_file_name(),
+            shader.shaders_source_dir(),
+        )?;
 
         assert_shader_interface_unchanged(
             shader.reflection_json(),

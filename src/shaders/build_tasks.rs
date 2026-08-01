@@ -19,6 +19,10 @@ pub struct Config {
     pub shaders_source_dir: PathBuf,
     /// the directory to write shader spriv & json to
     pub compiled_shaders_dir: PathBuf,
+    /// the path prefix generated imports resolve the engine crate through:
+    /// `"crate"` when the generated code lives in the engine itself (or in a
+    /// stub crate like the check_crate fixture), `"mltrs"` for consumers
+    pub import_root: String,
 }
 
 const SHADER_FILE_SUFFIX: &str = ".shader.slang";
@@ -150,6 +154,7 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             let cross_imports = cross_module_imports(module_name, module, &shared_modules);
 
             let template = SharedModuleTemplate {
+                import_root: config.import_root.clone(),
                 module_doc_lines: vec![format!(
                     "shared types from slang module: {module_name}.slang"
                 )],
@@ -167,12 +172,12 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
 
         // Generate per-shader files with shared types filtered out
         for data in &graphics_data {
-            let file = render_graphics_shader_file(data, &shared_modules);
+            let file = render_graphics_shader_file(data, &shared_modules, &config.import_root);
             generated_source_files.push(file);
         }
 
         for data in &compute_data {
-            let file = render_compute_shader_file(data, &shared_modules);
+            let file = render_compute_shader_file(data, &shared_modules, &config.import_root);
             generated_source_files.push(file);
         }
 
@@ -433,6 +438,7 @@ fn collect_graphics_shader_data(
 fn render_graphics_shader_file(
     data: &GraphicsShaderData,
     shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
+    import_root: &str,
 ) -> GeneratedFile {
     let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
@@ -445,6 +451,7 @@ fn render_graphics_shader_file(
     )];
 
     let content = ShaderAtlasEntryModule {
+        import_root: import_root.to_string(),
         module_doc_lines,
         shared_module_imports,
         enum_defs: local.enum_defs,
@@ -477,6 +484,7 @@ struct ShaderAtlasModule {
 #[derive(Template)]
 #[template(path = "shader_atlas_entry.rs.askama", escape = "none")]
 struct ShaderAtlasEntryModule {
+    import_root: String,
     module_doc_lines: Vec<String>,
     shared_module_imports: Vec<SharedModuleImport>,
     enum_defs: Vec<GeneratedEnumDefinition>,
@@ -488,6 +496,7 @@ struct ShaderAtlasEntryModule {
 #[derive(Template)]
 #[template(path = "shader_compute_entry.rs.askama", escape = "none")]
 struct ShaderComputeEntryModule {
+    import_root: String,
     module_doc_lines: Vec<String>,
     shared_module_imports: Vec<SharedModuleImport>,
     enum_defs: Vec<GeneratedEnumDefinition>,
@@ -680,6 +689,7 @@ fn collect_compute_shader_data(
 fn render_compute_shader_file(
     data: &ComputeShaderData,
     shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
+    import_root: &str,
 ) -> GeneratedFile {
     let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
@@ -691,6 +701,7 @@ fn render_compute_shader_file(
     )];
 
     let content = ShaderComputeEntryModule {
+        import_root: import_root.to_string(),
         module_doc_lines,
         shared_module_imports,
         enum_defs: local.enum_defs,
@@ -1685,6 +1696,7 @@ fn cross_module_imports(
 #[derive(Template)]
 #[template(path = "shader_shared_module.rs.askama", escape = "none")]
 struct SharedModuleTemplate {
+    import_root: String,
     module_doc_lines: Vec<String>,
     cross_module_imports: Vec<SharedModuleImport>,
     enum_defs: Vec<GeneratedEnumDefinition>,
@@ -1731,6 +1743,7 @@ mod tests {
             rust_source_dir: tmp_dir_path.join("src"),
             shaders_source_dir: manifest_path(["shaders", "source"]),
             compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
+            import_root: "crate".to_string(),
         };
 
         write_precompiled_shaders(config).unwrap();
@@ -1762,6 +1775,7 @@ mod tests {
             rust_source_dir: tmp_dir_path.join("src"),
             shaders_source_dir: manifest_path(["shaders", "test"]),
             compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
+            import_root: "crate".to_string(),
         };
 
         write_precompiled_shaders(config).unwrap();
@@ -1978,6 +1992,7 @@ mod tests {
             rust_source_dir: tmp_dir_path.join("src"),
             shaders_source_dir: manifest_path(["shaders", "test"]),
             compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
+            import_root: "crate".to_string(),
         };
         let compiled_dir = config.compiled_shaders_dir.clone();
 

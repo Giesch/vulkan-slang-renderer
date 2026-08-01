@@ -122,8 +122,11 @@ fn prepare_reflected_shader(
 }
 
 #[cfg(debug_assertions)]
-pub fn dev_compile_slang_shaders(source_file_name: &str) -> anyhow::Result<ReflectedShader> {
-    prepare_reflected_shader(source_file_name, "shaders/source")
+pub fn dev_compile_slang_shaders(
+    source_file_name: &str,
+    search_path: &std::path::Path,
+) -> anyhow::Result<ReflectedShader> {
+    prepare_reflected_shader(source_file_name, search_path.to_str().unwrap())
 }
 
 fn prepare_reflected_compute_shader(
@@ -200,8 +203,9 @@ fn prepare_reflected_compute_shader(
 #[cfg(debug_assertions)]
 pub fn dev_compile_slang_compute_shaders(
     source_file_name: &str,
+    search_path: &std::path::Path,
 ) -> anyhow::Result<ReflectedComputeShader> {
-    prepare_reflected_compute_shader(source_file_name, "shaders/source")
+    prepare_reflected_compute_shader(source_file_name, search_path.to_str().unwrap())
 }
 
 pub fn reflect_shared_module_types(

@@ -17,6 +17,7 @@ pub struct PrecompiledShaders {
 
 pub trait ShaderAtlasEntry {
     fn source_file_name(&self) -> &str;
+    fn shaders_source_dir(&self) -> &'static std::path::Path;
     fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription>;
     fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription>;
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
@@ -27,6 +28,7 @@ pub trait ShaderAtlasEntry {
 
 pub trait ComputeShaderAtlasEntry {
     fn source_file_name(&self) -> &str;
+    fn shaders_source_dir(&self) -> &'static std::path::Path;
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
     fn precompiled_compute_shader(&self) -> PrecompiledShader;
     fn pipeline_layout(&self) -> &ReflectedPipelineLayout;

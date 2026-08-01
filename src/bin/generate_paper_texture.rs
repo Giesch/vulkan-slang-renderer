@@ -1,5 +1,5 @@
 use image::{GrayImage, Luma};
-use vulkan_slang_renderer::util::manifest_path;
+use vulkan_slang_renderer::manifest_path;
 
 const SIZE: u32 = 2048;
 
@@ -86,7 +86,7 @@ fn main() {
         }
     }
 
-    let path = manifest_path(["textures", "watercolor", "paper_height.png"]);
+    let path = manifest_path!["textures", "watercolor", "paper_height.png"];
     img.save(&path).expect("failed to save paper texture");
     println!("saved paper texture to {}", path.display());
 }

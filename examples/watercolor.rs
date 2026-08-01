@@ -26,7 +26,7 @@ use vulkan_slang_renderer::generated::shader_atlas::wc_gaussian_blur_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_pressure_jacobi_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_project_velocity_compute;
 use vulkan_slang_renderer::generated::shader_atlas::wc_update_velocity_compute;
-use vulkan_slang_renderer::util::manifest_path;
+use vulkan_slang_renderer::manifest_path;
 
 fn main() -> Result<(), anyhow::Error> {
     Watercolor::run()
@@ -1197,7 +1197,7 @@ impl Game for Watercolor {
 }
 
 fn load_paper_height_map(width: u32, height: u32) -> Vec<f32> {
-    let path = manifest_path(["textures", "watercolor", "paper_height.png"]);
+    let path = manifest_path!["textures", "watercolor", "paper_height.png"];
     let img = image::open(&path).expect("missing paper texture — run `just paper-texture`");
     let gray = img.to_luma8();
     let mut data = Vec::with_capacity((width * height) as usize);

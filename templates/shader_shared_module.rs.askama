@@ -11,7 +11,7 @@ use serde::Serialize;
 
 {# a module holding only enums has no GPUWrite impl to emit #}
 #[allow(unused_imports)]
-use crate::renderer::gpu_write::GPUWrite;
+use {{ import_root }}::renderer::gpu_write::GPUWrite;
 {% for import in cross_module_imports -%}
 use super::{{ import.module_name }}::{ {{- import.type_names|join(", ") -}} };
 {% endfor %}

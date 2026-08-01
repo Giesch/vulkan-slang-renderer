@@ -643,8 +643,8 @@ fn load_textures(
             textures.push(None);
             continue;
         }
-        // util::load_image hardcodes the textures/ dir, so read directly;
-        // entry.file is manifest-relative.
+        // entry.file is manifest-relative, and the per-entry context beats
+        // util::load_image's generic error message here
         let image = ImageReader::open(dir.join(&entry.file))
             .with_context(|| format!("opening texture {}", entry.file))?
             .decode()
