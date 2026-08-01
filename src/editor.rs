@@ -66,20 +66,17 @@ impl Checkbox {
     }
 }
 
-/// An RGB color edited via egui's color picker.
+/// An RGB color (no alpha) edited via egui's color picker.
 ///
-/// Stored as bytes, the way a GX color register holds it, so the widget reads
-/// the same as the `rgb8(...)` constants and the decomp they were copied from.
+/// Stored as bytes, so the widget reads the same as `rgb8(...)` constants.
 /// egui treats these as sRGB, which is the right space: the shader's final
 /// `srgbDecode` says the byte/255 values reaching it are gamma-encoded.
-///
-/// No alpha, deliberately — the GX color overrides this drives are RGB-only.
 #[derive(Clone, Debug, Facet)]
-pub struct ColorPicker {
+pub struct RGBPicker {
     pub rgb: [u8; 3],
 }
 
-impl ColorPicker {
+impl RGBPicker {
     pub fn new(rgb: [u8; 3]) -> Self {
         Self { rgb }
     }

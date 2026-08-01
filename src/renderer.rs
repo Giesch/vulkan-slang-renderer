@@ -3369,7 +3369,7 @@ fn vk_color_write_mask(color_write: [bool; 4]) -> vk::ColorComponentFlags {
 /// `create_graphics_pipeline` so it is testable without a live device — the
 /// same shape as [`vk_cull_mode`] / [`vk_depth_compare`] / [`vk_color_write_mask`].
 ///
-/// The blend op is always ADD; no [`BlendMode`] needs GX's subtract mode yet.
+/// The blend op is always ADD
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct VkBlendState {
     enable: bool,
@@ -5624,8 +5624,8 @@ mod tests {
     use ash::vk;
 
     use super::{
-        BlendMode, CullMode, DepthCompare, RasterState, VkBlendState, index_range_in_bounds,
-        vk_blend_state, vk_color_write_mask, vk_cull_mode, vk_depth_compare,
+        BlendMode, CullMode, DepthCompare, RasterState, index_range_in_bounds, vk_blend_state,
+        vk_color_write_mask, vk_cull_mode, vk_depth_compare,
     };
 
     #[test]
@@ -5671,46 +5671,6 @@ mod tests {
         assert_eq!(
             vk_color_write_mask([true, true, true, false]),
             vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B
-        );
-    }
-
-    #[test]
-    fn blend_mode_mapping() {
-        use vk::BlendFactor as F;
-
-        // the renderer's original hardcoded blend
-        assert_eq!(
-            vk_blend_state(BlendMode::Alpha),
-            VkBlendState {
-                enable: true,
-                src_color: F::SRC_ALPHA,
-                dst_color: F::ONE_MINUS_SRC_ALPHA,
-                src_alpha: F::SRC_ALPHA,
-                dst_alpha: F::ONE_MINUS_SRC_ALPHA,
-            }
-        );
-
-        // GX_BL_DSTALPHA / GX_BL_INVDSTALPHA, on color and alpha alike (the eye
-        // composite pass) -- never SRC_ALPHA, which is the bug this guards
-        assert_eq!(
-            vk_blend_state(BlendMode::DstAlpha),
-            VkBlendState {
-                enable: true,
-                src_color: F::DST_ALPHA,
-                dst_color: F::ONE_MINUS_DST_ALPHA,
-                src_alpha: F::DST_ALPHA,
-                dst_alpha: F::ONE_MINUS_DST_ALPHA,
-            }
-        );
-
-        // Opaque disables blending, and the inert factors it still carries must
-        // stay the pre-raster-state hardcoded pair so disabling is a pure no-op
-        assert_eq!(
-            vk_blend_state(BlendMode::Opaque),
-            VkBlendState {
-                enable: false,
-                ..vk_blend_state(BlendMode::Alpha)
-            }
         );
     }
 

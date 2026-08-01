@@ -1,7 +1,7 @@
 //! Auto-generated egui UI from facet reflection
 
 use crate::editor::{
-    Checkbox, ColorPicker, IntSlider, Label, RadioButton, Slider, pascal_to_display,
+    Checkbox, IntSlider, Label, RGBPicker, RadioButton, Slider, pascal_to_display,
     render_radio_group,
 };
 use egui::Ui;
@@ -12,7 +12,7 @@ enum FieldKind {
     Slider,
     IntSlider,
     Checkbox,
-    ColorPicker,
+    RGBPicker,
     RadioButton,
     Label,
     Collapsing,
@@ -34,8 +34,8 @@ fn classify_field(shape: &Shape) -> Option<FieldKind> {
         return Some(FieldKind::Checkbox);
     }
 
-    if shape.is_type::<ColorPicker>() {
-        return Some(FieldKind::ColorPicker);
+    if shape.is_type::<RGBPicker>() {
+        return Some(FieldKind::RGBPicker);
     }
 
     if shape.is_type::<RadioButton>() {
@@ -84,11 +84,11 @@ fn render_checkbox(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
     checkbox.render_ui(ui)
 }
 
-/// Render a ColorPicker wrapper type.
-fn render_color_picker(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
+/// Render an RGBPicker wrapper type.
+fn render_rgb_picker(ui: &mut Ui, mut poke: Poke<'_, '_>) -> bool {
     let color = poke
-        .get_mut::<ColorPicker>()
-        .expect("type mismatch: expected ColorPicker");
+        .get_mut::<RGBPicker>()
+        .expect("type mismatch: expected RGBPicker");
     color.render_ui(ui)
 }
 
@@ -157,7 +157,7 @@ pub fn render_facet_ui<'a, T: Facet<'a>>(ui: &mut Ui, value: &mut T) -> bool {
         FieldKind::Slider => render_slider(ui, poke),
         FieldKind::IntSlider => render_int_slider(ui, poke),
         FieldKind::Checkbox => render_checkbox(ui, poke),
-        FieldKind::ColorPicker => render_color_picker(ui, poke),
+        FieldKind::RGBPicker => render_rgb_picker(ui, poke),
         FieldKind::RadioButton => render_radio_button(ui, poke),
         FieldKind::Label => {
             render_label(ui, poke);
@@ -203,8 +203,8 @@ fn render_collapsing(ui: &mut Ui, mut poke_struct: PokeStruct<'_, '_>) -> bool {
                         modified = true;
                     }
                 }
-                FieldKind::ColorPicker => {
-                    if render_color_picker(ui, field_poke) {
+                FieldKind::RGBPicker => {
+                    if render_rgb_picker(ui, field_poke) {
                         modified = true;
                     }
                 }

@@ -24,7 +24,7 @@ use facet::Facet;
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use image::{DynamicImage, ImageReader, Rgba, RgbaImage};
 
-use vulkan_slang_renderer::editor::{Checkbox, ColorPicker, IntSlider, Label, Slider};
+use vulkan_slang_renderer::editor::{Checkbox, IntSlider, Label, RGBPicker, Slider};
 use vulkan_slang_renderer::game::Game;
 // The manifest's GX enums are named `mm::CullMode` / `mm::BlendMode` throughout:
 // they collide with the renderer's same-named pipeline enums, and each mapping
@@ -854,7 +854,7 @@ pub struct EditState {
     eflight: Checkbox,
     /// Stage 2's additive tint, before `eflight_falloff` scales it. Only reaches
     /// K1 while `eflight` is checked — see [`EFLIGHT_KONST`].
-    eflight_konst: ColorPicker,
+    eflight_konst: RGBPicker,
     /// How much of `eflight_konst` actually reaches K1 — see [`EFLIGHT_FALLOFF`].
     eflight_falloff: Slider,
     /// How far below Link the eflight sits, in radians. Runs `0` (level with him)
@@ -863,8 +863,8 @@ pub struct EditState {
     eflight_elevation: Slider,
     /// Stage 0's toon lerp endpoints: the shadow end goes to `reg[1]` and the lit
     /// end to `konst[0]`. See [`ENV_ACTOR_C0`] and [`ENV_ACTOR_K0`].
-    env_actor_c0: ColorPicker,
-    env_actor_k0: ColorPicker,
+    env_actor_c0: RGBPicker,
+    env_actor_k0: RGBPicker,
     isolate_batch: Checkbox,
     /// A [`BatchIndex`] in disguise: 0..=batches-1, only read when
     /// `isolate_batch` is checked.
@@ -1114,11 +1114,11 @@ impl Game for ToonLink {
         let edit_state = EditState {
             debug_mode: DebugMode::default(),
             eflight: Checkbox::new(LightRig::default().eflight),
-            eflight_konst: ColorPicker::from_vec3(EFLIGHT_KONST),
+            eflight_konst: RGBPicker::from_vec3(EFLIGHT_KONST),
             eflight_falloff: Slider::new(EFLIGHT_FALLOFF, 0.0, 1.0),
             eflight_elevation: Slider::new(EFLIGHT_ELEVATION, 0.0, -0.5),
-            env_actor_c0: ColorPicker::from_vec3(ENV_ACTOR_C0),
-            env_actor_k0: ColorPicker::from_vec3(ENV_ACTOR_K0),
+            env_actor_c0: RGBPicker::from_vec3(ENV_ACTOR_C0),
+            env_actor_k0: RGBPicker::from_vec3(ENV_ACTOR_K0),
             isolate_batch: Checkbox::new(false),
             batch: IntSlider::new(0, 0, last_batch),
             batch_info: Label::new(""),
