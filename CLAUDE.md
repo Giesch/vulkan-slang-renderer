@@ -13,50 +13,87 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   place rather than deleted, so the record stays honest). Useful for *why* a
   thing is the way it is; verify against the code before acting on it.
 
+## Workspace layout
+
+- `crates/renderer` (package `mltrs-renderer`) — the renderer, editor widgets,
+  env_config, and the shader compile/reflection machinery.
+- `crates/mltrs` — the consumer-facing engine crate: `Game` trait, app loop,
+  asset helpers; re-exports the renderer modules.
+- `crates/cli` (package `mltrs-cli`, binary `mltrs`) — shader codegen
+  (`mltrs shaders compile`) and project seeding (`mltrs shaders init`);
+  owns the askama templates, the vendored engine slang modules, and the
+  snapshot-test fixtures.
+- `crates/gx` — GameCube manifest schema shared by `convert-link` and the
+  `toon_link` example.
+- `crates/convert-link` (binary `convert_link`) — Wind Waker asset converter.
+- `examples/<name>/` — one crate per example, each with its own
+  `shaders/source/`, committed `shaders/compiled/` + `src/generated/`
+  bindings, and its own assets. The examples are the first consumers of the
+  `mltrs` CLI workflow.
+
 ## Build Commands
 
 ```bash
-cargo check --all-targets  # Check source AND examples for type errors
-just shaders               # Generate shader bindings (MUST run after .slang changes)
+cargo check --workspace --all-targets  # check every crate, example, and test
+just shaders               # regenerate ALL examples' shader bindings
+just shaders EXAMPLE       # regenerate one example's bindings
 just test                  # Run tests (snapshot testing via insta)
-cargo insta test --accept  # accept all modified snapshots
+cargo insta test -p mltrs-cli --accept  # accept all modified snapshots
 just lint                  # Clippy with warnings as errors
 just watch EXAMPLE         # build, then run one example for a few seconds
 just sweep                 # run EVERY example headlessly, fail on validation output
-cat shaders/compiled/EXAMPLE.json | jq '.' # inspect shader reflection json
+cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection json
 ```
 
 ### After changes
-- Always run `just shaders` after modifying any `.slang` files to regenerate Rust bindings.
-- Always use `cargo check --all-targets` when changing rust files as a first pass.
-  NOTE `--all-targets`, not `--all`: `--all` means "all workspace members" and
-  silently skips examples, so a broken example passes. `--all-targets` covers
-  examples, benches and `#[cfg(test)]` code. Same distinction applies to clippy
-  (`just lint` uses `--all-targets`).
-- Always use `just test` when making changes to shaders/build_tasks.rs
+- Always run `just shaders EXAMPLE` after modifying an example's `.slang`
+  files (`just shaders` regenerates all of them).
+- Always use `cargo check --workspace --all-targets` when changing rust files
+  as a first pass. NOTE both flags: `--workspace` covers every member crate
+  (each example is one), `--all-targets` covers tests, benches and
+  `#[cfg(test)]` code. Same for clippy (`just lint` uses both).
+- Always use `just test` when making changes to `crates/cli/src/build_tasks.rs`
+  or `crates/cli/templates/`.
 - Run `cargo fmt` after a set of rust file changes are complete
-- Never edit `src/generated/` by hand — `just shaders` regenerates it.
-- Never call `std::env::var` outside `src/env_config.rs`. Every variable is
-  parsed once at startup into `EnvConfig` and passed down from there.
+- Never edit `examples/*/src/generated/` by hand — `just shaders` regenerates it.
+- Never call `std::env::var` outside `crates/renderer/src/env_config.rs`.
+  Every variable is parsed once at startup into `EnvConfig` and passed down
+  from there.
 
 ## Shader System
 
 **Workflow:**
-1. Create/edit `shaders/source/*.shader.slang`
-2. Run `just shaders`
-3. Generates: SPIR-V bytecode + reflection JSON + Rust bindings in `src/generated/`
+1. Create/edit `examples/<name>/shaders/source/*.shader.slang`
+2. Run `just shaders <name>`
+3. Generates: SPIR-V bytecode + reflection JSON in `shaders/compiled/`, and
+   Rust bindings in `src/generated/` — all inside the example's crate
+
+The engine slang modules (`addr`, `mvp`, `projection`, `fullscreen_triangle`,
+`super_sample`) are vendored in `crates/cli/vendor/`; `just vendor-shaders`
+re-seeds every example's copies from them. Shared example modules
+(`ray_march.slang`, …) are intentionally duplicated between examples.
+
+**Consumer workflow** (what the examples model):
+
+```bash
+cargo add mltrs            # path/git dep for now
+mltrs shaders init         # seeds shaders/source with the engine modules
+# write shaders/source/my_game.shader.slang
+mltrs shaders compile      # emits shaders/compiled + src/generated (imports `mltrs::…`)
+# src/main.rs: mod generated; impl Game for MyGame; MyGame::run()
+```
 
 ## Testing
 
 ```bash
 just test                  # Non-interactive (CI)
 just insta                 # Interactive review
-cargo insta test --accept  # Re-run and accept every changed snapshot
+cargo insta test -p mltrs-cli --accept  # Re-run and accept every changed snapshot
 just sweep                 # run all examples, checking for vulkan validation errors
 just sweep-self-test       # check that the sweep still detects an injected fault
 ```
 
-Always run `just test` when changing `src/shaders/build_tasks.rs`.
+Always run `just test` when changing `crates/cli/src/build_tasks.rs`.
 
 Run `just sweep` when a change could affect what the renderer records or destroys.
 
