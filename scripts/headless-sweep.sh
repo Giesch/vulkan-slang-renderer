@@ -110,9 +110,9 @@ done
 # is the whole set. Add a case here alongside any new gitignored-asset example.
 assets_missing() {
   case "$1" in
-    # examples/toon_link.rs:155 reads this first and bails if it is absent;
-    # produced by `just extract-link && just convert-link` from a Wind Waker
-    # disc image (llm_notes/link_rendering/phase_00.md).
+    # examples/toon_link/src/main.rs reads this first and bails if it is
+    # absent; produced by `just extract-link && just convert-link` from a
+    # Wind Waker disc image (llm_notes/link_rendering/phase_00.md).
     toon_link) [ ! -f assets/link/converted/link.manifest.json ] ;;
     *) return 1 ;;
   esac
@@ -146,7 +146,7 @@ validation_lines() {
 # viewport_width), so a detector in working order reports exit 1 with
 # VUID-VkViewport-width-01771.
 self_test() {
-  local bin="target/debug/examples/basic_triangle"
+  local bin="target/debug/basic_triangle"
   local log="$SWEEP_LOG_DIR/self-test.log"
 
   if [ ! -x "$bin" ]; then
@@ -185,7 +185,10 @@ echo "building examples..."
 # indistinguishable from "the example ran for its whole window" -- and the log
 # is empty. Every example then reports ok and the whole sweep is vacuous. This
 # is easy to hit, since any source edit immediately before a sweep triggers it.
-if ! cargo build -p mltrs --examples; then
+# every example is its own workspace member crate under examples/
+example_packages=$(ls -d examples/*/ | xargs -n1 basename)
+# shellcheck disable=SC2086
+if ! cargo build $(printf -- '-p %s ' $example_packages); then
   echo "FAIL: examples did not build" >&2
   exit 1
 fi
@@ -202,7 +205,7 @@ if [ "$SWEEP_SELF_TEST" != "0" ]; then
 fi
 
 if [ "${#examples[@]}" -eq 0 ]; then
-  mapfile -t examples < <(ls crates/mltrs/examples/*.rs | xargs -n1 basename | sed 's/\.rs$//')
+  mapfile -t examples < <(ls -d examples/*/ | xargs -n1 basename)
 fi
 
 fail=0
@@ -221,7 +224,7 @@ for e in "${examples[@]}"; do
   fi
 
   log="$SWEEP_LOG_DIR/$e.log"
-  bin="target/debug/examples/$e"
+  bin="target/debug/$e"
 
   if [ ! -x "$bin" ]; then
     echo "FAIL(no binary): $e"

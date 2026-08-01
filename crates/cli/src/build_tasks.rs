@@ -279,7 +279,9 @@ fn add_top_level_rust_modules(
 
     let top_generated_module = GeneratedFile {
         relative_path: relative_path(["generated.rs"]),
-        content: "pub mod shader_atlas;".to_string(),
+        // generated API surface: a consuming binary is not required to use
+        // all of it (in-library generated code was never dead-code checked)
+        content: "#[allow(dead_code)]\npub mod shader_atlas;".to_string(),
     };
     generated_source_files.push(top_generated_module);
 }

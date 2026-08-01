@@ -9,7 +9,6 @@ workspace = true
 
 [dependencies]
 mltrs-renderer.workspace = true
-gx.workspace = true
 
 anyhow.workspace = true
 ash.workspace = true
@@ -23,8 +22,3 @@ pretty_env_logger.workspace = true
 sdl3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-
-# example-only deps (cargo examples share the crate's dependency set until
-# they become their own crates in phase 4)
-rodio.workspace = true
-tobj.workspace = true

@@ -1,0 +1,59 @@
+#language slang 2026
+
+module mvp;
+
+// provided by the cpu; see shaders::MATRIX_LAYOUT
+extern static const bool columnMajor;
+
+// "GLM was originally designed for OpenGL,
+// where the Y coordinate of the clip coordinates is inverted.
+// The easiest way to compensate for that is to flip the sign
+// on the scaling factor of the Y axis in the projection matrix.
+// If you don’t do this, then the image will be rendered upside down."
+// https://docs.vulkan.org/tutorial/latest/05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.html
+static const float4x4 reflectY = float4x4(
+    1.0,  0.0, 0.0, 0.0,
+    0.0, -1.0, 0.0, 0.0,
+    0.0,  0.0, 1.0, 0.0,
+    0.0,  0.0, 0.0, 1.0,
+);
+
+public struct MVPMatrices {
+    float4x4 model;
+    float4x4 view;
+    float4x4 proj;
+
+    [ForceInline]
+    public func project(position: float3) -> float4 {
+        let position = float4(position, 1.0);
+        let projection = mul(reflectY, this.proj);
+
+        if (columnMajor) {
+            let mvpMatrix = mul(projection, mul(this.view, this.model));
+            return mul(mvpMatrix, position);
+        }
+
+        // GLM & glam use column-major matrices,
+        // but D3D12 and Slang use row-major matrices by default.
+        //
+        // We can either transpose the component matrices,
+        // or multiply everything backwards.
+        let mvpMatrix = mul(this.model, mul(this.view, projection));
+        return mul(position, mvpMatrix);
+    }
+
+    // Rotate a direction (e.g. a normal) into world space by the model
+    // matrix, ignoring its translation (w = 0). Correct for rotation and
+    // uniform scale; a non-uniform scale would need the inverse-transpose
+    // of the model matrix instead.
+    [ForceInline]
+    public func rotateDirection(direction: float3) -> float3 {
+        let d = float4(direction, 0.0);
+
+        if (columnMajor) {
+            return mul(this.model, d).xyz;
+        }
+
+        return mul(d, this.model).xyz;
+    }
+};
