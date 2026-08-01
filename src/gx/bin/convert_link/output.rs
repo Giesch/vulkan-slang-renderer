@@ -1,6 +1,6 @@
 //! Manifest + flat-binary emission and the `--obj` debug export. Converts the
 //! parsed `bmd::Model` and baked `pose::BakedModel` into
-//! `vulkan_slang_renderer::model_manifest` types plus `link.{vtx,idx,skin}.bin`.
+//! `vulkan_slang_renderer::gx::model_manifest` types plus `link.{vtx,idx,skin}.bin`.
 //!
 //! Enum→value mapping: renderer-facing raster state moves across as the shared
 //! `model_manifest` GX enums (which serialize as the canonical GX names); TEV
@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use vulkan_slang_renderer::model_manifest as mm;
+use vulkan_slang_renderer::gx::model_manifest as mm;
 
 use crate::bmd::Model;
 use crate::bmd::mat3::{self, Material};

@@ -29,15 +29,15 @@ use vulkan_slang_renderer::game::Game;
 // The manifest's GX enums are named `mm::CullMode` / `mm::BlendMode` throughout:
 // they collide with the renderer's same-named pipeline enums, and each mapping
 // below reads as the GX-value → Vulkan-state translation it is.
-use vulkan_slang_renderer::model_manifest::{
+use vulkan_slang_renderer::gx::model_manifest::{
     self as mm, Batch, Manifest, MaterialEntry, TextureEntry,
 };
+use vulkan_slang_renderer::gx::tev_pack;
 use vulkan_slang_renderer::renderer::{
     BlendMode, CullMode, DepthCompare, DrawError, DrawIndexed, FrameRenderer, MeshHandle,
     PipelineHandle, RasterState, Renderer, TextureColorSpace, TextureFilter, TextureHandle,
     TextureOptions, TextureWrap, UniformBufferHandle,
 };
-use vulkan_slang_renderer::tev_pack;
 
 use vulkan_slang_renderer::generated::shader_atlas::tev::{GXAlphaOp, GXCompare};
 use vulkan_slang_renderer::generated::shader_atlas::toon_link::*;
@@ -1023,7 +1023,7 @@ impl ToonLink {
             .map(|c| rgba_str(*c))
             .collect();
         println!("  konst = {}", konst.join("  "));
-        // reg_colors[i] loads REG{i}, not PREV — see src/tev_pack.rs. PREV has no
+        // reg_colors[i] loads REG{i}, not PREV — see src/gx/tev_pack.rs. PREV has no
         // MAT3 value and reg_colors[3] is never loaded at all.
         for (i, c) in material.tev.reg_colors.iter().take(3).enumerate() {
             print!(

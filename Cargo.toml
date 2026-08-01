@@ -3,6 +3,10 @@ name = "vulkan-slang-renderer"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "convert_link"
+path = "src/gx/bin/convert_link/main.rs"
+
 [dependencies]
 ash = { version = "0.38.0", features = ["linked"] }
 glam = { version = "0.30.3", features = ["serde"] }

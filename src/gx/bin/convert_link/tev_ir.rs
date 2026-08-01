@@ -15,7 +15,7 @@
 #![allow(dead_code)]
 // The IR is the gate's record of what it accepted. Most fields are written and
 // never read back today: the tests read them, and the intended future consumer
-// is `src/tev_pack.rs`, which currently re-derives the same values from the
+// is `src/gx/tev_pack.rs`, which currently re-derives the same values from the
 // manifest's raw bytes because it runs on the library side of the crate.
 
 use crate::bmd::BmdError;

@@ -3382,10 +3382,6 @@ struct VkBlendState {
 /// The factors are ignored when `enable` is false; the disabled case carries the
 /// SRC_ALPHA/ONE_MINUS_SRC_ALPHA pair that was hardcoded before raster state
 /// became configurable, so disabling stays a pure no-op.
-///
-/// NOTE the match is deliberately exhaustive with no `_` arm: this is the one
-/// place a new [`BlendMode`] variant must be a compile error rather than a
-/// silently unblended pipeline.
 fn vk_blend_state(blend: BlendMode) -> VkBlendState {
     const ALPHA: VkBlendState = VkBlendState {
         enable: true,

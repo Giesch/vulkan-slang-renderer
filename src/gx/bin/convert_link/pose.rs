@@ -455,7 +455,7 @@ mod tests {
         let converted = crate::output::build(&model, &baked);
         assert_eq!(converted.indices.len(), tris * 3);
         let json = serde_json::to_string(&converted.manifest).unwrap();
-        let back: vulkan_slang_renderer::model_manifest::Manifest =
+        let back: vulkan_slang_renderer::gx::model_manifest::Manifest =
             serde_json::from_str(&json).unwrap();
         assert_eq!(back.batches.len(), 24);
         assert_eq!(back.materials.len(), 24);

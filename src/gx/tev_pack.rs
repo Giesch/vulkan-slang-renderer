@@ -14,7 +14,7 @@ use anyhow::{Context, Result, bail, ensure};
 use glam::{UVec4, Vec4};
 
 use crate::generated::shader_atlas::tev::TevParams;
-use crate::model_manifest::{
+use crate::gx::model_manifest::{
     self as mm, ColorChannelId, ColorSrc, CombineAlpha, CombineColor, KonstAlphaSel, KonstColorSel,
     Register, TevBias, TevOp, TevScale, TexCoordId, TexGenMatrix, TexGenSrc, TexGenType, TexMapId,
 };
@@ -566,7 +566,7 @@ fn rgba8(c: [u8; 4]) -> Vec4 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model_manifest::{
+    use crate::gx::model_manifest::{
         AttenuationFunction, ChannelState, CompareType, CullMode, DiffuseFunction, PixelEngineMode,
         SwapModeState, TevConfig, TevOrderState, TevStageState, TexGenState, TexMatrixState,
     };

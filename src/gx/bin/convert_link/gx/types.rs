@@ -17,7 +17,7 @@
 
 use vulkan_slang_renderer::gx_enum;
 
-pub use vulkan_slang_renderer::model_manifest::{
+pub use vulkan_slang_renderer::gx::model_manifest::{
     AlphaOp, AttenuationFunction, BlendFactor, BlendMode, ColorChannelId, ColorSrc, CombineAlpha,
     CombineColor, CompareType, CullMode, DiffuseFunction, FilterMode, GxEnumError, KonstAlphaSel,
     KonstColorSel, LogicOp, PixelEngineMode, Register, TevBias, TevOp, TevScale, TexCoordId,

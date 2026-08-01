@@ -55,11 +55,11 @@ macro_rules! gx_enum {
         }
 
         impl TryFrom<u8> for $name {
-            type Error = $crate::model_manifest::GxEnumError;
+            type Error = $crate::gx::model_manifest::GxEnumError;
             fn try_from(value: u8) -> Result<Self, Self::Error> {
                 match value {
                     $($val => Ok(Self::$variant),)+
-                    _ => Err($crate::model_manifest::GxEnumError {
+                    _ => Err($crate::gx::model_manifest::GxEnumError {
                         kind: stringify!($name),
                         value: value as u32,
                     }),
