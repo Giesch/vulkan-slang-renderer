@@ -11,11 +11,10 @@
 // the channel per-fragment gives rounder, smoother toon bands than GX produces,
 // so `toon_link`'s debug mode 8 exists to A/B it.
 //
-// Only `TevParams` is a struct here, because `reflect_shared_module_types`
-// (src/shaders.rs) keys a *global* type-name map by struct name with silent
-// last-write-wins, so every public struct name has to be unique across all of
-// shaders/source/. Helpers are functions returning builtins, which cannot
-// collide.
+// Every public struct and enum name declared here has to be unique across all
+// of shaders/source/, because `reflect_shared_module_types` (src/shaders.rs)
+// keys a *global* type-name map with silent last-write-wins. Helpers are
+// functions returning builtins, which cannot collide.
 //
 // Plan: llm_notes/link_rendering/phase_08.md Step 2.
 
@@ -235,6 +234,76 @@ public float4 tevRasColor(uint chanId, float4 color0) {
     case 2:            // ALPHA0
     case 4: return color0; // COLOR0A0
     default: return float4(0.0);
+    }
+}
+
+// --- the GX alpha test ------------------------------------------------------
+
+// GXCompare (GXEnum.h:466–473): the alpha test's compare functions, as raw
+// MAT3 codes.
+public enum GXCompare : uint {
+    Never = 0,
+    Less = 1,
+    Equal = 2,
+    LessEqual = 3,
+    Greater = 4,
+    NotEqual = 5,
+    GreaterEqual = 6,
+    Always = 7,
+}
+
+// GXAlphaOp (GXEnum.h:477–480): how the alpha test's two compare results
+// combine.
+public enum GXAlphaOp : uint {
+    And = 0,
+    Or = 1,
+    Xor = 2,
+    Xnor = 3,
+}
+
+// GX alpha-compare state, straight from MAT3 via the manifest:
+//     keep = op(comp0(alpha, ref0), comp1(alpha, ref1))
+public struct GXAlphaCompare {
+    GXCompare comp0;
+    uint ref0;
+    GXCompare comp1;
+    uint ref1;
+    GXAlphaOp op;
+
+    // The GX alpha test, on the TEV output alpha quantized to the 8-bit value the
+    // hardware compares.
+    public bool test(float alpha) {
+        let alpha8 = uint(round(saturate(alpha) * 255.0));
+        return this.op(this.comp0(alpha8, this.ref0), this.comp1(alpha8, this.ref1));
+    }
+}
+
+// A compare function is callable on its operands: comp(alpha, reference), on
+// the 8-bit values the hardware compares.
+extension GXCompare {
+    bool operator()(uint alpha, uint reference) {
+        switch (this) {
+        case GXCompare.Never: return false;
+        case GXCompare.Less: return alpha < reference;
+        case GXCompare.Equal: return alpha == reference;
+        case GXCompare.LessEqual: return alpha <= reference;
+        case GXCompare.Greater: return alpha > reference;
+        case GXCompare.NotEqual: return alpha != reference;
+        case GXCompare.GreaterEqual: return alpha >= reference;
+        default: return true; // Always
+        }
+    }
+}
+
+// An op combines the two compare results: op(r0, r1).
+extension GXAlphaOp {
+    bool operator()(bool r0, bool r1) {
+        switch (this) {
+        case GXAlphaOp.And: return r0 && r1;
+        case GXAlphaOp.Or: return r0 || r1;
+        case GXAlphaOp.Xor: return r0 != r1;
+        default: return r0 == r1; // Xnor
+        }
     }
 }
 

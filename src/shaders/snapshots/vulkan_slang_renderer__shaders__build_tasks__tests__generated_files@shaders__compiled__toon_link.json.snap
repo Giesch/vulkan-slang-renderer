@@ -352,7 +352,7 @@ info:
               "size": 32
             },
             "structType": {
-              "typeName": "AlphaCompare",
+              "typeName": "GXAlphaCompare",
               "fields": [
                 {
                   "kind": "enum",

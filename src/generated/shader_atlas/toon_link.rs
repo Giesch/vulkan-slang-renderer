@@ -11,7 +11,7 @@ use facet::Facet;
 use serde::Serialize;
 
 pub use super::mvp::MVPMatrices;
-pub use super::tev::TevParams;
+pub use super::tev::{GXAlphaCompare, TevParams};
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -21,92 +21,6 @@ use crate::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, Facet)]
-#[repr(u32)]
-// variant names come from the shader author, so clippy's shared-prefix lint
-// would otherwise force renaming away from the slang spelling
-#[allow(clippy::enum_variant_names)]
-pub enum GXCompare {
-    #[default]
-    Never = 0,
-    Less = 1,
-    Equal = 2,
-    LessEqual = 3,
-    Greater = 4,
-    NotEqual = 5,
-    GreaterEqual = 6,
-    Always = 7,
-}
-
-const _: () = assert!(std::mem::size_of::<GXCompare>() == 4);
-
-impl From<GXCompare> for u32 {
-    fn from(value: GXCompare) -> u32 {
-        value as u32
-    }
-}
-
-// A repr(int) enum holding a value outside its declared variants is undefined
-// behavior. Data flows CPU -> GPU here, so the CPU never materializes a value it
-// did not construct; any future readback must come back through this TryFrom,
-// never a transmute or an `as` cast into the enum.
-impl TryFrom<u32> for GXCompare {
-    type Error = u32;
-
-    fn try_from(value: u32) -> Result<Self, u32> {
-        match value {
-            0 => Ok(Self::Never),
-            1 => Ok(Self::Less),
-            2 => Ok(Self::Equal),
-            3 => Ok(Self::LessEqual),
-            4 => Ok(Self::Greater),
-            5 => Ok(Self::NotEqual),
-            6 => Ok(Self::GreaterEqual),
-            7 => Ok(Self::Always),
-            other => Err(other),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, Facet)]
-#[repr(u32)]
-// variant names come from the shader author, so clippy's shared-prefix lint
-// would otherwise force renaming away from the slang spelling
-#[allow(clippy::enum_variant_names)]
-pub enum GXAlphaOp {
-    #[default]
-    And = 0,
-    Or = 1,
-    Xor = 2,
-    Xnor = 3,
-}
-
-const _: () = assert!(std::mem::size_of::<GXAlphaOp>() == 4);
-
-impl From<GXAlphaOp> for u32 {
-    fn from(value: GXAlphaOp) -> u32 {
-        value as u32
-    }
-}
-
-// A repr(int) enum holding a value outside its declared variants is undefined
-// behavior. Data flows CPU -> GPU here, so the CPU never materializes a value it
-// did not construct; any future readback must come back through this TryFrom,
-// never a transmute or an `as` cast into the enum.
-impl TryFrom<u32> for GXAlphaOp {
-    type Error = u32;
-
-    fn try_from(value: u32) -> Result<Self, u32> {
-        match value {
-            0 => Ok(Self::And),
-            1 => Ok(Self::Or),
-            2 => Ok(Self::Xor),
-            3 => Ok(Self::Xnor),
-            other => Err(other),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, Facet)]
 #[repr(u32)]
@@ -164,7 +78,7 @@ impl TryFrom<u32> for DebugMode {
 pub struct ToonLinkParams {
     pub mvp: MVPMatrices,
     pub tev: TevParams,
-    pub alpha_compare: AlphaCompare,
+    pub alpha_compare: GXAlphaCompare,
     pub debug_mode: DebugMode,
     pub _padding_0: [u8; 12],
 }
@@ -176,33 +90,9 @@ const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, tev) == 192);
 const _: () = assert!(std::mem::size_of::<TevParams>() == 1328);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare) == 1520);
-const _: () = assert!(std::mem::size_of::<AlphaCompare>() == 32);
+const _: () = assert!(std::mem::size_of::<GXAlphaCompare>() == 32);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 1552);
 const _: () = assert!(std::mem::size_of::<DebugMode>() == 4);
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[repr(C, align(16))]
-pub struct AlphaCompare {
-    pub comp0: GXCompare,
-    pub ref0: u32,
-    pub comp1: GXCompare,
-    pub ref1: u32,
-    pub op: GXAlphaOp,
-    pub _padding_0: [u8; 12],
-}
-
-impl GPUWrite for AlphaCompare {}
-const _: () = assert!(std::mem::size_of::<AlphaCompare>() == 32);
-const _: () = assert!(std::mem::offset_of!(AlphaCompare, comp0) == 0);
-const _: () = assert!(std::mem::size_of::<GXCompare>() == 4);
-const _: () = assert!(std::mem::offset_of!(AlphaCompare, ref0) == 4);
-const _: () = assert!(std::mem::size_of::<u32>() == 4);
-const _: () = assert!(std::mem::offset_of!(AlphaCompare, comp1) == 8);
-const _: () = assert!(std::mem::size_of::<GXCompare>() == 4);
-const _: () = assert!(std::mem::offset_of!(AlphaCompare, ref1) == 12);
-const _: () = assert!(std::mem::size_of::<u32>() == 4);
-const _: () = assert!(std::mem::offset_of!(AlphaCompare, op) == 16);
-const _: () = assert!(std::mem::size_of::<GXAlphaOp>() == 4);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]

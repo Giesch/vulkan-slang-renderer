@@ -86,38 +86,6 @@ enum DebugMode : uint {
     IdentityTexMtx = 9,
 }
 
-// GXCompare (GXEnum.h:466–473): the alpha test's compare functions, as raw
-// MAT3 codes.
-enum GXCompare : uint {
-    Never = 0,
-    Less = 1,
-    Equal = 2,
-    LessEqual = 3,
-    Greater = 4,
-    NotEqual = 5,
-    GreaterEqual = 6,
-    Always = 7,
-}
-
-// GXAlphaOp (GXEnum.h:477–480): how the alpha test's two compare results
-// combine.
-enum GXAlphaOp : uint {
-    And = 0,
-    Or = 1,
-    Xor = 2,
-    Xnor = 3,
-}
-
-// GX alpha-compare state, straight from MAT3 via the manifest:
-//     keep = op(comp0(alpha, ref0), comp1(alpha, ref1))
-struct AlphaCompare {
-    GXCompare comp0;
-    uint ref0;
-    GXCompare comp1;
-    uint ref1;
-    GXAlphaOp op;
-}
-
 ParameterBlock<ToonLinkParams> params;
 
 struct ToonLinkParams {
@@ -132,10 +100,7 @@ struct ToonLinkParams {
     // The whole per-material GX configuration, built by src/tev_pack.rs.
     TevParams tev;
 
-    AlphaCompare alphaCompare;
-    // NOTE: changing this struct's shape while `just dev` runs trips
-    // assert_shader_interface_unchanged — body edits hot-reload, shape
-    // edits need `just shaders` + a restart.
+    GXAlphaCompare alphaCompare;
     DebugMode debugMode;
 }
 
@@ -175,39 +140,6 @@ FragVertex vertMain(Vertex vertex) {
     return FragVertex(position, worldNormal, vertex.uv0, color0, texcoord01);
 }
 
-// One GXCompare function on the 8-bit alpha the hardware compares.
-bool gxCompare(GXCompare comp, uint alpha, uint reference) {
-    switch (comp) {
-    case GXCompare.Never: return false;
-    case GXCompare.Less: return alpha < reference;
-    case GXCompare.Equal: return alpha == reference;
-    case GXCompare.LessEqual: return alpha <= reference;
-    case GXCompare.Greater: return alpha > reference;
-    case GXCompare.NotEqual: return alpha != reference;
-    case GXCompare.GreaterEqual: return alpha >= reference;
-    default: return true; // Always
-    }
-}
-
-// Combine the two compare results per GXAlphaOp.
-bool gxAlphaOp(GXAlphaOp op, bool r0, bool r1) {
-    switch (op) {
-    case GXAlphaOp.And: return r0 && r1;
-    case GXAlphaOp.Or: return r0 || r1;
-    case GXAlphaOp.Xor: return r0 != r1;
-    default: return r0 == r1; // Xnor
-    }
-}
-
-// The GX alpha test, on the TEV output alpha quantized to the 8-bit value the
-// hardware compares.
-bool gxAlphaTest(AlphaCompare ac, float alpha) {
-    let alpha8 = uint(round(saturate(alpha) * 255.0));
-    let keep0 = gxCompare(ac.comp0, alpha8, ac.ref0);
-    let keep1 = gxCompare(ac.comp1, alpha8, ac.ref1);
-    return gxAlphaOp(ac.op, keep0, keep1);
-}
-
 // sRGB → linear. The color target is _SRGB, so the hardware applies
 // linear → sRGB *encode* on store; we hold raw GX values that must reach the
 // stored bits unchanged, so we apply the *decode* first and the two transfers
@@ -230,13 +162,12 @@ float4 fragMain(FragVertex fragVertex) : SV_TARGET {
         texcoord01 = params.tev.evalTexGens(fragVertex.uv0, color0, false);
     }
 
-    let tevOut =
-        params.tev.evalStages(color0, texcoord01, params.tex0, params.tex1);
+    let tevOut = params.tev.evalStages(color0, texcoord01, params.tex0, params.tex1);
 
     // GX order: the alpha test runs on the TEV output, not on a raw texel. It
     // runs in every debug mode, so the cutout stays visible while inspecting
     // normals or UVs.
-    if (!gxAlphaTest(params.alphaCompare, tevOut.a)) {
+    if (!params.alphaCompare.test(tevOut.a)) {
         discard;
     }
 

@@ -39,6 +39,7 @@ use vulkan_slang_renderer::renderer::{
 };
 use vulkan_slang_renderer::tev_pack;
 
+use vulkan_slang_renderer::generated::shader_atlas::tev::{GXAlphaOp, GXCompare};
 use vulkan_slang_renderer::generated::shader_atlas::toon_link::*;
 
 fn main() -> Result<(), anyhow::Error> {
@@ -297,10 +298,10 @@ fn group_batches(manifest: &Manifest) -> anyhow::Result<DrawGroups> {
     })
 }
 
-/// The manifest's GX alpha-compare state as the shader's `AlphaCompare` block.
-/// No record → GX's default "Always OR Always", a no-op that keeps every
-/// fragment.
-fn alpha_compare(material: &MaterialEntry) -> AlphaCompare {
+/// The manifest's GX alpha-compare state as the shader's `GXAlphaCompare`
+/// block. No record → GX's default "Always OR Always", a no-op that keeps
+/// every fragment.
+fn alpha_compare(material: &MaterialEntry) -> GXAlphaCompare {
     let (comp0, ref0, comp1, ref1, op) = match &material.alpha_compare {
         None => (GXCompare::Always, 0, GXCompare::Always, 0, GXAlphaOp::Or),
         Some(ac) => (
@@ -311,7 +312,7 @@ fn alpha_compare(material: &MaterialEntry) -> AlphaCompare {
             gx_alpha_op(ac.op),
         ),
     };
-    AlphaCompare {
+    GXAlphaCompare {
         comp0,
         ref0,
         comp1,
@@ -1174,8 +1175,6 @@ impl Game for ToonLink {
 
         let mvp = MVPMatrices { model, view, proj };
         let debug_mode = self.edit_state.debug_mode;
-        // Built from the widgets rather than stored, so they are the one source
-        // of truth and there is no per-frame sync to forget.
         let light = LightRig {
             eflight: self.edit_state.eflight.checked,
             eflight_elevation: self.edit_state.eflight_elevation.value,
@@ -1184,8 +1183,6 @@ impl Game for ToonLink {
         let light_color = light.colors();
         let eflight = light.eflight;
 
-        // Read out here rather than inside the closure: it borrows `self.pipelines`
-        // mutably, so it can't also reach into `self.edit_state`.
         let env_actor_c0 = self.edit_state.env_actor_c0.to_vec3();
         let env_actor_k0 = self.edit_state.env_actor_k0.to_vec3();
         let eflight_konst =
