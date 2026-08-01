@@ -9,11 +9,20 @@ in debugging time.
 
 Each entry states what's wrong, why it's tolerable today, and what "done" means.
 
+> **Path note (2026-08, workspace split):** entries written before the cargo
+> workspace migration cite monolith paths. Mapping: `src/renderer*` and
+> `src/shaders.rs` → `crates/renderer/src/…`; `src/shaders/build_tasks.rs` →
+> `crates/cli/src/build_tasks.rs`; `src/game/traits.rs` and `src/app.rs` →
+> `crates/mltrs/src/…`; `shaders/source/` → per-example
+> `examples/<name>/shaders/source/`. Line numbers have drifted; grep for the
+> named item.
+
 1. [Vulkan objects leak when an init function fails partway](#1-vulkan-objects-leak-when-an-init-function-fails-partway) — cleanup debt, diagnostic cost
 2. [Dangling pipeline when a hot reload's `create_graphics_pipeline` fails](#2-dangling-pipeline-when-a-hot-reloads-create_graphics_pipeline-fails) — **correctness bug**, debug builds only
 3. [Remove the legacy `disable_depth_test` flag](#3-remove-the-legacy-disable_depth_test-flag---done) — **done**
 4. [Duplicate struct names across shared slang modules resolve by silent last-write-wins](#4-duplicate-struct-names-across-shared-slang-modules-resolve-by-silent-last-write-wins) — latent **silent-wrong-output** hazard in codegen
 5. [Validation and fault injection cannot run in release builds](#5-validation-and-fault-injection-cannot-run-in-release-builds) — release builds are unsweepable, coverage gap
+6. [Fresh-environment builds: friction log from the workspace-migration session](#6-fresh-environment-builds-friction-log-from-the-workspace-migration-session) — reproducibility gaps, some already planned, two new
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -231,8 +240,9 @@ fault injection piggybacks on it via the `cfg!(debug_assertions) &&` conjunct
 in `Renderer::viewport_width` (`src/renderer.rs:1441`). The consequence is that
 a release build validates nothing and cannot be swept: `game/traits.rs:98`
 self-reports `exit_code::VALIDATION_DISABLED` under `VKR_SWEEP`, and
-`scripts/headless-sweep.sh` is structurally debug-only anyway (it hardcodes
-`target/debug/examples/` and `cargo build --examples`). Release builds get zero
+`scripts/headless-sweep.sh` is structurally debug-only anyway (since the
+workspace split it builds the per-example packages and runs
+`target/debug/<example>`, still with no release path). Release builds get zero
 validation coverage — a release-only regression (e.g. from the release half of
 the debug/release `create_from_atlas` pair, `src/renderer.rs:5026`) would ship
 silently.
@@ -263,7 +273,7 @@ paths, and the debug/release divergences are few.
    there; only the conjunct blocks it.
 3. **Sweep release flag.** Teach `scripts/headless-sweep.sh` (and
    `just sweep`) a `--release` flag: build with `--release`, run
-   `target/release/examples/`, and update the `VALIDATION_DISABLED` check at
+   `target/release/<example>`, and update the `VALIDATION_DISABLED` check at
    `game/traits.rs:98` to key off the runtime setting rather than the const.
 
 Watch for: `VK_LAYER_KHRONOS_validation` becomes a *runtime* requirement of any
@@ -282,3 +292,73 @@ validation active and passes; `just sweep-self-test --release` proves the
 injected fault is still detected in a release binary; a plain release run with
 the setting unset behaves exactly as today (no layer loaded, no messenger, no
 new runtime dependency).
+
+---
+
+## 6. Fresh-environment builds: friction log from the workspace-migration session
+
+**Context.** The 2026-08 workspace migration ran in a fresh container (no
+direnv, no display, restricted network via proxy, a fixed disk allowance, 4
+cores, lavapipe only). Everything below was hit in one session. Items marked
+*known* re-confirm an existing entry in
+[`build_reproducibility.md`](build_reproducibility.md); the disk and
+sweep-timing items are new.
+
+**Hit again, exactly as documented (annotations added there):**
+
+- ***known*, §3 — slang-rhi's OptiX fetch.** `cmake --preset default
+  -DSLANG_LIB_TYPE=STATIC` failed configuring: slang-rhi unconditionally
+  fetches the OptiX headers from GitHub, which a restricted proxy 403s.
+  Fixed with the flags the Windows recipe already passes:
+  `-DSLANG_ENABLE_SLANG_RHI=OFF -DSLANG_ENABLE_TESTS=OFF`. **The unix
+  `build-slang` recipe now passes them too** (applied during this session, as
+  §3 prescribed). Also re-confirmed: the static build produces no
+  `libslang.a` — `libslang-compiler.a` + `libcompiler-core.a` + `libcore.a`
+  are the artifacts to wait for.
+- ***known*, §4 — undocumented system deps.** `libasound2-dev` (alsa-sys ←
+  rodio) was the first build failure; the sweep set
+  (`mesa-vulkan-drivers vulkan-validationlayers libvulkan-dev`) was needed
+  exactly as listed. One wrinkle worth a word in §4: on a stale image the
+  pinned package index 404s, so it's `apt-get update` *then* install.
+- ***known*, §5 — env vars without direnv.** Every non-interactive shell needs
+  the `SLANG_*` exports by hand. A sharper footgun surfaced: `.env` computes
+  the paths from `$PWD`, so sourcing it (or exporting inline) from a
+  subdirectory silently bakes a wrong absolute path, and the eventual
+  `shader-slang-sys` build-script panic points at a nonsense nested path far
+  from the actual mistake. A `load-env.sh` that resolves relative to its own
+  file location (not `$PWD`) would remove the trap; `.cargo/config.toml
+  [env] relative = true` (§5's option 2) would too.
+- ***known*, §6 — `cargo-insta` not installed by anything.** Needed
+  `cargo install cargo-insta` before the snapshot-rename step could run.
+
+**New — disk footprint of the debug workspace build.** A full
+`cargo test --workspace` at the default dev profile overflowed a ~30 GB
+allowance mid-link (`ld terminated with signal 7`, `No space left on
+device`): `target/` alone reached ~21 GB, ~12 GB of which was
+`target/debug/examples` — each example binary statically links slang + SDL
+and carries full debuginfo, several hundred MB apiece, and the workspace
+split doubles the count of linked test/bin artifacts. The slang build tree
+adds ~7 GB (~1.3 GB of it deletable `*.o` files). Session workaround:
+`CARGO_PROFILE_DEV_DEBUG=0`, which shrank the example binaries by an order
+of magnitude with no effect on `debug_assertions` (validation, hot reload
+and the sweep all still work). Candidate real fixes, undecided: workspace
+`[profile.dev] debug = "line-tables-only"` (keeps usable backtraces), or
+`split-debuginfo`, or accepting the cost and documenting the disk
+requirement. Whoever picks one should re-run `just sweep` and a
+backtrace-bearing failure to check the trade.
+
+**New — watercolor vs. the sweep window on slow machines.** Under lavapipe
+on 4 cores, watercolor's first frame (10 compute pipeline creations) can
+exceed the default `SWEEP_TIMEOUT`, producing `FAIL(no frames): watercolor`
+— a false failure that reads exactly like the real no-frames regression the
+exit code exists to catch. `SWEEP_TIMEOUT=60` passed reliably. Options:
+per-example timeout overrides in the sweep script, a longer default (costs
+~every example's window), or a note in `docs/testing.md` telling a slow-box
+operator to retry the failing example with a bigger window before treating
+it as red. The last is cheapest and probably enough.
+
+**Done means.** §3/§4/§5/§6 of `build_reproducibility.md` get their fixes
+(the §3 recipe half landed with the workspace migration); the disk footprint
+has a chosen policy recorded in the workspace `Cargo.toml` or the README;
+and a slow-machine sweep either passes or fails with a message that says
+"widen the window", not "no frames".

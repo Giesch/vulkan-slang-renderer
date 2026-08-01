@@ -207,7 +207,14 @@ step.
 
 ---
 
-## 3. `just build-slang` fails from a clean checkout on Linux
+## 3. ~~`just build-slang` fails from a clean checkout on Linux~~ — DONE
+
+*(update 2026-08: hit again verbatim in the workspace-migration container —
+the proxy 403s the OptiX fetch. The unix recipe now passes
+`-DSLANG_ENABLE_SLANG_RHI=OFF -DSLANG_ENABLE_TESTS=OFF`, so both recipes
+carry the flags and the standing question above the Windows recipe is settled
+in the "required" direction. The no-`libslang.a` note below was re-confirmed
+too. See tech_debt.md §6 for the session's full friction log.)*
 
 **The problem.** The unix recipe (justfile:113) is:
 
@@ -259,6 +266,7 @@ each discovered by a build failing partway through a long compile:
 | package | needed by | failure if absent |
 |---|---|---|
 | `libasound2-dev` | `alsa-sys` ← `rodio` | `pkg-config` fails; build script panics |
+| *(wrinkle, 2026-08)* | stale apt index | pinned package versions 404 — run `apt-get update` first |
 | `libvulkan-dev` | link step | `rust-lld: error: unable to find library -lvulkan` |
 | `ninja-build` | slang's cmake preset | preset configure fails |
 

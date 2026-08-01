@@ -148,10 +148,14 @@ init-submodules:
   git submodule update --init --recursive
 
 # build slang as a static library (requires cmake and ninja)
+# NOTE slang-rhi and tests are disabled, matching the windows recipe: slang-rhi
+# unconditionally fetches OptiX headers at configure time, which fails behind a
+# restricted network, and nothing in this repo links it. See
+# llm_notes/build_reproducibility.md §3.
 [unix]
 build-slang:
   cd slang && \
-    cmake --preset default -DSLANG_LIB_TYPE=STATIC && \
+    cmake --preset default -DSLANG_LIB_TYPE=STATIC -DSLANG_ENABLE_SLANG_RHI=OFF -DSLANG_ENABLE_TESTS=OFF && \
     cmake --build --preset release
 
 # NOTE: the tests and slang-rhi dependency are disabled below.
