@@ -5,8 +5,8 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use vulkan_slang_renderer::game::*;
 use vulkan_slang_renderer::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
-    TextureFilter, TextureHandle, UniformBufferHandle,
+    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, RasterState, Renderer,
+    StorageBufferHandle, TextureFilter, TextureHandle, UniformBufferHandle,
 };
 use vulkan_slang_renderer::util::{load_image, manifest_path};
 
@@ -161,8 +161,9 @@ impl Game for SpaceInvaders {
         };
 
         let shader = ShaderAtlas::init().space_invaders;
-        let mut pipeline_config = shader.pipeline_config(resources);
-        pipeline_config.disable_depth_test = true;
+        let pipeline_config = shader
+            .pipeline_config(resources)
+            .with_raster_state(RasterState::no_depth());
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         let sprite_atlas_size = sprite_atlas.meta.size;

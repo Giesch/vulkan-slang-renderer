@@ -17,8 +17,8 @@ use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 use vulkan_slang_renderer::editor::Label;
 use vulkan_slang_renderer::game::{Game, MaxMSAASamples};
 use vulkan_slang_renderer::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, Renderer,
-    TextureFilter, UniformBufferHandle,
+    DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, RasterState,
+    Renderer, TextureFilter, UniformBufferHandle,
 };
 use vulkan_slang_renderer::util::load_image;
 
@@ -83,8 +83,9 @@ impl Game for SpriteBatch {
         };
 
         let shader = ShaderAtlas::init().sprite_batch;
-        let mut pipeline_config = shader.pipeline_config(resources);
-        pipeline_config.disable_depth_test = true;
+        let pipeline_config = shader
+            .pipeline_config(resources)
+            .with_raster_state(RasterState::no_depth());
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         Ok(Self {

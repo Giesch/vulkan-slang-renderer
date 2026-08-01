@@ -244,6 +244,19 @@ impl Default for RasterState {
     }
 }
 
+impl RasterState {
+    /// No depth test and no depth writes. Vulkan honors depth writes even with
+    /// the test disabled, so these two belong together — see
+    /// [`DepthCompare::Disabled`].
+    pub fn no_depth() -> Self {
+        Self {
+            depth_test: DepthCompare::Disabled,
+            depth_write: false,
+            ..Default::default()
+        }
+    }
+}
+
 pub(super) enum VertexPipelineConfig {
     VertexAndIndexBuffers(VertexAndIndexBuffers),
     /// index into Renderer::meshes; the buffers outlive this pipeline
@@ -280,8 +293,6 @@ pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall> {
     pub(super) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub(super) storage_texture_handles: Vec<&'t StorageTextureHandle>,
     pub(super) raster_state: RasterState,
-
-    pub disable_depth_test: bool,
 }
 
 /// which type of draw call to use, and the necessary data for it. Every variant
@@ -312,8 +323,6 @@ pub struct IndexedPipelineConfig<'t, V: VertexDescription> {
     storage_texture_handles: Vec<&'t StorageTextureHandle>,
     raster_state: RasterState,
     _vertex: PhantomData<V>,
-
-    pub disable_depth_test: bool,
 }
 
 impl<'t, V: VertexDescription> IndexedPipelineConfig<'t, V> {
@@ -332,9 +341,7 @@ impl<'t, V: VertexDescription> IndexedPipelineConfig<'t, V> {
     }
 
     /// Bake this pipeline with explicit fixed-function raster state. Callable
-    /// either side of the vertex source — see
-    /// [`PipelineConfig::with_raster_state`] for the `disable_depth_test`
-    /// interaction.
+    /// either side of the vertex source.
     pub fn with_raster_state(mut self, raster_state: RasterState) -> Self {
         self.raster_state = raster_state;
         self
@@ -349,7 +356,6 @@ impl<'t, V: VertexDescription> IndexedPipelineConfig<'t, V> {
             uniform_buffer_handles: self.uniform_buffer_handles,
             storage_texture_handles: self.storage_texture_handles,
             raster_state: self.raster_state,
-            disable_depth_test: self.disable_depth_test,
         }
     }
 }
@@ -358,11 +364,6 @@ impl<'t, V: VertexDescription, D: DrawCall> PipelineConfig<'t, V, D> {
     /// Bake this pipeline with explicit fixed-function raster state instead of
     /// [`RasterState::default()`] (which reproduces the renderer's original
     /// hardcoded pipeline).
-    ///
-    /// NOTE the older, coarser `disable_depth_test` flag wins when it is set:
-    /// it forces [`DepthCompare::Disabled`] regardless of what is passed here.
-    /// To vary the depth test alongside other state, leave
-    /// `disable_depth_test` false and set `depth_test` directly.
     pub fn with_raster_state(mut self, raster_state: RasterState) -> Self {
         self.raster_state = raster_state;
         self
@@ -377,8 +378,6 @@ pub struct PipelineConfigBuilder<'t> {
     pub texture_handles: Vec<&'t TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub storage_texture_handles: Vec<&'t StorageTextureHandle>,
-
-    pub disable_depth_test: bool,
 }
 
 impl<'t> PipelineConfigBuilder<'t> {
@@ -397,7 +396,6 @@ impl<'t> PipelineConfigBuilder<'t> {
             // with_raster_state rather than being a field
             raster_state: RasterState::default(),
             _vertex: PhantomData,
-            disable_depth_test: self.disable_depth_test,
         }
     }
 
@@ -413,7 +411,6 @@ impl<'t> PipelineConfigBuilder<'t> {
             uniform_buffer_handles: self.uniform_buffer_handles,
             storage_texture_handles: self.storage_texture_handles,
             raster_state: RasterState::default(),
-            disable_depth_test: self.disable_depth_test,
         }
     }
 }

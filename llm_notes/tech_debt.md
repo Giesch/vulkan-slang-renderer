@@ -11,7 +11,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 
 1. [Vulkan objects leak when an init function fails partway](#1-vulkan-objects-leak-when-an-init-function-fails-partway) — cleanup debt, diagnostic cost
 2. [Dangling pipeline when a hot reload's `create_graphics_pipeline` fails](#2-dangling-pipeline-when-a-hot-reloads-create_graphics_pipeline-fails) — **correctness bug**, debug builds only
-3. [Remove the legacy `disable_depth_test` flag](#3-remove-the-legacy-disable_depth_test-flag) — carries a **behavior-change trap**, see §3.1
+3. [Remove the legacy `disable_depth_test` flag](#3-remove-the-legacy-disable_depth_test-flag---done) — **done**
 4. [Duplicate struct names across shared slang modules resolve by silent last-write-wins](#4-duplicate-struct-names-across-shared-slang-modules-resolve-by-silent-last-write-wins) — latent **silent-wrong-output** hazard in codegen
 5. [Validation and fault injection cannot run in release builds](#5-validation-and-fault-injection-cannot-run-in-release-builds) — release builds are unsweepable, coverage gap
 
@@ -126,90 +126,21 @@ from hot reload anyway.
 leaves the old pipeline live and rendering, with no validation complaints and
 no entry orphaned in `old_pipelines`.
 
-## 3. Remove the legacy `disable_depth_test` flag
+## 3. Remove the legacy `disable_depth_test` flag — **done**
 
-> **Read §3.1 before starting.** The obvious mechanical migration silently
-> changes depth-write behavior in two examples. This is not a pure refactor.
+Removed. The flag is gone from `PipelineConfig`, `IndexedPipelineConfig`,
+`PipelineConfigBuilder`, the codegen template, and the `create_pipeline`
+override that let it silently beat `RasterState.depth_test`. Depth state now
+has exactly one spelling.
 
-**The problem.** Depth state is now part of `RasterState`
-(`src/renderer/pipeline.rs:216`, shipped in P5 of the link-rendering plan), but
-the older boolean it replaced is still a field on both `PipelineConfig`
-(`:274`) and `PipelineConfigBuilder` (`:332`), still emitted as
-`disable_depth_test: false` by the codegen template
-(`templates/shader_atlas_entry.rs.askama:132`, so it appears in all 16
-generated shader files), and still overrides the raster state at
-`src/renderer.rs:1270-1275`:
+The two consumers (`examples/sprite_batch.rs`, `examples/space_invaders.rs`)
+migrated to a new `RasterState::no_depth()` constructor. That was a deliberate
+behavior change, not a 1:1 port: the old flag set the depth *test* to disabled
+and never touched `depth_write`, so both examples had been writing depth
+unconditionally (Vulkan honors writes with the test off). `no_depth()` sets
+both, and exists so that pairing is hard to get wrong for the next caller.
 
-```rust
-// the older, coarser disable_depth_test flag (emitted by generated
-// pipeline_config()) wins over the raster state's depth compare
-let mut raster_state = config.raster_state;
-if config.disable_depth_test {
-    raster_state.depth_test = DepthCompare::Disabled;
-}
-```
-
-Two ways to say the same thing, one silently beating the other. The
-`with_raster_state` doc comment (`:315-318`) exists only to warn about this
-precedence.
-
-**Consumers.** Exactly two, both setting the field by direct mutation rather
-than a builder call:
-
-- `examples/sprite_batch.rs:87`
-- `examples/space_invaders.rs:165`
-
-**Fix.** Delete the field from `PipelineConfig` and `PipelineConfigBuilder`,
-drop it from the template and the `build()` body (`:349`), delete the override
-block at `src/renderer.rs:1270-1275`, trim the precedence warning out of the
-`with_raster_state` doc comment, and migrate the two examples per §3.1.
-
-### 3.1 The migration trap: `disable_depth_test` never touched `depth_write`
-
-The flag sets `depth_test = Disabled` and *leaves `depth_write` alone*, so both
-examples run today with `Disabled` **plus** `depth_write: true` (the
-`RasterState::default()` value). Per the `DepthCompare::Disabled` doc comment
-(`src/renderer/pipeline.rs:205-208`) Vulkan still honors depth writes when the
-test is off — so these two pipelines currently write depth unconditionally,
-which is almost certainly not what anyone intended when they reached for a flag
-named "disable depth test".
-
-That makes two different migrations, and they are not the same change:
-
-```rust
-// (a) faithful 1:1 — preserves today's behavior exactly, including the
-//     probably-unintended depth writes. Correct choice for the removal commit.
-.with_raster_state(RasterState {
-    depth_test: DepthCompare::Disabled,
-    ..Default::default()            // depth_write stays true
-})
-
-// (b) what these 2D examples arguably *want* — a real behavior change.
-.with_raster_state(RasterState {
-    depth_test: DepthCompare::Disabled,
-    depth_write: false,
-    ..Default::default()
-})
-```
-
-Do (a) in the removal commit so the change stays reviewable as a pure refactor,
-then decide (b) separately. Both examples draw a single pipeline into a depth
-buffer that is cleared every frame and never sampled, so (b) should be visually
-inert — which is exactly why it must be verified deliberately rather than
-assumed: if it *isn't* inert, something else depends on those writes and that is
-worth knowing before it's buried in a cleanup diff.
-
-The same trap applies to any future `DepthCompare::Disabled` user, so it may be
-worth pairing the removal with a rename or a constructor
-(`RasterState::no_depth()` setting both fields) that makes the pairing hard to
-get wrong.
-
-**Cost.** Mechanical but wide: `just shaders` regenerates all 16 generated
-files and every one of their snapshots changes (one deleted line each), so
-review the diff shape once and then `cargo insta test --accept`. Verify with
-`timeout 3 just dev sprite_batch` and `space_invaders` — the failure mode to
-watch for is sprites vanishing or z-fighting, which would mean the depth state
-didn't actually carry over.
+Kept numbered so §4/§5 references from other notes stay valid.
 
 ## 4. Duplicate struct names across shared slang modules resolve by silent last-write-wins
 

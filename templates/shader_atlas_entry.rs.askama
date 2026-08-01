@@ -166,7 +166,6 @@ impl {{ shader_impl.shader_type_name }} {
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
-            disable_depth_test: false,
         }
         .{{ shader_impl.build_method() }}()
     }

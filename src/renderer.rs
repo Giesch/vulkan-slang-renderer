@@ -1247,13 +1247,6 @@ impl Renderer {
         let pipeline_layout =
             ShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
 
-        // the older, coarser disable_depth_test flag (emitted by generated
-        // pipeline_config()) wins over the raster state's depth compare
-        let mut raster_state = config.raster_state;
-        if config.disable_depth_test {
-            raster_state.depth_test = DepthCompare::Disabled;
-        }
-
         let pipeline = create_graphics_pipeline(
             &self.device,
             self.image_format,
@@ -1262,7 +1255,7 @@ impl Renderer {
             &pipeline_layout,
             &config.shader.vertex_binding_descriptions(),
             &config.shader.vertex_attribute_descriptions(),
-            &raster_state,
+            &config.raster_state,
         )?;
 
         self.set_debug_name(
@@ -1353,8 +1346,8 @@ impl Renderer {
             vertex_pipeline_config,
             descriptor_pool,
             descriptor_sets,
+            raster_state: config.raster_state,
             shader: config.shader,
-            raster_state,
         })
     }
 

@@ -96,7 +96,6 @@ impl Shader {
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
-            disable_depth_test: false,
         }
         .build_indexed()
     }

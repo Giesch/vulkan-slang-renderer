@@ -36,7 +36,6 @@ pub struct PipelineConfigBuilder<'a> {
     pub texture_handles: Vec<&'a TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub storage_texture_handles: Vec<&'a StorageTextureHandle>,
-    pub disable_depth_test: bool,
 }
 
 pub struct ComputePipelineConfig<'a> {
