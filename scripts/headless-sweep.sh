@@ -185,7 +185,7 @@ echo "building examples..."
 # indistinguishable from "the example ran for its whole window" -- and the log
 # is empty. Every example then reports ok and the whole sweep is vacuous. This
 # is easy to hit, since any source edit immediately before a sweep triggers it.
-if ! cargo build --examples; then
+if ! cargo build -p mltrs --examples; then
   echo "FAIL: examples did not build" >&2
   exit 1
 fi
@@ -202,7 +202,7 @@ if [ "$SWEEP_SELF_TEST" != "0" ]; then
 fi
 
 if [ "${#examples[@]}" -eq 0 ]; then
-  mapfile -t examples < <(ls examples/*.rs | xargs -n1 basename | sed 's/\.rs$//')
+  mapfile -t examples < <(ls crates/mltrs/examples/*.rs | xargs -n1 basename | sed 's/\.rs$//')
 fi
 
 fail=0

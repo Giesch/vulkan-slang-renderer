@@ -1,5 +1,27 @@
 # mltrs workspace migration plan
 
+*(update 2026-08, at implementation time: the plan below predates the `gx`
+module, the `toon_link` example, `env_config.rs`, and `tev.slang`. The
+implementation follows the plan with these drift adjustments:*
+- *`env_config.rs` lives in `crates/renderer` (both `renderer.rs` and
+  `game/traits.rs` use it), re-exported as `mltrs::env_config`.*
+- *`gx/model_manifest.rs` (+ the `gx_enum!` macro) became a fourth library
+  crate `crates/gx` (package `gx`), shared by `convert-link` and `toon_link`.
+  `gx/tev_pack.rs` could **not** go into a library crate — it imports the
+  generated `tev::TevParams` — so it moves into the `toon_link` example crate
+  (interim: an `mltrs::gx` facade module).*
+- *`convert_link` had moved to `src/gx/bin/`; it still splits out as
+  `crates/convert-link`, depending on `gx` rather than on mltrs. Its
+  test fixtures reach the repo-root `assets/` via `../../` from the crate.*
+- *`shader_branching_snapshots` (postdates the plan) now compiles the
+  `fixtures/shaders` corpus in-test instead of reading the monolith's
+  committed `shaders/compiled`.*
+- *`json.rs`'s roundtrip test gets a committed fixture copy of
+  `basic_triangle.json` inside the renderer crate.*
+- *§7's corpus gained `ray_march_camera.slang`'s import parent chain via
+  `gpu_picking`; the snapshot bodies were diffed old-vs-new at migration time
+  and matched exactly for every carried-over file.)*
+
 Refactor the single crate `vulkan-slang-renderer` into a cargo workspace with three library/tool
 crates (`mltrs`, `mltrs-renderer`, `mltrs-cli`) plus per-example crates (axum-style). The driving
 goal: a consuming Rust project should be able to depend on `mltrs`, run the `mltrs` CLI against its

@@ -1,0 +1,16 @@
+[package]
+name = "shader-check"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ash = "0.38"
+# generated enums derive Facet; mirrors the root Cargo.toml's pinning
+facet = { version = "0.42", features = ["reflect"] }
+facet-core = { version = "0.42.0", features = ["std"] }
+glam = { version = "0.30", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# keep this fixture out of the real workspace (it is also in root `exclude`)
+[workspace]

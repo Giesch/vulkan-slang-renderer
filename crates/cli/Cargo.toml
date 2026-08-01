@@ -1,0 +1,27 @@
+[package]
+name = "mltrs-cli"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "mltrs"
+path = "src/main.rs"
+
+[dependencies]
+mltrs-renderer.workspace = true
+
+anyhow.workspace = true
+askama.workspace = true
+clap.workspace = true
+glam.workspace = true
+heck.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+rspirv.workspace = true
+uuid.workspace = true

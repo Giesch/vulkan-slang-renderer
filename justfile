@@ -14,14 +14,14 @@ check:
 # run dev build with shader hot reload
 [unix]
 dev example="basic_triangle":
-    cargo run --example {{example}}
+    cargo run -p mltrs --example {{example}}
 
 # run dev build with shader hot reload
 [windows]
 dev example="basic_triangle":
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      cargo run --example {{example}}; \
+      cargo run -p mltrs --example {{example}}; \
     }
 
 
@@ -29,7 +29,7 @@ dev example="basic_triangle":
 [unix]
 shader-debug example="viking_room":
     RUST_LOG=info VK_LAYER_PRINTF_ONLY_PRESET=1 \
-      cargo run --example {{example}}
+      cargo run -p mltrs --example {{example}}
 
 # run with shader printf and vk validation layers at 'info'
 [windows]
@@ -38,18 +38,18 @@ shader-debug example="viking_room":
       . ./scripts/load-env.ps1; \
       $env:RUST_LOG='info'; \
       $env:VK_LAYER_PRINTF_ONLY_PRESET='1'; \
-      cargo run --example {{example}}; \
+      cargo run -p mltrs --example {{example}}; \
     }
 
 # run a release build
-release: shaders
-    cargo run --release
+release example="basic_triangle": shaders
+    cargo run --release -p mltrs --example {{example}}
 
 
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
 [unix]
 shaders:
-    cargo run --bin prepare_shaders
+    cargo run -p mltrs-cli -- shaders compile --crate-dir crates/mltrs --import-root crate
     cargo fmt
 
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
@@ -57,18 +57,18 @@ shaders:
 shaders:
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      cargo run --bin prepare_shaders; \
+      cargo run -p mltrs-cli -- shaders compile --crate-dir crates/mltrs --import-root crate; \
       cargo fmt; \
     }
 
 # generate watercolor paper height map texture
 paper-texture:
-    cargo run --bin generate_paper_texture --release
+    cargo run -p mltrs --bin generate_paper_texture --release
 
 # export space invaders aseprite files as one sprite sheet
 [unix]
 sprites:
-    cd textures/space_invaders && aseprite --batch *.aseprite \
+    cd crates/mltrs/textures/space_invaders && aseprite --batch *.aseprite \
         --sheet sprite_sheet.png \
         --data sprite_sheet.json \
         --filename-format "{title} {frame}" \
@@ -81,7 +81,7 @@ sprites:
 # compilation and the example never starts -- with no output to say so.
 [unix]
 watch example="basic_triangle" seconds="5":
-    cargo build --example {{example}}
+    cargo build -p mltrs --example {{example}}
     timeout --preserve-status -k 5 -s TERM {{seconds}} ./target/debug/examples/{{example}}
 
 
@@ -98,7 +98,7 @@ sweep-self-test:
 
 # run all unit tests
 test:
-    INSTA_UPDATE=no cargo test
+    INSTA_UPDATE=no cargo test --workspace
 
 # run and review snapshot tests interactively
 [unix] # currently broken on windows, see build_tasks.rs
@@ -111,8 +111,8 @@ insta:
 # plain `cargo clippy` checks the lib and bins only, so example-only breakage
 # slips through (same trap applies to `cargo check`)
 lint:
-    cargo clippy --all-targets -- -D warnings
-    cargo clippy --all-targets --release -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --release -- -D warnings
 
 
 # set up git pre-commit hook
@@ -123,7 +123,7 @@ setup-precommit:
 
 # lint and test for git pre-commit hook
 pre-commit: shaders && lint test
-    git add shaders/compiled
+    git add crates/mltrs/shaders/compiled crates/mltrs/src/generated
 
 # get the slang git submodule and its submodules
 init-submodules:
@@ -165,7 +165,7 @@ clean-slang:
 # write *.beats.json assets based on automatically extracted timestamps
 [unix]
 beats:
-    ./scripts/extract_beats.py './audio/'
+    ./scripts/extract_beats.py './crates/mltrs/audio/'
 
 
 # extract Link assets from the tww disc image (needs ../tww; override with TWW_DIR)
@@ -176,7 +176,7 @@ extract-link:
 # parse Link's BDL and emit converted assets (P1: chunk walk only)
 [unix]
 convert-link *args:
-    cargo run --bin convert_link -- assets/link/raw assets/link/converted {{args}}
+    cargo run -p convert-link --bin convert_link -- assets/link/raw assets/link/converted {{args}}
 
 # P1 gate: diff our --info chunk table against the gclib oracle, then run ignored tests
 [unix]
@@ -184,7 +184,7 @@ link-verify-p1:
     #!/usr/bin/env bash
     set -euo pipefail
     diff <(just convert-link --info) <(./scripts/link_chunk_table.py assets/link/raw/cl.bdl)
-    cargo test --bin convert_link -- --include-ignored
+    cargo test -p convert-link -- --include-ignored
     echo "P1 VERIFIED"
 
 # P2 texture gate: pixel-diff every decoded texture against gclib
@@ -206,7 +206,7 @@ link-verify-mat3:
 # P2 gate: textures + MAT3 + ignored real-file tests
 [unix]
 link-verify-p2: link-verify-textures link-verify-mat3
-    cargo test --bin convert_link -- --include-ignored
+    cargo test -p convert-link -- --include-ignored
     echo "P2 VERIFIED"
 
 # P3 geometry gate: diff our canonical --dump-geometry against the oracle,
@@ -222,7 +222,7 @@ link-verify-geometry:
 # P3 gate: geometry diff + ignored real-file tests
 [unix]
 link-verify-p3: link-verify-geometry
-    cargo test --bin convert_link -- --include-ignored
+    cargo test -p convert-link -- --include-ignored
     echo "P3 VERIFIED"
 
 # resolve the actor lighting colors examples/toon_link.rs lerps between; pass

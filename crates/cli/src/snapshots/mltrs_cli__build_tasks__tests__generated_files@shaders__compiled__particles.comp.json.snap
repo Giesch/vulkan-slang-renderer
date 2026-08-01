@@ -1,0 +1,171 @@
+---
+source: crates/cli/src/build_tasks.rs
+info:
+  relative_path: shaders/compiled/particles.comp.json
+---
+{
+  "sourceFileName": "particles.compute.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "simParams",
+      "elementType": {
+        "typeName": "SimParams",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "particlesIn",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "Particle",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "velocity",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 32,
+            "access": "read"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "particlesOut",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "Particle",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "velocity",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 32,
+            "access": "readWrite"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "deltaTime",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 4
+            },
+            "scalarType": "float32"
+          }
+        ]
+      }
+    }
+  ],
+  "computeEntryPoint": {
+    "entryPointName": "computeMain",
+    "stage": "compute",
+    "parameters": []
+  },
+  "workgroupSize": [
+    256,
+    1,
+    1
+  ],
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": []
+  }
+}

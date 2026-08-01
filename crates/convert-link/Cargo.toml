@@ -1,0 +1,24 @@
+[package]
+name = "convert-link"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "convert_link"
+path = "src/main.rs"
+
+[dependencies]
+gx.workspace = true
+
+anyhow.workspace = true
+glam.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
