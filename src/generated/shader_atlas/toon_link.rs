@@ -11,7 +11,7 @@ use facet::Facet;
 use serde::Serialize;
 
 pub use super::mvp::MVPMatrices;
-pub use super::tev::TevParams;
+pub use super::tev::{GXAlphaCompare, TevParams};
 use crate::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -78,23 +78,20 @@ impl TryFrom<u32> for DebugMode {
 pub struct ToonLinkParams {
     pub mvp: MVPMatrices,
     pub tev: TevParams,
-    pub alpha_compare: glam::UVec4,
-    pub alpha_compare_op: u32,
+    pub alpha_compare: GXAlphaCompare,
     pub debug_mode: DebugMode,
-    pub _padding_0: [u8; 8],
+    pub _padding_0: [u8; 12],
 }
 
 impl GPUWrite for ToonLinkParams {}
-const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 1552);
+const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 1568);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, tev) == 192);
 const _: () = assert!(std::mem::size_of::<TevParams>() == 1328);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare) == 1520);
-const _: () = assert!(std::mem::size_of::<glam::UVec4>() == 16);
-const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare_op) == 1536);
-const _: () = assert!(std::mem::size_of::<u32>() == 4);
-const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 1540);
+const _: () = assert!(std::mem::size_of::<GXAlphaCompare>() == 32);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 1552);
 const _: () = assert!(std::mem::size_of::<DebugMode>() == 4);
 
 #[derive(Debug, Clone, Copy, Serialize)]

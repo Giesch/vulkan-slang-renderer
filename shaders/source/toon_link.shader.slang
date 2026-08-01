@@ -5,9 +5,9 @@ module toon_link;
 import mvp;
 import tev;
 
-// Keep in sync with examples/toon_link.rs's module doc comment. The variant
-// names are what the debug window's radio buttons are labelled with, via
-// `pascal_to_display` — there is no parallel list of names on the Rust side.
+// The variant names are what the debug window's radio buttons are labelled
+// with, via `pascal_to_display` — there is no parallel list of names on the
+// Rust side.
 //
 // Three things hold in *every* mode, so the notes below only cover the rgb:
 // the GX alpha test still runs on the TEV output before the switch, the output
@@ -100,14 +100,7 @@ struct ToonLinkParams {
     // The whole per-material GX configuration, built by src/tev_pack.rs.
     TevParams tev;
 
-    // raw GX codes, straight from MAT3 via the manifest.
-    // GXCompare: NEVER 0, LESS 1, EQUAL 2, LEQUAL 3,
-    //            GREATER 4, NEQUAL 5, GEQUAL 6, ALWAYS 7
-    uint4 alphaCompare;      // comp0, ref0, comp1, ref1
-    uint  alphaCompareOp;    // GXAlphaOp: AND 0, OR 1, XOR 2, XNOR 3
-    // NOTE: changing this struct's shape while `just dev` runs trips
-    // assert_shader_interface_unchanged — body edits hot-reload, shape
-    // edits need `just shaders` + a restart.
+    GXAlphaCompare alphaCompare;
     DebugMode debugMode;
 }
 
@@ -147,49 +140,13 @@ FragVertex vertMain(Vertex vertex) {
     return FragVertex(position, worldNormal, vertex.uv0, color0, texcoord01);
 }
 
-// One GXCompare function on the 8-bit alpha the hardware compares.
-bool gxCompare(uint comp, uint alpha, uint reference) {
-    switch (comp) {
-    case 0: return false;              // NEVER
-    case 1: return alpha < reference;  // LESS
-    case 2: return alpha == reference; // EQUAL
-    case 3: return alpha <= reference; // LEQUAL
-    case 4: return alpha > reference;  // GREATER
-    case 5: return alpha != reference; // NEQUAL
-    case 6: return alpha >= reference; // GEQUAL
-    default: return true;              // ALWAYS (7)
-    }
-}
-
-// Combine the two compare results per GXAlphaOp.
-bool gxAlphaOp(uint op, bool r0, bool r1) {
-    switch (op) {
-    case 0: return r0 && r1;           // AND
-    case 1: return r0 || r1;           // OR
-    case 2: return r0 != r1;           // XOR
-    default: return r0 == r1;          // XNOR (3)
-    }
-}
-
-// sRGB → linear on one channel. The color target is _SRGB, so the hardware
-// applies linear → sRGB *encode* on store; we hold raw GX values that must
-// reach the stored bits unchanged, so we apply the *decode* first and the two
-// transfers cancel. Applied to RGB only, never alpha.
-//
-// Verified numerically in P7 (2026-07-27): a flat tunic texel round-trips to the
-// source PNG's byte value with 0 LSB error.
-float srgbDecodeChannel(float c) {
-    if (c <= 0.04045) {
-        return c / 12.92;
-    }
-    return pow((c + 0.055) / 1.055, 2.4);
-}
-
+// sRGB → linear. The color target is _SRGB, so the hardware applies
+// linear → sRGB *encode* on store; we hold raw GX values that must reach the
+// stored bits unchanged, so we apply the *decode* first and the two transfers
+// cancel. Applied to RGB only, never alpha. Verified numerically in P7: a flat
+// tunic texel round-trips to the source PNG's byte value with 0 LSB error.
 float3 srgbDecode(float3 c) {
-    return float3(
-        srgbDecodeChannel(c.r),
-        srgbDecodeChannel(c.g),
-        srgbDecodeChannel(c.b));
+    return select(c <= 0.04045, c / 12.92, pow((c + 0.055) / 1.055, 2.4));
 }
 
 [shader("fragment")]
@@ -205,16 +162,12 @@ float4 fragMain(FragVertex fragVertex) : SV_TARGET {
         texcoord01 = params.tev.evalTexGens(fragVertex.uv0, color0, false);
     }
 
-    let tevOut =
-        params.tev.evalStages(color0, texcoord01, params.tex0, params.tex1);
+    let tevOut = params.tev.evalStages(color0, texcoord01, params.tex0, params.tex1);
 
     // GX order: the alpha test runs on the TEV output, not on a raw texel. It
     // runs in every debug mode, so the cutout stays visible while inspecting
     // normals or UVs.
-    let alpha8 = uint(round(saturate(tevOut.a) * 255.0));
-    let keep0 = gxCompare(params.alphaCompare.x, alpha8, params.alphaCompare.y);
-    let keep1 = gxCompare(params.alphaCompare.z, alpha8, params.alphaCompare.w);
-    if (!gxAlphaOp(params.alphaCompareOp, keep0, keep1)) {
+    if (!params.alphaCompare.test(tevOut.a)) {
         discard;
     }
 
