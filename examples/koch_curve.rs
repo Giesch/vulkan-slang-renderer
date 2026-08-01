@@ -5,11 +5,11 @@ use glam::Vec2;
 
 use vulkan_slang_renderer::editor::Slider;
 use vulkan_slang_renderer::game::{Game, Input, MouseButton};
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, TextureFilter,
     UniformBufferHandle,
 };
-use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::util::load_image;
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;

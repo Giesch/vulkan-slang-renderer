@@ -4,11 +4,11 @@ use glam::{Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::Game;
 use vulkan_slang_renderer::ktx::load_ktx2;
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
     UniformBufferHandle,
 };
-use vulkan_slang_renderer::manifest_path;
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
 use vulkan_slang_renderer::generated::shader_atlas::suzanne::*;

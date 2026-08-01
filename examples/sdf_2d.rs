@@ -68,11 +68,10 @@ impl Game for SDF2D {
     {
         let start_time = Instant::now();
 
-        let beats: BeatsData =
-            serde_json::from_str(&std::fs::read_to_string(manifest_path![
-                "audio",
-                "alias_abandon.beats.json"
-            ])?)?;
+        let beats: BeatsData = serde_json::from_str(&std::fs::read_to_string(manifest_path![
+            "audio",
+            "alias_abandon.beats.json"
+        ])?)?;
 
         let params_buffer = renderer.create_uniform_buffer::<SDF2DParams>()?;
         let resources = Resources {

@@ -3,11 +3,11 @@ use std::time::{Duration, Instant};
 use glam::{Mat4, Vec2, Vec3};
 
 use vulkan_slang_renderer::game::Game;
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
     UniformBufferHandle,
 };
-use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::util::load_image;
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;

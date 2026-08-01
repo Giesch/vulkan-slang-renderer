@@ -16,11 +16,11 @@ use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
 use vulkan_slang_renderer::editor::Label;
 use vulkan_slang_renderer::game::{Game, MaxMSAASamples};
+use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, RasterState,
     Renderer, TextureFilter, UniformBufferHandle,
 };
-use vulkan_slang_renderer::manifest_path;
 use vulkan_slang_renderer::util::load_image;
 
 use vulkan_slang_renderer::generated::shader_atlas::ShaderAtlas;
