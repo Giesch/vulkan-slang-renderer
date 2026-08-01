@@ -22,6 +22,8 @@ enum Command {
 enum ShadersCommand {
     /// Compile slang shaders to SPIR-V + reflection json, and generate Rust bindings
     Compile(CompileArgs),
+    /// Seed a shaders/source dir with the vendored engine slang modules
+    Init(InitArgs),
 }
 
 #[derive(Args)]
@@ -46,12 +48,66 @@ struct CompileArgs {
     no_rust: bool,
 }
 
+#[derive(Args)]
+struct InitArgs {
+    /// directory to write the engine slang modules into
+    #[arg(long, default_value = "shaders/source")]
+    dir: PathBuf,
+    /// overwrite existing (possibly modified) files
+    #[arg(long)]
+    force: bool,
+}
+
+/// The canonical engine slang modules, embedded so `cargo install mltrs-cli`
+/// is self-contained. `shaders init` writes them into a consumer's source dir.
+const VENDORED_MODULES: &[(&str, &str)] = &[
+    ("addr.slang", include_str!("../vendor/addr.slang")),
+    ("mvp.slang", include_str!("../vendor/mvp.slang")),
+    (
+        "projection.slang",
+        include_str!("../vendor/projection.slang"),
+    ),
+    (
+        "fullscreen_triangle.slang",
+        include_str!("../vendor/fullscreen_triangle.slang"),
+    ),
+    (
+        "super_sample.slang",
+        include_str!("../vendor/super_sample.slang"),
+    ),
+];
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Command::Shaders(ShadersCommand::Compile(args)) => compile(args),
+        Command::Shaders(ShadersCommand::Init(args)) => init(args),
     }
+}
+
+fn init(args: InitArgs) -> anyhow::Result<()> {
+    std::fs::create_dir_all(&args.dir)?;
+
+    for (file_name, content) in VENDORED_MODULES {
+        let path = args.dir.join(file_name);
+
+        if path.exists() && !args.force {
+            let existing = std::fs::read_to_string(&path)?;
+            if existing == *content {
+                continue;
+            }
+            anyhow::bail!(
+                "refusing to overwrite modified {}; re-run with --force",
+                path.display()
+            );
+        }
+
+        std::fs::write(&path, content)?;
+        println!("wrote {}", path.display());
+    }
+
+    Ok(())
 }
 
 fn compile(args: CompileArgs) -> anyhow::Result<()> {

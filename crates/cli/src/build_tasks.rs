@@ -64,6 +64,7 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
     // Pass 1: Compile all shaders, write SPIR-V/JSON, collect intermediate build data
     let mut graphics_data: Vec<GraphicsShaderData> = vec![];
     let mut compute_data: Vec<ComputeShaderData> = vec![];
+    let mut written_compiled_files: BTreeSet<String> = BTreeSet::new();
 
     for slang_file_name in &slang_file_names {
         let ReflectedShader {
@@ -93,6 +94,10 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             config.compiled_shaders_dir.join(&spv_frag_file_name),
             fragment_shader.shader_bytecode.as_slice(),
         )?;
+
+        written_compiled_files.insert(reflection_json_file_name);
+        written_compiled_files.insert(spv_vert_file_name);
+        written_compiled_files.insert(spv_frag_file_name);
 
         if config.generate_rust_source {
             graphics_data.push(collect_graphics_shader_data(
@@ -125,11 +130,30 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             compute_shader.shader_bytecode.as_slice(),
         )?;
 
+        written_compiled_files.insert(reflection_json_file_name);
+        written_compiled_files.insert(spv_comp_file_name);
+
         if config.generate_rust_source {
             compute_data.push(collect_compute_shader_data(
                 &reflection_json,
                 &type_to_module,
             ));
+        }
+    }
+
+    // A removed shader must not leave its old outputs behind: sweep any
+    // *.spv / *.json this run did not write. Runs only after every compile
+    // succeeded, so a broken shader never wipes the previous outputs.
+    std::fs::create_dir_all(&config.compiled_shaders_dir)?;
+    for entry in std::fs::read_dir(&config.compiled_shaders_dir)? {
+        let path = entry?.path();
+        let is_managed = path
+            .extension()
+            .is_some_and(|ext| ext == "spv" || ext == "json");
+        let file_name = path.file_name().and_then(|n| n.to_str());
+        let is_stale = file_name.is_some_and(|n| !written_compiled_files.contains(n));
+        if is_managed && is_stale {
+            std::fs::remove_file(&path)?;
         }
     }
 
@@ -189,6 +213,15 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             &shared_module_names,
             &mut generated_source_files,
         );
+
+        // Same stale-file rule for the generated rust: the whole shader_atlas
+        // dir is regenerated every run, so removed shaders disappear with it.
+        let shader_atlas_dir = config
+            .rust_source_dir
+            .join(relative_path(["generated", "shader_atlas"]));
+        if shader_atlas_dir.exists() {
+            std::fs::remove_dir_all(&shader_atlas_dir)?;
+        }
 
         for source_file in &generated_source_files {
             write_generated_file(&config, source_file)?;
