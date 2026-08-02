@@ -2,7 +2,7 @@
 
 module paint_display;
 
-import fullscreen_triangle;
+import mltrs;
 
 enum DebugView : uint {
     Pigments = 0,
@@ -47,7 +47,7 @@ struct FragInput {
 
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
-    let fp = fullscreenPosition(id);
+    let fp = mltrs::fullscreenPosition(id);
     return FragInput(fp.svPosition, fp.texCoord);
 }
 

@@ -27,7 +27,9 @@ fn load_cpu_constants_module(session: &slang::Session) -> anyhow::Result<slang::
         #language slang 2026
         module cpu_constants;
 
-        export static const bool columnMajor = {column_major};
+        namespace mltrs {{
+            export static const bool columnMajor = {column_major};
+        }}
         "#,
     );
     Ok(session.load_module_from_source_string("cpu_constants", "cpu_constants.slang", &src)?)
@@ -207,8 +209,11 @@ pub fn dev_compile_slang_compute_shaders(
     prepare_reflected_compute_shader(source_file_name, search_path.to_str().unwrap())
 }
 
+/// `modules` pairs a slang load name (eg. "mltrs/addr") with the rust module
+/// name its types are recorded under (eg. "mltrs"); the two only differ for
+/// modules that live in a subdirectory of the shader source dir.
 pub fn reflect_shared_module_types(
-    module_names: &[&str],
+    modules: &[(&str, &str)],
     search_path: &str,
 ) -> anyhow::Result<HashMap<String, String>> {
     let global_session = slang::GlobalSession::new().unwrap();
@@ -239,23 +244,37 @@ pub fn reflect_shared_module_types(
 
     let mut type_to_module: HashMap<String, String> = HashMap::new();
 
-    for &module_name in module_names {
-        let module = session.load_module(module_name)?;
+    for &(load_name, rust_module_name) in modules {
+        let module = session.load_module(load_name)?;
         let module_decl = module.module_reflection();
 
-        for child in module_decl.children() {
-            // enums hoist into a shared module file exactly like structs
-            if matches!(
-                child.kind(),
-                slang::DeclKind::Struct | slang::DeclKind::Enum
-            ) && let Some(name) = child.name()
-            {
-                type_to_module.insert(name.to_string(), module_name.to_string());
-            }
-        }
+        collect_struct_and_enum_decls(module_decl, rust_module_name, &mut type_to_module);
     }
 
     Ok(type_to_module)
+}
+
+/// records every struct/enum declared in `decl`'s subtree,
+/// looking through namespace declarations (eg. `namespace mltrs { ... }`)
+fn collect_struct_and_enum_decls(
+    decl: &slang::reflection::Decl,
+    rust_module_name: &str,
+    type_to_module: &mut HashMap<String, String>,
+) {
+    for child in decl.children() {
+        match child.kind() {
+            // enums hoist into a shared module file exactly like structs
+            slang::DeclKind::Struct | slang::DeclKind::Enum => {
+                if let Some(name) = child.name() {
+                    type_to_module.insert(name.to_string(), rust_module_name.to_string());
+                }
+            }
+            slang::DeclKind::Namespace => {
+                collect_struct_and_enum_decls(child, rust_module_name, type_to_module);
+            }
+            _ => {}
+        }
+    }
 }
 
 pub struct CompiledShader {

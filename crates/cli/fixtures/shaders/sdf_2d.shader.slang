@@ -2,8 +2,7 @@
 
 module sdf_2d;
 
-import fullscreen_triangle;
-import super_sample;
+import mltrs;
 
 // A partial Slang implementation of this blog post:
 // https://danielchasehooper.com/posts/code-animated-rick
@@ -23,13 +22,13 @@ struct FragInput {
 
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
-    let fp = fullscreenPosition(id);
+    let fp = mltrs::fullscreenPosition(id);
     let pixel = fp.centeredCoords * params.resolution;
 
     return FragInput(fp.svPosition, pixel);
 }
 
-struct SDF2DSampler : ISuperSampler {
+struct SDF2DSampler : mltrs::ISuperSampler {
     float2 pixel;
     float2 res;
     float time;
@@ -43,7 +42,7 @@ struct SDF2DSampler : ISuperSampler {
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
     let sampler = SDF2DSampler(input.pixel, params.resolution, params.time);
-    let color = superSample<SDF2DSampler, 3>(sampler);
+    let color = mltrs::superSample<SDF2DSampler, 3>(sampler);
     return float4(color, 1.0);
 }
 

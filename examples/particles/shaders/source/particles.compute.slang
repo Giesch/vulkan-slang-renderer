@@ -2,14 +2,14 @@
 
 module particles_compute;
 
-import addr;
+import mltrs;
 import particle;
 
 ParameterBlock<SimParams> simParams;
 
 struct SimParams {
-    ReadAddr<Particle> particlesIn;
-    Addr<Particle> particlesOut;
+    mltrs::ReadAddr<Particle> particlesIn;
+    mltrs::Addr<Particle> particlesOut;
     float deltaTime;
 }
 

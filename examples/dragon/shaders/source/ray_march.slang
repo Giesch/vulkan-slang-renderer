@@ -2,7 +2,7 @@
 
 module ray_march;
 
-import addr;
+import mltrs;
 
 public interface IRayMarchWorld {
     // NOTE: returning 'none' here would mean no shapes in the scene,
@@ -118,7 +118,7 @@ func basicLighting<W>(
 
 // a generic 3D SDF
 public interface IShape {
-    static RayHitDistance closest(ReadAddr<This> buffer, int count, float3 position) {
+    static RayHitDistance closest(mltrs::ReadAddr<This> buffer, int count, float3 position) {
         var rayHit: Optional<ClosestShape> = none;
 
         for (int i = 0; i < count; i++) {

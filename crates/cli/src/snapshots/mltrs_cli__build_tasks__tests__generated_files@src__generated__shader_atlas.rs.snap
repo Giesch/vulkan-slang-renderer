@@ -4,9 +4,8 @@ info:
   relative_path: src/generated/shader_atlas.rs
 ---
 pub mod gpu_picking_common;
-pub mod mvp;
+pub mod mltrs;
 pub mod particle;
-pub mod projection;
 pub mod ray_march_camera;
 pub mod basic_triangle;
 pub mod gpu_picking;

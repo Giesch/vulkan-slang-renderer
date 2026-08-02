@@ -10,7 +10,7 @@ use ash::vk;
 use facet::Facet;
 use serde::Serialize;
 
-pub use super::mvp::MVPMatrices;
+pub use super::mltrs::MVPMatrices;
 pub use super::tev::{GXAlphaCompare, TevParams};
 use mltrs::renderer::gpu_write::GPUWrite;
 #[allow(unused)]

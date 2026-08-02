@@ -2,9 +2,9 @@
 
 module basic_triangle;
 
-import mvp;
+import mltrs;
 
-ParameterBlock<MVPMatrices> matrices;
+ParameterBlock<mltrs::MVPMatrices> matrices;
 
 struct Vertex {
     float3 position;

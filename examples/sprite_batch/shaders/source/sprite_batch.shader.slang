@@ -2,8 +2,7 @@
 
 module sprite_batch;
 
-import addr;
-import projection;
+import mltrs;
 
 // Based on the official SDL_gpu example here:
 // https://github.com/TheSpydog/SDL_gpu_examples/blob/main/Examples/PullSpriteBatch.c
@@ -16,8 +15,8 @@ import projection;
 ParameterBlock<SpriteBatchParams> params;
 
 struct SpriteBatchParams {
-    ImmutableAddr<Sprite> sprites;
-    Projection projection;
+    mltrs::ImmutableAddr<Sprite> sprites;
+    mltrs::Projection projection;
     Sampler2D texture;
 }
 

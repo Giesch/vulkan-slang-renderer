@@ -2,12 +2,12 @@
 
 module suzanne;
 
-import mvp;
+import mltrs;
 
 ParameterBlock<SuzanneParams> params;
 
 struct SuzanneParams {
-    MVPMatrices mvp;
+    mltrs::MVPMatrices mvp;
     float time;
     Sampler2D texture0;
     Sampler2D texture1;

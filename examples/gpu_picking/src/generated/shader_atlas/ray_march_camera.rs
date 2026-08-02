@@ -4,7 +4,7 @@
 
 use serde::Serialize;
 
-use super::projection::Projection;
+use super::mltrs::Projection;
 #[allow(unused_imports)]
 use mltrs::renderer::gpu_write::GPUWrite;
 

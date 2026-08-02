@@ -298,8 +298,8 @@ fn reflect_struct_fields(
                     }
                     slang::ResourceShape::SlangStructuredBuffer => anyhow::bail!(
                         "field '{field_name}': StructuredBuffer/RWStructuredBuffer descriptors \
-                        are unsupported; use a BDA pointer instead (e.g. Addr<T> via import addr, \
-                        or LayoutPtr<T, Std430DataLayout>)"
+                        are unsupported; use a BDA pointer instead (e.g. mltrs::Addr<T> via \
+                        import mltrs, or LayoutPtr<T, Std430DataLayout>)"
                     ),
                     s => todo!("unhandled slang base shape: {s:?}"),
                 };
@@ -376,7 +376,7 @@ fn reflect_struct_fields(
                 if layout_arg != "Std430DataLayout" {
                     anyhow::bail!(
                         "pointer field '{field_name}' ({ptr_type_name}): only Std430DataLayout \
-                        pointers are supported; declare it as Addr<T> (import addr;) \
+                        pointers are supported; declare it as mltrs::Addr<T> (import mltrs;) \
                         or LayoutPtr<T, Std430DataLayout>"
                     );
                 }

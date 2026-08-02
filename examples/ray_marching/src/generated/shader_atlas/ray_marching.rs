@@ -9,7 +9,7 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
-pub use super::projection::Projection;
+pub use super::mltrs::Projection;
 pub use super::ray_march_camera::RayMarchCamera;
 use mltrs::renderer::gpu_write::GPUWrite;
 #[allow(unused)]

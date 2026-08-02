@@ -1,5 +1,5 @@
 pub mod basic_triangle;
-pub mod mvp;
+pub mod mltrs;
 
 pub struct ShaderAtlas {
     pub basic_triangle: basic_triangle::Shader,

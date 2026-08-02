@@ -3,7 +3,7 @@
 module dragon;
 
 import dragon_curve;
-import fullscreen_triangle;
+import mltrs;
 import ray_march_camera;
 import ray_march;
 
@@ -21,7 +21,7 @@ struct FragInput {
 
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
-    let fp = fullscreenPosition(id);
+    let fp = mltrs::fullscreenPosition(id);
     return FragInput(fp.svPosition, fp.centeredCoords);
 }
 

@@ -2,10 +2,8 @@
 
 module gpu_picking_id;
 
-import addr;
-import fullscreen_triangle;
+import mltrs;
 import ray_march_camera;
-import projection;
 import gpu_picking_common;
 
 ParameterBlock<GpuPickingIdParams> params;
@@ -13,12 +11,12 @@ ParameterBlock<GpuPickingIdParams> params;
 struct GpuPickingIdParams {
     RayMarchCamera camera;
     uint cubeCount;
-    ReadAddr<Cube> cubes;
+    mltrs::ReadAddr<Cube> cubes;
 }
 
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
-    let fp = fullscreenPosition(id);
+    let fp = mltrs::fullscreenPosition(id);
     return FragInput(fp.svPosition, fp.centeredCoords);
 }
 

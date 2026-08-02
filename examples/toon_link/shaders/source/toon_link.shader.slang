@@ -2,7 +2,7 @@
 
 module toon_link;
 
-import mvp;
+import mltrs;
 import tev;
 
 // The variant names are what the debug window's radio buttons are labelled
@@ -95,7 +95,7 @@ struct ToonLinkParams {
     Sampler2D tex0;
     Sampler2D tex1;
 
-    MVPMatrices mvp;
+    mltrs::MVPMatrices mvp;
 
     // The whole per-material GX configuration, built by src/tev_pack.rs.
     TevParams tev;

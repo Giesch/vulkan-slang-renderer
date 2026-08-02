@@ -5,7 +5,7 @@
 
 module serenity_crt;
 
-import fullscreen_triangle;
+import mltrs;
 
 ParameterBlock<SerenityCRTParams> params;
 
@@ -31,7 +31,7 @@ struct SerenityCRTParams {
 
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
-    let fp = fullscreenPosition(id);
+    let fp = mltrs::fullscreenPosition(id);
     return FragInput(fp.svPosition, fp.texCoord);
 }
 

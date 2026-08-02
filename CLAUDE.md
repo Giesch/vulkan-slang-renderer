@@ -69,15 +69,23 @@ cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection
    Rust bindings in `src/generated/` — all inside the example's crate
 
 The engine slang modules (`addr`, `mvp`, `projection`, `fullscreen_triangle`,
-`super_sample`) are vendored in `crates/cli/vendor/`; `just vendor-shaders`
-re-seeds every example's copies from them. Shared example modules
-(`ray_march.slang`, …) are intentionally duplicated between examples.
+`super_sample`) are vendored in `crates/cli/vendor/`: a top-level `mltrs.slang`
+prelude re-exports the modules under `vendor/mltrs/`, with every declaration
+inside `namespace mltrs`. Shaders write `import mltrs;` and qualified
+references (`mltrs::MVPMatrices`, `mltrs::Addr<T>`, …). `just vendor-shaders`
+re-seeds every example's copies (`shaders/source/mltrs.slang` +
+`shaders/source/mltrs/`). Shared example modules (`ray_march.slang`, …) are
+intentionally duplicated between examples and stay un-namespaced.
+
+The namespace is ergonomics, not isolation: reflection records type names
+unqualified into a flat map, so every public struct/enum name must still be
+unique across all of a crate's `shaders/source/`.
 
 **Consumer workflow** (what the examples model):
 
 ```bash
 cargo add mltrs            # path/git dep for now
-mltrs shaders init         # seeds shaders/source with the engine modules
+mltrs shaders init         # seeds shaders/source with mltrs.slang + mltrs/
 # write shaders/source/my_game.shader.slang
 mltrs shaders compile      # emits shaders/compiled + src/generated (imports `mltrs::…`)
 # src/main.rs: mod generated; impl Game for MyGame; MyGame::run()

@@ -46,7 +46,9 @@
       "Bash(vulkaninfo:*)",
       "Bash(just convert-link *)",
       "Bash(just link-verify-p1 *)",
-      "Bash(just link-verify-p2 *)"
+      "Bash(just link-verify-p2 *)",
+      "Bash(just shaders *)",
+      "Bash(just sweep *)"
     ]
   },
   "statusLine": {

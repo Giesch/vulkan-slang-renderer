@@ -11,7 +11,7 @@ use mltrs::renderer::{
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::gpu_picking::*;
 use crate::generated::shader_atlas::gpu_picking_id;
-use crate::generated::shader_atlas::projection::Projection;
+use crate::generated::shader_atlas::mltrs::Projection;
 
 fn main() -> Result<(), anyhow::Error> {
     GpuPicking::run()

@@ -2,7 +2,7 @@
 
 module depth_texture;
 
-import mvp;
+import mltrs;
 
 // modified from the official tutorial example here:
 // https://docs.vulkan.org/tutorial/latest/_attachments/27_shader_depth.slang
@@ -10,7 +10,7 @@ import mvp;
 ParameterBlock<DepthTextureParams> params;
 
 struct DepthTextureParams {
-    MVPMatrices mvp;
+    mltrs::MVPMatrices mvp;
     Sampler2D texture;
 }
 

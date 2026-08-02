@@ -1,4 +1,4 @@
-pub mod projection;
+pub mod mltrs;
 pub mod space_invaders;
 
 pub struct ShaderAtlas {

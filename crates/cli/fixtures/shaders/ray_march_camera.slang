@@ -2,10 +2,10 @@
 
 module ray_march_camera;
 
-import projection;
+import mltrs;
 
 public struct RayMarchCamera {
-    public Projection inverseViewProj;
+    public mltrs::Projection inverseViewProj;
     public float3 position;
 
     public float3 rayDirection(float2 centeredCoords) {

@@ -6,7 +6,7 @@
 
 module koch_curve;
 
-import fullscreen_triangle;
+import mltrs;
 
 #define MAX_STEPS 100
 #define MAX_DIST 100.
@@ -38,7 +38,7 @@ struct FragInput {
 
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
-    let fp = fullscreenPosition(id);
+    let fp = mltrs::fullscreenPosition(id);
     let pixel = fp.centeredCoords * params.resolution;
     return FragInput(fp.svPosition, pixel);
 }

@@ -2,12 +2,12 @@
 
 module multi_mesh;
 
-import mvp;
+import mltrs;
 
 ParameterBlock<MultiMeshParams> params;
 
 struct MultiMeshParams {
-    MVPMatrices mvp;
+    mltrs::MVPMatrices mvp;
     float4 tint;
     // the raster/texture test objects modulate by this; every pre-existing
     // shape binds a solid white image, so their output is unchanged

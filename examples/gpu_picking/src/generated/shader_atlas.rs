@@ -1,7 +1,7 @@
 pub mod gpu_picking;
 pub mod gpu_picking_common;
 pub mod gpu_picking_id;
-pub mod projection;
+pub mod mltrs;
 pub mod ray_march_camera;
 
 pub struct ShaderAtlas {

@@ -2,14 +2,14 @@
 
 module particle_render;
 
-import addr;
+import mltrs;
 import particle;
 
 ParameterBlock<RenderParams> renderParams;
 
 struct RenderParams {
     uint particleCount;
-    ReadAddr<Particle> particles;
+    mltrs::ReadAddr<Particle> particles;
 }
 
 struct FragInput {

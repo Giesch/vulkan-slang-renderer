@@ -1516,13 +1516,21 @@ impl Alignment {
 /// (i.e., shared/utility modules), extracting `struct` declarations via the Slang reflection API.
 /// Returns a map of `type_name → module_name`.
 fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, String> {
-    let mut module_names = Vec::new();
+    // (slang load name, rust module name); these differ for modules in a
+    // subdirectory, whose types all collapse into one rust module named
+    // after the directory (eg. mltrs/addr.slang → "mltrs/addr" / "mltrs").
+    let mut modules: Vec<(String, String)> = Vec::new();
+    let mut subdirs = Vec::new();
 
     for entry in std::fs::read_dir(shaders_source_dir).unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
         let file_name = path.file_name().unwrap().to_str().unwrap();
 
+        if path.is_dir() {
+            subdirs.push(file_name.to_string());
+            continue;
+        }
         if file_name.ends_with(SHADER_FILE_SUFFIX)
             || file_name.ends_with(COMPUTE_SHADER_FILE_SUFFIX)
         {
@@ -1533,14 +1541,36 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
         }
 
         let module_name = file_name.strip_suffix(".slang").unwrap().to_string();
-        module_names.push(module_name);
+        modules.push((module_name.clone(), module_name));
     }
 
-    module_names.sort();
+    // a top-level module sharing a subdirectory's name (eg. mltrs.slang next
+    // to mltrs/) is reflected like any other: it's usually a re-export prelude
+    // with no types of its own, but a consumer's utils.slang may declare types
+    // alongside a utils/ directory — both collapse into the same rust module
+    for subdir in &subdirs {
+        for entry in std::fs::read_dir(shaders_source_dir.join(subdir)).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let file_name = path.file_name().unwrap().to_str().unwrap();
+
+            if !path.is_file() || !file_name.ends_with(".slang") {
+                continue;
+            }
+
+            let stem = file_name.strip_suffix(".slang").unwrap();
+            modules.push((format!("{subdir}/{stem}"), subdir.clone()));
+        }
+    }
+
+    modules.sort();
 
     let search_path = shaders_source_dir.to_str().unwrap();
-    let module_name_refs: Vec<&str> = module_names.iter().map(|s| s.as_str()).collect();
-    mltrs_renderer::shaders::reflect_shared_module_types(&module_name_refs, search_path)
+    let module_refs: Vec<(&str, &str)> = modules
+        .iter()
+        .map(|(load, rust)| (load.as_str(), rust.as_str()))
+        .collect();
+    mltrs_renderer::shaders::reflect_shared_module_types(&module_refs, search_path)
         .unwrap_or_else(|e| panic!("failed to reflect shared modules: {e}"))
 }
 

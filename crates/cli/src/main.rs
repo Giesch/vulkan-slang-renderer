@@ -59,22 +59,38 @@ struct InitArgs {
 }
 
 /// The canonical engine slang modules, embedded so `cargo install mltrs-cli`
-/// is self-contained. `shaders init` writes them into a consumer's source dir.
+/// is self-contained. `shaders init` writes them into a consumer's source dir:
+/// the `mltrs.slang` prelude at the top level, the modules it re-exports
+/// under `mltrs/`.
 const VENDORED_MODULES: &[(&str, &str)] = &[
-    ("addr.slang", include_str!("../vendor/addr.slang")),
-    ("mvp.slang", include_str!("../vendor/mvp.slang")),
+    ("mltrs.slang", include_str!("../vendor/mltrs.slang")),
     (
-        "projection.slang",
-        include_str!("../vendor/projection.slang"),
+        "mltrs/addr.slang",
+        include_str!("../vendor/mltrs/addr.slang"),
+    ),
+    ("mltrs/mvp.slang", include_str!("../vendor/mltrs/mvp.slang")),
+    (
+        "mltrs/projection.slang",
+        include_str!("../vendor/mltrs/projection.slang"),
     ),
     (
-        "fullscreen_triangle.slang",
-        include_str!("../vendor/fullscreen_triangle.slang"),
+        "mltrs/fullscreen_triangle.slang",
+        include_str!("../vendor/mltrs/fullscreen_triangle.slang"),
     ),
     (
-        "super_sample.slang",
-        include_str!("../vendor/super_sample.slang"),
+        "mltrs/super_sample.slang",
+        include_str!("../vendor/mltrs/super_sample.slang"),
     ),
+];
+
+/// Top-level engine module files from the pre-namespace layout; `shaders init`
+/// removes these so they don't collide with the `mltrs/` copies in reflection.
+const LEGACY_MODULES: &[&str] = &[
+    "addr.slang",
+    "mvp.slang",
+    "projection.slang",
+    "fullscreen_triangle.slang",
+    "super_sample.slang",
 ];
 
 fn main() -> anyhow::Result<()> {
@@ -103,8 +119,27 @@ fn init(args: InitArgs) -> anyhow::Result<()> {
             );
         }
 
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::write(&path, content)?;
         println!("wrote {}", path.display());
+    }
+
+    for file_name in LEGACY_MODULES {
+        let path = args.dir.join(file_name);
+        if !path.exists() {
+            continue;
+        }
+        if !args.force {
+            anyhow::bail!(
+                "found {} from the pre-namespace engine layout; its contents now \
+                live in mltrs/{file_name}. re-run with --force to remove it",
+                path.display()
+            );
+        }
+        std::fs::remove_file(&path)?;
+        println!("removed legacy {}", path.display());
     }
 
     Ok(())

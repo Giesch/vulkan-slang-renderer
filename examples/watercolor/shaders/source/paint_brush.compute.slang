@@ -2,7 +2,7 @@
 
 module paint_brush;
 
-import addr;
+import mltrs;
 
 ParameterBlock<BrushParams> brushParams;
 
@@ -25,7 +25,7 @@ struct BrushParams {
     float4 pigmentColor_4_7;
     float4 pigmentColor_8_11;
     float2 canvasSize;
-    ReadAddr<StrokePoint> strokePoints;
+    mltrs::ReadAddr<StrokePoint> strokePoints;
 }
 
 [numthreads(16, 16, 1)]

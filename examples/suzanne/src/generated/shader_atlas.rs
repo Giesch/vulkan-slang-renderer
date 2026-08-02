@@ -1,4 +1,4 @@
-pub mod mvp;
+pub mod mltrs;
 pub mod suzanne;
 
 pub struct ShaderAtlas {

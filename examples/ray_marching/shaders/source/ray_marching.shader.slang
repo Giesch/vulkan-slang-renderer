@@ -2,12 +2,9 @@
 
 module ray_marching;
 
-import addr;
+import mltrs;
 import ray_march;
-import fullscreen_triangle;
 import ray_march_camera;
-import projection;
-import super_sample;
 
 ParameterBlock<RayMarchingParams> params;
 
@@ -23,8 +20,8 @@ struct RayMarchingParams {
 
     float2 resolution;
 
-    ReadAddr<Sphere> spheres;
-    ReadAddr<BoxRect> boxes;
+    mltrs::ReadAddr<Sphere> spheres;
+    mltrs::ReadAddr<BoxRect> boxes;
 }
 
 struct FragInput {
@@ -34,11 +31,11 @@ struct FragInput {
 
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
-    let fp = fullscreenPosition(id);
+    let fp = mltrs::fullscreenPosition(id);
     return FragInput(fp.svPosition, fp.centeredCoords);
 }
 
-struct RayMarchSampler : ISuperSampler {
+struct RayMarchSampler : mltrs::ISuperSampler {
     float2 centeredCoords;
     float2 pixelSize;
     RayMarchWorld world;
@@ -75,15 +72,15 @@ float4 fragMain(FragInput input) : SV_Target {
         params.camera,
         params.lightPosition
     );
-    let color = superSample<RayMarchSampler, 3>(sampler);
+    let color = mltrs::superSample<RayMarchSampler, 3>(sampler);
     return float4(color, 1.0);
 }
 
 struct RayMarchWorld : IRayMarchWorld {
-    ReadAddr<Sphere> spheres;
+    mltrs::ReadAddr<Sphere> spheres;
     uint sphereCount;
 
-    ReadAddr<BoxRect> boxes;
+    mltrs::ReadAddr<BoxRect> boxes;
     uint boxCount;
 
     float minHitDistance = 0.001;
@@ -116,7 +113,7 @@ public struct Sphere : IShape {
 
 // https://www.youtube.com/watch?v=62-pRVZuS5c
 public struct BoxRect : IShape {
-    Projection transform;
+    mltrs::Projection transform;
     float3 radii;
 
     float3 color;

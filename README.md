@@ -39,7 +39,7 @@ the first consumers of the same workflow an external project would use:
 
 ``` sh
 cargo add mltrs            # path/git dep for now
-mltrs shaders init         # seeds shaders/source with the engine slang modules
+mltrs shaders init         # seeds shaders/source with mltrs.slang + mltrs/ (the engine modules)
 # write shaders/source/my_game.shader.slang
 mltrs shaders compile      # emits shaders/compiled + src/generated (imports `mltrs::…`)
 # src/main.rs: mod generated; impl Game for MyGame; MyGame::run()

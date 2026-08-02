@@ -1,17 +1,17 @@
 #+title: Todo
 
 * Now
-- [ ] problems/issues for side-agent PRs
+- [-] problems/issues for side-agent PRs
   - [X] triple-buffering problems
     done 2026-07-28: PRE_WAIT_RING_LEN and ring_slot deleted, one 2-slot ring
     (llm_notes/remove_pipelined_compute.md)
-  - [ ] testing without opening a window
+  - [X] testing without opening a window
     write to a texture? will this catch validation errors?
     might be worth it anyway
   - [ ] pick up tech_debt.md tasks
   - [ ] roc platform (after render graph)
-  - [ ] BDA slices; then sparse sets?
-  - [ ] add an immutable bda buffer variant with no duplication
+  - [-] BDA slices; then sparse sets?
+  - [-] add an immutable bda buffer variant with no duplication
     ie, don't need pipelined triple-buffering if it's always the same
 
 - [-] work through the issues in bda_footguns.md
