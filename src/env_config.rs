@@ -30,6 +30,12 @@ pub struct EnvConfig {
     /// builds only, like validation itself.
     pub inject_validation_fault: bool,
 
+    /// `VKR_PREFER_INTEGRATED=1` — rank integrated GPUs above discrete when
+    /// choosing a physical device. A preference, not a requirement: if no
+    /// integrated GPU is suitable the renderer still starts on whatever is.
+    /// Unset (or false) keeps the default discrete-first order.
+    pub prefer_integrated_gpu: Option<bool>,
+
     /// `RUST_LOG` — consumed by `pretty_env_logger`, captured for reporting.
     ///
     /// Not load-bearing: validation counting keys off message severity, not the
@@ -43,6 +49,7 @@ impl EnvConfig {
         Self {
             sweep: flag("VKR_SWEEP"),
             inject_validation_fault: flag("VKR_INJECT_VALIDATION_FAULT"),
+            prefer_integrated_gpu: optional_flag("VKR_PREFER_INTEGRATED"),
             rust_log: std::env::var("RUST_LOG").ok(),
         }
     }
@@ -61,13 +68,15 @@ pub mod exit_code {
     pub const NO_FRAMES: i32 = 3;
 }
 
-/// Unset, empty and `"false"` are false; anything else is true.
+/// Unset, empty, `"0"` and `"false"` are false; anything else is true.
 fn flag(name: &str) -> bool {
-    match std::env::var(name) {
-        Err(_) => false,
-        Ok(value) => {
-            let value = value.trim();
-            !value.is_empty() && !value.eq_ignore_ascii_case("false")
-        }
-    }
+    optional_flag(name).unwrap_or(false)
+}
+
+/// Unset is `None`; otherwise the same truthiness rule as [`flag`].
+fn optional_flag(name: &str) -> Option<bool> {
+    let value = std::env::var(name).ok()?;
+    let value = value.trim();
+    let is_falsey = value.is_empty() || value == "0" || value.eq_ignore_ascii_case("false");
+    Some(!is_falsey)
 }

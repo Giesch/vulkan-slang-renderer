@@ -301,7 +301,7 @@ impl Renderer {
         let surface = window.vulkan_create_surface(instance.handle())?;
 
         let (physical_device, queue_family_indices, physical_device_properties) =
-            choose_physical_device(&instance, &surface_ext, surface)?;
+            choose_physical_device(&instance, &surface_ext, surface, env.prefer_integrated_gpu)?;
         let device = create_logical_device(&instance, physical_device, &queue_family_indices)?;
         let debug_utils_device = ash::ext::debug_utils::Device::new(&instance, &device);
 
@@ -2920,6 +2920,7 @@ fn choose_physical_device(
     instance: &ash::Instance,
     surface_ext: &ash::khr::surface::Instance,
     surface: vk::SurfaceKHR,
+    prefer_integrated: Option<bool>,
 ) -> anyhow::Result<(
     vk::PhysicalDevice,
     QueueFamilyIndices,
@@ -3004,6 +3005,8 @@ fn choose_physical_device(
 
     devices_with_indices_and_props.sort_by_key(|(_physical_device, _indices, props)| {
         match props.device_type {
+            vk::PhysicalDeviceType::DISCRETE_GPU if prefer_integrated == Some(true) => 1,
+            vk::PhysicalDeviceType::INTEGRATED_GPU if prefer_integrated == Some(true) => 0,
             vk::PhysicalDeviceType::DISCRETE_GPU => 0,
             vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
             vk::PhysicalDeviceType::VIRTUAL_GPU => 2,
@@ -3020,6 +3023,22 @@ fn choose_physical_device(
              timelineSemaphore, and bufferDeviceAddress)"
         );
     };
+
+    if let Some(prefer_integrated) = prefer_integrated {
+        let preferred_type = if prefer_integrated {
+            vk::PhysicalDeviceType::INTEGRATED_GPU
+        } else {
+            vk::PhysicalDeviceType::DISCRETE_GPU
+        };
+        let chosen_device_name = device_name_as_string(chosen_device.2);
+        if chosen_device.2.device_type == preferred_type {
+            log::info!("using device: {chosen_device_name}");
+        } else {
+            log::warn!(
+                "no suitable {preferred_type:?} available, using device: {chosen_device_name}"
+            );
+        }
+    }
 
     #[cfg(debug_assertions)]
     {
