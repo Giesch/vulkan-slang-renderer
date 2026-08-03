@@ -152,8 +152,6 @@ setup-precommit:
 
 # lint and test for git pre-commit hook
 pre-commit: shaders && lint test
-    # the trailing /* is required: git only prefix-matches wildcard-free
-    # pathspecs, so 'examples/*/shaders/compiled' matches no file and aborts
     git add 'examples/*/shaders/compiled/*' 'examples/*/src/generated/*'
 
 # get the slang git submodule and its submodules

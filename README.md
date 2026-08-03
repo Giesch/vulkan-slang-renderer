@@ -30,19 +30,3 @@ direnv allow     # allow loading env vars
 just build-slang # build slang from source (this will take a while)
 just dev         # run the default triangle example
 ```
-
-## workspace & consumer workflow
-
-The repo is a cargo workspace: the engine lives in `crates/mltrs` (over
-`crates/renderer`), shader codegen ships as the `mltrs` CLI
-(`crates/cli`), and every example under `examples/` is its own crate —
-the first consumers of the same workflow an external project would use:
-
-``` sh
-cargo add mltrs            # path/git dep for now
-mltrs shaders init         # seeds shaders/source with mltrs.slang + mltrs/ (the engine modules)
-# write shaders/source/my_game.shader.slang
-mltrs shaders compile      # emits shaders/compiled + src/generated (imports `mltrs::…`)
-# src/main.rs: mod generated; impl Game for MyGame; MyGame::run()
-```
-
