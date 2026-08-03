@@ -61,10 +61,11 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
 
     let search_path = config.shaders_source_dir.to_str().unwrap();
 
-    // Pass 1: Compile all shaders, write SPIR-V/JSON, collect intermediate build data
+    // Pass 1: Compile all shaders, collect their outputs and intermediate build
+    // data. Nothing is written to disk in here on purpose -- see the wipe below.
     let mut graphics_data: Vec<GraphicsShaderData> = vec![];
     let mut compute_data: Vec<ComputeShaderData> = vec![];
-    let mut written_compiled_files: BTreeSet<String> = BTreeSet::new();
+    let mut compiled_files: Vec<(String, Vec<u8>)> = vec![];
 
     for slang_file_name in &slang_file_names {
         let ReflectedShader {
@@ -74,30 +75,20 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         } = prepare_reflected_shader(slang_file_name, search_path)?;
 
         let source_file_name = &reflection_json.source_file_name;
-        std::fs::create_dir_all(&config.compiled_shaders_dir)?;
 
         let reflection_json_str = serde_json::to_string_pretty(&reflection_json)?;
-        let reflection_json_file_name = source_file_name.replace(SHADER_FILE_SUFFIX, ".json");
-        std::fs::write(
-            config.compiled_shaders_dir.join(&reflection_json_file_name),
-            reflection_json_str,
-        )?;
-
-        let spv_vert_file_name = source_file_name.replace(SHADER_FILE_SUFFIX, ".vert.spv");
-        std::fs::write(
-            config.compiled_shaders_dir.join(&spv_vert_file_name),
-            vertex_shader.shader_bytecode.as_slice(),
-        )?;
-
-        let spv_frag_file_name = source_file_name.replace(SHADER_FILE_SUFFIX, ".frag.spv");
-        std::fs::write(
-            config.compiled_shaders_dir.join(&spv_frag_file_name),
-            fragment_shader.shader_bytecode.as_slice(),
-        )?;
-
-        written_compiled_files.insert(reflection_json_file_name);
-        written_compiled_files.insert(spv_vert_file_name);
-        written_compiled_files.insert(spv_frag_file_name);
+        compiled_files.push((
+            source_file_name.replace(SHADER_FILE_SUFFIX, ".json"),
+            reflection_json_str.into_bytes(),
+        ));
+        compiled_files.push((
+            source_file_name.replace(SHADER_FILE_SUFFIX, ".vert.spv"),
+            vertex_shader.shader_bytecode.to_vec(),
+        ));
+        compiled_files.push((
+            source_file_name.replace(SHADER_FILE_SUFFIX, ".frag.spv"),
+            fragment_shader.shader_bytecode.to_vec(),
+        ));
 
         if config.generate_rust_source {
             graphics_data.push(collect_graphics_shader_data(
@@ -114,24 +105,16 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         } = prepare_reflected_compute_shader(slang_file_name, search_path)?;
 
         let source_file_name = &reflection_json.source_file_name;
-        std::fs::create_dir_all(&config.compiled_shaders_dir)?;
 
         let reflection_json_str = serde_json::to_string_pretty(&reflection_json)?;
-        let reflection_json_file_name =
-            source_file_name.replace(COMPUTE_SHADER_FILE_SUFFIX, ".comp.json");
-        std::fs::write(
-            config.compiled_shaders_dir.join(&reflection_json_file_name),
-            reflection_json_str,
-        )?;
-
-        let spv_comp_file_name = source_file_name.replace(COMPUTE_SHADER_FILE_SUFFIX, ".comp.spv");
-        std::fs::write(
-            config.compiled_shaders_dir.join(&spv_comp_file_name),
-            compute_shader.shader_bytecode.as_slice(),
-        )?;
-
-        written_compiled_files.insert(reflection_json_file_name);
-        written_compiled_files.insert(spv_comp_file_name);
+        compiled_files.push((
+            source_file_name.replace(COMPUTE_SHADER_FILE_SUFFIX, ".comp.json"),
+            reflection_json_str.into_bytes(),
+        ));
+        compiled_files.push((
+            source_file_name.replace(COMPUTE_SHADER_FILE_SUFFIX, ".comp.spv"),
+            compute_shader.shader_bytecode.to_vec(),
+        ));
 
         if config.generate_rust_source {
             compute_data.push(collect_compute_shader_data(
@@ -141,20 +124,19 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         }
     }
 
-    // A removed shader must not leave its old outputs behind: sweep any
-    // *.spv / *.json this run did not write. Runs only after every compile
-    // succeeded, so a broken shader never wipes the previous outputs.
+    // A removed shader must not leave its old outputs behind, so the directory
+    // is regenerated rather than written over -- the same rule the generated
+    // shader_atlas dir below follows.
+    //
+    // This is why pass 1 buffers instead of writing as it goes: every compile
+    // has already succeeded by the time anything is deleted, so a broken shader
+    // leaves the previous outputs untouched rather than half-replaced.
+    if config.compiled_shaders_dir.exists() {
+        std::fs::remove_dir_all(&config.compiled_shaders_dir)?;
+    }
     std::fs::create_dir_all(&config.compiled_shaders_dir)?;
-    for entry in std::fs::read_dir(&config.compiled_shaders_dir)? {
-        let path = entry?.path();
-        let is_managed = path
-            .extension()
-            .is_some_and(|ext| ext == "spv" || ext == "json");
-        let file_name = path.file_name().and_then(|n| n.to_str());
-        let is_stale = file_name.is_some_and(|n| !written_compiled_files.contains(n));
-        if is_managed && is_stale {
-            std::fs::remove_file(&path)?;
-        }
+    for (file_name, bytes) in compiled_files {
+        std::fs::write(config.compiled_shaders_dir.join(file_name), bytes)?;
     }
 
     if config.generate_rust_source {
@@ -1826,6 +1808,94 @@ mod tests {
                 insta::assert_snapshot!(content);
             });
         });
+    }
+
+    /// Both halves of the compiled-dir rule. It is regenerated rather than
+    /// written over, so a deleted shader's outputs cannot linger -- and because
+    /// pass 1 buffers every write until all compiles have succeeded, a shader
+    /// that fails to compile must leave the previous outputs exactly as they
+    /// were, rather than half-replaced or wiped.
+    #[cfg(not(windows))]
+    #[test]
+    fn compiled_dir_is_regenerated_only_after_every_compile_succeeds() {
+        fn copy_dir(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                let dest = to.join(entry.file_name());
+                if entry.file_type().unwrap().is_dir() {
+                    copy_dir(&entry.path(), &dest);
+                } else {
+                    std::fs::copy(entry.path(), dest).unwrap();
+                }
+            }
+        }
+
+        // name -> content hash. Hashed rather than compared byte-for-byte only
+        // so a failure prints something readable; the comparison is still over
+        // the full contents, which is what catches a half-replaced dir.
+        //
+        // A missing dir reads as empty rather than panicking: a regression here
+        // deletes the dir outright, and that should surface as the assert's
+        // message, not as an unwrap on read_dir.
+        fn contents(dir: &Path) -> BTreeMap<String, u64> {
+            use std::hash::{DefaultHasher, Hash, Hasher};
+
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return BTreeMap::new();
+            };
+            entries
+                .map(|entry| {
+                    let entry = entry.unwrap();
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let mut hasher = DefaultHasher::new();
+                    std::fs::read(entry.path()).unwrap().hash(&mut hasher);
+                    (name, hasher.finish())
+                })
+                .collect()
+        }
+
+        let tmp_dir_path =
+            std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+        let source_dir = tmp_dir_path.join("source");
+        copy_dir(&manifest_path(["fixtures", "shaders"]), &source_dir);
+
+        let compiled_dir = tmp_dir_path.join(relative_path(["shaders", "compiled"]));
+        let config = || Config {
+            generate_rust_source: false,
+            rust_source_dir: tmp_dir_path.join("src"),
+            shaders_source_dir: source_dir.clone(),
+            compiled_shaders_dir: compiled_dir.clone(),
+            import_root: "crate".to_string(),
+        };
+
+        write_precompiled_shaders(config()).unwrap();
+        let baseline = contents(&compiled_dir);
+        assert!(
+            !baseline.is_empty(),
+            "the fixture produced no compiled output — the asserts below would \
+             pass vacuously",
+        );
+
+        // An output whose shader is gone does not survive a clean run.
+        let orphan = compiled_dir.join("removed_shader.vert.spv");
+        std::fs::write(&orphan, b"stale").unwrap();
+        write_precompiled_shaders(config()).unwrap();
+        assert!(!orphan.exists(), "orphaned output survived a clean run");
+        assert_eq!(contents(&compiled_dir), baseline);
+
+        // A shader that cannot compile aborts before anything is deleted.
+        let broken = source_dir.join("broken.shader.slang");
+        std::fs::write(&broken, "this is not valid slang").unwrap();
+        write_precompiled_shaders(config())
+            .expect_err("a shader that cannot compile must fail the run");
+        assert_eq!(
+            contents(&compiled_dir),
+            baseline,
+            "a failed compile must leave the previous outputs untouched",
+        );
+
+        std::fs::remove_dir_all(&tmp_dir_path).unwrap();
     }
 
     // Tests for std140 and std430 alignment edge cases
