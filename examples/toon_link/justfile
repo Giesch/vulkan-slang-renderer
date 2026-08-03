@@ -6,7 +6,7 @@
 # examples/toon_link/. `cargo` still finds the workspace root by walking up.
 
 # list this example's recipes
-list:
+_default:
     @ just --list --unsorted
 
 

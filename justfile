@@ -12,7 +12,7 @@ mod watercolor 'examples/watercolor'
 
 
 # list all available just recipes, including the per-example modules
-list:
+_default:
     @ just --list --unsorted --list-submodules
 
 

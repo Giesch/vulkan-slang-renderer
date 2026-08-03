@@ -2,7 +2,7 @@
 # `just watercolor <recipe>` (the root justfile declares this dir as a module).
 
 # list this example's recipes
-list:
+_default:
     @ just --list --unsorted
 
 # generate watercolor paper height map texture

@@ -7,7 +7,7 @@
 # examples/space_invaders/.
 
 # list this example's recipes
-list:
+_default:
     @ just --list --unsorted
 
 # export the aseprite files as one sprite sheet

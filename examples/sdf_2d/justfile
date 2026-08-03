@@ -5,7 +5,7 @@
 # submodule's directory, so every path below is relative to examples/sdf_2d/.
 
 # list this example's recipes
-list:
+_default:
     @ just --list --unsorted
 
 # write *.beats.json assets based on automatically extracted timestamps
