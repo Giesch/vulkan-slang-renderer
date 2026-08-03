@@ -29,9 +29,6 @@ use crate::generated::shader_atlas::wc_pressure_jacobi_compute;
 use crate::generated::shader_atlas::wc_project_velocity_compute;
 use crate::generated::shader_atlas::wc_update_velocity_compute;
 use mltrs::manifest_path;
-// this example builds many pipelines, and `pipeline_config` consumes the atlas
-// entry, so it re-inits the atlas for each one
-use mltrs::shaders::atlas::ShaderAtlasRoot;
 
 fn main() -> Result<(), anyhow::Error> {
     Watercolor::run()
@@ -483,33 +480,30 @@ impl Game for Watercolor {
 
         // --- Create pipelines ---
         // Brush pipeline: 2 variants for wet_mask/pigment parity
-        let brush_pipelines = {
-            let s1 = ShaderAtlas::init();
-            [
-                renderer.create_compute_pipeline(shaders.paint_brush_compute.pipeline_config(
-                    paint_brush_compute::Resources {
-                        wet_mask: wet_mask.read_storage(false),
-                        pressure: pressure.read_storage(false),
-                        pigment_0_3: pigment_0_3.read_storage(false),
-                        pigment_4_7: pigment_4_7.read_storage(false),
-                        pigment_8_11: pigment_8_11.read_storage(false),
-                        saturation: saturation.read_storage(false),
-                        brush_params_buffer: &brush_params_buffer,
-                    },
-                ))?,
-                renderer.create_compute_pipeline(s1.paint_brush_compute.pipeline_config(
-                    paint_brush_compute::Resources {
-                        wet_mask: wet_mask.read_storage(true),
-                        pressure: pressure.read_storage(false), // pressure always at 0
-                        pigment_0_3: pigment_0_3.read_storage(true),
-                        pigment_4_7: pigment_4_7.read_storage(true),
-                        pigment_8_11: pigment_8_11.read_storage(true),
-                        saturation: saturation.read_storage(true),
-                        brush_params_buffer: &brush_params_buffer,
-                    },
-                ))?,
-            ]
-        };
+        let brush_pipelines = [
+            renderer.create_compute_pipeline(shaders.paint_brush_compute.pipeline_config(
+                paint_brush_compute::Resources {
+                    wet_mask: wet_mask.read_storage(false),
+                    pressure: pressure.read_storage(false),
+                    pigment_0_3: pigment_0_3.read_storage(false),
+                    pigment_4_7: pigment_4_7.read_storage(false),
+                    pigment_8_11: pigment_8_11.read_storage(false),
+                    saturation: saturation.read_storage(false),
+                    brush_params_buffer: &brush_params_buffer,
+                },
+            ))?,
+            renderer.create_compute_pipeline(shaders.paint_brush_compute.pipeline_config(
+                paint_brush_compute::Resources {
+                    wet_mask: wet_mask.read_storage(true),
+                    pressure: pressure.read_storage(false), // pressure always at 0
+                    pigment_0_3: pigment_0_3.read_storage(true),
+                    pigment_4_7: pigment_4_7.read_storage(true),
+                    pigment_8_11: pigment_8_11.read_storage(true),
+                    saturation: saturation.read_storage(true),
+                    brush_params_buffer: &brush_params_buffer,
+                },
+            ))?,
+        ];
 
         // Update velocity: 2 pipelines for vel parity
         let update_velocity_pipelines = [
@@ -527,164 +521,142 @@ impl Game for Watercolor {
                     },
                 ),
             )?,
-            // Need a second ShaderAtlas instance for the second pipeline
-            {
-                let shaders2 = ShaderAtlas::init();
-                renderer.create_compute_pipeline(
-                    shaders2.wc_update_velocity_compute.pipeline_config(
-                        wc_update_velocity_compute::Resources {
-                            u_in: velocity_u.read_sampled(true),
-                            v_in: velocity_v.read_sampled(true),
-                            pressure: pressure.read_sampled(false), // pressure always at index 0
-                            paper_height: &paper_height_sampled,
-                            wet_mask: wet_mask.read_sampled(true),
-                            u_out: velocity_u.write_storage(true),
-                            v_out: velocity_v.write_storage(true),
-                            params_buffer: &update_vel_params_buffer,
-                        },
-                    ),
-                )?
-            },
+            renderer.create_compute_pipeline(
+                shaders.wc_update_velocity_compute.pipeline_config(
+                    wc_update_velocity_compute::Resources {
+                        u_in: velocity_u.read_sampled(true),
+                        v_in: velocity_v.read_sampled(true),
+                        pressure: pressure.read_sampled(false), // pressure always at index 0
+                        paper_height: &paper_height_sampled,
+                        wet_mask: wet_mask.read_sampled(true),
+                        u_out: velocity_u.write_storage(true),
+                        v_out: velocity_v.write_storage(true),
+                        params_buffer: &update_vel_params_buffer,
+                    },
+                ),
+            )?,
         ];
 
         // Divergence: 2 pipelines for vel parity (reads from velocity after update)
-        let divergence_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
-            [
-                renderer.create_compute_pipeline(s0.wc_divergence_compute.pipeline_config(
-                    wc_divergence_compute::Resources {
-                        u_in: velocity_u.read_sampled(true), // after vel flip
-                        v_in: velocity_v.read_sampled(true),
-                        divergence: &divergence,
-                        params_buffer: &divergence_params_buffer,
-                    },
-                ))?,
-                renderer.create_compute_pipeline(s1.wc_divergence_compute.pipeline_config(
-                    wc_divergence_compute::Resources {
-                        u_in: velocity_u.read_sampled(false),
-                        v_in: velocity_v.read_sampled(false),
-                        divergence: &divergence,
-                        params_buffer: &divergence_params_buffer,
-                    },
-                ))?,
-            ]
-        };
+        let divergence_pipelines = [
+            renderer.create_compute_pipeline(shaders.wc_divergence_compute.pipeline_config(
+                wc_divergence_compute::Resources {
+                    u_in: velocity_u.read_sampled(true), // after vel flip
+                    v_in: velocity_v.read_sampled(true),
+                    divergence: &divergence,
+                    params_buffer: &divergence_params_buffer,
+                },
+            ))?,
+            renderer.create_compute_pipeline(shaders.wc_divergence_compute.pipeline_config(
+                wc_divergence_compute::Resources {
+                    u_in: velocity_u.read_sampled(false),
+                    v_in: velocity_v.read_sampled(false),
+                    divergence: &divergence,
+                    params_buffer: &divergence_params_buffer,
+                },
+            ))?,
+        ];
 
         // Pressure Jacobi: 2 pipelines for pressure parity
-        let pressure_jacobi_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
-            [
-                renderer.create_compute_pipeline(s0.wc_pressure_jacobi_compute.pipeline_config(
+        let pressure_jacobi_pipelines = [
+            renderer.create_compute_pipeline(
+                shaders.wc_pressure_jacobi_compute.pipeline_config(
                     wc_pressure_jacobi_compute::Resources {
                         pressure_in: pressure.read_sampled(false),
                         divergence: &divergence_sampled,
                         pressure_out: pressure.write_storage(false),
                         params_buffer: &pressure_jacobi_params_buffer,
                     },
-                ))?,
-                renderer.create_compute_pipeline(s1.wc_pressure_jacobi_compute.pipeline_config(
+                ),
+            )?,
+            renderer.create_compute_pipeline(
+                shaders.wc_pressure_jacobi_compute.pipeline_config(
                     wc_pressure_jacobi_compute::Resources {
                         pressure_in: pressure.read_sampled(true),
                         divergence: &divergence_sampled,
                         pressure_out: pressure.write_storage(true),
                         params_buffer: &pressure_jacobi_params_buffer,
                     },
-                ))?,
-            ]
-        };
+                ),
+            )?,
+        ];
 
         // Project velocity: 2 pipelines for vel parity (reads pressure after Jacobi)
-        let project_velocity_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
-            [
-                renderer.create_compute_pipeline(
-                    s0.wc_project_velocity_compute.pipeline_config(
-                        wc_project_velocity_compute::Resources {
-                            u: velocity_u.read_storage(true),
-                            v: velocity_v.read_storage(true),
-                            pressure: pressure.read_sampled(false),
-                            wet_mask: wet_mask.read_sampled(false),
-                            params_buffer: &project_vel_params_buffer,
-                        },
-                    ),
-                )?,
-                renderer.create_compute_pipeline(
-                    s1.wc_project_velocity_compute.pipeline_config(
-                        wc_project_velocity_compute::Resources {
-                            u: velocity_u.read_storage(false),
-                            v: velocity_v.read_storage(false),
-                            pressure: pressure.read_sampled(false),
-                            wet_mask: wet_mask.read_sampled(true),
-                            params_buffer: &project_vel_params_buffer,
-                        },
-                    ),
-                )?,
-            ]
-        };
+        let project_velocity_pipelines = [
+            renderer.create_compute_pipeline(
+                shaders.wc_project_velocity_compute.pipeline_config(
+                    wc_project_velocity_compute::Resources {
+                        u: velocity_u.read_storage(true),
+                        v: velocity_v.read_storage(true),
+                        pressure: pressure.read_sampled(false),
+                        wet_mask: wet_mask.read_sampled(false),
+                        params_buffer: &project_vel_params_buffer,
+                    },
+                ),
+            )?,
+            renderer.create_compute_pipeline(
+                shaders.wc_project_velocity_compute.pipeline_config(
+                    wc_project_velocity_compute::Resources {
+                        u: velocity_u.read_storage(false),
+                        v: velocity_v.read_storage(false),
+                        pressure: pressure.read_sampled(false),
+                        wet_mask: wet_mask.read_sampled(true),
+                        params_buffer: &project_vel_params_buffer,
+                    },
+                ),
+            )?,
+        ];
 
         // Gaussian blur H: wet_mask → blur_temp (2 pipelines for wet_mask parity)
-        let blur_h_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
-            [
-                renderer.create_compute_pipeline(s0.wc_gaussian_blur_compute.pipeline_config(
-                    wc_gaussian_blur_compute::Resources {
-                        input_tex: wet_mask.read_sampled(false),
-                        output_tex: &blur_temp,
-                        params_buffer: &blur_h_params_buffer,
-                    },
-                ))?,
-                renderer.create_compute_pipeline(s1.wc_gaussian_blur_compute.pipeline_config(
-                    wc_gaussian_blur_compute::Resources {
-                        input_tex: wet_mask.read_sampled(true),
-                        output_tex: &blur_temp,
-                        params_buffer: &blur_h_params_buffer,
-                    },
-                ))?,
-            ]
-        };
+        let blur_h_pipelines = [
+            renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
+                wc_gaussian_blur_compute::Resources {
+                    input_tex: wet_mask.read_sampled(false),
+                    output_tex: &blur_temp,
+                    params_buffer: &blur_h_params_buffer,
+                },
+            ))?,
+            renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
+                wc_gaussian_blur_compute::Resources {
+                    input_tex: wet_mask.read_sampled(true),
+                    output_tex: &blur_temp,
+                    params_buffer: &blur_h_params_buffer,
+                },
+            ))?,
+        ];
 
         // Gaussian blur V: blur_temp → blurred_mask (single pipeline, neither is ping-ponged)
-        let blur_v_pipeline = {
-            let s = ShaderAtlas::init();
-            renderer.create_compute_pipeline(s.wc_gaussian_blur_compute.pipeline_config(
+        let blur_v_pipeline =
+            renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
                 wc_gaussian_blur_compute::Resources {
                     input_tex: &blur_temp_sampled,
                     output_tex: &blurred_mask,
                     params_buffer: &blur_v_params_buffer,
                 },
-            ))?
-        };
+            ))?;
 
         // Flow outward: flow formula from blurred wet mask into pressure + saturation
         // 2 pipelines for wet_mask parity
-        let flow_outward_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
-            [
-                renderer.create_compute_pipeline(s0.wc_flow_outward_compute.pipeline_config(
-                    wc_flow_outward_compute::Resources {
-                        blurred_mask: &blurred_mask_sampled,
-                        wet_mask: wet_mask.read_sampled(false),
-                        pressure: pressure.read_storage(false),
-                        saturation: saturation.read_storage(false),
-                        params_buffer: &flow_outward_params_buffer,
-                    },
-                ))?,
-                renderer.create_compute_pipeline(s1.wc_flow_outward_compute.pipeline_config(
-                    wc_flow_outward_compute::Resources {
-                        blurred_mask: &blurred_mask_sampled,
-                        wet_mask: wet_mask.read_sampled(true),
-                        pressure: pressure.read_storage(false),
-                        saturation: saturation.read_storage(true),
-                        params_buffer: &flow_outward_params_buffer,
-                    },
-                ))?,
-            ]
-        };
+        let flow_outward_pipelines = [
+            renderer.create_compute_pipeline(shaders.wc_flow_outward_compute.pipeline_config(
+                wc_flow_outward_compute::Resources {
+                    blurred_mask: &blurred_mask_sampled,
+                    wet_mask: wet_mask.read_sampled(false),
+                    pressure: pressure.read_storage(false),
+                    saturation: saturation.read_storage(false),
+                    params_buffer: &flow_outward_params_buffer,
+                },
+            ))?,
+            renderer.create_compute_pipeline(shaders.wc_flow_outward_compute.pipeline_config(
+                wc_flow_outward_compute::Resources {
+                    blurred_mask: &blurred_mask_sampled,
+                    wet_mask: wet_mask.read_sampled(true),
+                    pressure: pressure.read_storage(false),
+                    saturation: saturation.read_storage(true),
+                    params_buffer: &flow_outward_params_buffer,
+                },
+            ))?,
+        ];
 
         // Advect + transfer pigment: 4 pipelines for (sim_parity × deposit_parity)
         // Index: sim_parity * 2 + deposit_parity
@@ -693,32 +665,35 @@ impl Game for Watercolor {
             let mut pipelines = Vec::with_capacity(4);
             for sim in [false, true] {
                 for dep in [false, true] {
-                    let s = ShaderAtlas::init();
                     let dep_read = !dep as usize; // read from previous
                     let dep_write = dep as usize; // write to current
-                    pipelines.push(renderer.create_compute_pipeline(
-                        s.wc_advect_and_transfer_pigment_compute.pipeline_config(
-                            wc_advect_and_transfer_pigment_compute::Resources {
-                                pigment_in_0_3: pigment_0_3.read_sampled(sim),
-                                pigment_in_4_7: pigment_4_7.read_sampled(sim),
-                                pigment_in_8_11: pigment_8_11.read_sampled(sim),
-                                u_in: velocity_u.read_sampled(sim),
-                                v_in: velocity_v.read_sampled(sim),
-                                wet_mask: wet_mask.read_sampled(sim),
-                                paper_height: &paper_height_sampled,
-                                pigment_out_0_3: pigment_0_3.write_storage(sim),
-                                pigment_out_4_7: pigment_4_7.write_storage(sim),
-                                pigment_out_8_11: pigment_8_11.write_storage(sim),
-                                deposit_in_0_3: &deposit_0_3_sampled[dep_read],
-                                deposit_in_4_7: &deposit_4_7_sampled[dep_read],
-                                deposit_in_8_11: &deposit_8_11_sampled[dep_read],
-                                deposit_out_0_3: &deposit_0_3_storage[dep_write],
-                                deposit_out_4_7: &deposit_4_7_storage[dep_write],
-                                deposit_out_8_11: &deposit_8_11_storage[dep_write],
-                                params_buffer: &advect_and_transfer_params_buffer,
-                            },
-                        ),
-                    )?);
+                    pipelines.push(
+                        renderer.create_compute_pipeline(
+                            shaders
+                                .wc_advect_and_transfer_pigment_compute
+                                .pipeline_config(
+                                    wc_advect_and_transfer_pigment_compute::Resources {
+                                        pigment_in_0_3: pigment_0_3.read_sampled(sim),
+                                        pigment_in_4_7: pigment_4_7.read_sampled(sim),
+                                        pigment_in_8_11: pigment_8_11.read_sampled(sim),
+                                        u_in: velocity_u.read_sampled(sim),
+                                        v_in: velocity_v.read_sampled(sim),
+                                        wet_mask: wet_mask.read_sampled(sim),
+                                        paper_height: &paper_height_sampled,
+                                        pigment_out_0_3: pigment_0_3.write_storage(sim),
+                                        pigment_out_4_7: pigment_4_7.write_storage(sim),
+                                        pigment_out_8_11: pigment_8_11.write_storage(sim),
+                                        deposit_in_0_3: &deposit_0_3_sampled[dep_read],
+                                        deposit_in_4_7: &deposit_4_7_sampled[dep_read],
+                                        deposit_in_8_11: &deposit_8_11_sampled[dep_read],
+                                        deposit_out_0_3: &deposit_0_3_storage[dep_write],
+                                        deposit_out_4_7: &deposit_4_7_storage[dep_write],
+                                        deposit_out_8_11: &deposit_8_11_storage[dep_write],
+                                        params_buffer: &advect_and_transfer_params_buffer,
+                                    },
+                                ),
+                        )?,
+                    );
                 }
             }
 
@@ -726,32 +701,28 @@ impl Game for Watercolor {
         };
 
         // Capillary flow: 2 pipelines for saturation parity
-        let capillary_flow_pipelines = {
-            let s0 = ShaderAtlas::init();
-            let s1 = ShaderAtlas::init();
-            [
-                renderer.create_compute_pipeline(s0.wc_capillary_flow_compute.pipeline_config(
-                    wc_capillary_flow_compute::Resources {
-                        saturation_in: saturation.read_sampled(false),
-                        wet_mask_in: wet_mask.read_sampled(false),
-                        paper_height: &paper_height_sampled,
-                        saturation_out: saturation.write_storage(false),
-                        wet_mask_out: wet_mask.write_storage(false),
-                        params_buffer: &capillary_flow_params_buffer,
-                    },
-                ))?,
-                renderer.create_compute_pipeline(s1.wc_capillary_flow_compute.pipeline_config(
-                    wc_capillary_flow_compute::Resources {
-                        saturation_in: saturation.read_sampled(true),
-                        wet_mask_in: wet_mask.read_sampled(true),
-                        paper_height: &paper_height_sampled,
-                        saturation_out: saturation.write_storage(true),
-                        wet_mask_out: wet_mask.write_storage(true),
-                        params_buffer: &capillary_flow_params_buffer,
-                    },
-                ))?,
-            ]
-        };
+        let capillary_flow_pipelines = [
+            renderer.create_compute_pipeline(shaders.wc_capillary_flow_compute.pipeline_config(
+                wc_capillary_flow_compute::Resources {
+                    saturation_in: saturation.read_sampled(false),
+                    wet_mask_in: wet_mask.read_sampled(false),
+                    paper_height: &paper_height_sampled,
+                    saturation_out: saturation.write_storage(false),
+                    wet_mask_out: wet_mask.write_storage(false),
+                    params_buffer: &capillary_flow_params_buffer,
+                },
+            ))?,
+            renderer.create_compute_pipeline(shaders.wc_capillary_flow_compute.pipeline_config(
+                wc_capillary_flow_compute::Resources {
+                    saturation_in: saturation.read_sampled(true),
+                    wet_mask_in: wet_mask.read_sampled(true),
+                    paper_height: &paper_height_sampled,
+                    saturation_out: saturation.write_storage(true),
+                    wet_mask_out: wet_mask.write_storage(true),
+                    params_buffer: &capillary_flow_params_buffer,
+                },
+            ))?,
+        ];
 
         // Display pipeline: 4 variants for (wet_mask_parity × deposit_parity)
         // Index: wet_mask_parity * 2 + deposit_parity
@@ -760,18 +731,19 @@ impl Game for Watercolor {
             let mut pipelines = Vec::with_capacity(4);
             for wm in [false, true] {
                 for dep in [false, true] {
-                    let s = ShaderAtlas::init();
                     let dep_read = !dep as usize; // display reads previous frame's output
-                    pipelines.push(renderer.create_pipeline(s.paint_display.pipeline_config(
-                        paint_display::Resources {
-                            deposit_0_3: &deposit_0_3_sampled[dep_read],
-                            deposit_4_7: &deposit_4_7_sampled[dep_read],
-                            deposit_8_11: &deposit_8_11_sampled[dep_read],
-                            paper_height: &paper_height_sampled,
-                            wet_mask: wet_mask.read_sampled(wm),
-                            display_params_buffer: &display_params_buffer,
-                        },
-                    ))?);
+                    pipelines.push(
+                        renderer.create_pipeline(shaders.paint_display.pipeline_config(
+                            paint_display::Resources {
+                                deposit_0_3: &deposit_0_3_sampled[dep_read],
+                                deposit_4_7: &deposit_4_7_sampled[dep_read],
+                                deposit_8_11: &deposit_8_11_sampled[dep_read],
+                                paper_height: &paper_height_sampled,
+                                wet_mask: wet_mask.read_sampled(wm),
+                                display_params_buffer: &display_params_buffer,
+                            },
+                        ))?,
+                    );
                 }
             }
             [

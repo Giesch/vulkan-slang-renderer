@@ -83,6 +83,7 @@ impl VertexDescription for Vertex {
     }
 }
 
+#[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,
 }
@@ -99,7 +100,10 @@ impl Shader {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config(self, resources: Resources<'_>) -> IndexedPipelineConfig<'_, Vertex> {
+    pub fn pipeline_config<'a>(
+        &self,
+        resources: Resources<'a>,
+    ) -> IndexedPipelineConfig<'a, Vertex> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -119,7 +123,7 @@ impl Shader {
         ];
 
         PipelineConfigBuilder {
-            shader: Box::new(self),
+            shader: Box::new(self.clone()),
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,

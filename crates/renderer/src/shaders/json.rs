@@ -8,7 +8,7 @@ pub use parameters::*;
 mod pipeline_builders;
 pub use pipeline_builders::*;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReflectionJson {
     pub source_file_name: String,
@@ -24,7 +24,7 @@ impl ReflectionJson {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputeReflectionJson {
     pub source_file_name: String,

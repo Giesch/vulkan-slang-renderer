@@ -4,27 +4,27 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum GlobalParameter {
     ParameterBlock(ParameterBlockGlobalParameter),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParameterBlockGlobalParameter {
     pub parameter_name: String,
     pub element_type: ParameterBlockElementType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParameterBlockElementType {
     pub type_name: String,
     pub fields: Vec<StructField>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntryPoint {
     pub entry_point_name: String,
@@ -32,7 +32,7 @@ pub struct EntryPoint {
     pub parameters: Vec<EntryPointParameter>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum EntryPointStage {
     Vertex,
@@ -40,14 +40,14 @@ pub enum EntryPointStage {
     Compute,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum EntryPointParameter {
     Struct(StructEntryPointParameter),
     Scalar(ScalarEntryPointParameter),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StructEntryPointParameter {
     pub parameter_name: String,
@@ -56,14 +56,14 @@ pub struct StructEntryPointParameter {
     pub fields: Vec<StructField>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged, rename_all = "camelCase")]
 pub enum ScalarEntryPointParameter {
     Bound(BoundScalarEntryPointParameter),
     Semantic(SemanticScalarEntryPointParameter),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BoundScalarEntryPointParameter {
     pub parameter_name: String,
@@ -71,7 +71,7 @@ pub struct BoundScalarEntryPointParameter {
     pub scalar_type: ScalarType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticScalarEntryPointParameter {
     pub parameter_name: String,
@@ -79,7 +79,7 @@ pub struct SemanticScalarEntryPointParameter {
     pub scalar_type: ScalarType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum StructField {
     Scalar(ScalarStructField),
@@ -92,7 +92,7 @@ pub enum StructField {
     Enum(EnumStructField),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Binding {
     Uniform(OffsetSizeBinding),
@@ -101,14 +101,14 @@ pub enum Binding {
     ConstantBuffer(IndexCountBinding),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OffsetSizeBinding {
     pub offset: usize,
     pub size: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexCountBinding {
     pub index: usize,
@@ -120,14 +120,14 @@ pub struct IndexCountBinding {
     pub count: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged, rename_all = "camelCase")]
 pub enum VectorStructField {
     Bound(BoundVectorStructField),
     Semantic(SemanticVectorStructField),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticVectorStructField {
     pub field_name: String,
@@ -136,7 +136,7 @@ pub struct SemanticVectorStructField {
     pub element_type: VectorElementType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScalarStructField {
     pub field_name: String,
@@ -144,7 +144,7 @@ pub struct ScalarStructField {
     pub scalar_type: ScalarType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BoundVectorStructField {
     pub field_name: String,
@@ -153,7 +153,7 @@ pub struct BoundVectorStructField {
     pub element_type: VectorElementType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MatrixStructField {
     pub field_name: String,
@@ -163,7 +163,7 @@ pub struct MatrixStructField {
     pub element_type: VectorElementType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceStructField {
     pub field_name: String,
@@ -172,14 +172,14 @@ pub struct ResourceStructField {
     pub result_type: ResourceResultType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ResourceShape {
     Texture2D,
     RWTexture2D,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ResourceResultType {
     Scalar(ScalarResultType),
@@ -187,27 +187,27 @@ pub enum ResourceResultType {
     Struct(StructResultType),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScalarResultType {
     pub scalar_type: ScalarType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VectorResultType {
     pub element_count: usize,
     pub element_type: VectorElementType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StructResultType {
     pub type_name: String,
     pub fields: Vec<StructField>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StructStructField {
     pub field_name: String,
@@ -215,7 +215,7 @@ pub struct StructStructField {
     pub struct_type: StructFieldType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StructFieldType {
     pub type_name: String,
@@ -226,7 +226,7 @@ pub struct StructFieldType {
 /// (float4/int4/uint4), the only element types whose stride equals their size
 /// in both std140 and std430 — so a contiguous Rust array matches the GPU
 /// layout exactly, with no inter-element padding to model.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArrayStructField {
     pub field_name: String,
@@ -240,7 +240,7 @@ pub struct ArrayStructField {
 /// A physical-storage-buffer pointer field (slang `Ptr<T, ..., Std430DataLayout>`).
 /// 8 bytes of uniform data holding a buffer device address; consumes no
 /// descriptor slot. The pointee fields carry std430 offsets.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PointerStructField {
     pub field_name: String,
@@ -267,13 +267,13 @@ pub enum PointerAccess {
     Immutable,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum VectorElementType {
     Scalar(ScalarVectorElementType),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScalarVectorElementType {
     pub scalar_type: ScalarType,
@@ -291,7 +291,7 @@ pub enum ScalarType {
 /// A slang enum field. Slang lays an enum out as its tag type, so the GPU bytes
 /// are identical to the equivalent scalar field; the enum identity survives only
 /// on the declared type, and is carried here so codegen can emit a Rust enum.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnumStructField {
     pub field_name: String,
@@ -299,7 +299,7 @@ pub struct EnumStructField {
     pub enum_type: EnumFieldType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnumFieldType {
     pub type_name: String,

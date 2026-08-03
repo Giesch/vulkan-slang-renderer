@@ -581,8 +581,8 @@ impl GeneratedShaderImpl {
     /// already complete.
     fn config_return_type(&self) -> String {
         match &self.vertex_type_name {
-            Some(vertex_type_name) => format!("IndexedPipelineConfig<'_, {vertex_type_name}>"),
-            None => "PipelineConfig<'_, NoVertex, DrawVertexCount>".to_string(),
+            Some(vertex_type_name) => format!("IndexedPipelineConfig<'a, {vertex_type_name}>"),
+            None => "PipelineConfig<'a, NoVertex, DrawVertexCount>".to_string(),
         }
     }
 

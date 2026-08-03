@@ -1,6 +1,8 @@
 #+title: Todo
 
 * Now
+- [ ] get a static build of slang-rs working and use it here
+
 - [-] problems/issues for side-agent PRs
   - [X] triple-buffering problems
     done 2026-07-28: PRE_WAIT_RING_LEN and ring_slot deleted, one 2-slot ring

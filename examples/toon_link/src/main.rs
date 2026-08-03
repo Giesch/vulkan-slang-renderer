@@ -777,6 +777,7 @@ fn blend_mode(material: &MaterialEntry) -> anyhow::Result<BlendMode> {
 /// `MaterialSlot` order: push order is what defines the slot.
 fn build_material_pipelines(
     renderer: &mut Renderer,
+    shader: &Shader,
     manifest: &Manifest,
     mesh: &MeshHandle<Vertex>,
     textures: &[Option<TextureHandle>],
@@ -786,7 +787,7 @@ fn build_material_pipelines(
     for material in &manifest.materials {
         let role = decal_role(material)?;
         let params_buffer = renderer.create_uniform_buffer::<ToonLinkParams>()?;
-        let pipeline_config = Shader::init()
+        let pipeline_config = shader
             .pipeline_config(Resources {
                 tex0: resolve_texmap(material, 0, textures, dummy),
                 tex1: resolve_texmap(material, 1, textures, dummy),
@@ -1066,7 +1067,7 @@ impl Game for ToonLink {
         Some(("Toon Link", &mut self.edit_state))
     }
 
-    fn setup(renderer: &mut Renderer, _shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -1101,8 +1102,14 @@ impl Game for ToonLink {
             },
         )?;
 
-        let pipelines =
-            build_material_pipelines(renderer, &manifest, &mesh, &textures, &white_square)?;
+        let pipelines = build_material_pipelines(
+            renderer,
+            &shaders.toon_link,
+            &manifest,
+            &mesh,
+            &textures,
+            &white_square,
+        )?;
 
         let groups = group_batches(&manifest)?;
         let draw_order = groups.draw_order();

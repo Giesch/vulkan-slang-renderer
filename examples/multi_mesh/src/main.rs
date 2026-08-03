@@ -345,7 +345,7 @@ impl Game for MultiMesh {
         "Multi Mesh"
     }
 
-    fn setup(renderer: &mut Renderer, _shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -369,7 +369,8 @@ impl Game for MultiMesh {
                 texture: &textures[spec.texture],
                 params_buffer: &params_buffer,
             };
-            let pipeline_config = Shader::init()
+            let pipeline_config = shaders
+                .multi_mesh
                 .pipeline_config(resources)
                 .with_shared_mesh(&mesh)
                 .with_raster_state(spec.raster);

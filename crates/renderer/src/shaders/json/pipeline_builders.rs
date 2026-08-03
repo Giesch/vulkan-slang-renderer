@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// reflected data for creating a vulkan PipelineLayout
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReflectedPipelineLayout {
     pub descriptor_set_layouts: Vec<ReflectedDescriptorSetLayout>,
@@ -13,7 +13,7 @@ pub struct ReflectedPipelineLayout {
 }
 
 /// reflected data for creating a vulkan DescriptorSetLayout
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReflectedDescriptorSetLayout {
     pub binding_ranges: Vec<ReflectedDescriptorSetLayoutBinding>,
@@ -31,7 +31,7 @@ pub struct ReflectedDescriptorSetLayoutBinding {
     pub size: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReflectedPushConstantRange {
     pub stage_flags: ReflectedStageFlags,

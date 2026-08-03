@@ -118,6 +118,7 @@ impl VertexDescription for {{ block.type_name }} {
 }
 {%- endfor %}
 
+#[derive(Clone)]
 pub struct {{ shader_impl.shader_type_name }} {
     pub reflection_json: ReflectionJson,
 }
@@ -134,9 +135,9 @@ impl {{ shader_impl.shader_type_name }} {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config(
-        self,
-        resources: Resources<'_>,
+    pub fn pipeline_config<'a>(
+        &self,
+        resources: Resources<'a>,
     ) -> {{ shader_impl.config_return_type() }} {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
@@ -162,7 +163,7 @@ impl {{ shader_impl.shader_type_name }} {
         ];
 
         PipelineConfigBuilder {
-            shader: Box::new(self),
+            shader: Box::new(self.clone()),
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,

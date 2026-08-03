@@ -93,6 +93,7 @@ const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 
 pub const WORKGROUP_SIZE: [u32; 3] = [{{ shader_impl.workgroup_size[0] }}, {{ shader_impl.workgroup_size[1] }}, {{ shader_impl.workgroup_size[2] }}];
 
+#[derive(Clone)]
 pub struct {{ shader_impl.shader_type_name }} {
     pub reflection_json: ComputeReflectionJson,
 }
@@ -109,10 +110,10 @@ impl {{ shader_impl.shader_type_name }} {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config(
-        self,
-        resources: Resources<'_>,
-    ) -> ComputePipelineConfig<'_> {
+    pub fn pipeline_config<'a>(
+        &self,
+        resources: Resources<'a>,
+    ) -> ComputePipelineConfig<'a> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -137,7 +138,7 @@ impl {{ shader_impl.shader_type_name }} {
         ];
 
         ComputePipelineConfig {
-            shader: Box::new(self),
+            shader: Box::new(self.clone()),
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
