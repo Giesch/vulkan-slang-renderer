@@ -75,7 +75,7 @@ impl Game for SerenityCRT {
 
         let edit_state = EditState {
             scanline_intensity: Slider::new(0.95, 0.0, 1.0),
-            scanline_count: Slider::new(256.0 * 4.0, 0.0, 2000.0),
+            scanline_count: Slider::new(1100.0, 0.0, 2000.0),
             y_offset: Slider::new(0.0, -1.0, 1.0),
             brightness: Slider::new(0.9, 0.0, 2.0),
             contrast: Slider::new(1.05, 0.0, 2.0),
@@ -85,7 +85,7 @@ impl Game for SerenityCRT {
             rgb_shift: Slider::new(1.0, 0.0, 5.0),
             adaptive_intensity: Slider::new(0.3, 0.0, 1.0),
             vignette_strength: Slider::new(0.3, 0.0, 1.0),
-            curvature: Slider::new(0.1, 0.0, 0.5),
+            curvature: Slider::new(0.05, 0.0, 0.5),
             flicker_strength: Slider::new(0.01, 0.0, 0.1),
         };
 

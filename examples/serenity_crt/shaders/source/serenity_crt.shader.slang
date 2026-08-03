@@ -104,7 +104,7 @@ float4 effect(FragInput input) {
     // Apply flicker effect
     float flicker = 1.0 + sin(params.time * 110.0) * params.flickerStrength;
 
-    // FIXME
+    // TODO vignette effect is broken?
     pixel.rgb *= scanline * flicker;
     return pixel;
 
