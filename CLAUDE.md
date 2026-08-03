@@ -45,7 +45,7 @@ crate-relative, not repo-relative.
 the crate at `examples/toon_link/assets/link/`.
 
 Keep the root justfile for workspace-wide tasks only (`shaders`, `sweep`,
-`test`, `lint`, `dev`, `build-slang`, `pre-commit`).
+`test`, `lint`, `dev`, `pre-commit`).
 
 ## Build Commands
 

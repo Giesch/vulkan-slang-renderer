@@ -14,8 +14,6 @@ The idea is to provide generated type-safe CPU bindings for an arbitrary slang s
 
 For now, only linux and windows are supported.
 
-When cloning this repo, use `git clone --recursive` to pick up the slang submodule.
-
 You'll need the following dependencies installed:
 - rust/cargo
 - just
@@ -26,9 +24,8 @@ You'll need the following dependencies installed:
 Then run:
 
 ``` sh
-direnv allow     # allow loading env vars
-just build-slang # build slang from source (this will take a while)
-just dev         # run the default triangle example
+direnv allow # allow loading env vars
+just dev     # run the default triangle example
 ```
 
 ## workspace & consumer workflow
