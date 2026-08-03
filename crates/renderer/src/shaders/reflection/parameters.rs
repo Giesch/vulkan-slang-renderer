@@ -483,6 +483,7 @@ fn reflect_struct_fields(
 fn slang_base_shape(shape_with_flags: slang::ResourceShape) -> slang::ResourceShape {
     // this is reproducing the way the base shape mask is used here:
     // https://github.com/shader-slang/slang/blob/9f9d28c1f496132dc71b80252b0eeddfa28cc8bc/source/slang/slang-reflection-json.cpp#L470
+    // FIXME update slang-rs to make this unnecessary
     let base_shape =
         shape_with_flags as u32 & slang::ResourceShape::SlangResourceBaseShapeMask as u32;
     unsafe { std::mem::transmute(base_shape) }
