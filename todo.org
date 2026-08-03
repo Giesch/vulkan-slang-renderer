@@ -1,17 +1,21 @@
 #+title: Todo
 
 * Now
-- [ ] problems/issues for side-agent PRs
+- [ ] get a static build of slang-rs working and use it here
+  this will make it possible to stop caring about slang-rhi's build
+- [ ] look into the non-png image formats mason recommended
+
+- [-] problems/issues for side-agent PRs
   - [X] triple-buffering problems
     done 2026-07-28: PRE_WAIT_RING_LEN and ring_slot deleted, one 2-slot ring
     (llm_notes/remove_pipelined_compute.md)
-  - [ ] testing without opening a window
+  - [X] testing without opening a window
     write to a texture? will this catch validation errors?
     might be worth it anyway
-  - [ ] pick up tech_debt.md tasks
+  - [-] pick up tech_debt.md tasks
   - [ ] roc platform (after render graph)
-  - [ ] BDA slices; then sparse sets?
-  - [ ] add an immutable bda buffer variant with no duplication
+  - [-] BDA slices; then sparse sets?
+  - [-] add an immutable bda buffer variant with no duplication
     ie, don't need pipelined triple-buffering if it's always the same
 
 - [-] work through the issues in bda_footguns.md
@@ -109,6 +113,8 @@
   #+begin_src rust
   // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
   #+end_src
+  this applies to all the cfg(not(windows)) tests in build_tasks,
+  and the insta justfile recipe(s)
 
 - [ ] get a more principled slang parsing setup
   - [ ] avoid the direct 'starts_with' stuff in build_tasks
@@ -481,12 +487,12 @@
 
 
 * Future
-- [ ] OCAML as a scripting language?
-  it has all the Roc stuff already...
+- [ ] look into fixing slang-rhi flags upstream
+  avoid depending on private header files in a public build? if they care i guess
 
-- [ ] consider replacing codegen with padding
+- [ ] consider replacing codegen with serialization (like encase)
   - ie, use packed cpu-side structs with 'to_storage' and 'to_uniform' methods
-  - or generate both?
+  - or generate both options?
 
 - [ ] migrate off of anyhow
   - use thiserror for game api

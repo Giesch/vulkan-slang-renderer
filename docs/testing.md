@@ -21,12 +21,12 @@ just insta                 # interactive review
 cargo insta test --accept  # re-run and accept every changed snapshot
 ```
 
-Always run `just test` when changing `src/shaders/build_tasks.rs` or the
-`templates/*.askama` files — that's what the snapshots cover.
+Always run `just test` when changing `crates/cli/src/build_tasks.rs` or the
+`crates/cli/templates/*.askama` files — that's what the snapshots cover.
 
 **NOTE `cargo insta accept` on its own does nothing after `just test`**: that
 recipe sets `INSTA_UPDATE=no`, so no `.snap.new` files are written for it to
-review. Use `cargo insta test --accept`, which re-runs the tests and writes the
+review. Use `cargo insta test --workspace --accept`, which re-runs the tests and writes the
 snapshots in one step. Review the diffs `just test` prints before accepting.
 
 **Known open issue:** the snapshots capture *pre-rustfmt* template output while
@@ -59,8 +59,9 @@ comparable across machines.
 ### When to run it
 
 **When a change could affect what the renderer records or destroys.** That means
-`src/renderer.rs` — especially command recording, synchronization and teardown —
-`src/app.rs`, anything touching descriptors or resource lifetimes, and any time
+`crates/renderer/src/renderer.rs` — especially command recording, synchronization
+and teardown — `crates/mltrs/src/app.rs`, anything touching descriptors or
+resource lifetimes, and any time
 you add or rework an example. It's fast enough to be the default check on
 renderer work.
 
@@ -69,7 +70,7 @@ renderer work.
 
 ### How it decides
 
-The verdict is each example's **exit code**. `src/renderer/debug.rs` counts
+The verdict is each example's **exit code**. `crates/renderer/src/renderer/debug.rs` counts
 validation messages by the severity Vulkan reports, and `Game::run` reads that
 count once the `Renderer` has been dropped — which is after `vkDestroyDevice`
 and its leaked-object report, so teardown is included.
@@ -105,7 +106,7 @@ of what used to be on this list is now enforced by the exit codes above.
 - **Never wrap a validation check in `timeout N cargo run`.** That times the
   *compile* as well as the run, so on a cold build the timeout expires during
   compilation, cargo exits 124 with an empty log, and every example looks fine.
-  One `touch src/renderer.rs` was once enough to make all 16 report `ok` with 16
+  One `touch` of renderer.rs was once enough to make all 16 report `ok` with 16
   empty logs. Both the sweep and `just watch` build up front, then time the
   binary directly.
 - **Don't use `timeout --foreground`** on an example launched through `just` or
@@ -124,12 +125,13 @@ signal anyway now reports 143 rather than looking like a pass. See
 
 ### Machine-local assets
 
-`toon_link` needs `assets/link/converted`, which is gitignored and derived from a
-disc image. The script tests for those assets and skips the example where they're
-absent, so the same invocation is correct on a dev machine and in a bare
-container — 16 ok / 0 skip locally, 15 ok / 1 skip in a container. Run
-`just extract-link && just convert-link` to make it sweepable. Every other
-example loads from tracked `textures/`, `models/` or `audio/`.
+`toon_link` needs `examples/toon_link/assets/link/converted`, which is gitignored
+and derived from a disc image. The script tests for those assets and skips the
+example where they're absent, so the same invocation is correct on a dev machine
+and in a bare container — 16 ok / 0 skip locally, 15 ok / 1 skip in a container.
+Run `just toon_link extract-link && just toon_link convert-link` to make it
+sweepable. Every other example loads from tracked assets inside its own
+`examples/<name>/` crate.
 
 ### If you change the script
 

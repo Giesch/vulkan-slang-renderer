@@ -1,0 +1,24 @@
+[package]
+name = "mltrs"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+mltrs-renderer.workspace = true
+
+anyhow.workspace = true
+ash.workspace = true
+egui.workspace = true
+facet.workspace = true
+glam.workspace = true
+image.workspace = true
+ktx2.workspace = true
+log.workspace = true
+pretty_env_logger.workspace = true
+sdl3.workspace = true
+serde.workspace = true
+serde_json.workspace = true

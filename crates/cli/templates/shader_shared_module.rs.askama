@@ -1,0 +1,87 @@
+// GENERATED FILE (do not edit directly)
+
+{% for line in module_doc_lines -%}
+//! {{ line }}
+{%- endfor %}
+
+{% if enum_defs.len() > 0 -%}
+use facet::Facet;
+{% endif -%}
+use serde::Serialize;
+
+{# a module holding only enums has no GPUWrite impl to emit #}
+#[allow(unused_imports)]
+use {{ import_root }}::renderer::gpu_write::GPUWrite;
+{% for import in cross_module_imports -%}
+use super::{{ import.module_name }}::{ {{- import.type_names|join(", ") -}} };
+{% endfor %}
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
+{% for def in enum_defs %}
+{{ def.trait_derive_line() }}
+{{ def.repr() }}
+// variant names come from the shader author, so clippy's shared-prefix lint
+// would otherwise force renaming away from the slang spelling
+#[allow(clippy::enum_variant_names)]
+pub enum {{ def.type_name }} {
+{%- for case in def.cases %}
+{%- if loop.first %}
+    #[default]
+{%- endif %}
+    {{ case.variant_name }} = {{ case.value }},
+{%- endfor %}
+}
+
+const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ def.expected_size() }});
+
+impl From<{{ def.type_name }}> for {{ def.tag_rust_type() }} {
+    fn from(value: {{ def.type_name }}) -> {{ def.tag_rust_type() }} {
+        value as {{ def.tag_rust_type() }}
+    }
+}
+
+// A repr(int) enum holding a value outside its declared variants is undefined
+// behavior. Data flows CPU -> GPU here, so the CPU never materializes a value it
+// did not construct; any future readback must come back through this TryFrom,
+// never a transmute or an `as` cast into the enum.
+impl TryFrom<{{ def.tag_rust_type() }}> for {{ def.type_name }} {
+    type Error = {{ def.tag_rust_type() }};
+
+    fn try_from(value: {{ def.tag_rust_type() }}) -> Result<Self, {{ def.tag_rust_type() }}> {
+        match value {
+{%- for arm in def.try_from_arms() %}
+            {{ arm }}
+{%- endfor %}
+            other => Err(other),
+        }
+    }
+}
+{% endfor %}
+{%- for def in struct_defs %}
+{%~ match def.trait_derive_line() -%}
+{%- when Some with (derive_line) -%}
+{{derive_line}}
+{%- when None -%}
+{%- endmatch +%}
+{%- match def.repr() -%}
+{%- when Some with (repr) +%}
+{{ repr }}
+{%~ when None -%}
+{%- endmatch -%}
+pub struct {{ def.type_name }} {
+{%~ for field in def.fields +%}    pub {{ field.field_name }}: {{ field.type_name }},
+{% endfor -%}
+}
+{%- if def.gpu_write() +%}
+
+impl GPUWrite for {{ def.type_name }} {}
+{%- endif %}
+{%- match def.expected_size() -%}
+{%- when Some with (size) +%}
+const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
+{%- when None -%}
+{%- endmatch %}
+{%- for assert_line in def.layout_assert_lines() +%}
+{{ assert_line }}
+{%- endfor %}
+{% endfor %}

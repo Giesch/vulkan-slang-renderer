@@ -1,0 +1,24 @@
+[package]
+name = "sdf_2d"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+mltrs.workspace = true
+
+anyhow.workspace = true
+ash.workspace = true
+facet.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+
+[dependencies.rodio]
+version = "0.22.2"
+default-features = false
+features = ["playback", "flac"]

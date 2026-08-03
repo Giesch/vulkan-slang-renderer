@@ -1,0 +1,10 @@
+# Recipes for the watercolor example, invoked from the repo root as
+# `just watercolor <recipe>` (the root justfile declares this dir as a module).
+
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
+# generate watercolor paper height map texture
+paper-texture:
+    cargo run -p watercolor --bin generate_paper_texture --release

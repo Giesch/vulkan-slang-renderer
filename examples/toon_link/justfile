@@ -1,0 +1,76 @@
+# Recipes for the toon_link example, invoked from the repo root as
+# `just toon_link <recipe>` (the root justfile declares this dir as a module).
+#
+# NOTE just runs a submodule's recipes with the working directory set to the
+# submodule's directory, so every path below is relative to
+# examples/toon_link/. `cargo` still finds the workspace root by walking up.
+
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
+
+# extract Link assets from the tww disc image (needs a tww checkout beside the repo; override with TWW_DIR)
+[unix]
+extract-link:
+    ./scripts/extract_link.sh
+
+# parse Link's BDL and emit converted assets (P1: chunk walk only)
+[unix]
+convert-link *args:
+    cargo run -p convert-link --bin convert_link -- assets/link/raw assets/link/converted {{args}}
+
+
+# P1 gate: diff our --info chunk table against the gclib oracle, then run ignored tests
+[unix]
+link-verify-p1:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    diff <(just convert-link --info) <(./scripts/link_chunk_table.py assets/link/raw/cl.bdl)
+    cargo test -p convert-link -- --include-ignored
+    echo "P1 VERIFIED"
+
+# P2 texture gate: pixel-diff every decoded texture against gclib
+[unix]
+link-verify-textures:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just convert-link >/dev/null
+    ./scripts/link_texture_diff.py assets/link/raw assets/link/converted/tex
+
+# P2 MAT3 gate: diff our canonical --dump-mat3 against the gclib oracle
+[unix]
+link-verify-mat3:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    diff <(just convert-link --dump-mat3) <(./scripts/link_mat3_table.py assets/link/raw/cl.bdl)
+    echo "MAT3 table matches oracle"
+
+# P2 gate: textures + MAT3 + ignored real-file tests
+[unix]
+link-verify-p2: link-verify-textures link-verify-mat3
+    cargo test -p convert-link -- --include-ignored
+    echo "P2 VERIFIED"
+
+# P3 geometry gate: diff our canonical --dump-geometry against the oracle,
+# then run the full conversion (which runs the baking invariants)
+[unix]
+link-verify-geometry:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    diff <(just convert-link --dump-geometry) <(./scripts/link_geometry_table.py assets/link/raw/cl.bdl)
+    just convert-link >/dev/null
+    echo "geometry table matches oracle"
+
+# P3 gate: geometry diff + ignored real-file tests
+[unix]
+link-verify-p3: link-verify-geometry
+    cargo test -p convert-link -- --include-ignored
+    echo "P3 VERIFIED"
+
+
+# resolve the actor lighting colors this example lerps between; pass
+# --room/--weather/--time to read a different palette slot
+[unix]
+link-env-colors *args:
+    ./scripts/link_env_colors.py assets/link/raw/sea_stage.dzs {{args}}

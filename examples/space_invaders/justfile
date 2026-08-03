@@ -1,0 +1,20 @@
+# Recipes for the space_invaders example, invoked from the repo root as
+# `just space_invaders <recipe>` (the root justfile declares this dir as a
+# module).
+#
+# NOTE just runs a submodule's recipes with the working directory set to the
+# submodule's directory, so the cd below is relative to
+# examples/space_invaders/.
+
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
+# export the aseprite files as one sprite sheet
+[unix]
+sprites:
+    cd textures/space_invaders && aseprite --batch *.aseprite \
+        --sheet sprite_sheet.png \
+        --data sprite_sheet.json \
+        --filename-format "{title} {frame}" \
+        --format json-array

@@ -1,51 +1,51 @@
-[package]
-name = "vulkan-slang-renderer"
+[workspace]
+resolver = "3"
+members = ["crates/*", "examples/*"]
+exclude = ["crates/cli/fixtures/check_crate", "slang"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "convert_link"
-path = "src/gx/bin/convert_link/main.rs"
+[workspace.dependencies]
+# internal
+gx = { path = "crates/gx" }
+mltrs = { path = "crates/mltrs" }
+mltrs-renderer = { path = "crates/renderer" }
 
-[dependencies]
-ash = { version = "0.38.0", features = ["linked"] }
-glam = { version = "0.30.3", features = ["serde"] }
-image = "0.25.6"
-ktx2 = "0.5.0"
-log = "0.4.27"
-pretty_env_logger = "0.5.0"
-# using build-from-source-static for windows
-# sdl3 = { version = "0.14.29", features = ["ash"] }
-sdl3 = { version = "0.14.29", features = ["ash", "build-from-source-static"] }
-tobj = "4.0.3"
-
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.141"
-
-notify = "8.1.0"
-
+# external
 anyhow = "1.0.100"
-heck = "0.5.0"
+ash = { version = "0.38.0", features = ["linked"] }
 askama = "0.14.0"
-thiserror = "2.0.17"
+clap = { version = "4.5", features = ["derive"] }
 egui = "0.33"
 egui-ash-renderer = { version = "0.11.0", features = ["dynamic-rendering"] }
 facet = { version = "0.42", features = ["reflect"] }
 facet-core = { version = "0.42.0", features = ["std"] }
-rodio = "0.22.2"
+glam = { version = "0.33.2", features = ["serde"] }
+heck = "0.5.0"
+image = { version = "0.25.6", default-features = false, features = ["png", "jpeg", "bmp"] }
+insta = { version = "1.43.2", features = ["json", "glob"] }
+ktx2 = "0.5.0"
+log = "0.4.27"
+notify = "8.1.0"
+pretty_env_logger = "0.5.0"
+rspirv = "0.12.0"
+# using build-from-source-static for windows
+sdl3 = { version = "0.14.29", features = ["ash", "build-from-source-static"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.141"
+# fork with static build changes
+shader-slang = { git = "https://github.com/Giesch/slang-rs.git", branch = "main", default-features = false, features = ["static"] }
+thiserror = "2.0.17"
+tobj = "4.0.3"
+uuid = { version = "1.18.1", features = ["v4"] }
 vk-mem = "0.5.0"
 
-[dependencies.shader-slang]
-# fork with static build changes
-git = "https://github.com/Giesch/slang-rs.git"
-branch = "main"
-default-features = false
-features = ["static"]
+[workspace.lints.clippy]
+type_complexity = "allow"
+too_many_arguments = "allow"
 
-[dev-dependencies]
-insta = { version = "1.43.2", features = ["json", "glob"] }
-rspirv = "0.12.0"
-uuid = { version = "1.18.1", features = ["v4"] }
-
+# profiles only apply at the workspace root
 [profile.dev.package."*"]
 opt-level = 3

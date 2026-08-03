@@ -1,9 +1,19 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
+# Example-specific recipes live in the example's own crate, alongside the
+# scripts and assets they touch. Reach them as `just <example> <recipe>`, e.g.
+# `just toon_link link-verify-p1`. just runs a submodule's recipes with the
+# working directory set to that submodule's dir, which is what their relative
+# paths assume.
+mod sdf_2d 'examples/sdf_2d'
+mod space_invaders 'examples/space_invaders'
+mod toon_link 'examples/toon_link'
+mod watercolor 'examples/watercolor'
 
-# list all available just recipes
-list:
-    @ just --list --unsorted
+
+# list all available just recipes, including the per-example modules
+_default:
+    @ just --list --unsorted --list-submodules
 
 
 # compiler/linter watch via bacon
@@ -14,14 +24,14 @@ check:
 # run dev build with shader hot reload
 [unix]
 dev example="basic_triangle":
-    cargo run --example {{example}}
+    cargo run -p {{example}}
 
 # run dev build with shader hot reload
 [windows]
 dev example="basic_triangle":
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      cargo run --example {{example}}; \
+      cargo run -p {{example}}; \
     }
 
 
@@ -29,7 +39,7 @@ dev example="basic_triangle":
 [unix]
 shader-debug example="viking_room":
     RUST_LOG=info VK_LAYER_PRINTF_ONLY_PRESET=1 \
-      cargo run --example {{example}}
+      cargo run -p {{example}}
 
 # run with shader printf and vk validation layers at 'info'
 [windows]
@@ -38,41 +48,60 @@ shader-debug example="viking_room":
       . ./scripts/load-env.ps1; \
       $env:RUST_LOG='info'; \
       $env:VK_LAYER_PRINTF_ONLY_PRESET='1'; \
-      cargo run --example {{example}}; \
+      cargo run -p {{example}}; \
     }
 
 # run a release build
-release: shaders
-    cargo run --release
+release example="basic_triangle": shaders
+    cargo run --release -p {{example}}
 
 
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
 [unix]
-shaders:
-    cargo run --bin prepare_shaders
+shaders example="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{example}}" = "all" ]; then
+        for d in examples/*/; do cargo run -p mltrs-cli -- shaders compile --crate-dir "$d"; done
+    else
+        cargo run -p mltrs-cli -- shaders compile --crate-dir "examples/{{example}}"
+    fi
     cargo fmt
+
+# re-seed every example's vendored engine slang modules from the cli's canonical copies
+[unix]
+vendor-shaders:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for d in examples/*/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
+    cargo fmt
+
+# e.g. `just mltrs shaders compile --crate-dir examples/sdf_2d`
+# run the mltrs cli directly, passing all arguments through
+[unix]
+mltrs *args:
+    cargo run -p mltrs-cli -- {{args}}
+
+# run the mltrs cli directly, passing all arguments through
+[windows]
+mltrs *args:
+    pwsh -Command { \
+      . ./scripts/load-env.ps1; \
+      cargo run -p mltrs-cli -- {{args}}; \
+    }
 
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
 [windows]
-shaders:
+shaders example="all":
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
-      cargo run --bin prepare_shaders; \
+      if ('{{example}}' -eq 'all') { \
+        Get-ChildItem -Directory examples | ForEach-Object { cargo run -p mltrs-cli -- shaders compile --crate-dir $_.FullName }; \
+      } else { \
+        cargo run -p mltrs-cli -- shaders compile --crate-dir "examples/{{example}}"; \
+      } \
       cargo fmt; \
     }
-
-# generate watercolor paper height map texture
-paper-texture:
-    cargo run --bin generate_paper_texture --release
-
-# export space invaders aseprite files as one sprite sheet
-[unix]
-sprites:
-    cd textures/space_invaders && aseprite --batch *.aseprite \
-        --sheet sprite_sheet.png \
-        --data sprite_sheet.json \
-        --filename-format "{title} {frame}" \
-        --format json-array
 
 # build one example, then run it for a few seconds and exit
 #
@@ -81,8 +110,8 @@ sprites:
 # compilation and the example never starts -- with no output to say so.
 [unix]
 watch example="basic_triangle" seconds="5":
-    cargo build --example {{example}}
-    timeout --preserve-status -k 5 -s TERM {{seconds}} ./target/debug/examples/{{example}}
+    cargo build -p {{example}}
+    timeout --preserve-status -k 5 -s TERM {{seconds}} ./target/debug/{{example}}
 
 
 # run every example headlessly, failing on vulkan validation output
@@ -98,12 +127,12 @@ sweep-self-test:
 
 # run all unit tests
 test:
-    INSTA_UPDATE=no cargo test
+    INSTA_UPDATE=no cargo test --workspace
 
 # run and review snapshot tests interactively
 [unix] # currently broken on windows, see build_tasks.rs
 insta:
-    cargo insta test --review
+    cargo insta test --workspace --review
 
 
 # lint in debug and release, with warnings denied
@@ -111,8 +140,8 @@ insta:
 # plain `cargo clippy` checks the lib and bins only, so example-only breakage
 # slips through (same trap applies to `cargo check`)
 lint:
-    cargo clippy --all-targets -- -D warnings
-    cargo clippy --all-targets --release -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --release -- -D warnings
 
 
 # set up git pre-commit hook
@@ -123,17 +152,21 @@ setup-precommit:
 
 # lint and test for git pre-commit hook
 pre-commit: shaders && lint test
-    git add shaders/compiled
+    git add 'examples/*/shaders/compiled/*' 'examples/*/src/generated/*'
 
 # get the slang git submodule and its submodules
 init-submodules:
   git submodule update --init --recursive
 
 # build slang as a static library (requires cmake and ninja)
+# NOTE slang-rhi and tests are disabled, matching the windows recipe: slang-rhi
+# unconditionally fetches OptiX headers at configure time, which fails behind a
+# restricted network, and nothing in this repo links it. See
+# llm_notes/build_reproducibility.md §3.
 [unix]
 build-slang:
   cd slang && \
-    cmake --preset default -DSLANG_LIB_TYPE=STATIC && \
+    cmake --preset default -DSLANG_LIB_TYPE=STATIC -DSLANG_ENABLE_SLANG_RHI=OFF -DSLANG_ENABLE_TESTS=OFF && \
     cmake --build --preset release
 
 # NOTE: the tests and slang-rhi dependency are disabled below.
@@ -160,73 +193,3 @@ clean-slang:
       . ./scripts/load-env.ps1; \
       Remove-Item -Recurse -Force slang/build; \
     }
-
-
-# write *.beats.json assets based on automatically extracted timestamps
-[unix]
-beats:
-    ./scripts/extract_beats.py './audio/'
-
-
-# extract Link assets from the tww disc image (needs ../tww; override with TWW_DIR)
-[unix]
-extract-link:
-    ./scripts/extract_link.sh
-
-# parse Link's BDL and emit converted assets (P1: chunk walk only)
-[unix]
-convert-link *args:
-    cargo run --bin convert_link -- assets/link/raw assets/link/converted {{args}}
-
-# P1 gate: diff our --info chunk table against the gclib oracle, then run ignored tests
-[unix]
-link-verify-p1:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    diff <(just convert-link --info) <(./scripts/link_chunk_table.py assets/link/raw/cl.bdl)
-    cargo test --bin convert_link -- --include-ignored
-    echo "P1 VERIFIED"
-
-# P2 texture gate: pixel-diff every decoded texture against gclib
-[unix]
-link-verify-textures:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just convert-link >/dev/null
-    ./scripts/link_texture_diff.py assets/link/raw assets/link/converted/tex
-
-# P2 MAT3 gate: diff our canonical --dump-mat3 against the gclib oracle
-[unix]
-link-verify-mat3:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    diff <(just convert-link --dump-mat3) <(./scripts/link_mat3_table.py assets/link/raw/cl.bdl)
-    echo "MAT3 table matches oracle"
-
-# P2 gate: textures + MAT3 + ignored real-file tests
-[unix]
-link-verify-p2: link-verify-textures link-verify-mat3
-    cargo test --bin convert_link -- --include-ignored
-    echo "P2 VERIFIED"
-
-# P3 geometry gate: diff our canonical --dump-geometry against the oracle,
-# then run the full conversion (which runs the baking invariants)
-[unix]
-link-verify-geometry:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    diff <(just convert-link --dump-geometry) <(./scripts/link_geometry_table.py assets/link/raw/cl.bdl)
-    just convert-link >/dev/null
-    echo "geometry table matches oracle"
-
-# P3 gate: geometry diff + ignored real-file tests
-[unix]
-link-verify-p3: link-verify-geometry
-    cargo test --bin convert_link -- --include-ignored
-    echo "P3 VERIFIED"
-
-# resolve the actor lighting colors examples/toon_link.rs lerps between; pass
-# --room/--weather/--time to read a different palette slot
-[unix]
-link-env-colors *args:
-    ./scripts/link_env_colors.py assets/link/raw/sea_stage.dzs {{args}}

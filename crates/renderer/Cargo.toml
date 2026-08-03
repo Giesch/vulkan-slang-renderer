@@ -1,0 +1,27 @@
+[package]
+name = "mltrs-renderer"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ash.workspace = true
+egui.workspace = true
+egui-ash-renderer.workspace = true
+facet.workspace = true
+facet-core.workspace = true
+glam.workspace = true
+heck.workspace = true
+image.workspace = true
+log.workspace = true
+notify.workspace = true
+sdl3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shader-slang.workspace = true
+thiserror.workspace = true
+vk-mem.workspace = true

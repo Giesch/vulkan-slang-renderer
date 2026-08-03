@@ -101,19 +101,21 @@ done
 
 # True when $1 needs machine-local assets that aren't on this machine.
 #
-# /assets/ is gitignored wholesale, so an example fed from it runs on a machine
-# where the assets have been generated and cannot run anywhere else. Testing for
-# the assets beats a hard-coded skip list: the same sweep covers toon_link on a
-# dev machine and skips it in a container, with no env var to remember.
+# examples/toon_link/assets/ is gitignored wholesale, so an example fed from it
+# runs on a machine where the assets have been generated and cannot run anywhere
+# else. Testing for the assets beats a hard-coded skip list: the same sweep
+# covers toon_link on a dev machine and skips it in a container, with no env var
+# to remember.
 #
 # Every other example loads from tracked textures/, models/ or audio/, so this
 # is the whole set. Add a case here alongside any new gitignored-asset example.
 assets_missing() {
   case "$1" in
-    # examples/toon_link.rs:155 reads this first and bails if it is absent;
-    # produced by `just extract-link && just convert-link` from a Wind Waker
-    # disc image (llm_notes/link_rendering/phase_00.md).
-    toon_link) [ ! -f assets/link/converted/link.manifest.json ] ;;
+    # examples/toon_link/src/main.rs reads this first and bails if it is
+    # absent; produced by `just toon_link extract-link && just toon_link
+    # convert-link` from a Wind Waker disc image
+    # (llm_notes/link_rendering/phase_00.md).
+    toon_link) [ ! -f examples/toon_link/assets/link/converted/link.manifest.json ] ;;
     *) return 1 ;;
   esac
 }
@@ -146,7 +148,7 @@ validation_lines() {
 # viewport_width), so a detector in working order reports exit 1 with
 # VUID-VkViewport-width-01771.
 self_test() {
-  local bin="target/debug/examples/basic_triangle"
+  local bin="target/debug/basic_triangle"
   local log="$SWEEP_LOG_DIR/self-test.log"
 
   if [ ! -x "$bin" ]; then
@@ -185,7 +187,10 @@ echo "building examples..."
 # indistinguishable from "the example ran for its whole window" -- and the log
 # is empty. Every example then reports ok and the whole sweep is vacuous. This
 # is easy to hit, since any source edit immediately before a sweep triggers it.
-if ! cargo build --examples; then
+# every example is its own workspace member crate under examples/
+example_packages=$(ls -d examples/*/ | xargs -n1 basename)
+# shellcheck disable=SC2086
+if ! cargo build $(printf -- '-p %s ' $example_packages); then
   echo "FAIL: examples did not build" >&2
   exit 1
 fi
@@ -202,7 +207,7 @@ if [ "$SWEEP_SELF_TEST" != "0" ]; then
 fi
 
 if [ "${#examples[@]}" -eq 0 ]; then
-  mapfile -t examples < <(ls examples/*.rs | xargs -n1 basename | sed 's/\.rs$//')
+  mapfile -t examples < <(ls -d examples/*/ | xargs -n1 basename)
 fi
 
 fail=0
@@ -215,13 +220,13 @@ for e in "${examples[@]}"; do
   # A skip, not a failure, even when named explicitly on the command line: in a
   # container there is nothing to fix, and a red sweep there would be noise.
   if assets_missing "$e"; then
-    echo "skip: $e (assets absent; run \`just extract-link && just convert-link\`)"
+    echo "skip: $e (assets absent; run \`just toon_link extract-link && just toon_link convert-link\`)"
     skipped=$((skipped + 1))
     continue
   fi
 
   log="$SWEEP_LOG_DIR/$e.log"
-  bin="target/debug/examples/$e"
+  bin="target/debug/$e"
 
   if [ ! -x "$bin" ]; then
     echo "FAIL(no binary): $e"

@@ -8,6 +8,7 @@ The idea is to provide generated type-safe CPU bindings for an arbitrary slang s
 ![2D SDFs](./screenshots/sdf_demo.gif)
 ![Vulkan Tutorial Viking Room](./screenshots/viking-room.png)
 ![Ray-marched Spheres](./screenshots/raymarch-spheres.png)
+![Toon Link](./screenshots/toon-link.png)
 
 ## setup
 
@@ -29,4 +30,3 @@ direnv allow     # allow loading env vars
 just build-slang # build slang from source (this will take a while)
 just dev         # run the default triangle example
 ```
-
