@@ -4,7 +4,8 @@ mod generated;
 
 use std::time::Duration;
 
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::camera::lh::proj::directx;
+use glam::{Vec2, Vec3, Vec4};
 
 use mltrs::game::*;
 use mltrs::manifest_path;
@@ -372,7 +373,7 @@ impl Game for SpaceInvaders {
         }
 
         let projection = Projection {
-            matrix: Mat4::orthographic_lh(0.0, width, height, 0.0, 0.0, -1.0),
+            matrix: directx::orthographic(0.0, width, height, 0.0, 0.0, -1.0),
         };
         // draw
         let visible_sprites = self

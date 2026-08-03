@@ -8,7 +8,7 @@ ash = "0.38"
 # generated enums derive Facet; mirrors the root Cargo.toml's pinning
 facet = { version = "0.42", features = ["reflect"] }
 facet-core = { version = "0.42.0", features = ["std"] }
-glam = { version = "0.30", features = ["serde"] }
+glam = { version = "0.33", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

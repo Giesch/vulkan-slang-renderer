@@ -23,6 +23,7 @@ mod generated;
 
 use std::time::Instant;
 
+use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use image::{DynamicImage, Rgba, RgbaImage};
 
@@ -526,8 +527,8 @@ fn orbit_angle(elapsed: f32) -> f32 {
 
 fn camera(orbit: f32, aspect_ratio: f32) -> (Mat4, Mat4) {
     let eye = Mat3::from_rotation_y(orbit) * Vec3::new(0.0, 2.2, 5.5);
-    let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
-    let proj = Mat4::perspective_rh(FOV_Y_DEGREES.to_radians(), aspect_ratio, 0.1, 20.0);
+    let view = look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
+    let proj = directx::perspective(FOV_Y_DEGREES.to_radians(), aspect_ratio, 0.1, 20.0);
 
     (view, proj)
 }

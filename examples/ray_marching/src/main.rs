@@ -4,6 +4,7 @@ mod generated;
 
 use std::time::Instant;
 
+use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Quat, Vec3};
 use mltrs::game::*;
 use mltrs::renderer::{
@@ -248,8 +249,8 @@ impl RaymarchCameraController {
         let up = Quat::from_axis_angle(forward, self.roll) * Vec3::Y;
 
         let target = self.position + forward;
-        let view = Mat4::look_at_rh(self.position, target, up);
-        let proj = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 1000.0);
+        let view = look_at_mat4(self.position, target, up);
+        let proj = directx::perspective(fov_y_radians, aspect_ratio, 0.1, 1000.0);
         let inverse_view_proj = (proj * view).inverse();
 
         RayMarchCamera {

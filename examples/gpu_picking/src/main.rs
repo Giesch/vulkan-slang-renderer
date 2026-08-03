@@ -1,4 +1,5 @@
-use glam::{Mat4, Vec3};
+use glam::Vec3;
+use glam::camera::rh::{proj::directx, view::look_at_mat4};
 
 mod generated;
 
@@ -136,8 +137,8 @@ fn build_camera(aspect_ratio: f32) -> RayMarchCamera {
     let up = Vec3::Y;
 
     let fov_y = 45.0_f32.to_radians();
-    let view = Mat4::look_at_rh(position, target, up);
-    let proj = Mat4::perspective_rh(fov_y, aspect_ratio, 0.1, 100.0);
+    let view = look_at_mat4(position, target, up);
+    let proj = directx::perspective(fov_y, aspect_ratio, 0.1, 100.0);
     let inverse_view_proj = (proj * view).inverse();
 
     RayMarchCamera {

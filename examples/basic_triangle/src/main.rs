@@ -1,3 +1,4 @@
+use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Vec3};
 
 mod generated;
@@ -79,10 +80,10 @@ fn make_basic_mvp_matrices(aspect_ratio: f32) -> MVPMatrices {
     let model = Mat4::IDENTITY;
 
     let eye = Vec3::new(0.0, 0.0, 6.0);
-    let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+    let view = look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
 
     let fov_degrees: f32 = 45.0;
-    let proj = Mat4::perspective_rh(fov_degrees.to_radians(), aspect_ratio, 0.1, 10.0);
+    let proj = directx::perspective(fov_degrees.to_radians(), aspect_ratio, 0.1, 10.0);
 
     MVPMatrices { model, view, proj }
 }

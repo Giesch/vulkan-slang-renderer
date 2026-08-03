@@ -23,6 +23,8 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 4. [Duplicate struct names across shared slang modules resolve by silent last-write-wins](#4-duplicate-struct-names-across-shared-slang-modules-resolve-by-silent-last-write-wins) — latent **silent-wrong-output** hazard in codegen
 5. [Validation and fault injection cannot run in release builds](#5-validation-and-fault-injection-cannot-run-in-release-builds) — release builds are unsweepable, coverage gap
 6. [Fresh-environment builds: friction log from the workspace-migration session](#6-fresh-environment-builds-friction-log-from-the-workspace-migration-session) — reproducibility gaps, some already planned, two new
+7. [The Y-down clip space flip is applied in three different places, none documented](#7-the-y-down-clip-space-flip-is-applied-in-three-different-places-none-documented) — undocumented convention, easy to get wrong in a new example
+8. [The `fixtures/shaders` corpus is hand-maintained copies of example shaders](#8-the-fixturesshaders-corpus-is-hand-maintained-copies-of-example-shaders) — lockstep edits, undetected drift weakens snapshot coverage
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -362,3 +364,203 @@ it as red. The last is cheapest and probably enough.
 has a chosen policy recorded in the workspace `Cargo.toml` or the README;
 and a slow-machine sweep either passes or fails with a message that says
 "widen the window", not "no frames".
+
+---
+
+## 7. The Y-down clip space flip is applied in three different places, none documented
+
+**Context.** Surfaced while upgrading glam 0.30.8 → 0.33.2 (2026-08). The
+upgrade itself is done and is *not* the debt — this entry records what the
+upgrade exposed and deliberately did not fix.
+
+> **Correction (same session).** A first draft of this entry claimed the flip
+> was absent from the shared code and hand-rolled per example. That was wrong,
+> and it was wrong in the direction that would have caused damage: acting on it
+> would have double-flipped six examples. The flip *is* centralized — in two
+> vendored slang modules, below. The draft also read `Vec3::Z` in
+> `viking_room`/`depth_texture` as clip-space compensation; it is the model's
+> orientation. Kept visible rather than silently rewritten, since the
+> mischaracterization is the kind a reader might repeat.
+
+**The problem.** The repo's convention is a **Y-up (`directx`-style)
+projection matrix on the CPU, flipped to Vulkan's Y-down clip space downstream.**
+That is a coherent choice, and consistency with it is the goal. What's missing
+is that "downstream" means three unrelated mechanisms, and no document names
+any of them:
+
+1. **`crates/cli/vendor/mltrs/mvp.slang`** — `MVPMatrices::project` computes
+   `mul(reflectY, this.proj)`, with the Vulkan-tutorial citation inline. This
+   covers `basic_triangle`, `suzanne`, `multi_mesh`, `viking_room`,
+   `depth_texture` and `toon_link`.
+2. **`crates/cli/vendor/mltrs/fullscreen_triangle.slang`** — a *second*,
+   independent `reflectY` producing `centeredCoords`, annotated "OpenGL-style
+   Y-up" against the same struct's Y-down `svPosition`/`texCoord`. Sixteen
+   examples read it; only `gpu_picking` and `ray_marching` invert a projection
+   against it, and for them it is what makes the Y-up matrix correct. The other
+   consumers are 2D SDFs that simply want Y-up math.
+3. **Swapped orthographic bounds** — `examples/sprite_batch/src/main.rs:141`
+   and `examples/space_invaders/src/main.rs:380` pass
+   `bottom = height, top = 0.0`. `Projection` (`projection.slang`) applies no
+   flip of its own, so for these two the swap *is* the flip.
+
+Not a mechanism, listed because a first read mistakes it for one:
+`viking_room`/`depth_texture` pass `Vec3::Z` as the up vector because
+`viking_room.obj` is Z-up — the same reason the spin is `Mat4::from_rotation_z`.
+Unrelated to clip space, and it must not be "fixed".
+
+Whoever writes the next example has to work out which of the three applies
+before their first frame is the right way up, and the answer depends on
+something invisible from the Rust side: whether the shader went through
+`MVPMatrices` or bare `Projection`.
+
+**Why it's tolerable today.** Every example looks right, `just sweep` covers
+them, and the convention is at least *consistent* even if it is unwritten.
+Nothing ships from this repo, so the cost is the next author's time.
+
+**What the glam upgrade changed.** glam 0.33.2 deprecated the whole
+view/projection family (`Mat4::look_at_rh`, `Mat4::perspective_rh`,
+`Mat4::orthographic_lh`, …) and moved it to free functions under
+`glam::camera::{lh,rh}::{view,proj}`, where the `proj` sub-module *names the
+NDC convention*:
+
+| module    | NDC Z   | NDC Y |
+|-----------|---------|-------|
+| `opengl`  | [-1, 1] | Up    |
+| `directx` | [0, 1]  | Up    |
+| `vulkan`  | [0, 1]  | Down  |
+
+`vulkan::perspective` is `directx::perspective` with the Y row negated. The old
+`Mat4::perspective_rh` was Z ∈ [0,1] **Y-up** — i.e. `directx`. The migration
+therefore used `directx::perspective` / `directx::orthographic` /
+`view::look_at_mat4`. Each call site carries a short comment naming *which* of
+the three mechanisms above flips it, because `directx` in a Vulkan renderer
+reads as a mistake otherwise.
+
+Checked rather than assumed: replaying every example's actual arguments through
+both the deprecated method and its replacement gives bit-identical matrices in
+12 of 13 cases. The exception is `ray_marching`'s `far = 1000.0` perspective,
+where the two depth terms differ by exactly 1 ULP (`-1.0001` vs `-1.0000999`,
+relative 1.19e-7). The formula was rearranged — old:
+`r = far / (near - far)`; new: `z_range_inv = 1.0 / (far - near)` then
+`-far * z_range_inv`. Same value mathematically, different rounding. Worst-case
+NDC depth error across that frustum is 1.19e-7, which is one ULP of `f32` near
+1.0 — at the representational floor of the depth buffer, and `ray_marching` only
+feeds the matrix through `(proj * view).inverse()` to reconstruct ray
+directions. Not worth compensating for; worth knowing before someone diffs a
+matrix and thinks something moved.
+
+**Decision (2026-08): keep the `directx`-style convention.** glam 0.33.2 ships
+`camera::rh::proj::vulkan::*`, which would move the flip into the projection
+matrix and let all three mechanisms go away. Considered and declined — the goal
+is internal consistency, and the repo is already consistently Y-up-plus-
+downstream-flip. Switching would mean deleting `reflectY` from `mvp.slang`
+(a vendored engine module, so every consumer's contract, not just the
+examples'), and either growing `FullscreenPosition` with a Y-down centered
+coordinate or flipping `centeredCoords` for the six 2D SDF examples that
+legitimately want it Y-up. Large blast radius, no behavioral win.
+
+**Fix — documentation, not code.** The debt is that the convention is unwritten,
+so record it in `docs/`: CPU builds Y-up (`directx`) projections; the flip is
+applied by `mvp.slang` for `MVPMatrices` shaders, by `fullscreen_triangle.slang`
+for shaders that reconstruct rays from `centeredCoords`, and by swapped
+orthographic bounds for bare-`Projection` 2D shaders. State which one a new
+example inherits, and that a Y-up projection paired with the wrong one is an
+upside-down first frame with no other symptom.
+
+Worth doing at the same time: `fullscreen_triangle.slang` and `mvp.slang`
+each define their own private `reflectY` with no cross-reference, so neither
+tells a reader the other exists.
+
+**Done means.** `docs/` has a section a new example's author can follow to get
+the right orientation on the first frame without reading either slang module;
+the two `reflectY` definitions reference it; and the per-call-site comments in
+`examples/*/src/main.rs` point at it rather than restating it.
+
+**Adjacent, deliberately out of scope.** glam 0.33 made its non-`f32` types
+optional (`default = ["std", "all-types"]`), so the workspace pin could set
+`default-features = false` and drop `f64` plus unused integer widths for a
+compile-time win — the used surface is only `Vec2/3/4`, `UVec4`, `IVec4`,
+`Mat3`, `Mat4`, `Quat`. Separately, `crates/mltrs/Cargo.toml:17` declares glam
+but `crates/mltrs/src/**` contains zero references to it. Neither is worth a
+numbered entry; both are free wins for whoever is next in the neighborhood.
+
+The layout half of the glam contract is *not* debt and must not be disturbed by
+any of the above — see Phase 6 of
+[`vulkan_1_3_migration.md`](vulkan_1_3_migration.md) for the model (sizes
+stable, alignments feature-dependent, never substitute `Vec3A`, and the
+`align_of::<glam::Vec4>() == 16` assert the templates emit to catch a
+transitively-enabled `scalar-math`). The 0.33.2 upgrade left it intact:
+`just shaders` regenerated every example with no diff.
+
+## 8. The `fixtures/shaders` corpus is hand-maintained copies of example shaders
+
+**Context.** Surfaced while moving the engine slang modules under a `mltrs`
+namespace (2026-08). The refactor is done and is not the debt — this entry
+records the cost it exposed.
+
+**The problem.** The `generated_files` test
+(`crates/cli/src/build_tasks.rs:1784`) points `shaders_source_dir` at
+`manifest_path(["fixtures", "shaders"])` with `import_root: "crate"`, i.e. one
+synthetic consumer crate. Every `.slang` file in that corpus is a byte-identical
+copy of a file that lives somewhere else in the repo — nothing there is unique
+to the fixtures:
+
+| fixture files | copy of | real source of truth |
+|---|---|---|
+| `mltrs.slang` + `mltrs/*.slang` (6) | `crates/cli/vendor/`, and every example's seeded copy | `crates/cli/vendor/` |
+| `basic_triangle.shader.slang`, `sdf_2d.shader.slang`, `gpu_picking.shader.slang`, `gpu_picking_common.slang`, `particle.slang`, `particle_render.shader.slang`, `particles.compute.slang`, `ray_march_camera.slang` (8) | one example each (`ray_march_camera.slang` also exists identically in 3 examples) | the example crate |
+
+The copies are maintained by hand, and nothing checks that a copy still matches
+its origin. The namespace refactor had to rewrite every engine import twice —
+once across the fixtures, once across the 16 examples — and the two passes were
+kept in sync only by remembering to do both. Drift doesn't fail: it silently
+weakens what the snapshots cover, since the corpus would keep exercising the
+codegen paths, just not the ones any real consumer uses.
+
+Note the corpus *was* deliberately curated, not accidentally accumulated —
+`mltrs_workspace.md:462-470` specifies "a curated set exercising every codegen
+path" and lists them by the path each covers (vertex-buffer graphics,
+vertex-less fullscreen, compute + shared module, cross-module import). That
+intent is still right. What's missing is anything that keeps the files honest to
+it.
+
+**Why it's tolerable today.** The copies are currently identical (verified
+file-by-file, 2026-08), the corpus is 14 files, and the failure mode is degraded
+coverage rather than wrong output. Neither `crates/cli/fixtures/alignment/` (21
+purpose-built std140/std430/pointer files) nor `fixtures/check_crate/` has this
+problem — alignment fixtures are self-contained and named for the codegen branch
+they cover, which is arguably the shape this corpus should have too.
+
+**Fix — pick one; the tradeoff is real in both directions.**
+
+- **(a) Replace the duplicates with purpose-built fixtures.** Follow the
+  `fixtures/alignment` model: name each file for the codegen branch it exercises
+  rather than the example it was lifted from, and let it diverge from any
+  example. Keeps cli snapshots insulated from cosmetic example edits — which is
+  the reason for having a separate corpus at all — at the cost of the "fixtures
+  mirror real usage" property.
+- **(b) Make the example crates the source of truth and regenerate.** A `just
+  sync-fixtures` recipe that copies the 8 example-owned files from their example
+  homes, plus a test (or `pre-commit` step) that fails when they drift.
+  Guarantees the corpus tracks real usage; couples cli snapshot churn to every
+  example shader edit, so a purely visual tweak in `sdf_2d` starts producing
+  snapshot diffs in `mltrs-cli`.
+
+(a) is the better end state for the reason the corpus exists — stable,
+branch-complete coverage — and the pattern is already proven one directory over.
+(b) is the cheaper stopgap if the drift guarantee is wanted before anyone has
+time for the rewrite.
+
+**Cheap partial win, independent of that choice.** The 6 engine files already
+have both a source of truth and a seeding mechanism:
+`mltrs shaders init --dir crates/cli/fixtures/shaders --force` is the same
+command `just vendor-shaders` (`justfile:62-67`) already runs for every example.
+Adding the fixtures dir to that loop retires 6 of the 14 hand-maintained copies
+today, whichever way the other 8 go.
+
+**Done means.** No file under `crates/cli/fixtures/shaders/` is a
+hand-maintained copy of another file in the repo: each is either purpose-built
+for a named codegen path, or regenerated by a recipe that fails when it drifts.
+`just test` still passes with the corpus covering every branch it does now —
+graphics with vertex buffers, vertex-less fullscreen, compute, shared module,
+cross-module import, BDA pointers, enums.

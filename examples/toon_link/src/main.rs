@@ -24,6 +24,7 @@ use std::time::Instant;
 
 use anyhow::Context;
 use facet::Facet;
+use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use image::{DynamicImage, ImageReader, Rgba, RgbaImage};
 
@@ -1161,8 +1162,8 @@ impl Game for ToonLink {
         let model = Mat4::from_rotation_y(spin) * Mat4::from_scale(Vec3::splat(MODEL_SCALE));
         let target = Vec3::new(0.0, 0.62, 0.0);
         let eye = target + Vec3::new(0.0, 0.25, 2.8);
-        let view = Mat4::look_at_rh(eye, target, Vec3::Y);
-        let proj = Mat4::perspective_rh(45f32.to_radians(), renderer.aspect_ratio(), 0.1, 20.0);
+        let view = look_at_mat4(eye, target, Vec3::Y);
+        let proj = directx::perspective(45f32.to_radians(), renderer.aspect_ratio(), 0.1, 20.0);
 
         // one index-range draw per batch, in the five-group order
         let isolate = self.isolate();

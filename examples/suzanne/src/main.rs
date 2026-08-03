@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 mod generated;
 
+use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Vec2, Vec3};
 
 use mltrs::game::Game;
@@ -150,9 +151,9 @@ fn make_mvp_matrices(elapsed: Duration, aspect_ratio: f32) -> MVPMatrices {
     // Blender's monkey faces +Z in obj coordinates; spin it around +Y
     let model = Mat4::from_rotation_y(turn_radians);
     let eye = Vec3::new(0.0, 0.5, 3.0);
-    let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+    let view = look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
     let fov_y_radians = FOV_DEGREES.to_radians();
-    let proj = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 10.0);
+    let proj = directx::perspective(fov_y_radians, aspect_ratio, 0.1, 10.0);
 
     MVPMatrices { model, view, proj }
 }

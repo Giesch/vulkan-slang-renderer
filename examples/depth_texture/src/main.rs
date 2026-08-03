@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 mod generated;
 
+use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Vec2, Vec3};
 
 use mltrs::game::Game;
@@ -138,9 +139,9 @@ fn make_mvp_matrices(elapsed: Duration, aspect_ratio: f32) -> MVPMatrices {
 
     let model = Mat4::from_rotation_z(turn_radians);
     let eye = Vec3::splat(2.0);
-    let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Z);
+    let view = look_at_mat4(eye, Vec3::ZERO, Vec3::Z);
     let fov_y_radians = STARTING_ANGLE_DEGREES.to_radians();
-    let proj = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 10.0);
+    let proj = directx::perspective(fov_y_radians, aspect_ratio, 0.1, 10.0);
 
     MVPMatrices { model, view, proj }
 }

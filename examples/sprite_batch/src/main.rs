@@ -13,7 +13,8 @@ use std::f32::consts::TAU;
 use std::time::{Duration, Instant};
 
 use facet::Facet;
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::camera::lh::proj::directx;
+use glam::{Vec2, Vec3, Vec4};
 use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
 use mltrs::editor::Label;
@@ -133,7 +134,7 @@ impl Game for SpriteBatch {
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let (width, height) = Self::initial_window_size();
         let projection = Projection {
-            matrix: Mat4::orthographic_lh(0.0, width as f32, height as f32, 0.0, 0.0, -1.0),
+            matrix: directx::orthographic(0.0, width as f32, height as f32, 0.0, 0.0, -1.0),
         };
         // 6 = the corners in 2 triangles to make a quad
         let vertex_count = self.sprites.len() as u32 * 6;
