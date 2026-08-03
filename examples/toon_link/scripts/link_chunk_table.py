@@ -4,8 +4,8 @@
 # dependencies = ["gclib @ git+https://github.com/LagoLunatic/gclib@64127742467acb633d51685b9b1798ab45bb4034"]
 # ///
 
-# Independent oracle for `just link-verify-p1`: prints the canonical chunk
-# table (claude_notes/link_rendering/phase_01.md, step 4) for a .bdl file so
+# Independent oracle for `just toon_link link-verify-p1`: prints the canonical chunk
+# table (llm_notes/link_rendering/phase_01.md, step 4) for a .bdl file so
 # it can be diffed byte-for-byte against `convert_link --info`. Offsets and
 # sizes come from a plain struct walk over the raw bytes; counts come from
 # gclib's parsed model where it exposes them (JNT1/SHP1/MAT3/TEX1). gclib

@@ -9,7 +9,7 @@
 //! Plan and decision log: `llm_notes/link_rendering.md`.
 //!
 //! Requires converted assets on disk (gitignored — you need the disc image):
-//! `just extract-link && just convert-link`.
+//! `just toon_link extract-link && just toon_link convert-link`.
 //!
 //! Controls live in the egui debug window (debug builds only) and are
 //! documented on [`EditState`]; the debug views are documented on the shader's
@@ -487,15 +487,16 @@ impl LightRig {
 }
 
 fn converted_dir() -> PathBuf {
-    // the extracted assets stay at the repo root (gitignored, machine-local)
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/link/converted")
+    // gitignored and machine-local, but inside this crate like every other
+    // example's assets — `just toon_link extract-link` writes it here
+    mltrs::manifest_path!["assets", "link", "converted"]
 }
 
 fn load_manifest(dir: &Path) -> anyhow::Result<Manifest> {
     let path = dir.join("link.manifest.json");
     let bytes = std::fs::read(&path).with_context(|| {
         format!(
-            "{}: not found — run `just extract-link && just convert-link` first \
+            "{}: not found — run `just toon_link extract-link && just toon_link convert-link` first \
              (assets are gitignored; you need the disc image, see \
              llm_notes/link_rendering/phase_00.md)",
             path.display()

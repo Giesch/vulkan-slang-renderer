@@ -4,9 +4,9 @@
 # dependencies = ["gclib @ git+https://github.com/LagoLunatic/gclib@64127742467acb633d51685b9b1798ab45bb4034"]
 # ///
 
-# Independent oracle for `just link-verify-geometry`: prints the canonical
-# geometry table (claude_notes/link_rendering/phase_03.md, step 4;
-# src/bin/convert_link/bmd/geometry_dump.rs is the format spec) so it diffs
+# Independent oracle for `just toon_link link-verify-geometry`: prints the canonical
+# geometry table (llm_notes/link_rendering/phase_03.md, step 4;
+# crates/convert-link/src/bmd/geometry_dump.rs is the format spec) so it diffs
 # byte-for-byte against `convert_link --dump-geometry`. gclib supplies the
 # INF1/VTX1/JNT1 fields; EVP1/DRW1/SHP1 are independent struct walks over the
 # raw chunk bytes (including SHP1's display-list decoder), so the oracle never

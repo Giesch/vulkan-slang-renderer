@@ -4,12 +4,13 @@
 //! render. Anything outside the set is a hard error naming the material and the
 //! feature.
 //!
-//! Validation-only: this writes nothing and changes no output byte, which is why
-//! `scripts/link_converted.sha256` is its own correctness gate. It lives in the
-//! converter rather than the example because several of the fields it has to
-//! assert on — `TexMatrix::projection` / `map_mode`, `fog`, `indirect`,
-//! `post_tex_coord_gens`, `post_tex_matrices` — are parsed from MAT3 and dropped
-//! before the manifest, so the example can never see them.
+//! Validation-only: this writes nothing and changes no output byte, which is
+//! why `examples/toon_link/scripts/link_converted.sha256` is its own
+//! correctness gate. It lives in the converter rather than the example because
+//! several of the fields it has to assert on — `TexMatrix::projection` /
+//! `map_mode`, `fog`, `indirect`, `post_tex_coord_gens`, `post_tex_matrices` —
+//! are parsed from MAT3 and dropped before the manifest, so the example can
+//! never see them.
 //!
 //! Plan: llm_notes/link_rendering/phase_08.md Step 1.
 #![allow(dead_code)]
@@ -1044,9 +1045,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires extracted assets (just extract-link); run via just link-verify-p2"]
+    #[ignore = "requires extracted assets; run via just toon_link link-verify-p2"]
     fn real_tev_subset_accepted() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/link/raw/cl.bdl");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/toon_link/assets/link/raw/cl.bdl"
+        );
         let Ok(data) = std::fs::read(path) else {
             eprintln!("skipping: {path} not present");
             return;
@@ -1057,7 +1061,8 @@ mod tests {
 
         // `ear` is the canonical toon material: SRTG, two non-identity swap
         // tables, three konst selects, three stages. Cross-check against
-        // assets/link/converted/mat3_dump.txt's "=== material 0 ear ===" block.
+        // examples/toon_link/assets/link/converted/mat3_dump.txt's
+        // "=== material 0 ear ===" block.
         let ear = &descs[0];
         assert_eq!(ear.name, "ear");
         assert_eq!(ear.stages.len(), 3);

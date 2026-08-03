@@ -5,7 +5,7 @@
 # ///
 
 # Resolves the actor lighting colors Wind Waker feeds Link's TEV stage 0 out
-# of a stage's `.dzs`, so `examples/toon_link.rs` can cite measured values
+# of a stage's `.dzs`, so `examples/toon_link/src/main.rs` can cite measured values
 # instead of hand-tuned seeds.
 #
 # These two colors are the endpoints of the toon lerp:

@@ -2,8 +2,9 @@
 //! every raw value must map to a known variant or the parse fails with the
 //! field name and value. Numeric values verified against
 //! ../tww/include/dolphin/gx/GXEnum.h; canonical `Display` spellings are the
-//! shared vocabulary of the MAT3 diff gate (scripts/link_mat3_table.py prints
-//! the same names from gclib's enums).
+//! shared vocabulary of the MAT3 diff gate
+//! (examples/toon_link/scripts/link_mat3_table.py prints the same names from
+//! gclib's enums).
 //!
 //! The enums the manifest serializes (`CullMode`, `CompareType`, the blend and
 //! channel state, texture wrap/filter, …) are defined in the library's

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Extract Toon Link assets from the Wind Waker disc image in ../tww.
-# Plan and verification checklist: claude_notes/link_rendering/phase_00.md
+# Extract Toon Link assets from the Wind Waker disc image in the repo's sibling
+# ../tww checkout.
+# Plan and verification checklist: llm_notes/link_rendering/phase_00.md
 set -euo pipefail
+# examples/toon_link -- every path below is relative to this example's crate dir
 cd "$(dirname "$0")/.."
 
-TWW_DIR="${TWW_DIR:-../tww}"
+# two levels down from the repo root, so the repo's sibling is ../../../tww
+TWW_DIR="${TWW_DIR:-../../../tww}"
 DISC="$TWW_DIR/orig/GZLE01/Legend of Zelda, The - The Wind Waker (USA, Canada).ciso"
 DTK="$TWW_DIR/build/tools/dtk"
 RAW=assets/link/raw
@@ -109,4 +112,4 @@ else
     echo "extract_link: BOOTSTRAP: wrote $MANIFEST -- review and commit it"
 fi
 
-echo "extract_link: OK: 5 files extracted and verified in $RAW/"
+echo "extract_link: OK: 5 files extracted and verified in examples/toon_link/$RAW/"

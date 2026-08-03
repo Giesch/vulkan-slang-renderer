@@ -1,8 +1,8 @@
 //! MAT3 dump printers.
 //!
 //! `canonical` is the byte-exact diff-gate format, printed identically by
-//! scripts/link_mat3_table.py from gclib's parse. The spec, implemented
-//! independently by both sides:
+//! examples/toon_link/scripts/link_mat3_table.py from gclib's parse. The spec,
+//! implemented independently by both sides:
 //!
 //! - header `MAT3 materials=N`, then per slot `material <i> <name>` followed
 //!   by fixed field lines in the order below; no indentation; single spaces.

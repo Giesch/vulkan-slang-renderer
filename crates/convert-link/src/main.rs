@@ -57,7 +57,7 @@ fn main() -> Result<()> {
     let bdl_path = raw_dir.join("cl.bdl");
     let data = std::fs::read(&bdl_path).with_context(|| {
         format!(
-            "reading {} (run `just extract-link` first)",
+            "reading {} (run `just toon_link extract-link` first)",
             bdl_path.display()
         )
     })?;
@@ -83,8 +83,9 @@ fn main() -> Result<()> {
 
     // The TEV subset gate, before the first file is written: a material the
     // interpreter cannot render must never reach the manifest. Validation-only,
-    // so no output byte depends on it — `scripts/link_converted.sha256` staying
-    // unchanged is the proof. It runs *after* the dump modes return, so
+    // so no output byte depends on it —
+    // `examples/toon_link/scripts/link_converted.sha256` staying unchanged is
+    // the proof. It runs *after* the dump modes return, so
     // `--dump-mat3` remains usable for diagnosing whatever it rejected.
     let tev_descs = tev_ir::describe_all(&model.mat3).with_context(|| "TEV subset gate")?;
 
@@ -131,7 +132,10 @@ fn emit_standalone_btis(raw_dir: &Path, tex_dir: &Path) -> Result<()> {
     for file in STANDALONE_BTIS {
         let path = raw_dir.join(file);
         let data = std::fs::read(&path).with_context(|| {
-            format!("reading {} (run `just extract-link` first)", path.display())
+            format!(
+                "reading {} (run `just toon_link extract-link` first)",
+                path.display()
+            )
         })?;
         let stem = file.strip_suffix(".bti").unwrap();
         let reader = be::BeReader::new(&data);

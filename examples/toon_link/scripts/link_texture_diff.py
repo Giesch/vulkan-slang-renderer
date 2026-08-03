@@ -7,7 +7,7 @@
 # ]
 # ///
 
-# P2 texture gate (claude_notes/link_rendering/phase_02.md, step 7): for
+# P2 texture gate (llm_notes/link_rendering/phase_02.md, step 7): for
 # every .bti the converter re-emitted (GX bytes copied verbatim from cl.bdl)
 # plus the three raw standalone .bti files, decode with gclib and pixel-diff
 # against the converter's PNG. Two independent decoders over identical
@@ -49,7 +49,7 @@ def main() -> None:
     for raw in sorted(raw_dir.glob("*.bti")):
         pairs.append((raw, tex_dir / f"raw_{raw.stem}.png"))
     if not pairs:
-        print(f"no .bti files found under {tex_dir} (run `just convert-link` first)", file=sys.stderr)
+        print(f"no .bti files found under {tex_dir} (run `just toon_link convert-link` first)", file=sys.stderr)
         sys.exit(2)
 
     failed = 0

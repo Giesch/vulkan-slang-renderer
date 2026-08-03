@@ -349,9 +349,10 @@ pub fn read_name_table(r: &BeReader, pos: usize) -> Result<Vec<String>, BmdError
     Ok(names)
 }
 
-/// The canonical `--info` format. `scripts/link_chunk_table.py` prints the
-/// same spec (claude_notes/link_rendering/phase_01.md, step 4); verification
-/// diffs the two byte-for-byte.
+/// The canonical `--info` format.
+/// `examples/toon_link/scripts/link_chunk_table.py` prints the same spec
+/// (llm_notes/link_rendering/phase_01.md, step 4); verification diffs the two
+/// byte-for-byte.
 pub fn canonical_table(table: &ChunkTable) -> String {
     use std::fmt::Write;
     let mut out = format!(
@@ -531,16 +532,19 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires extracted assets (just extract-link); run via just link-verify-p1"]
+    #[ignore = "requires extracted assets; run via just toon_link link-verify-p1"]
     fn real_cl_bdl_invariants() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/link/raw/cl.bdl");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/toon_link/assets/link/raw/cl.bdl"
+        );
         let Ok(data) = std::fs::read(path) else {
             eprintln!("skipping: {path} not present");
             return;
         };
         let table = parse_chunk_table(&data).expect("cl.bdl must satisfy all invariants");
         // recorded facts: claude_notes/link_rendering/phase_01.md, verified
-        // against the gclib oracle via `just link-verify-p1`
+        // against the gclib oracle via `just toon_link link-verify-p1`
         assert_eq!(
             canonical_table(&table),
             "\

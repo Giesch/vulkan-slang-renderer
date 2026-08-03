@@ -1200,7 +1200,8 @@ impl Game for Watercolor {
 
 fn load_paper_height_map(width: u32, height: u32) -> Vec<f32> {
     let path = manifest_path!["textures", "watercolor", "paper_height.png"];
-    let img = image::open(&path).expect("missing paper texture — run `just paper-texture`");
+    let img =
+        image::open(&path).expect("missing paper texture — run `just watercolor paper-texture`");
     let gray = img.to_luma8();
     let mut data = Vec::with_capacity((width * height) as usize);
     for y in 0..height {

@@ -31,6 +31,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   bindings, and its own assets. The examples are the first consumers of the
   `mltrs` CLI workflow.
 
+### Per-example recipes
+
+An example that needs its own build tasks carries a `justfile` (and a
+`scripts/` dir) inside its crate; the root justfile declares each one as a
+`mod`, so they run as `just <example> <recipe>` — e.g.
+`just toon_link link-verify-p1`, `just sdf_2d beats`. `just --list` at the root
+shows them all. **just sets the working directory to the example's crate dir**
+when running a submodule recipe, so paths in those justfiles and scripts are
+crate-relative, not repo-relative.
+
+`toon_link` also keeps its gitignored, machine-local Wind Waker assets inside
+the crate at `examples/toon_link/assets/link/`.
+
+Keep the root justfile for workspace-wide tasks only (`shaders`, `sweep`,
+`test`, `lint`, `dev`, `build-slang`, `pre-commit`).
+
 ## Build Commands
 
 ```bash
@@ -42,6 +58,7 @@ cargo insta test -p mltrs-cli --accept  # accept all modified snapshots
 just lint                  # Clippy with warnings as errors
 just watch EXAMPLE         # build, then run one example for a few seconds
 just sweep                 # run EVERY example headlessly, fail on validation output
+just EXAMPLE               # list one example's own recipes (if it has a justfile)
 cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection json
 ```
 

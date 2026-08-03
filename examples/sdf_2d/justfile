@@ -1,0 +1,14 @@
+# Recipes for the sdf_2d example, invoked from the repo root as
+# `just sdf_2d <recipe>` (the root justfile declares this dir as a module).
+#
+# NOTE just runs a submodule's recipes with the working directory set to the
+# submodule's directory, so every path below is relative to examples/sdf_2d/.
+
+# list this example's recipes
+list:
+    @ just --list --unsorted
+
+# write *.beats.json assets based on automatically extracted timestamps
+[unix]
+beats:
+    ./scripts/extract_beats.py audio/

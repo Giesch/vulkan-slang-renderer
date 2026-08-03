@@ -1,7 +1,8 @@
 /target
 
-# Extracted/converted Nintendo assets (never committed; see scripts/extract_link.sh)
-/assets/
+# Extracted/converted Nintendo assets (never committed; see
+# examples/toon_link/scripts/extract_link.sh)
+/examples/toon_link/assets/
 
 # Test fixture crate generated files
 crates/cli/fixtures/check_crate/src/generated/

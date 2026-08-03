@@ -8,7 +8,7 @@
 
 # P2 MAT3 oracle: prints the canonical material table for a .bdl from
 # gclib's parse, implementing the format spec in
-# src/bin/convert_link/bmd/mat3_dump.rs (module doc comment). The verify
+# crates/convert-link/src/bmd/mat3_dump.rs (module doc comment). The verify
 # recipe literally diffs this against `convert_link --dump-mat3`. Enum
 # spellings are gclib's member names — the shared vocabulary both sides
 # implement from the spec.

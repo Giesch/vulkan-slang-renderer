@@ -364,20 +364,23 @@ mod tests {
     }
 
     /// Loads the real cl.bdl if present (skips otherwise). Run via
-    /// `just link-verify-p3`.
+    /// `just toon_link link-verify-p3`.
     fn load_real() -> Option<Vec<u8>> {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/link/raw/cl.bdl");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/toon_link/assets/link/raw/cl.bdl"
+        );
         match std::fs::read(path) {
             Ok(d) => Some(d),
             Err(_) => {
-                eprintln!("skipping: {path} not present (run `just extract-link`)");
+                eprintln!("skipping: {path} not present (run `just toon_link extract-link`)");
                 None
             }
         }
     }
 
     #[test]
-    #[ignore = "requires extracted assets (just extract-link); run via just link-verify-p3"]
+    #[ignore = "requires extracted assets; run via just toon_link link-verify-p3"]
     fn real_geometry_probed_facts() {
         let Some(data) = load_real() else { return };
         let model = crate::bmd::parse_model(&data).unwrap();
@@ -439,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires extracted assets (just extract-link); run via just link-verify-p3"]
+    #[ignore = "requires extracted assets; run via just toon_link link-verify-p3"]
     fn real_bake_and_manifest() {
         let Some(data) = load_real() else { return };
         let model = crate::bmd::parse_model(&data).unwrap();

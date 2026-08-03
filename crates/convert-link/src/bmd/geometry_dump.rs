@@ -1,9 +1,10 @@
 //! Canonical `--dump-geometry` table: raw file data only (exact bytes → exact
 //! text, no computed floats), diffed byte-for-byte against
-//! `scripts/link_geometry_table.py`. This module's format IS the spec the
-//! oracle reimplements independently. Discipline (same as `mat3_dump`): fixed
-//! field order, no indentation, single spaces, absent values print `-`, floats
-//! print the stored f32 at `{:.6}` (identical bit pattern on both sides).
+//! `examples/toon_link/scripts/link_geometry_table.py`. This module's format IS
+//! the spec the oracle reimplements independently. Discipline (same as
+//! `mat3_dump`): fixed field order, no indentation, single spaces, absent
+//! values print `-`, floats print the stored f32 at `{:.6}` (identical bit
+//! pattern on both sides).
 //!
 //! Sections in order: INF1 (header + flat node stream), VTX1 (formats +
 //! element counts), JNT1 (joints verbatim), EVP1 (envelopes + weights +

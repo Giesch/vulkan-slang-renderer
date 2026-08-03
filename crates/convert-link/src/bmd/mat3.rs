@@ -747,9 +747,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires extracted assets (just extract-link); run via just link-verify-p2"]
+    #[ignore = "requires extracted assets; run via just toon_link link-verify-p2"]
     fn real_mat3_expectations() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/link/raw/cl.bdl");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/toon_link/assets/link/raw/cl.bdl"
+        );
         let Ok(data) = std::fs::read(path) else {
             eprintln!("skipping: {path} not present");
             return;
