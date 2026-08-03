@@ -32,6 +32,7 @@ struct Particles {
 
 impl Game for Particles {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Particles"
@@ -41,7 +42,7 @@ impl Game for Particles {
         (800, 800)
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -56,8 +57,6 @@ impl Game for Particles {
             renderer.create_uniform_buffer::<particle_render::RenderParams>()?;
 
         renderer.write_gpu_only_all_frames(&mut particle_buffer, &initial_particles);
-
-        let shaders = ShaderAtlas::init();
 
         let compute_resources = particles_compute::Resources {
             sim_params_buffer: &sim_params_buffer,

@@ -6,15 +6,27 @@ use crate::renderer::LayoutDescription;
 
 use super::json::{ComputeReflectionJson, ReflectedPipelineLayout, ReflectionJson};
 
+/// The generated `ShaderAtlas` struct: every shader entry in a crate, plus the
+/// one slang source dir they were all generated from.
+///
+/// A project has exactly one of these. `Game::run` reads `SHADERS_SOURCE_DIR`
+/// off the type before the atlas exists, so the renderer can start watching
+/// before any pipeline is created.
+pub trait ShaderAtlasRoot {
+    /// dev only: absolute path to the slang source dir this atlas was generated
+    /// from (baked in with the consuming crate's manifest dir).
+    ///
+    /// A `&str` rather than a `&Path` because `Path::new` is not a `const fn`.
+    const SHADERS_SOURCE_DIR: &'static str;
+
+    fn init() -> Self;
+}
+
 pub trait ShaderAtlasEntry {
     // dev only
 
     // used in hot reload
     fn source_file_name(&self) -> &str;
-
-    /// dev only: absolute path to the slang source dir this entry was
-    /// generated from (baked in with the consuming crate's manifest dir)
-    fn shaders_source_dir(&self) -> &'static std::path::Path;
 
     // used in hot reload to detect interface changes that require a rebuild
     fn reflection_json(&self) -> &ReflectionJson;
@@ -47,9 +59,6 @@ pub struct PrecompiledShader {
 pub trait ComputeShaderAtlasEntry {
     fn source_file_name(&self) -> &str;
 
-    /// dev only: absolute path to the slang source dir this entry was
-    /// generated from (baked in with the consuming crate's manifest dir)
-    fn shaders_source_dir(&self) -> &'static std::path::Path;
     fn reflection_json(&self) -> &ComputeReflectionJson;
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
     fn precompiled_compute_shader(&self) -> PrecompiledShader;

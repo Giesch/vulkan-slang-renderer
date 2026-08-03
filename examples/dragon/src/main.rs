@@ -22,12 +22,13 @@ struct Dragon {
 
 impl Game for Dragon {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Dragon Curve"
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -38,8 +39,7 @@ impl Game for Dragon {
             params_buffer: &params_buffer,
         };
 
-        let shader = ShaderAtlas::init().dragon;
-        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline_config = shaders.dragon.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         Ok(Self {

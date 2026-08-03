@@ -45,6 +45,7 @@ struct EditState {
 
 impl Game for SerenityCRT {
     type EditState = EditState;
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Serenity CRT"
@@ -54,7 +55,7 @@ impl Game for SerenityCRT {
         Some(("Serenity CRT", &mut self.edit_state))
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -69,8 +70,7 @@ impl Game for SerenityCRT {
             params_buffer: &params_buffer,
         };
 
-        let shader = ShaderAtlas::init().serenity_crt;
-        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline_config = shaders.serenity_crt.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         let edit_state = EditState {

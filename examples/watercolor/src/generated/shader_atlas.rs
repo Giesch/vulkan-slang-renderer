@@ -9,6 +9,8 @@ pub mod wc_pressure_jacobi_compute;
 pub mod wc_project_velocity_compute;
 pub mod wc_update_velocity_compute;
 
+use ::mltrs::shaders::atlas::ShaderAtlasRoot;
+
 pub struct ShaderAtlas {
     pub paint_display: paint_display::Shader,
     pub paint_brush_compute: paint_brush_compute::Shader,
@@ -22,8 +24,10 @@ pub struct ShaderAtlas {
     pub wc_update_velocity_compute: wc_update_velocity_compute::Shader,
 }
 
-impl ShaderAtlas {
-    pub fn init() -> Self {
+impl ShaderAtlasRoot for ShaderAtlas {
+    const SHADERS_SOURCE_DIR: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source");
+
+    fn init() -> Self {
         Self {
             paint_display: paint_display::Shader::init(),
             paint_brush_compute: paint_brush_compute::Shader::init(),

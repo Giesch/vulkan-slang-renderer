@@ -53,6 +53,7 @@ const FRAME_HISTORY_SIZE: usize = 60;
 
 impl Game for SpriteBatch {
     type EditState = EditState;
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Sprite Batch"
@@ -62,7 +63,7 @@ impl Game for SpriteBatch {
         Duration::from_nanos(10)
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -86,8 +87,8 @@ impl Game for SpriteBatch {
             texture: &texture,
         };
 
-        let shader = ShaderAtlas::init().sprite_batch;
-        let pipeline_config = shader
+        let pipeline_config = shaders
+            .sprite_batch
             .pipeline_config(resources)
             .with_raster_state(RasterState::no_depth());
         let pipeline = renderer.create_pipeline(pipeline_config)?;

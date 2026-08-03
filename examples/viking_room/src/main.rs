@@ -80,12 +80,13 @@ impl VikingRoom {
 
 impl Game for VikingRoom {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Viking Room"
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -94,16 +95,14 @@ impl Game for VikingRoom {
         const IMAGE_FILE_NAME: &str = "viking_room.png";
         let image = load_image(manifest_path!["textures", IMAGE_FILE_NAME])?;
 
-        let shader_atlas = ShaderAtlas::init();
-        let shader = shader_atlas.depth_texture;
-
         let texture = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
         let params_buffer = renderer.create_uniform_buffer::<DepthTextureParams>()?;
         let resources = Resources {
             texture: &texture,
             params_buffer: &params_buffer,
         };
-        let pipeline_config = shader
+        let pipeline_config = shaders
+            .depth_texture
             .pipeline_config(resources)
             .with_vertices(vertices, indices);
         let pipeline = renderer.create_pipeline(pipeline_config)?;

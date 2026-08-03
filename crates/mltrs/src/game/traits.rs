@@ -6,6 +6,7 @@ use sdl3::keyboard::Scancode as SDLScancode;
 use crate::app::App;
 use crate::env_config::{EnvConfig, exit_code};
 use crate::renderer::{self, DrawError, FrameRenderer, Renderer};
+use crate::shaders::atlas::ShaderAtlasRoot;
 
 const DEFAULT_FRAME_DELAY: Duration = Duration::from_millis(15); // about 60 fps
 const DEFAULT_WINDOW_SIZE: (u32, u32) = (800, 600);
@@ -19,7 +20,10 @@ pub trait Game {
     /// Use `()` if no debug UI is needed.
     type EditState: for<'a> Facet<'a> + 'static;
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    /// The generated `ShaderAtlas`.
+    type Atlas: ShaderAtlasRoot;
+
+    fn setup(renderer: &mut Renderer, shaders: Self::Atlas) -> anyhow::Result<Self>
     where
         Self: Sized;
 
@@ -119,8 +123,10 @@ pub trait Game {
             enable_egui,
             render_scale,
             max_msaa_samples,
+            #[cfg(debug_assertions)]
+            Self::Atlas::SHADERS_SOURCE_DIR,
         )?;
-        let game = Self::setup(&mut renderer)?;
+        let game = Self::setup(&mut renderer, Self::Atlas::init())?;
         let app = App::init(renderer, game)?;
 
         if !startup_window.show() {

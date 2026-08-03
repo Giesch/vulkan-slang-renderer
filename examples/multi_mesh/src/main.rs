@@ -34,6 +34,7 @@ use mltrs::renderer::{
     TextureWrap, UniformBufferHandle,
 };
 
+use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::multi_mesh::*;
 
 fn main() -> Result<(), anyhow::Error> {
@@ -338,12 +339,13 @@ pub struct MultiMesh {
 
 impl Game for MultiMesh {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Multi Mesh"
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, _shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {

@@ -83,20 +83,18 @@ const INDICES: [u32; 12] = [
 
 impl Game for DepthTextureGame {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Depth Texture"
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
         const IMAGE_FILE_NAME: &str = "texture.jpg";
         let image = load_image(manifest_path!["textures", IMAGE_FILE_NAME])?;
-
-        let shader_atlas = ShaderAtlas::init();
-        let shader = shader_atlas.depth_texture;
 
         let texture = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
         let params_buffer = renderer.create_uniform_buffer::<DepthTextureParams>()?;
@@ -104,7 +102,8 @@ impl Game for DepthTextureGame {
             texture: &texture,
             params_buffer: &params_buffer,
         };
-        let pipeline_config = shader
+        let pipeline_config = shaders
+            .depth_texture
             .pipeline_config(resources)
             .with_vertices(VERTICES.to_vec(), INDICES.to_vec());
         let pipeline = renderer.create_pipeline(pipeline_config)?;

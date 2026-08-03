@@ -169,10 +169,6 @@ impl ComputeShaderAtlasEntry for {{ shader_impl.shader_type_name }} {
         &self.reflection_json.source_file_name
     }
 
-    fn shaders_source_dir(&self) -> &'static std::path::Path {
-        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source"))
-    }
-
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
         self.reflection_json.layout_bindings()
     }

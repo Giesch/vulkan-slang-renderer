@@ -33,21 +33,20 @@ struct GpuPicking {
 
 impl Game for GpuPicking {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "GPU Picking"
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self> {
-        let atlas = ShaderAtlas::init();
-
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
         // Visual shader pipeline
         let params_buffer = renderer.create_uniform_buffer::<GpuPickingParams>()?;
         let cubes_buffer = renderer.create_storage_buffer::<Cube>(MAX_CUBES)?;
         let visual_resources = Resources {
             params_buffer: &params_buffer,
         };
-        let visual_config = atlas.gpu_picking.pipeline_config(visual_resources);
+        let visual_config = shaders.gpu_picking.pipeline_config(visual_resources);
         let pipeline = renderer.create_pipeline(visual_config)?;
 
         // Picking ID shader pipeline
@@ -56,7 +55,7 @@ impl Game for GpuPicking {
         let picking_resources = gpu_picking_id::Resources {
             params_buffer: &picking_params_buffer,
         };
-        let picking_config = atlas.gpu_picking_id.pipeline_config(picking_resources);
+        let picking_config = shaders.gpu_picking_id.pipeline_config(picking_resources);
         let picking_pipeline = renderer.create_picking_pipeline(picking_config)?;
 
         let mut cubes = Vec::new();

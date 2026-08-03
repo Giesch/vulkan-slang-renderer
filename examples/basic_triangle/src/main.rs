@@ -22,12 +22,13 @@ pub struct BasicTriangle {
 
 impl Game for BasicTriangle {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Basic Triangle"
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -37,8 +38,8 @@ impl Game for BasicTriangle {
             matrices_buffer: &uniform_buffer,
         };
 
-        let shader = ShaderAtlas::init().basic_triangle;
-        let pipeline_config = shader
+        let pipeline_config = shaders
+            .basic_triangle
             .pipeline_config(resources)
             .with_vertices(VERTICES.to_vec(), INDICES.to_vec());
         let pipeline = renderer.create_pipeline(pipeline_config)?;

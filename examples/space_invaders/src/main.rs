@@ -49,6 +49,7 @@ const MAX_DEBUG_BOXES: u32 = 100;
 
 impl Game for SpaceInvaders {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Space Invaders"
@@ -61,7 +62,7 @@ impl Game for SpaceInvaders {
         )
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -165,8 +166,8 @@ impl Game for SpaceInvaders {
             params_buffer: &params_buffer,
         };
 
-        let shader = ShaderAtlas::init().space_invaders;
-        let pipeline_config = shader
+        let pipeline_config = shaders
+            .space_invaders
             .pipeline_config(resources)
             .with_raster_state(RasterState::no_depth());
         let pipeline = renderer.create_pipeline(pipeline_config)?;

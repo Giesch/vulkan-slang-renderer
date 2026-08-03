@@ -74,12 +74,13 @@ impl Suzanne {
 
 impl Game for Suzanne {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Suzanne"
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -101,9 +102,6 @@ impl Game for Suzanne {
             textures.push(texture);
         }
 
-        let shader_atlas = ShaderAtlas::init();
-        let shader = shader_atlas.suzanne;
-
         let params_buffer = renderer.create_uniform_buffer::<SuzanneParams>()?;
         let resources = Resources {
             texture0: &textures[0],
@@ -111,7 +109,8 @@ impl Game for Suzanne {
             texture2: &textures[2],
             params_buffer: &params_buffer,
         };
-        let pipeline_config = shader
+        let pipeline_config = shaders
+            .suzanne
             .pipeline_config(resources)
             .with_vertices(vertices, indices);
         let pipeline = renderer.create_pipeline(pipeline_config)?;

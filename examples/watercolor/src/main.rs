@@ -29,6 +29,9 @@ use crate::generated::shader_atlas::wc_pressure_jacobi_compute;
 use crate::generated::shader_atlas::wc_project_velocity_compute;
 use crate::generated::shader_atlas::wc_update_velocity_compute;
 use mltrs::manifest_path;
+// this example builds many pipelines, and `pipeline_config` consumes the atlas
+// entry, so it re-inits the atlas for each one
+use mltrs::shaders::atlas::ShaderAtlasRoot;
 
 fn main() -> Result<(), anyhow::Error> {
     Watercolor::run()
@@ -389,6 +392,7 @@ impl Pigment {
 
 impl Game for Watercolor {
     type EditState = EditState;
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Watercolor"
@@ -402,7 +406,7 @@ impl Game for Watercolor {
         Some(1.0)
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self> {
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
         // Create all ping-pong textures
         let velocity_u = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
         let velocity_v = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
@@ -476,8 +480,6 @@ impl Game for Watercolor {
             renderer.create_uniform_buffer::<wc_advect_and_transfer_pigment_compute::Params>()?;
         let capillary_flow_params_buffer =
             renderer.create_uniform_buffer::<wc_capillary_flow_compute::Params>()?;
-
-        let shaders = ShaderAtlas::init();
 
         // --- Create pipelines ---
         // Brush pipeline: 2 variants for wet_mask/pigment parity

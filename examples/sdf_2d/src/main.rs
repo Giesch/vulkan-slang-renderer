@@ -59,12 +59,13 @@ fn start_audio() -> anyhow::Result<(MixerDeviceSink, rodio::Player)> {
 
 impl Game for SDF2D {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "SDF 2D"
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -80,8 +81,7 @@ impl Game for SDF2D {
             params_buffer: &params_buffer,
         };
 
-        let shader = ShaderAtlas::init().sdf_2d;
-        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline_config = shaders.sdf_2d.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         // eprintln! rather than log::warn! on purpose: with RUST_LOG unset,

@@ -107,12 +107,10 @@ pub struct Renderer {
     width: f32,
     height: f32,
     total_frames: usize,
-    /// dev only: one watcher per shader source dir, created lazily as
-    /// pipelines are built (each generated atlas entry knows its own dir)
     #[cfg(debug_assertions)]
-    shader_watchers: Vec<shader_watcher::ShaderChanges>,
+    shaders_source_dir: &'static std::path::Path,
     #[cfg(debug_assertions)]
-    watched_shader_dirs: std::collections::BTreeSet<std::path::PathBuf>,
+    shader_watcher: shader_watcher::ShaderChanges,
     #[cfg(debug_assertions)]
     old_pipelines: Vec<(
         usize,
@@ -256,7 +254,13 @@ impl Renderer {
         enable_egui: bool,
         render_scale: f32,
         max_msaa_samples: MaxMSAASamples,
+        #[cfg(debug_assertions)] shaders_source_dir: &'static str,
     ) -> Result<Self, anyhow::Error> {
+        #[cfg(debug_assertions)]
+        let shaders_source_dir = std::path::Path::new(shaders_source_dir);
+        #[cfg(debug_assertions)]
+        let shader_watcher = shader_watcher::watch(shaders_source_dir)?;
+
         let render_scale = render_scale.clamp(0.25, 1.0);
 
         let (window_width, window_height) = window.size();
@@ -412,9 +416,9 @@ impl Renderer {
             height: window_height as f32,
             total_frames: 0,
             #[cfg(debug_assertions)]
-            shader_watchers: vec![],
+            shaders_source_dir,
             #[cfg(debug_assertions)]
-            watched_shader_dirs: Default::default(),
+            shader_watcher,
             #[cfg(debug_assertions)]
             old_pipelines: vec![],
             window: window.clone(),
@@ -976,27 +980,10 @@ impl Renderer {
         &mut self,
         config: PipelineConfig<V, D>,
     ) -> anyhow::Result<PipelineHandle<D>> {
-        #[cfg(debug_assertions)]
-        self.ensure_watching(config.shader.shaders_source_dir())?;
-
         let pipeline = self.init_pipeline(config)?;
         let handle = self.pipelines.add(pipeline);
 
         Ok(handle)
-    }
-
-    /// dev only: start watching a shader source dir the first time a pipeline
-    /// generated from it is created
-    #[cfg(debug_assertions)]
-    fn ensure_watching(&mut self, dir: &std::path::Path) -> anyhow::Result<()> {
-        if self.watched_shader_dirs.contains(dir) {
-            return Ok(());
-        }
-
-        self.shader_watchers.push(shader_watcher::watch(dir)?);
-        self.watched_shader_dirs.insert(dir.to_path_buf());
-
-        Ok(())
     }
 
     /// Create vertex and index buffers that can be shared by multiple
@@ -1046,9 +1033,6 @@ impl Renderer {
         &mut self,
         picking_config: PipelineConfig<V, DrawVertexCount>,
     ) -> anyhow::Result<PickingPipelineHandle> {
-        #[cfg(debug_assertions)]
-        self.ensure_watching(picking_config.shader.shaders_source_dir())?;
-
         // Lazily initialize picking resources on first use
         if self.picking.is_none() {
             self.picking = Some(PickingResources::init(
@@ -1058,8 +1042,12 @@ impl Renderer {
             )?);
         }
 
-        let picking_pipeline_layout =
-            ShaderPipelineLayout::create_from_atlas(&self.device, &*picking_config.shader)?;
+        let picking_pipeline_layout = ShaderPipelineLayout::create_from_atlas(
+            &self.device,
+            &*picking_config.shader,
+            #[cfg(debug_assertions)]
+            self.shaders_source_dir,
+        )?;
         // picking renders ids into a uint target with no depth attachment, so
         // blending is meaningless and the depth-stencil state is ignored
         // entirely (depth_write is set false as the honest value)
@@ -1154,11 +1142,12 @@ impl Renderer {
         &mut self,
         config: ComputePipelineConfig,
     ) -> anyhow::Result<PipelineHandle<Compute>> {
-        #[cfg(debug_assertions)]
-        self.ensure_watching(config.shader.shaders_source_dir())?;
-
-        let pipeline_layout =
-            ComputeShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
+        let pipeline_layout = ComputeShaderPipelineLayout::create_from_atlas(
+            &self.device,
+            &*config.shader,
+            #[cfg(debug_assertions)]
+            self.shaders_source_dir,
+        )?;
 
         let shader_module = {
             let shader_module_create_info = vk::ShaderModuleCreateInfo::default()
@@ -1283,8 +1272,12 @@ impl Renderer {
             );
         }
 
-        let pipeline_layout =
-            ShaderPipelineLayout::create_from_atlas(&self.device, &*config.shader)?;
+        let pipeline_layout = ShaderPipelineLayout::create_from_atlas(
+            &self.device,
+            &*config.shader,
+            #[cfg(debug_assertions)]
+            self.shaders_source_dir,
+        )?;
 
         let pipeline = create_graphics_pipeline(
             &self.device,
@@ -2494,10 +2487,7 @@ impl Renderer {
         }
 
         // recompile shaders if necessary
-        let mut edit_events = vec![];
-        for watcher in &mut self.shader_watchers {
-            edit_events.extend(watcher.events()?);
-        }
+        let edit_events = self.shader_watcher.events()?;
         if !edit_events.is_empty() {
             info!("recompiling shaders...");
             for &graphics_index in graphics_pipeline_indices {
@@ -2520,6 +2510,8 @@ impl Renderer {
         let mut tmp_pipeline_layout = match ShaderPipelineLayout::create_from_atlas(
             &self.device,
             &*self.pipelines.get_by_index(pipeline_index).shader,
+            #[cfg(debug_assertions)]
+            self.shaders_source_dir,
         ) {
             Ok(shaders) => shaders,
             Err(e) => {
@@ -2575,6 +2567,8 @@ impl Renderer {
         let mut tmp_layout = match ComputeShaderPipelineLayout::create_from_atlas(
             &self.device,
             &*compute_pipeline.shader,
+            #[cfg(debug_assertions)]
+            self.shaders_source_dir,
         ) {
             Ok(layout) => layout,
             Err(e) => {
@@ -5039,15 +5033,13 @@ impl ShaderPipelineLayout {
     fn create_from_atlas(
         device: &ash::Device,
         shader: &dyn ShaderAtlasEntry,
+        shaders_source_dir: &std::path::Path,
     ) -> Result<Self, anyhow::Error> {
         let shaders::ReflectedShader {
             vertex_shader,
             fragment_shader,
             reflection_json,
-        } = shaders::dev_compile_slang_shaders(
-            shader.source_file_name(),
-            shader.shaders_source_dir(),
-        )?;
+        } = shaders::dev_compile_slang_shaders(shader.source_file_name(), shaders_source_dir)?;
 
         assert_shader_interface_unchanged(
             shader.reflection_json(),
@@ -5109,13 +5101,14 @@ impl ComputeShaderPipelineLayout {
     fn create_from_atlas(
         device: &ash::Device,
         shader: &dyn ComputeShaderAtlasEntry,
+        shaders_source_dir: &std::path::Path,
     ) -> Result<Self, anyhow::Error> {
         let shaders::ReflectedComputeShader {
             compute_shader,
             reflection_json,
         } = shaders::dev_compile_slang_compute_shaders(
             shader.source_file_name(),
-            shader.shaders_source_dir(),
+            shaders_source_dir,
         )?;
 
         assert_shader_interface_unchanged(

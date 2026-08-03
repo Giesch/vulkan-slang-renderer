@@ -193,6 +193,7 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             &slang_file_names,
             &compute_slang_file_names,
             &shared_module_names,
+            &config.import_root,
             &mut generated_source_files,
         );
 
@@ -217,6 +218,7 @@ fn add_top_level_rust_modules(
     slang_file_names: &[String],
     compute_slang_file_names: &[String],
     shared_module_names: &[String],
+    import_root: &str,
     generated_source_files: &mut Vec<GeneratedFile>,
 ) {
     let module_names: Vec<String> = slang_file_names
@@ -245,7 +247,17 @@ fn add_top_level_rust_modules(
         })
         .collect();
 
+    // This file declares a `pub mod` per shared slang module, and one of them
+    // is `mltrs` (the engine's slang namespace). That shadows the engine crate
+    // of the same name, so the trait import needs a leading `::` to name the
+    // crate rather than the sibling module.
+    let engine_root = match import_root {
+        "crate" | "self" | "super" => import_root.to_string(),
+        external_crate => format!("::{external_crate}"),
+    };
+
     let shader_atlas_module = ShaderAtlasModule {
+        engine_root,
         shared_module_names: shared_module_names.to_vec(),
         module_names,
         entries,
@@ -489,6 +501,8 @@ fn render_graphics_shader_file(
 #[derive(Template)]
 #[template(path = "shader_atlas.rs.askama", escape = "none")]
 struct ShaderAtlasModule {
+    /// `import_root`, made absolute so a shared slang module cannot shadow it
+    engine_root: String,
     shared_module_names: Vec<String>,
     module_names: Vec<String>,
     /// field name and type name prefix

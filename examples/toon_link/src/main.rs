@@ -40,6 +40,7 @@ use mltrs::renderer::{
     TextureOptions, TextureWrap, UniformBufferHandle,
 };
 
+use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::tev::{GXAlphaOp, GXCompare};
 use crate::generated::shader_atlas::toon_link::*;
 
@@ -1055,6 +1056,7 @@ fn rgba_str(c: Option<[u8; 4]>) -> String {
 
 impl Game for ToonLink {
     type EditState = EditState;
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Toon Link"
@@ -1064,7 +1066,7 @@ impl Game for ToonLink {
         Some(("Toon Link", &mut self.edit_state))
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, _shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {

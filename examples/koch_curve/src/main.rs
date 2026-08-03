@@ -41,6 +41,7 @@ pub struct KochCurve {
 
 impl Game for KochCurve {
     type EditState = EditState;
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Koch Curve 3D"
@@ -50,7 +51,7 @@ impl Game for KochCurve {
         Some(("Koch Curve 3D", &mut self.edit_state))
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -65,8 +66,7 @@ impl Game for KochCurve {
             cube_map: &cube_map,
         };
 
-        let shader = ShaderAtlas::init().koch_curve;
-        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline_config = shaders.koch_curve.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         let edit_state = EditState {

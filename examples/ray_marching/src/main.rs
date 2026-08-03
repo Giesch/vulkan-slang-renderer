@@ -39,12 +39,13 @@ struct RayMarching {
 
 impl Game for RayMarching {
     type EditState = ();
+    type Atlas = ShaderAtlas;
 
     fn window_title() -> &'static str {
         "Ray Marching"
     }
 
-    fn setup(renderer: &mut Renderer) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -57,8 +58,7 @@ impl Game for RayMarching {
             params_buffer: &params_buffer,
         };
 
-        let shader = ShaderAtlas::init().ray_marching;
-        let pipeline_config = shader.pipeline_config(resources);
+        let pipeline_config = shaders.ray_marching.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
         let spheres = vec![Sphere {
