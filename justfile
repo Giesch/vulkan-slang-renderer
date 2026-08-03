@@ -132,7 +132,7 @@ test:
 # run and review snapshot tests interactively
 [unix] # currently broken on windows, see build_tasks.rs
 insta:
-    cargo insta test -p mltrs-cli --review
+    cargo insta test --workspace --review
 
 
 # lint in debug and release, with warnings denied

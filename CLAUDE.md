@@ -54,7 +54,7 @@ cargo check --workspace --all-targets  # check every crate, example, and test
 just shaders               # regenerate ALL examples' shader bindings
 just shaders EXAMPLE       # regenerate one example's bindings
 just test                  # Run tests (snapshot testing via insta)
-cargo insta test -p mltrs-cli --accept  # accept all modified snapshots
+cargo insta test --workspace --accept  # accept all modified snapshots
 just lint                  # Clippy with warnings as errors
 just watch EXAMPLE         # build, then run one example for a few seconds
 just sweep                 # run EVERY example headlessly, fail on validation output
