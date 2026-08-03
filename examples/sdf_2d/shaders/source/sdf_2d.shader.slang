@@ -42,7 +42,7 @@ struct SDF2DSampler : mltrs::ISuperSampler {
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
     let sampler = SDF2DSampler(input.pixel, params.resolution, params.time);
-    let color = mltrs::superSample<SDF2DSampler, 3>(sampler);
+    let color = mltrs::superSample(sampler);
     return float4(color, 1.0);
 }
 

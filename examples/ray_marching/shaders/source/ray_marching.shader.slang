@@ -72,7 +72,7 @@ float4 fragMain(FragInput input) : SV_Target {
         params.camera,
         params.lightPosition
     );
-    let color = mltrs::superSample<RayMarchSampler, 3>(sampler);
+    let color = mltrs::superSample(sampler);
     return float4(color, 1.0);
 }
 
