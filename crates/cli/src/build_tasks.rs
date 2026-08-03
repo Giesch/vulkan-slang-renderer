@@ -57,13 +57,10 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
     let compute_slang_file_names =
         collect_slang_file_names(&config.shaders_source_dir, COMPUTE_SHADER_FILE_SUFFIX)?;
 
-    // Build type→module map from shared slang modules
     let type_to_module = reflect_slang_module_types(&config.shaders_source_dir);
 
     let search_path = config.shaders_source_dir.to_str().unwrap();
 
-    // Pass 1: Compile all shaders, collect their outputs and intermediate build
-    // data. Nothing is written to disk in here on purpose -- see the wipe below.
     let mut graphics_data: Vec<GraphicsShaderData> = vec![];
     let mut compute_data: Vec<ComputeShaderData> = vec![];
     let mut compiled_files: Vec<(String, Vec<u8>)> = vec![];
@@ -136,7 +133,6 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
     if config.generate_rust_source {
         let mut generated_source_files = vec![];
 
-        // Pass 2: Identify shared modules from all shader type defs
         let all_shader_defs: Vec<(String, GeneratedTypeDefs)> = graphics_data
             .iter()
             .map(|d| (d.shader_name.clone(), d.defs.clone()))
@@ -149,7 +145,6 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
 
         let shared_modules = collect_shared_modules(&all_shader_defs);
 
-        // Generate shared module files
         for (module_name, module) in &shared_modules {
             let cross_imports = cross_module_imports(module_name, module, &shared_modules);
 
@@ -170,7 +165,6 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             });
         }
 
-        // Generate per-shader files with shared types filtered out
         for data in &graphics_data {
             let file = render_graphics_shader_file(data, &shared_modules, &config.import_root);
             generated_source_files.push(file);
@@ -181,7 +175,6 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             generated_source_files.push(file);
         }
 
-        // Generate top-level module files
         let shared_module_names: Vec<String> = shared_modules.keys().cloned().collect();
         add_top_level_rust_modules(
             &slang_file_names,
