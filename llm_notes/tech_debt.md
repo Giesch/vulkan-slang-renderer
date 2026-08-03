@@ -26,6 +26,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 7. [The Y-down clip space flip is applied in three different places, none documented](#7-the-y-down-clip-space-flip-is-applied-in-three-different-places-none-documented) — undocumented convention, easy to get wrong in a new example
 8. [The `fixtures/shaders` corpus is hand-maintained copies of example shaders](#8-the-fixturesshaders-corpus-is-hand-maintained-copies-of-example-shaders) — lockstep edits, undetected drift weakens snapshot coverage
 9. [`pipeline_config` consumes the atlas entry, so a shader can build only one pipeline](#9-pipeline_config-consumes-the-atlas-entry-so-a-shader-can-build-only-one-pipeline---done) — **done**
+10. [The codegen emits unformatted Rust and relies on the caller running `cargo fmt`](#10-the-codegen-emits-unformatted-rust-and-relies-on-the-caller-running-cargo-fmt) — consumer-visible churn, only the justfile hides it
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -674,3 +675,87 @@ re-accepted (`cargo insta test -p mltrs-cli --accept`), `cargo check --workspace
 --all-targets` is clean, and `just sweep` still passes — hot reload is the
 consumer that keeps the boxed entry alive, so a manual edit to a watercolor
 `.slang` file while it runs is worth confirming too.
+
+## 10. The codegen emits unformatted Rust and relies on the caller running `cargo fmt`
+
+**Context.** Surfaced while adding the `just mltrs` passthrough recipe
+(`justfile:82`), which runs the cli with arbitrary arguments and — unlike
+`just shaders` — does not append `cargo fmt`. Running
+`just mltrs shaders compile --crate-dir examples/sdf_2d` immediately produced a
+three-file diff in `examples/sdf_2d/src/generated*` against the committed,
+formatted output. Nothing semantic changed: a missing newline at EOF in all
+three files, two blank lines the templates emit, and one line rustfmt wraps
+(`const SHADERS_SOURCE_DIR: &'static str = concat!(…)`).
+
+**The problem.** `write_precompiled_shaders` renders askama templates and writes
+the result verbatim — `write_generated_file`
+(`crates/cli/src/build_tasks.rs:1256`) is a `create_dir_all` plus an
+`fs::write` with no formatting pass. The committed files under
+`examples/*/src/generated/` are formatted only because the two recipes that
+invoke the cli follow it with a whole-workspace `cargo fmt`
+(`justfile:69`, `:77`, and the windows arm at `:103`).
+
+That makes formatting a property of *how the cli was invoked*, not of the cli.
+A consumer following the documented workflow in `CLAUDE.md` —
+`cargo add mltrs`, `mltrs shaders init`, `mltrs shaders compile` — gets
+unformatted files with no newline at EOF, and then gets a spurious diff in
+generated code the first time they run `cargo fmt` on their own crate. The
+generated module is committed by design (that is the whole point of checking in
+`src/generated/`), so the churn lands in their version control.
+
+**Why it's tolerable today.** Only the examples consume the cli, and both
+recipes that drive it format afterwards, so nothing in-repo is visibly wrong.
+The output is valid Rust either way — this is cosmetic churn, not miscompiled
+code.
+
+**Fix — Option A: shell out to `rustfmt` from `write_generated_file`.**
+
+Pipe `source_file.content` into `rustfmt --edition 2024 --emit stdout` on
+stdin and write what comes back. Best-effort: if the binary is missing (rustup's
+minimal profile omits the `rustfmt` component) or exits non-zero, write the raw
+content and warn rather than failing the compile. Piping instead of passing a
+path means a rustfmt failure can never leave a half-written file on disk.
+
+Details that matter:
+
+- **Not `cargo fmt`.** It formats the consumer's entire crate, which is the
+  collateral damage this entry is about — the cli must touch only the files it
+  generates.
+- **`--edition` must be explicit.** rustfmt defaults to edition 2015; the
+  workspace is 2024 (`Cargo.toml:8`).
+- **No env-var override.** Cargo honors `RUSTFMT` for the binary path, but
+  adopting that would collide with the repo rule against `std::env::var` outside
+  `crates/renderer/src/env_config.rs`. Plain `PATH` lookup is the fit here.
+- Once this lands, `just shaders` and `just vendor-shaders` can drop their
+  trailing `cargo fmt`, and `just mltrs` inherits correct output for free.
+
+**Rejected alternatives**, recorded so they aren't re-litigated:
+
+- **`prettyplease` + `syn`** (in-process, hermetic, no toolchain dependency) —
+  ruled out because it drops non-doc `//` comments, and the templates carry
+  load-bearing ones: the `repr(int)` UB explanation
+  (`crates/cli/templates/shader_atlas_entry.rs.askama:51-54`), the glam
+  scalar-math warning, and the descriptor-set-order `NOTE` at `:142`.
+- **Fixing the templates alone** (askama whitespace control `{%-`/`-%}` plus a
+  trailing newline) — kills the specific diffs above with zero dependencies, but
+  cannot match rustfmt's line-wrapping, so a consumer running `cargo fmt` still
+  gets churn. Worth doing anyway as the quality floor for Option A's
+  rustfmt-unavailable fallback path.
+
+**The cost to accept, and it is the reason this is an entry rather than a
+commit.** The snapshot tests glob generated files off disk
+(`crates/cli/src/build_tasks.rs:1806`, `:1973`, both
+`insta::glob!(…, "**/*.{rs,json}")`), so formatting at write time changes every
+`.rs` snapshot — a one-time `cargo insta test -p mltrs-cli --accept` — and
+afterwards those snapshots encode the *local* rustfmt's output. A rustfmt
+version bump could then fail CI on formatting alone. For generated code this
+simple that is unlikely, but whoever takes this should decide knowingly. The
+alternative that avoids it entirely is to snapshot `GeneratedFile.content`
+before the format pass instead of reading the files back from disk, which is a
+larger change to the test's shape.
+
+**Done means.** `mltrs shaders compile` in a bare consumer crate — no justfile,
+no `cargo fmt` — writes files that a subsequent `cargo fmt` leaves byte-identical.
+`just shaders` produces no diff against the committed `examples/*/src/generated/`
+with its `cargo fmt` removed. A `PATH` with no `rustfmt` still compiles
+successfully, with a warning and unformatted-but-valid output.
