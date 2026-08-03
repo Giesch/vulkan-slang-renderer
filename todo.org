@@ -112,6 +112,8 @@
   #+begin_src rust
   // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
   #+end_src
+  this applies to all the cfg(not(windows)) tests in build_tasks,
+  and the insta justfile recipe(s)
 
 - [ ] get a more principled slang parsing setup
   - [ ] avoid the direct 'starts_with' stuff in build_tasks

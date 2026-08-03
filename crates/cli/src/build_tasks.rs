@@ -1781,7 +1781,6 @@ mod tests {
         }
     }
 
-    // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
     #[cfg(not(windows))]
     #[test]
     fn generated_files() {
