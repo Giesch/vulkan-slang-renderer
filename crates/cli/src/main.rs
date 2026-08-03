@@ -80,16 +80,6 @@ const VENDORED_MODULES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Top-level engine module files from the pre-namespace layout; `shaders init`
-/// removes these so they don't collide with the `mltrs/` copies in reflection.
-const LEGACY_MODULES: &[&str] = &[
-    "addr.slang",
-    "mvp.slang",
-    "projection.slang",
-    "fullscreen_triangle.slang",
-    "super_sample.slang",
-];
-
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -121,22 +111,6 @@ fn init(args: InitArgs) -> anyhow::Result<()> {
         }
         std::fs::write(&path, content)?;
         println!("wrote {}", path.display());
-    }
-
-    for file_name in LEGACY_MODULES {
-        let path = args.dir.join(file_name);
-        if !path.exists() {
-            continue;
-        }
-        if !args.force {
-            anyhow::bail!(
-                "found {} from the pre-namespace engine layout; its contents now \
-                live in mltrs/{file_name}. re-run with --force to remove it",
-                path.display()
-            );
-        }
-        std::fs::remove_file(&path)?;
-        println!("removed legacy {}", path.display());
     }
 
     Ok(())
