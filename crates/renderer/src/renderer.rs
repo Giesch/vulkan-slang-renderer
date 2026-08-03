@@ -5425,15 +5425,7 @@ enum PendingDrawCommand {
     },
 }
 
-/// a one-time-use reference to the renderer, for recording a frame's draws:
-/// queue any number of draws with the `queue_draw_*` methods, then submit them
-/// all with the terminal `submit_draws(self, …)`. The legacy single-draw
-/// methods (`draw_indexed`, `draw_vertex_count`) are one-element wrappers with
-/// append semantics: they submit the union of the queue and their own draw.
-///
-/// `submit_draws(self, …)` is the single-terminal-submit shape the FrameInputs
-/// plan also depends on; a later migration swaps the `gpu_update` closure for
-/// declarative frame inputs.
+/// A reference to the renderer for use in a game's draw callback
 pub struct FrameRenderer<'f> {
     renderer: &'f mut Renderer,
     pending_draws: Vec<PendingDrawCommand>,
@@ -5447,8 +5439,6 @@ pub enum DrawError {
 }
 
 impl<'f> FrameRenderer<'f> {
-    /// Constructed once per frame by the app run loop (`mltrs::app`); games
-    /// receive one in `Game::draw` rather than building their own.
     pub fn new(renderer: &'f mut Renderer) -> Self {
         Self {
             renderer,
