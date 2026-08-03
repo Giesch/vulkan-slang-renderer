@@ -76,6 +76,20 @@ vendor-shaders:
     for d in examples/*/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
     cargo fmt
 
+# e.g. `just mltrs shaders compile --crate-dir examples/sdf_2d --no-rust`
+# run the mltrs cli directly, passing all arguments through
+[unix]
+mltrs *args:
+    cargo run -p mltrs-cli -- {{args}}
+
+# run the mltrs cli directly, passing all arguments through
+[windows]
+mltrs *args:
+    pwsh -Command { \
+      . ./scripts/load-env.ps1; \
+      cargo run -p mltrs-cli -- {{args}}; \
+    }
+
 # write precompiled shader bytecode, json metadata, and generated rust source to disk
 [windows]
 shaders example="all":
