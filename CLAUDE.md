@@ -113,7 +113,7 @@ mltrs shaders compile      # emits shaders/compiled + src/generated (imports `ml
 ```bash
 just test                  # Non-interactive (CI)
 just insta                 # Interactive review
-cargo insta test -p mltrs-cli --accept  # Re-run and accept every changed snapshot
+cargo insta test --workspace --accept  # Re-run and accept every changed snapshot
 just sweep                 # run all examples, checking for vulkan validation errors
 just sweep-self-test       # check that the sweep still detects an injected fault
 ```
