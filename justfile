@@ -76,7 +76,7 @@ vendor-shaders:
     for d in examples/*/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
     cargo fmt
 
-# e.g. `just mltrs shaders compile --crate-dir examples/sdf_2d --no-rust`
+# e.g. `just mltrs shaders compile --crate-dir examples/sdf_2d`
 # run the mltrs cli directly, passing all arguments through
 [unix]
 mltrs *args:

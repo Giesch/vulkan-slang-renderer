@@ -43,9 +43,6 @@ struct CompileArgs {
     /// path prefix generated imports use for the engine crate
     #[arg(long, default_value = "mltrs")]
     import_root: String,
-    /// only write spirv + json, skip rust codegen
-    #[arg(long)]
-    no_rust: bool,
 }
 
 #[derive(Args)]
@@ -148,7 +145,7 @@ fn init(args: InitArgs) -> anyhow::Result<()> {
 fn compile(args: CompileArgs) -> anyhow::Result<()> {
     let crate_dir = &args.crate_dir;
     let config = build_tasks::Config {
-        generate_rust_source: !args.no_rust,
+        generate_rust_source: true,
         rust_source_dir: args.rust_dir.unwrap_or_else(|| crate_dir.join("src")),
         shaders_source_dir: args
             .source_dir
