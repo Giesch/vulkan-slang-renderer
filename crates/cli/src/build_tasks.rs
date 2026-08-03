@@ -10,6 +10,7 @@ use mltrs_renderer::shaders::{prepare_reflected_compute_shader, prepare_reflecte
 
 use crate::util::relative_path;
 
+#[derive(Debug, Clone)]
 pub struct Config {
     /// whether to write rust code (or only shader spirv & json)
     pub generate_rust_source: bool,
@@ -124,13 +125,6 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         }
     }
 
-    // A removed shader must not leave its old outputs behind, so the directory
-    // is regenerated rather than written over -- the same rule the generated
-    // shader_atlas dir below follows.
-    //
-    // This is why pass 1 buffers instead of writing as it goes: every compile
-    // has already succeeded by the time anything is deleted, so a broken shader
-    // leaves the previous outputs untouched rather than half-replaced.
     if config.compiled_shaders_dir.exists() {
         std::fs::remove_dir_all(&config.compiled_shaders_dir)?;
     }
@@ -1534,10 +1528,11 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
         modules.push((module_name.clone(), module_name));
     }
 
-    // a top-level module sharing a subdirectory's name (eg. mltrs.slang next
-    // to mltrs/) is reflected like any other: it's usually a re-export prelude
-    // with no types of its own, but a consumer's utils.slang may declare types
-    // alongside a utils/ directory — both collapse into the same rust module
+    // A top-level module sharing a subdirectory's name (eg. mltrs.slang next
+    // to mltrs/) is reflected like any other.
+    // In the 'mltrs' case, it's a re-export prelude with no types of its own,
+    // but if the top module declares types,
+    // they'll collapse into the same rust module
     for subdir in &subdirs {
         for entry in std::fs::read_dir(shaders_source_dir.join(subdir)).unwrap() {
             let entry = entry.unwrap();
@@ -1858,7 +1853,7 @@ mod tests {
         copy_dir(&manifest_path(["fixtures", "shaders"]), &source_dir);
 
         let compiled_dir = tmp_dir_path.join(relative_path(["shaders", "compiled"]));
-        let config = || Config {
+        let config = Config {
             generate_rust_source: false,
             rust_source_dir: tmp_dir_path.join("src"),
             shaders_source_dir: source_dir.clone(),
@@ -1866,7 +1861,7 @@ mod tests {
             import_root: "crate".to_string(),
         };
 
-        write_precompiled_shaders(config()).unwrap();
+        write_precompiled_shaders(config.clone()).unwrap();
         let baseline = contents(&compiled_dir);
         assert!(
             !baseline.is_empty(),
@@ -1877,14 +1872,14 @@ mod tests {
         // An output whose shader is gone does not survive a clean run.
         let orphan = compiled_dir.join("removed_shader.vert.spv");
         std::fs::write(&orphan, b"stale").unwrap();
-        write_precompiled_shaders(config()).unwrap();
+        write_precompiled_shaders(config.clone()).unwrap();
         assert!(!orphan.exists(), "orphaned output survived a clean run");
         assert_eq!(contents(&compiled_dir), baseline);
 
         // A shader that cannot compile aborts before anything is deleted.
         let broken = source_dir.join("broken.shader.slang");
         std::fs::write(&broken, "this is not valid slang").unwrap();
-        write_precompiled_shaders(config())
+        write_precompiled_shaders(config.clone())
             .expect_err("a shader that cannot compile must fail the run");
         assert_eq!(
             contents(&compiled_dir),
