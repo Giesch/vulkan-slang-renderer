@@ -20,12 +20,8 @@ struct FragInput {
 // 6 vertices per particle (2 triangles forming a quad)
 // Winding order must be counter-clockwise in Vulkan clip space (Y-down)
 static const float2 quadOffsets[6] = {
-    {-1.0, -1.0},
-    {-1.0,  1.0},
-    { 1.0, -1.0},
-    { 1.0, -1.0},
-    {-1.0,  1.0},
-    { 1.0,  1.0},
+    {-1.0, -1.0}, {-1.0,  1.0}, { 1.0, -1.0},
+    { 1.0, -1.0}, {-1.0,  1.0}, { 1.0,  1.0},
 };
 
 static const float PARTICLE_SIZE = 0.008;
