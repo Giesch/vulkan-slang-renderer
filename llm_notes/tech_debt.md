@@ -27,6 +27,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 8. [The `fixtures/shaders` corpus is hand-maintained copies of example shaders](#8-the-fixturesshaders-corpus-is-hand-maintained-copies-of-example-shaders) — lockstep edits, undetected drift weakens snapshot coverage
 9. [`pipeline_config` consumes the atlas entry, so a shader can build only one pipeline](#9-pipeline_config-consumes-the-atlas-entry-so-a-shader-can-build-only-one-pipeline---done) — **done**
 10. [The codegen emits unformatted Rust and relies on the caller running `cargo fmt`](#10-the-codegen-emits-unformatted-rust-and-relies-on-the-caller-running-cargo-fmt) — consumer-visible churn, only the justfile hides it
+11. [Vendored slang modules conflate engine API with example-shared conveniences](#11-vendored-slang-modules-conflate-engine-api-with-example-shared-conveniences) — public API surface wider than intended, and no mechanism for the modules actually being duplicated
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -759,3 +760,111 @@ no `cargo fmt` — writes files that a subsequent `cargo fmt` leaves byte-identi
 `just shaders` produces no diff against the committed `examples/*/src/generated/`
 with its `cargo fmt` removed. A `PATH` with no `rustfmt` still compiles
 successfully, with a warning and unformatted-but-valid output.
+
+## 11. Vendored slang modules conflate engine API with example-shared conveniences
+
+**The problem.** `crates/cli/vendor/` holds five slang modules, and
+`mltrs shaders init` writes all five into every consumer's `shaders/source/`
+(`VENDORED_MODULES`, `crates/cli/src/main.rs:65-84`; `just vendor-shaders`,
+`justfile:71-77`, re-seeds all 16 examples). They are delivered as one
+undifferentiated set. They are not one thing:
+
+| module | example crates using it | engine coupling |
+|---|---|---|
+| `addr.slang` | 7 — dragon, gpu_picking, particles, ray_marching, space_invaders, sprite_batch, watercolor | **hard**: mirrors `crates/renderer/src/renderer/addr.rs` |
+| `mvp.slang` | 16 (all) | soft: the `columnMajor` extern |
+| `projection.slang` | 5 — dragon, gpu_picking, ray_marching, space_invaders, sprite_batch | soft: the same extern |
+| `fullscreen_triangle.slang` | 7 — dragon, gpu_picking, koch_curve, ray_marching, sdf_2d, serenity_crt, watercolor | none |
+| `super_sample.slang` | 2 — ray_marching, sdf_2d | none |
+
+`addr.slang` is genuine engine API: its three typealiases have to stay in lockstep
+with `Addr`/`ReadAddr`/`ImmutableAddr` (`crates/renderer/src/renderer/addr.rs:9`,
+`:64`, `:128`), the comments in both files say so, and a consumer could not write
+them correctly on their own. The other four are conveniences that the examples
+happen to share. `MVPMatrices` bakes in one particular model/view/proj triple and
+one Y-flip convention (§7); `superSample` is a twenty-line unrolled loop that
+touches nothing engine-owned. Shipping them through `shaders init` presents them
+as engine contract, which means a change to a convenience utility is a breaking
+change to every consumer's source tree.
+
+The mirror image of the same gap: the modules that examples *actually* share are
+duplicated by hand with no mechanism at all. `ray_march.slang` lives in dragon and
+ray_marching; `ray_march_camera.slang` in dragon, gpu_picking and ray_marching.
+Byte-identical today (md5-verified, 2026-08), but nothing makes them stay that way.
+The single-crate shared modules — `dragon_curve`, `gpu_picking_common`, `particle`,
+`tev`, `watercolor_common` — are not duplicated and are not part of this.
+
+So one mechanism vendors things that don't need vendoring, and nothing covers the
+things that are in fact being copied.
+
+**Why it's tolerable today.** Nothing ships from this repo and there is no outside
+consumer, so the oversized public surface costs nothing yet. Every example's seeded
+`mltrs/` copy is byte-identical to `crates/cli/vendor/` (verified 2026-08), and the
+hand-duplicated example modules are two files across three crates. The bill arrives
+the first time an external consumer pins against `MVPMatrices`, or the first time
+one of those two files is edited in one crate and not the others.
+
+**Two things a split does *not* fix, both worth knowing before starting.**
+
+1. **`columnMajor` stays engine API even if `MVPMatrices` doesn't.** Both
+   `mvp.slang:8` and `projection.slang:8` declare
+   `extern static const bool columnMajor`, and the value comes from a module the
+   renderer *generates at compile time*: `load_cpu_constants_module`
+   (`crates/renderer/src/shaders.rs:23-35`) emits
+   `export static const bool columnMajor = …` inside `namespace mltrs`, driven by
+   `MATRIX_LAYOUT` (`shaders.rs:14`). Demoting those two modules to the examples
+   side does not decouple them — it just moves the coupling somewhere less
+   visible. Either the extern becomes documented public API in its own right, or
+   `mvp`/`projection` keep a foot in the engine set.
+2. **It buys no namespace isolation.** Reflection records type names *unqualified*
+   into a flat map, so every public struct/enum name must still be unique across a
+   crate's entire `shaders/source/` regardless of which side it came from — see §4,
+   which is the same flat-map hazard one level up. The win here is API surface and
+   churn control, not scoping.
+
+**Fix — two delivery paths instead of one.**
+
+- **Engine set**, staying in `VENDORED_MODULES` with `mltrs shaders init` as its
+  delivery: `addr.slang`, plus whatever the `columnMajor` extern forces to come
+  along. This is the set the engine promises to keep stable.
+- **Examples set**, delivered by a separate recipe (`just sync-example-shaders` or
+  similar) from a single in-repo home, never written into a consumer project. It
+  should cover both the demoted engine modules and the already-hand-duplicated
+  `ray_march.slang` / `ray_march_camera.slang` — absorbing those is the concrete
+  payoff, since they get a source of truth they have never had.
+
+Mechanical consequences to plan for: `VENDORED_MODULES` becomes two lists, and
+`LEGACY_MODULES` (`crates/cli/src/main.rs:88-94`) — which *deletes* stale
+pre-namespace copies — needs a story for files that change sides, since a demoted
+module left behind in a consumer's `shaders/source/` is exactly the case it exists
+to clean up. The `mltrs.slang` prelude (`crates/cli/vendor/mltrs.slang`)
+`__exported import`s all five, so dropping any changes what `import mltrs;` yields
+and every affected example's imports move with it. `just vendor-shaders` grows a
+second loop rather than being replaced — the examples need both mechanisms.
+
+Whichever way it lands, the new recipe wants the drift check that §8(b) describes:
+copies with a source of truth and no verification are what this entry is about.
+
+**Interaction with §8.** §8's cheap partial win is adding
+`crates/cli/fixtures/shaders` to the `shaders init` loop, retiring 6 of its 14
+hand-maintained copies. If modules leave the init set that win shrinks to whatever
+stays vendored, and the fixture copies of the demoted modules have to come from the
+new mechanism instead. Doing §8 first is fine; doing this first means §8's partial
+win has to be re-scoped. Related: `fullscreen_triangle.slang` carries its own
+`reflectY` (`:26-29`) independent of `mvp.slang`'s, already flagged in §7 — if
+those two modules end up on opposite sides of the split, §7's "neither module tells
+a reader the other exists" gets meaningfully worse, so land §7's documentation
+first or at the same time.
+
+**Open question, left visible rather than resolved.** Whether `mvp`/`projection`
+can honestly be demoted at all given the `columnMajor` coupling. The clean split
+may be `addr` + `mvp` + `projection` as engine, `fullscreen_triangle` +
+`super_sample` as examples — which is a smaller win, but an honest one.
+
+**Done means.** `mltrs shaders init` in a bare consumer crate writes only the
+modules the engine is prepared to keep stable, and each one's docs say why it is
+engine API. The example-shared modules have exactly one in-repo source of truth and
+a recipe that regenerates every copy from it. Editing a copy in place is caught —
+by that recipe or by `just pre-commit` — rather than committed. `just shaders` and
+`just test` pass with the examples' imports updated for whatever left the `mltrs`
+prelude.
