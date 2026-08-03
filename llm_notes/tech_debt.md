@@ -672,7 +672,7 @@ call sites, and (b) stays available afterwards as a pure renderer-side refactor.
 pipelines from the single `shaders` atlas with no `ShaderAtlas::init()` repeats,
 and the comment at `main.rs:32` is deleted rather than reworded. `just shaders`
 regenerates every example, `just test` passes with the `mltrs-cli` snapshots
-re-accepted (`cargo insta test -p mltrs-cli --accept`), `cargo check --workspace
+re-accepted (`cargo insta test --workspace --accept`), `cargo check --workspace
 --all-targets` is clean, and `just sweep` still passes — hot reload is the
 consumer that keeps the boxed entry alive, so a manual edit to a watercolor
 `.slang` file while it runs is worth confirming too.

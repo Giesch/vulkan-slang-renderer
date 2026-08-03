@@ -26,7 +26,7 @@ Always run `just test` when changing `crates/cli/src/build_tasks.rs` or the
 
 **NOTE `cargo insta accept` on its own does nothing after `just test`**: that
 recipe sets `INSTA_UPDATE=no`, so no `.snap.new` files are written for it to
-review. Use `cargo insta test -p mltrs-cli --accept`, which re-runs the tests and writes the
+review. Use `cargo insta test --workspace --accept`, which re-runs the tests and writes the
 snapshots in one step. Review the diffs `just test` prints before accepting.
 
 **Known open issue:** the snapshots capture *pre-rustfmt* template output while
