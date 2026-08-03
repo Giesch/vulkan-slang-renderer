@@ -197,8 +197,6 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             &mut generated_source_files,
         );
 
-        // Same stale-file rule for the generated rust: the whole shader_atlas
-        // dir is regenerated every run, so removed shaders disappear with it.
         let shader_atlas_dir = config
             .rust_source_dir
             .join(relative_path(["generated", "shader_atlas"]));
@@ -247,12 +245,10 @@ fn add_top_level_rust_modules(
         })
         .collect();
 
-    // This file declares a `pub mod` per shared slang module, and one of them
-    // is `mltrs` (the engine's slang namespace). That shadows the engine crate
-    // of the same name, so the trait import needs a leading `::` to name the
-    // crate rather than the sibling module.
     let engine_root = match import_root {
         "crate" | "self" | "super" => import_root.to_string(),
+        // we need the leading :: because the local 'mltrs' module
+        // from mtlrs.slang shadows the crate name
         external_crate => format!("::{external_crate}"),
     };
 
@@ -273,8 +269,6 @@ fn add_top_level_rust_modules(
 
     let top_generated_module = GeneratedFile {
         relative_path: relative_path(["generated.rs"]),
-        // generated API surface: a consuming binary is not required to use
-        // all of it (in-library generated code was never dead-code checked)
         content: "#[allow(dead_code)]\npub mod shader_atlas;".to_string(),
     };
     generated_source_files.push(top_generated_module);
@@ -1824,11 +1818,6 @@ mod tests {
         });
     }
 
-    /// Both halves of the compiled-dir rule. It is regenerated rather than
-    /// written over, so a deleted shader's outputs cannot linger -- and because
-    /// pass 1 buffers every write until all compiles have succeeded, a shader
-    /// that fails to compile must leave the previous outputs exactly as they
-    /// were, rather than half-replaced or wiped.
     #[cfg(not(windows))]
     #[test]
     fn compiled_dir_is_regenerated_only_after_every_compile_succeeds() {
@@ -1845,13 +1834,7 @@ mod tests {
             }
         }
 
-        // name -> content hash. Hashed rather than compared byte-for-byte only
-        // so a failure prints something readable; the comparison is still over
-        // the full contents, which is what catches a half-replaced dir.
-        //
-        // A missing dir reads as empty rather than panicking: a regression here
-        // deletes the dir outright, and that should surface as the assert's
-        // message, not as an unwrap on read_dir.
+        // name -> content hash, for catching a half-replaced directory
         fn contents(dir: &Path) -> BTreeMap<String, u64> {
             use std::hash::{DefaultHasher, Hash, Hasher};
 

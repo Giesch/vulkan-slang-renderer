@@ -466,8 +466,7 @@ impl ComputePipelineStorage {
     }
 }
 
-// fields are pub because generated compute atlas entries construct this
-// directly (graphics entries go through PipelineConfigBuilder, same deal)
+// fields are pub because generated compute atlas entries construct this directly
 pub struct ComputePipelineConfig<'t> {
     pub shader: Box<dyn ComputeShaderAtlasEntry>,
     pub texture_handles: Vec<&'t TextureHandle>,

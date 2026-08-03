@@ -2,6 +2,7 @@
 
 * Now
 - [ ] get a static build of slang-rs working and use it here
+- [ ] look into the non-png image formats mason recommended
 
 - [-] problems/issues for side-agent PRs
   - [X] triple-buffering problems
@@ -10,7 +11,7 @@
   - [X] testing without opening a window
     write to a texture? will this catch validation errors?
     might be worth it anyway
-  - [ ] pick up tech_debt.md tasks
+  - [-] pick up tech_debt.md tasks
   - [ ] roc platform (after render graph)
   - [-] BDA slices; then sparse sets?
   - [-] add an immutable bda buffer variant with no duplication
