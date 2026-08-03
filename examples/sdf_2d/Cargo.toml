@@ -16,5 +16,9 @@ facet.workspace = true
 glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-rodio.workspace = true
 log.workspace = true
+
+[dependencies.rodio]
+version = "0.22.2"
+default-features = false
+features = ["playback", "flac"]

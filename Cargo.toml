@@ -24,13 +24,16 @@ facet = { version = "0.42", features = ["reflect"] }
 facet-core = { version = "0.42.0", features = ["std"] }
 glam = { version = "0.30.3", features = ["serde"] }
 heck = "0.5.0"
-image = "0.25.6"
+image = { version = "0.25.6", default-features = false, features = [
+  "png",
+  "jpeg",
+  "bmp",
+] }
 insta = { version = "1.43.2", features = ["json", "glob"] }
 ktx2 = "0.5.0"
 log = "0.4.27"
 notify = "8.1.0"
 pretty_env_logger = "0.5.0"
-rodio = "0.22.2"
 rspirv = "0.12.0"
 # using build-from-source-static for windows
 sdl3 = { version = "0.14.29", features = ["ash", "build-from-source-static"] }
