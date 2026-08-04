@@ -128,6 +128,7 @@ fn compile(args: CompileArgs) -> anyhow::Result<()> {
             .compiled_dir
             .unwrap_or_else(|| crate_dir.join("shaders/compiled")),
         import_root: args.import_root,
+        optimization: build_tasks::OptimizationLevel::High,
     };
 
     build_tasks::write_precompiled_shaders(config)

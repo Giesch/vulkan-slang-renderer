@@ -6,7 +6,11 @@ use heck::{ToSnakeCase, ToUpperCamelCase};
 
 use mltrs_renderer::shaders::json::*;
 use mltrs_renderer::shaders::{ReflectedComputeShader, ReflectedShader};
-use mltrs_renderer::shaders::{prepare_reflected_compute_shader, prepare_reflected_shader};
+use mltrs_renderer::shaders::{
+    prepare_reflected_compute_shader_with_optimization, prepare_reflected_shader_with_optimization,
+};
+
+pub use mltrs_renderer::shaders::OptimizationLevel;
 
 use crate::util::relative_path;
 
@@ -24,6 +28,8 @@ pub struct Config {
     /// `"crate"` when the generated code lives in the engine itself (or in a
     /// stub crate like the check_crate fixture), `"mltrs"` for consumers
     pub import_root: String,
+    /// the slang optimization level to compile shader bytecode at
+    pub optimization: OptimizationLevel,
 }
 
 const SHADER_FILE_SUFFIX: &str = ".shader.slang";
@@ -70,7 +76,11 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             vertex_shader,
             fragment_shader,
             reflection_json,
-        } = prepare_reflected_shader(slang_file_name, search_path)?;
+        } = prepare_reflected_shader_with_optimization(
+            slang_file_name,
+            search_path,
+            config.optimization,
+        )?;
 
         let source_file_name = &reflection_json.source_file_name;
 
@@ -100,7 +110,11 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         let ReflectedComputeShader {
             compute_shader,
             reflection_json,
-        } = prepare_reflected_compute_shader(slang_file_name, search_path)?;
+        } = prepare_reflected_compute_shader_with_optimization(
+            slang_file_name,
+            search_path,
+            config.optimization,
+        )?;
 
         let source_file_name = &reflection_json.source_file_name;
 
@@ -1751,6 +1765,7 @@ mod tests {
     use super::*;
 
     use crate::util::manifest_path;
+    use mltrs_renderer::shaders::prepare_reflected_shader;
 
     /// Shader discovery must be sorted, not in `read_dir` order: that order reaches
     /// the generated `shader_atlas.rs` and its snapshots, so an unsorted walk makes
@@ -1786,6 +1801,7 @@ mod tests {
             shaders_source_dir: manifest_path(["fixtures", "shaders"]),
             compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
             import_root: "crate".to_string(),
+            optimization: OptimizationLevel::High,
         };
 
         write_precompiled_shaders(config).unwrap();
@@ -1851,6 +1867,7 @@ mod tests {
             shaders_source_dir: source_dir.clone(),
             compiled_shaders_dir: compiled_dir.clone(),
             import_root: "crate".to_string(),
+            optimization: OptimizationLevel::High,
         };
 
         write_precompiled_shaders(config.clone()).unwrap();
@@ -1895,6 +1912,7 @@ mod tests {
             shaders_source_dir: manifest_path(["fixtures", "alignment"]),
             compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
             import_root: "crate".to_string(),
+            optimization: OptimizationLevel::High,
         };
 
         write_precompiled_shaders(config).unwrap();
@@ -2112,6 +2130,7 @@ mod tests {
             shaders_source_dir: manifest_path(["fixtures", "alignment"]),
             compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
             import_root: "crate".to_string(),
+            optimization: OptimizationLevel::High,
         };
         let compiled_dir = config.compiled_shaders_dir.clone();
 
@@ -2790,6 +2809,10 @@ float4 fragMain() : SV_Target {
             shaders_source_dir: manifest_path(["fixtures", "shaders"]),
             compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
             import_root: "crate".to_string(),
+            // This test uses -O0 on purpose.
+            // The goal is to catch unintentionally added branches,
+            // but the optimizer can obscure this via inlining decisions.
+            optimization: OptimizationLevel::None,
         };
         let compiled_dir = config.compiled_shaders_dir.clone();
 

@@ -32,14 +32,6 @@
 set -u
 cd "$(dirname "$0")/.." || exit 1
 
-# Defaults for the in-repo slang build, only where the environment (direnv, a
-# custom slang location) hasn't already set them. Unlike the sweep-owned
-# settings below, these are build configuration and an existing value wins.
-: "${SLANG_LIB_DIR:=$PWD/slang/build/Release/lib}"
-: "${SLANG_INCLUDE_DIR:=$PWD/slang/build/Release/include}"
-: "${SLANG_EXTERNAL_DIR:=$PWD/slang/build/external}"
-export SLANG_LIB_DIR SLANG_INCLUDE_DIR SLANG_EXTERNAL_DIR
-
 # --- the settings this sweep must OWN rather than inherit -------------------
 # Each of these, left to the ambient environment, makes a broken example pass
 # silently. See build_reproducibility.md §7.3 for the measurements.
