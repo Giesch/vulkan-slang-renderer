@@ -1,0 +1,22 @@
+# Recipes for the serenity_crt example, invoked from the repo root as
+# `just serenity_crt <recipe>` (the root justfile declares this dir as a
+# module).
+#
+# NOTE just runs a submodule's recipes with the working directory set to the
+# submodule's directory, so every path below is relative to
+# examples/serenity_crt/.
+
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
+# encode the pixel art losslessly (bit-exact, and smaller than the png)
+#
+# NOTE no --mipmap: this is Nearest-filtered 2d content that never minifies,
+# and a single level is what keeps the sampler from capping the LOD at a level
+# that isn't there.
+[unix]
+textures:
+    ctt textures/serenity_crt/castlevania_pixel_art.png \
+        -o textures/serenity_crt/castlevania_pixel_art.ktx2 \
+        -f rgba8unorm --zstd=19

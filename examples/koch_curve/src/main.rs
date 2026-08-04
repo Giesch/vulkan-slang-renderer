@@ -7,12 +7,12 @@ use glam::Vec2;
 
 use mltrs::editor::Slider;
 use mltrs::game::{Game, Input, MouseButton};
+use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, TextureFilter,
     UniformBufferHandle,
 };
-use mltrs::util::load_image;
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::koch_curve::*;
@@ -55,9 +55,9 @@ impl Game for KochCurve {
     where
         Self: Sized,
     {
-        const IMAGE_FILE_NAME: &str = "istockphoto-uffizi-blurred-612x612.jpg";
-        let image = load_image(manifest_path!["textures", IMAGE_FILE_NAME])?;
-        let cube_map = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
+        const IMAGE_FILE_NAME: &str = "istockphoto-uffizi-blurred-612x612.ktx2";
+        let file_path = manifest_path!["textures", IMAGE_FILE_NAME];
+        let cube_map = load_ktx2_texture(renderer, &file_path, TextureFilter::Linear)?;
 
         let params_buffer = renderer.create_uniform_buffer::<KochCurveParams>()?;
 

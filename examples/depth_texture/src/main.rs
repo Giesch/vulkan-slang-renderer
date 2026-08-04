@@ -6,12 +6,12 @@ use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Vec2, Vec3};
 
 use mltrs::game::Game;
+use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
     DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
     UniformBufferHandle,
 };
-use mltrs::util::load_image;
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::depth_texture::*;
@@ -93,10 +93,10 @@ impl Game for DepthTextureGame {
     where
         Self: Sized,
     {
-        const IMAGE_FILE_NAME: &str = "texture.jpg";
-        let image = load_image(manifest_path!["textures", IMAGE_FILE_NAME])?;
+        const IMAGE_FILE_NAME: &str = "texture.ktx2";
+        let file_path = manifest_path!["textures", IMAGE_FILE_NAME];
 
-        let texture = renderer.create_texture(IMAGE_FILE_NAME, &image, TextureFilter::Linear)?;
+        let texture = load_ktx2_texture(renderer, &file_path, TextureFilter::Linear)?;
         let params_buffer = renderer.create_uniform_buffer::<DepthTextureParams>()?;
         let resources = Resources {
             texture: &texture,
