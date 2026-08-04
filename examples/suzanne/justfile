@@ -1,0 +1,21 @@
+# Recipes for the suzanne example, invoked from the repo root as
+# `just suzanne <recipe>` (the root justfile declares this dir as a module).
+#
+# NOTE just runs a submodule's recipes with the working directory set to the
+# submodule's directory, so every path below is relative to
+# examples/suzanne/.
+
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
+# encode the three material textures as bc7 with mip chains
+[unix]
+textures:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for i in 0 1 2; do
+        ctt "models/suzanne/suzanne$i.png" \
+            -o "models/suzanne/suzanne$i.ktx2" \
+            -f bc7 --mipmap --quality very-slow --zstd=19
+    done

@@ -16,7 +16,6 @@ facet.workspace = true
 facet-core.workspace = true
 glam.workspace = true
 heck.workspace = true
-image.workspace = true
 log.workspace = true
 notify.workspace = true
 sdl3.workspace = true

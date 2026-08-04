@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
+use anyhow::Context as _;
 use ash::vk;
 use glam::Vec2;
 use sdl3::sys::vulkan::SDL_Vulkan_DestroySurface;
@@ -495,7 +496,7 @@ impl Renderer {
     pub fn create_texture(
         &mut self,
         source_file_name: impl Into<String>,
-        image: &image::DynamicImage,
+        image: RgbaPixels<'_>,
         texture_filter: TextureFilter,
     ) -> anyhow::Result<TextureHandle> {
         self.create_texture_with_options(
@@ -514,7 +515,7 @@ impl Renderer {
     pub fn create_texture_with_options(
         &mut self,
         source_file_name: impl Into<String>,
-        image: &image::DynamicImage,
+        image: RgbaPixels<'_>,
         options: TextureOptions,
     ) -> anyhow::Result<TextureHandle> {
         let texture = create_texture(
@@ -2826,6 +2827,56 @@ impl Default for TextureOptions {
     }
 }
 
+/// Borrowed RGBA8 texel data
+/// four bytes per texel, rows top to bottom, no padding
+#[derive(Debug, Clone, Copy)]
+pub struct RgbaPixels<'a> {
+    width: u32,
+    height: u32,
+    bytes: &'a [u8],
+}
+
+impl<'a> RgbaPixels<'a> {
+    pub fn new(width: u32, height: u32, bytes: &'a [u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            width > 0 && height > 0,
+            "expected a non-empty image, got {width}x{height}"
+        );
+
+        // u32 * u32 * 4 overflows u32 but not usize on the 64-bit targets this
+        // builds for; checked anyway so a 32-bit build can't wrap into a
+        // too-small expectation that a short buffer would satisfy
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|texels| texels.checked_mul(4))
+            .with_context(|| format!("image dimensions overflow: {width}x{height}"))?;
+
+        anyhow::ensure!(
+            bytes.len() == expected,
+            "expected {expected} rgba bytes for {width}x{height}, got {}",
+            bytes.len(),
+        );
+
+        Ok(Self {
+            width,
+            height,
+            bytes,
+        })
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
 fn get_required_layers() -> Vec<&'static std::ffi::CStr> {
     if ENABLE_VALIDATION {
         vec![c"VK_LAYER_KHRONOS_validation"]
@@ -4074,7 +4125,7 @@ pub fn format_block_info(format: vk::Format) -> Option<FormatBlockInfo> {
 
 fn create_texture(
     source_file_name: String,
-    input_image: &image::DynamicImage,
+    input_image: RgbaPixels<'_>,
     allocator: &vk_mem::Allocator,
     instance: &ash::Instance,
     device: &ash::Device,
@@ -4117,7 +4168,7 @@ fn create_texture(
 }
 
 fn create_texture_image(
-    image: &image::DynamicImage,
+    image: RgbaPixels<'_>,
     allocator: &vk_mem::Allocator,
     instance: &ash::Instance,
     device: &ash::Device,
@@ -4126,11 +4177,8 @@ fn create_texture_image(
     graphics_queue: vk::Queue,
     options: TextureOptions,
 ) -> Result<(vk::Image, vk_mem::Allocation, u32), anyhow::Error> {
-    let bytes = image.to_rgba8().into_raw();
-    debug_assert!(
-        bytes.len() == (image.width() * image.height() * 4) as usize,
-        "expected rgba bytes size"
-    );
+    // RgbaPixels::new already checked this against the dimensions
+    let bytes = image.bytes();
 
     let format = texture_format(options.color_space);
 
@@ -4148,7 +4196,7 @@ fn create_texture_image(
         BufferMemory::Staging,
     )?;
 
-    unsafe { write_to_gpu_buffer(allocator, &mut staging_buffer_memory, &bytes)? };
+    unsafe { write_to_gpu_buffer(allocator, &mut staging_buffer_memory, bytes)? };
 
     let extent = vk::Extent2D::default()
         .width(image.width())

@@ -11,10 +11,20 @@ _default:
     @ just --list --unsorted
 
 # export the aseprite files as one sprite sheet
+#
+# NOTE `&& textures` is just's deferred dependency: the encode runs after the
+# sheet it reads has been rewritten.
 [unix]
-sprites:
+sprites: && textures
     cd textures/space_invaders && aseprite --batch *.aseprite \
         --sheet sprite_sheet.png \
         --data sprite_sheet.json \
         --filename-format "{title} {frame}" \
         --format json-array
+
+# encode the sprite sheet losslessly, single level (see serenity_crt/justfile)
+[unix]
+textures:
+    ctt textures/space_invaders/sprite_sheet.png \
+        -o textures/space_invaders/sprite_sheet.ktx2 \
+        -f rgba8unorm --zstd=19

@@ -26,7 +26,7 @@ use anyhow::Context;
 use facet::Facet;
 use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
-use image::{DynamicImage, ImageReader, Rgba, RgbaImage};
+use image::ImageReader;
 
 use mltrs::editor::{Checkbox, IntSlider, Label, RGBPicker, Slider};
 use mltrs::game::Game;
@@ -36,8 +36,8 @@ use mltrs::game::Game;
 use gx::model_manifest::{self as mm, Batch, Manifest, MaterialEntry, TextureEntry};
 use mltrs::renderer::{
     BlendMode, CullMode, DepthCompare, DrawError, DrawIndexed, FrameRenderer, MeshHandle,
-    PipelineHandle, RasterState, Renderer, TextureColorSpace, TextureFilter, TextureHandle,
-    TextureOptions, TextureWrap, UniformBufferHandle,
+    PipelineHandle, RasterState, Renderer, RgbaPixels, TextureColorSpace, TextureFilter,
+    TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -647,15 +647,16 @@ fn load_textures(
             textures.push(None);
             continue;
         }
-        // entry.file is manifest-relative, and the per-entry context beats
-        // util::load_image's generic error message here
+        // entry.file is manifest-relative, and the per-entry context beats a
+        // generic decode error here
         let image = ImageReader::open(dir.join(&entry.file))
             .with_context(|| format!("opening texture {}", entry.file))?
             .decode()
-            .with_context(|| format!("decoding texture {}", entry.file))?;
+            .with_context(|| format!("decoding texture {}", entry.file))?
+            .to_rgba8();
         let handle = renderer.create_texture_with_options(
             entry.file.clone(),
-            &image,
+            RgbaPixels::new(image.width(), image.height(), &image)?,
             texture_options(entry)?,
         )?;
         textures.push(Some(handle));
@@ -1088,11 +1089,9 @@ impl Game for ToonLink {
         let mesh = renderer.create_mesh(&vertices, &indices)?;
 
         let textures = load_textures(renderer, &dir, &manifest)?;
-        let white_square_image =
-            DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([255; 4])));
         let white_square = renderer.create_texture_with_options(
             "toon_link_white_square",
-            &white_square_image,
+            RgbaPixels::new(1, 1, &[255; 4])?,
             TextureOptions {
                 filter: TextureFilter::Linear,
                 wrap_u: TextureWrap::ClampToEdge,
