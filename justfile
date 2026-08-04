@@ -5,9 +5,15 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 # `just toon_link link-verify-p1`. just runs a submodule's recipes with the
 # working directory set to that submodule's dir, which is what their relative
 # paths assume.
+mod depth_texture 'examples/depth_texture'
+mod koch_curve 'examples/koch_curve'
 mod sdf_2d 'examples/sdf_2d'
+mod serenity_crt 'examples/serenity_crt'
 mod space_invaders 'examples/space_invaders'
+mod sprite_batch 'examples/sprite_batch'
+mod suzanne 'examples/suzanne'
 mod toon_link 'examples/toon_link'
+mod viking_room 'examples/viking_room'
 mod watercolor 'examples/watercolor'
 
 
@@ -67,6 +73,18 @@ shaders example="all":
         cargo run -p mltrs-cli -- shaders compile --crate-dir "examples/{{example}}"
     fi
     cargo fmt
+
+# the examples with a `textures` recipe; add new ones here
+texture_examples := "depth_texture koch_curve serenity_crt space_invaders sprite_batch suzanne viking_room"
+
+# re-encode every example's source images to ktx2 (needs `cargo install ctt-cli`)
+[unix]
+textures:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # NOTE the artifacts are committed, so this is only needed after changing a
+    # source image -- it is deliberately not part of `just pre-commit`.
+    for e in {{texture_examples}}; do just "$e" textures; done
 
 # re-seed every example's vendored engine slang modules from the cli's canonical copies
 [unix]

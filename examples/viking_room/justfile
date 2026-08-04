@@ -1,0 +1,17 @@
+# Recipes for the viking_room example, invoked from the repo root as
+# `just viking_room <recipe>` (the root justfile declares this dir as a module).
+#
+# NOTE just runs a submodule's recipes with the working directory set to the
+# submodule's directory, so every path below is relative to
+# examples/viking_room/.
+
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
+# encode the model texture as bc7 with a mip chain (4x less vram than rgba8)
+[unix]
+textures:
+    ctt textures/viking_room.png \
+        -o textures/viking_room.ktx2 \
+        -f bc7 --mipmap --quality very-slow --zstd=19

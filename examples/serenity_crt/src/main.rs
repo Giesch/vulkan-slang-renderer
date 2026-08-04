@@ -12,8 +12,8 @@ use mltrs::renderer::{
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::serenity_crt::*;
+use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
-use mltrs::util::load_image;
 
 fn main() -> Result<(), anyhow::Error> {
     SerenityCRT::run()
@@ -59,10 +59,11 @@ impl Game for SerenityCRT {
     where
         Self: Sized,
     {
-        let image_name = "serenity_crt/castlevania_pixel_art.png";
-        let pixel_art_image = load_image(manifest_path!["textures", image_name])?;
-        let texture =
-            renderer.create_texture(image_name, &pixel_art_image, TextureFilter::Nearest)?;
+        // lossless rgba8 + zstd, single level; regenerate with
+        // `just serenity_crt textures`
+        let image_name = "serenity_crt/castlevania_pixel_art.ktx2";
+        let file_path = manifest_path!["textures", image_name];
+        let texture = load_ktx2_texture(renderer, &file_path, TextureFilter::Nearest)?;
 
         let params_buffer = renderer.create_uniform_buffer::<SerenityCRTParams>()?;
         let resources = Resources {

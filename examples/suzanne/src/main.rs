@@ -86,7 +86,7 @@ impl Game for Suzanne {
     {
         let (vertices, indices) = Self::load_vertices()?;
 
-        // converted from KTX1 with: ktx2ktx2 -f models/suzanne/suzanne{0,1,2}.ktx
+        // regenerate from the committed pngs with: just suzanne textures
         let mut textures = Vec::new();
         for i in 0..3 {
             let file_name = format!("suzanne{i}.ktx2");

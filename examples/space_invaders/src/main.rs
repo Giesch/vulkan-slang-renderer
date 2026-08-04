@@ -8,12 +8,12 @@ use glam::camera::lh::proj::directx;
 use glam::{Vec2, Vec3, Vec4};
 
 use mltrs::game::*;
+use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, RasterState, Renderer,
     StorageBufferHandle, TextureFilter, TextureHandle, UniformBufferHandle,
 };
-use mltrs::util::load_image;
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::space_invaders::*;
@@ -159,7 +159,9 @@ impl Game for SpaceInvaders {
         let debug_boxes_buffer = renderer.create_storage_buffer::<DebugBox>(MAX_DEBUG_BOXES)?;
         let sprites_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
 
-        let sprite_sheet_texture = load_texture(renderer, "sprite_sheet.png")?;
+        // lossless rgba8 + zstd, single level; regenerate with
+        // `just space_invaders textures` (or `sprites`, which chains into it)
+        let sprite_sheet_texture = load_texture(renderer, "sprite_sheet.ktx2")?;
 
         let resources = Resources {
             sprite_sheet: &sprite_sheet_texture,
@@ -626,11 +628,9 @@ fn flag_enabled(sprite: &Sprite, flag: u32) -> bool {
 
 fn load_texture(renderer: &mut Renderer, file_name: &str) -> anyhow::Result<TextureHandle> {
     let asset_name = format!("space_invaders/{file_name}");
-    let image = load_image(manifest_path!["textures", asset_name.as_str()])?;
+    let file_path = manifest_path!["textures", asset_name.as_str()];
 
-    let texture = renderer.create_texture(asset_name, &image, TextureFilter::Nearest)?;
-
-    Ok(texture)
+    load_ktx2_texture(renderer, &file_path, TextureFilter::Nearest)
 }
 
 // Aseprite integration

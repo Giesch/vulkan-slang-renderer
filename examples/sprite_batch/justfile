@@ -1,0 +1,18 @@
+# Recipes for the sprite_batch example, invoked from the repo root as
+# `just sprite_batch <recipe>` (the root justfile declares this dir as a
+# module).
+#
+# NOTE just runs a submodule's recipes with the working directory set to the
+# submodule's directory, so every path below is relative to
+# examples/sprite_batch/.
+
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
+# encode the sprite atlas losslessly, single level (see serenity_crt/justfile)
+[unix]
+textures:
+    ctt textures/ravioli_atlas.bmp \
+        -o textures/ravioli_atlas.ktx2 \
+        -f rgba8unorm --zstd=19

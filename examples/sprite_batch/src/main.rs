@@ -19,12 +19,12 @@ use sdl3::sys::everything::{SDL_rand, SDL_randf, SDL_srand};
 
 use mltrs::editor::Label;
 use mltrs::game::{Game, MaxMSAASamples};
+use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, RasterState,
     Renderer, TextureFilter, UniformBufferHandle,
 };
-use mltrs::util::load_image;
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::sprite_batch::*;
@@ -78,9 +78,11 @@ impl Game for SpriteBatch {
         let params_buffer = renderer.create_uniform_buffer::<SpriteBatchParams>()?;
         let sprites_buffer = renderer.create_immutable_buffer::<Sprite>(sprites.len() as u32)?;
 
-        let image_file_name = "ravioli_atlas.bmp";
-        let image = load_image(manifest_path!["textures", image_file_name])?;
-        let texture = renderer.create_texture(image_file_name, &image, TextureFilter::Nearest)?;
+        // lossless rgba8 + zstd, single level; regenerate with
+        // `just sprite_batch textures`
+        let image_file_name = "ravioli_atlas.ktx2";
+        let file_path = manifest_path!["textures", image_file_name];
+        let texture = load_ktx2_texture(renderer, &file_path, TextureFilter::Nearest)?;
 
         let resources = Resources {
             params_buffer: &params_buffer,
