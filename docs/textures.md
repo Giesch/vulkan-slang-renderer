@@ -7,7 +7,7 @@ and committed next to the source image it came from.
 ```bash
 cargo install ctt-cli    # one-time; only needed to *change* an asset
 just textures            # re-encode every example's images
-just textures EXAMPLE    # re-encode one example's
+just EXAMPLE textures    # re-encode one example's
 ```
 
 Nothing in `cargo build` or `cargo run` needs `ctt` — the `.ktx2` is committed, the
@@ -51,7 +51,7 @@ anisotropy off instead of a LOD clamp pointing at a level that isn't there.
    `serenity_crt`/`sprite_batch`/`space_invaders`.
 3. **Add the example to `texture_examples` in the root justfile**, or `just textures`
    with no argument will skip it.
-4. `just textures EXAMPLE`.
+4. `just EXAMPLE textures`.
 5. Load it with `mltrs::ktx::load_ktx2_texture(renderer, &file_path, filter)`.
 6. Commit **both** the source and the `.ktx2`.
 

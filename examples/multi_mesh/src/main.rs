@@ -499,13 +499,10 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
 
 const TEXTURE_SIZE: u32 = 8;
 
-/// Wraps what `solid_image`/`checker_image` return for upload.
 fn pixels(bytes: &[u8]) -> anyhow::Result<RgbaPixels<'_>> {
     RgbaPixels::new(TEXTURE_SIZE, TEXTURE_SIZE, bytes)
 }
 
-/// Rgba8 bytes for a TEXTURE_SIZE square. Small enough to write out by hand,
-/// which is why this example needs no image decoder.
 fn solid_image(r: u8, g: u8, b: u8) -> Vec<u8> {
     [r, g, b, 255].repeat((TEXTURE_SIZE * TEXTURE_SIZE) as usize)
 }

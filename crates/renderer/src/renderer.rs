@@ -2827,14 +2827,8 @@ impl Default for TextureOptions {
     }
 }
 
-/// Borrowed RGBA8 texel data: four bytes per texel, rows top to bottom, no
-/// padding.
-///
-/// This is all the upload path needs, so it is what the texture entry points
-/// take. Decoding a file, or converting from some other channel layout, is the
-/// caller's job -- it happens where the source format is actually known, and
-/// the bytes are read straight out of the caller's buffer rather than copied
-/// into an intermediate first.
+/// Borrowed RGBA8 texel data
+/// four bytes per texel, rows top to bottom, no padding
 #[derive(Debug, Clone, Copy)]
 pub struct RgbaPixels<'a> {
     width: u32,
@@ -2843,8 +2837,6 @@ pub struct RgbaPixels<'a> {
 }
 
 impl<'a> RgbaPixels<'a> {
-    /// Fails unless `bytes` is exactly `width * height * 4` long and both
-    /// dimensions are non-zero.
     pub fn new(width: u32, height: u32, bytes: &'a [u8]) -> anyhow::Result<Self> {
         anyhow::ensure!(
             width > 0 && height > 0,
