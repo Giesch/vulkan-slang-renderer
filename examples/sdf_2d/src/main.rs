@@ -2,6 +2,7 @@ use std::time::Instant;
 
 mod generated;
 
+use mltrs::env_config::EnvConfig;
 use mltrs::game::*;
 use mltrs::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
@@ -47,6 +48,11 @@ struct SDF2D {
 /// Opens the default output device and starts the track. Fails when there is no
 /// audio device at all, which [`SDF2D::setup`] treats as non-fatal.
 fn start_audio() -> anyhow::Result<(MixerDeviceSink, rodio::Player)> {
+    let config = EnvConfig::from_env();
+    if config.headless_sweep {
+        anyhow::bail!("headless sweep");
+    }
+
     let mut device_sink = rodio::DeviceSinkBuilder::open_default_sink()?;
     device_sink.log_on_drop(false);
     let mixer = device_sink.mixer();

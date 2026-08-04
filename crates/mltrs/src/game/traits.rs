@@ -86,7 +86,7 @@ pub trait Game {
         // A sweep of a build with validation compiled out passes everything it
         // is looking for, which is worse than not running: fail before the
         // window exists rather than report a vacuous success.
-        if env.sweep && !crate::renderer::ENABLE_VALIDATION {
+        if env.headless_sweep && !crate::renderer::ENABLE_VALIDATION {
             eprintln!(
                 "VKR_SWEEP is set, but ENABLE_VALIDATION is false. \
                  It is cfg!(debug_assertions), so this is a release build \
@@ -151,7 +151,7 @@ pub trait Game {
 
         // An example that exits cleanly without drawing anything is a pass by
         // every other measure, and covers none of what the sweep is checking.
-        if env.sweep && stats.frames == 0 {
+        if env.headless_sweep && stats.frames == 0 {
             eprintln!("VKR_SWEEP is set, but the run ended without presenting a frame.");
             std::process::exit(exit_code::NO_FRAMES);
         }

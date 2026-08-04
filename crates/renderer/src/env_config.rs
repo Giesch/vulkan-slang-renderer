@@ -21,7 +21,7 @@ pub struct EnvConfig {
     /// Turns on startup and exit checks that are right for an automated sweep
     /// and wrong for an interactive run: a person closing a window after zero
     /// frames is not an error, but an example doing it under the sweep is.
-    pub sweep: bool,
+    pub headless_sweep: bool,
 
     /// `VKR_INJECT_VALIDATION_FAULT=1` — record a deliberately invalid viewport.
     ///
@@ -47,7 +47,7 @@ pub struct EnvConfig {
 impl EnvConfig {
     pub fn from_env() -> Self {
         Self {
-            sweep: flag("VKR_SWEEP"),
+            headless_sweep: flag("VKR_SWEEP"),
             inject_validation_fault: flag("VKR_INJECT_VALIDATION_FAULT"),
             prefer_integrated_gpu: optional_flag("VKR_PREFER_INTEGRATED"),
             rust_log: std::env::var("RUST_LOG").ok(),
