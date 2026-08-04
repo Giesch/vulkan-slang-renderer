@@ -25,13 +25,12 @@ use std::time::Instant;
 
 use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
-use image::{DynamicImage, Rgba, RgbaImage};
 
 use mltrs::game::Game;
 use mltrs::renderer::{
     BlendMode, CullMode, DrawError, DrawIndexed, FrameRenderer, MeshHandle, PipelineHandle,
-    RasterState, Renderer, TextureColorSpace, TextureFilter, TextureHandle, TextureOptions,
-    TextureWrap, UniformBufferHandle,
+    RasterState, Renderer, RgbaPixels, TextureColorSpace, TextureFilter, TextureHandle,
+    TextureOptions, TextureWrap, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -444,8 +443,11 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
         ..Default::default()
     };
 
-    let mut textures =
-        vec![renderer.create_texture_with_options("white", &white, TextureOptions::default())?];
+    let mut textures = vec![renderer.create_texture_with_options(
+        "white",
+        pixels(&white)?,
+        TextureOptions::default(),
+    )?];
 
     for (name, wrap, filter) in [
         (
@@ -471,7 +473,7 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
     ] {
         textures.push(renderer.create_texture_with_options(
             name,
-            &checker,
+            pixels(&checker)?,
             unmipped(wrap, filter),
         )?);
     }
@@ -483,7 +485,7 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
     ] {
         textures.push(renderer.create_texture_with_options(
             name,
-            &gray,
+            pixels(&gray)?,
             TextureOptions {
                 mipmaps: false,
                 color_space,
@@ -497,26 +499,32 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
 
 const TEXTURE_SIZE: u32 = 8;
 
-fn solid_image(r: u8, g: u8, b: u8) -> DynamicImage {
-    DynamicImage::ImageRgba8(RgbaImage::from_pixel(
-        TEXTURE_SIZE,
-        TEXTURE_SIZE,
-        Rgba([r, g, b, 255]),
-    ))
+/// Wraps what `solid_image`/`checker_image` return for upload.
+fn pixels(bytes: &[u8]) -> anyhow::Result<RgbaPixels<'_>> {
+    RgbaPixels::new(TEXTURE_SIZE, TEXTURE_SIZE, bytes)
 }
 
-fn checker_image() -> DynamicImage {
+/// Rgba8 bytes for a TEXTURE_SIZE square. Small enough to write out by hand,
+/// which is why this example needs no image decoder.
+fn solid_image(r: u8, g: u8, b: u8) -> Vec<u8> {
+    [r, g, b, 255].repeat((TEXTURE_SIZE * TEXTURE_SIZE) as usize)
+}
+
+fn checker_image() -> Vec<u8> {
     const CELL: u32 = TEXTURE_SIZE / 2;
 
-    let image = RgbaImage::from_fn(TEXTURE_SIZE, TEXTURE_SIZE, |x, y| {
-        if (x / CELL + y / CELL).is_multiple_of(2) {
-            Rgba([245, 245, 245, 255])
-        } else {
-            Rgba([20, 20, 60, 255])
+    let mut bytes = Vec::with_capacity((TEXTURE_SIZE * TEXTURE_SIZE * 4) as usize);
+    for y in 0..TEXTURE_SIZE {
+        for x in 0..TEXTURE_SIZE {
+            bytes.extend_from_slice(if (x / CELL + y / CELL).is_multiple_of(2) {
+                &[245, 245, 245, 255]
+            } else {
+                &[20, 20, 60, 255]
+            });
         }
-    });
+    }
 
-    DynamicImage::ImageRgba8(image)
+    bytes
 }
 
 // --- camera and placement ---
