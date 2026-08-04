@@ -1843,8 +1843,8 @@ dependencies = [
 
 [[package]]
 name = "shader-slang"
-version = "0.1.0"
-source = "git+https://github.com/Giesch/slang-rs.git?tag=v0.1.0%2Bslang-2026.13.1#74652651e4b06748206b2691bc052bcf0fed8e2c"
+version = "0.1.1"
+source = "git+https://github.com/Giesch/slang-rs.git?tag=v0.1.1%2Bslang-2026.13.1#c4d2c45f0d55a1cea2c63322fada4a38681a8bbf"
 dependencies = [
  "shader-slang-sys",
 ]
@@ -1852,7 +1852,7 @@ dependencies = [
 [[package]]
 name = "shader-slang-sys"
 version = "0.1.0"
-source = "git+https://github.com/Giesch/slang-rs.git?tag=v0.1.0%2Bslang-2026.13.1#74652651e4b06748206b2691bc052bcf0fed8e2c"
+source = "git+https://github.com/Giesch/slang-rs.git?tag=v0.1.1%2Bslang-2026.13.1#c4d2c45f0d55a1cea2c63322fada4a38681a8bbf"
 dependencies = [
  "link-cplusplus",
  "lzma-rs",

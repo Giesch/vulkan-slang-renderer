@@ -1,8 +1,16 @@
 #+title: Todo
 
 * Possible Next Directions
-- [ ] Bindless Textures
+- [-] Bindless Textures
   https://discord.com/channels/1303735196696445038/1427662446579024013/1427662446579024013
+  - [X] make a plan
+  - [X] updates to slang-rs
+    - [X] expose the needed compiler option
+      bindless_space_index, in v0.1.1+slang-2026.13.1
+    - [X] other bugfixes/maintainence changes
+  - [ ] try out a small example
+  - [ ] migrate other examples
+
 - [ ] Make a Quaternion / Rotor demo/explanation
   https://eater.net/quaternions
 - [ ] Draw API improvements
@@ -250,8 +258,10 @@
 - [ ] look for opportunities to refactor (and split up) renderer.rs and build_tasks.rs
   - find chunks that could be modules and/or opaque types
 
-- [ ] Slang-rs fixes/improvements
-  - [ ] handle shape mask & bitflags correctly
+- [X] Slang-rs fixes/improvements
+  - [X] handle shape mask & bitflags correctly
+    ResourceShape/BindingType are bitfield newtypes with base() decoders
+    as of v0.1.1+slang-2026.13.1; the transmute workaround is gone
 
 - [X] see if statically linking slang is viable
   there's a cmake flag for it, but there are other dependencies involved
@@ -473,7 +483,9 @@
 - [X] add a powershell script that loads .env file
 
 - [ ] look into splitting texture/image and texture sampler config/states
-  this can avoid creating a lot of duplicate samplers
+  this can avoid creating a lot of duplicate samplers?
+  maybe combined is better for MacOS support?
+
 
 
 * Roc Questions

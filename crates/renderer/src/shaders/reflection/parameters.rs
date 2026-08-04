@@ -284,11 +284,10 @@ fn reflect_struct_fields(
             }
 
             slang::TypeKind::Resource => {
-                let shape_with_flags = field_type_layout.resource_shape().unwrap();
-                let slang_base_shape = slang_base_shape(shape_with_flags);
+                let shape = field_type_layout.resource_shape().unwrap();
 
-                let resource_shape = match slang_base_shape {
-                    slang::ResourceShape::SlangTexture2d => {
+                let resource_shape = match shape.base() {
+                    slang::BaseShape::Texture2D => {
                         let access = field_type_layout.resource_access();
                         if access == Some(slang::ResourceAccess::ReadWrite) {
                             ResourceShape::RWTexture2D
@@ -296,7 +295,7 @@ fn reflect_struct_fields(
                             ResourceShape::Texture2D
                         }
                     }
-                    slang::ResourceShape::SlangStructuredBuffer => anyhow::bail!(
+                    slang::BaseShape::StructuredBuffer => anyhow::bail!(
                         "field '{field_name}': StructuredBuffer/RWStructuredBuffer descriptors \
                         are unsupported; use a BDA pointer instead (e.g. mltrs::Addr<T> via \
                         import mltrs, or LayoutPtr<T, Std430DataLayout>)"
@@ -478,15 +477,6 @@ fn reflect_struct_fields(
     }
 
     Ok(fields)
-}
-
-fn slang_base_shape(shape_with_flags: slang::ResourceShape) -> slang::ResourceShape {
-    // this is reproducing the way the base shape mask is used here:
-    // https://github.com/shader-slang/slang/blob/9f9d28c1f496132dc71b80252b0eeddfa28cc8bc/source/slang/slang-reflection-json.cpp#L470
-    // FIXME update slang-rs to make this unnecessary
-    let base_shape =
-        shape_with_flags as u32 & slang::ResourceShape::SlangResourceBaseShapeMask as u32;
-    unsafe { std::mem::transmute(base_shape) }
 }
 
 /// Only 16-byte vector elements (float4/int4/uint4) have stride == size in

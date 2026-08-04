@@ -80,40 +80,35 @@ impl PipelineLayoutBuilder {
             type_layout.sub_object_range_binding_range_index(sub_object_range_index);
         let binding_type = type_layout.binding_range_type(binding_range_index);
 
-        match binding_type {
-            slang::BindingType::ParameterBlock => {
+        match binding_type.base() {
+            slang::BaseBindingType::ParameterBlock => {
                 let parameter_block_type_layout = type_layout
                     .binding_range_leaf_type_layout(binding_range_index)
                     .unwrap();
                 self.add_descriptor_set_for_parameter_block(parameter_block_type_layout);
             }
 
-            slang::BindingType::PushConstant => {
+            slang::BaseBindingType::PushConstant => {
                 let constant_buffer_type_layout = type_layout
                     .binding_range_leaf_type_layout(binding_range_index)
                     .unwrap();
                 self.add_push_constatant_range_for_constant_buffer(constant_buffer_type_layout);
             }
 
-            // slang::BindingType::Unknown => todo!(),
-            // slang::BindingType::Sampler => todo!(),
-            // slang::BindingType::Texture => todo!(),
-            // slang::BindingType::ConstantBuffer => todo!(),
-            // slang::BindingType::TypedBuffer => todo!(),
-            // slang::BindingType::RawBuffer => todo!(),
-            // slang::BindingType::CombinedTextureSampler => todo!(),
-            // slang::BindingType::InputRenderTarget => todo!(),
-            // slang::BindingType::InlineUniformData => todo!(),
-            // slang::BindingType::RayTracingAccelerationStructure => todo!(),
-            // slang::BindingType::VaryingInput => todo!(),
-            // slang::BindingType::VaryingOutput => todo!(),
-            // slang::BindingType::ExistentialValue => todo!(),
-            // slang::BindingType::MutableFlag => todo!(),
-            // slang::BindingType::MutableTeture => todo!(),
-            // slang::BindingType::MutableTypedBuffer => todo!(),
-            // slang::BindingType::MutableRawBuffer => todo!(),
-            // slang::BindingType::BaseMask => todo!(),
-            // slang::BindingType::ExtMask => todo!(),
+            // slang::BaseBindingType::Unknown => todo!(),
+            // slang::BaseBindingType::Sampler => todo!(),
+            // slang::BaseBindingType::Texture => todo!(),
+            // slang::BaseBindingType::ConstantBuffer => todo!(),
+            // slang::BaseBindingType::TypedBuffer => todo!(),
+            // slang::BaseBindingType::RawBuffer => todo!(),
+            // slang::BaseBindingType::CombinedTextureSampler => todo!(),
+            // slang::BaseBindingType::InputRenderTarget => todo!(),
+            // slang::BaseBindingType::InlineUniformData => todo!(),
+            // slang::BaseBindingType::RayTracingAccelerationStructure => todo!(),
+            // slang::BaseBindingType::VaryingInput => todo!(),
+            // slang::BaseBindingType::VaryingOutput => todo!(),
+            // slang::BaseBindingType::ExistentialValue => todo!(),
+            // slang::BaseBindingType::Unrecognized(_) => todo!(),
             _ => {}
         }
     }
@@ -233,7 +228,7 @@ impl DescriptorSetLayoutBuilder {
     ) {
         let binding_type =
             type_layout.descriptor_set_descriptor_range_type(relative_set_index, range_index);
-        if binding_type == slang::BindingType::PushConstant {
+        if binding_type.base() == slang::BaseBindingType::PushConstant {
             // this is accounted for in add_sub_object_range
             return;
         }
@@ -319,34 +314,35 @@ impl ReflectedStageFlags {
 impl ReflectedBindingType {
     // cpp mapSlangBindingTypeToVulkanDescriptorType
     pub fn from_slang(binding_type: slang::BindingType) -> Self {
-        match binding_type {
-            slang::BindingType::Sampler => Self::Sampler,
-            slang::BindingType::Texture => Self::Texture,
-            slang::BindingType::ConstantBuffer => Self::ConstantBuffer,
-            slang::BindingType::CombinedTextureSampler => Self::CombinedTextureSampler,
+        let mutable = binding_type.is_mutable();
+
+        match binding_type.base() {
+            slang::BaseBindingType::Sampler => Self::Sampler,
+            slang::BaseBindingType::Texture if mutable => Self::StorageImage,
+            slang::BaseBindingType::Texture => Self::Texture,
+            slang::BaseBindingType::ConstantBuffer => Self::ConstantBuffer,
+            slang::BaseBindingType::CombinedTextureSampler => Self::CombinedTextureSampler,
             // unreachable in practice: parameters reflection rejects structured
             // buffers first with a friendlier, field-specific error
-            slang::BindingType::RawBuffer | slang::BindingType::MutableRawBuffer => panic!(
+            slang::BaseBindingType::RawBuffer => panic!(
                 "StructuredBuffer descriptors are unsupported; \
                 use a BDA pointer (LayoutPtr<T, Std430DataLayout>) instead"
             ),
 
-            slang::BindingType::PushConstant => todo!(),
-            slang::BindingType::ParameterBlock => todo!(),
+            slang::BaseBindingType::PushConstant => todo!(),
+            slang::BaseBindingType::ParameterBlock => todo!(),
 
-            slang::BindingType::VaryingInput => todo!(),
-            slang::BindingType::VaryingOutput => todo!(),
-            slang::BindingType::TypedBuffer => todo!(),
-            slang::BindingType::InputRenderTarget => todo!(),
-            slang::BindingType::InlineUniformData => todo!(),
-            slang::BindingType::RayTracingAccelerationStructure => todo!(),
-            slang::BindingType::ExistentialValue => todo!(),
-            slang::BindingType::MutableFlag => todo!(),
-            slang::BindingType::MutableTeture => Self::StorageImage,
-            slang::BindingType::MutableTypedBuffer => todo!(),
-            slang::BindingType::BaseMask => todo!(),
-            slang::BindingType::ExtMask => todo!(),
-            slang::BindingType::Unknown => todo!(),
+            slang::BaseBindingType::VaryingInput => todo!(),
+            slang::BaseBindingType::VaryingOutput => todo!(),
+            slang::BaseBindingType::TypedBuffer => todo!(),
+            slang::BaseBindingType::InputRenderTarget => todo!(),
+            slang::BaseBindingType::InlineUniformData => todo!(),
+            slang::BaseBindingType::RayTracingAccelerationStructure => todo!(),
+            slang::BaseBindingType::ExistentialValue => todo!(),
+            slang::BaseBindingType::Unknown => todo!(),
+            slang::BaseBindingType::Unrecognized(bits) => {
+                todo!("unrecognized slang binding type: {bits:#x}")
+            }
         }
     }
 }
