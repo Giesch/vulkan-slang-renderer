@@ -1,9 +1,28 @@
 #+title: Todo
 
+* Possible Next Directions
+- [ ] Bindless Textures
+  https://discord.com/channels/1303735196696445038/1427662446579024013/1427662446579024013
+- [ ] Make a Quaternion / Rotor demo/explanation
+  https://eater.net/quaternions
+- [ ] Draw API improvements
+  - [ ] automatic compute barriers
+  - [ ] require all draw params at once per pipeline
+    is it valid to not use or swap a pipeline?
+    maybe require an explicit PipelineSet or something?
+- [ ] Roc Platform
+  - [ ] get minimal window example
+  - [ ] get shader codegen working
+- [ ] PBR Renderer
+- [ ] WebGPU shader codegen pipeline
+- [ ] work through the vulkan renderer book?
+  this addresses PBR
+- [ ] replace ReflectionJson::layout_bindings with directly inlining data
+  ie, avoid parsing json at startup
+
 * Now
-- [ ] get a static build of slang-rs working and use it here
+- [X] get a static build of slang-rs working and use it here
   this will make it possible to stop caring about slang-rhi's build
-- [ ] look into the non-png image formats mason recommended
 
 - [-] problems/issues for side-agent PRs
   - [X] triple-buffering problems
@@ -58,7 +77,7 @@
     then see if the full API change is necessary
 
   - [ ] make it impossible to forget to write a required field
-  - [ ] allow both memcpy and encase writer patterns
+  - [ ] allow both memcpy and encase writer patterns?
   - [ ] come up with a way to not need sort_storage_by
   - [ ] change gpu_only naming to something about compute / ping-pong
     mention that they're GPU-only in a doc comment
@@ -84,8 +103,7 @@
 - [ ] change the api of Game::setup to get a restricted SetupRenderer
   a wrapper similar to FrameRenderer; but it exposes only the methods used during setup
 
-
-- [ ] add a wind waker style demo
+- [X] add a wind waker style demo
   - multi-draw materials?
     do we actually need multi-draw yet for this
   - cel shading
@@ -109,13 +127,6 @@
   either for picking or in general (eg. for sound effects)
   this could be based on atomics like the queue used by nanite for graph traversal
 
-- [ ] re-enable build_tasks unit tests on windows
-  #+begin_src rust
-  // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
-  #+end_src
-  this applies to all the cfg(not(windows)) tests in build_tasks,
-  and the insta justfile recipe(s)
-
 - [ ] get a more principled slang parsing setup
   - [ ] avoid the direct 'starts_with' stuff in build_tasks
   - [ ] see if there's a better slang compiler api to be using
@@ -126,33 +137,39 @@
 
 - [ ] get a better understanding of srgb vs unorm color spaces
 
-- [ ] migrate all examples to use the newer renderer apis and delete the dead ones
-  after getting to render graph?
-
 * Next
+- [ ] look into converting textures to ktx2, and removing the image crate
+  https://gamesbymason.com/blog/2025/stop-shipping-pngs/
+
 - [ ] check if the different drop helpers for buffers are used/needed
 
 - [ ] re-confirm the build on windows
   - [ ] run the examples
   - [ ] make sure the slang build still works
   - [ ] get the unit tests working
+    in build_tasks especially
+    #+begin_src rust
+    // the tmp_path.strip_prefix() is broken for windows' '\\?\' extended paths
+    #+end_src
+    this applies to all the cfg(not(windows)) tests in build_tasks,
+    and the insta justfile recipe(s)
+- [ ] fix `just shaders` on windows
+  - [ ] sort struct fields consistently
+  - [ ] find out why spv is different
+- [ ] investigate large slang binary size on windows
+  probably debug symbols being included?
 
 - [ ] reconsider FLAME GPU-based render graph
-  - pipelined compute was removed 2026-07-28 for want of a measurable win.
-    if cross-frame simulation/rendering overlap is wanted again, first measure
-    what it actually buys, then build it in the graph rather than as a
-    renderer-wide mode
+  - pipelined compute removed 2026-07-28
   - look for a potentially nicer way using BDAs and a slang helper module
   - find a way to incoprorate gpu picking into this way of doing things
 
-- [ ] investigate whether static slang build includes spirv-opt or not
-  ie, does a build of this renderer still depend on dynamic linking glslang?
-    can we fully replace its use of opt with our own to get a static build,
-    without upstream changes?
+- [X] investigate whether static slang build includes spirv-opt or not
 
-- [X] profile startup
-  find the source of the black screen (and duration)
-  maybe do more work before opening the window
+- [-] profile startup
+  - [X] find the source of the black screen (and duration)
+    do more work before opening the window
+  - [ ] find why watercolor is still slow to start
 
 - [ ] fix codegen edge cases
   - [ ] StructuredBuffer<float4> generated as StorageBufferHandle<Vec<f32>>
@@ -163,16 +180,14 @@
   - [ ] edge darkening
     the current problem seems to be that we have no divergence at the edges of the wet mask
         while in Curtis they deliberately allow/add some
+        need to let pressure/water leave instead of just gathering?
   - [ ] try out other paper textures
     particularly the gridlike ones from figure 4
 
 - [ ] text support with MSDF fonts
   - read all the red blob games stuff
 
-- [ ] Roc scripting
-  - [ ] make an example that's a roc platform, based on the rust template
-
-- [ ] add a way for claude to check for vulkan validation errors
+- [X] add a way for claude to check for vulkan validation errors
   - panic on validation error, based on an environment variable?
   - set up a just command that runs an exammple with this env var
   - add instructions about this just command to CLAUDE.md
@@ -185,59 +200,39 @@
     two things do break drop, and the sweep owns both: SIGKILL, and
     SDL_NO_SIGNAL_HANDLERS=1.
 
-- [-] frame rate improvements on sprite batch example
+- [X] frame rate improvements on sprite batch example
+  it was mailbox present mode not being used
   - [X] fence wating at frame start
   - [X] make msaa samples configurable
     ie don't always take the max; pixel art doesn't even want it
-  - [ ] host coherent vs host cached storage buffers?
-  - [ ] figure out why the window size matters
-
-- [-] try using encase for std140/430 formatting
-  is it possible to preserve the 'just one memcpy' aspect?
-- [X] look into frame-rate counter for sprite batch example
-  - is it accurate? the framerate seems hitchy
 
 - [ ] slang has experimental rich diagnostics for the compiler api
   with line numbers!
   how can we use this for showing slang compiler errors in the view?
   need text first
 
-- [ ] use super-sampling for ray-marching example?
+- [X] use super-sampling for ray-marching example?
   is there a way to share the implementation?
   would we need lambdas for colorForPixel?
- 
-- [ ] learn about quaternions, euler angle camera rotation
-  - [ ] watch 3b1b visualization/interactive
-    https://eater.net/quaternions
-  - [ ] maybe recreate it as an example?
 
-- [ ] go through vulkan 1.3 tutorial
+- [X] go through vulkan 1.3 tutorial
 
 - [-] get a spinning dragon curve example
   prepare to live code that? and/or basic raymarching
   - [-] animate a dragon curve growing from a square/line
     - [X] 2D dragon curve
     - [X] factor out a module for the 2D dragon curve
-    - [ ] factor out a module for ray marching
-    - [ ] draw a slice of a 3D dragon curve
-    - [ ] try unioning it with rotations
-    - [ ] try spinning it
+    - [X] factor out a module for ray marching
+    - [-] draw a slice of a 3D dragon curve
+      do julia set instead; this way was bad
 
   - rotate the full curve
   - gradually increase the parameter to grow from a sphere?
 
-- [ ] make an sdl rust pr to add window.start/stop_text_input()
-
-- [ ] get back to using a vendored version of slang
-  - [ ] find some way to ensure not accidentally using vulkan sdk
-    try static linking again?
-- [ ] look into slang prs
-  - add rich error info? file, line number, marked up source
-  - reflection on non-entrypoint modules?
-
 - [ ] egui editor improvements
   - [ ] switch from facet to a 'wrapper' trait with a blanket impl for facet derives
   - [ ] come up with a plan for implementing that trait from scripting lang
+    for Roc, can abuse encoder/decoder api for reflection
   - [ ] egui editor undo stack?
   - [ ] make it possible to have a 'save' button in egui
     - separate trait for that? include loading api
@@ -245,59 +240,21 @@
       what would be nicer from roc/ts? direct imgui api?
     - properties api? like a godot scene, but focused on settings
 
-- [ ] add a way to test for vulkan validation errors
-  claude has already started tailing the logs...
-  - [ ] at a minimum, run basic triangle for x seconds
-  - [ ] ideally, record inputs for all example games and run the recorded inputs
 
-- [ ] use facet for generating 430/140 stuff?
-  stepping stone to supporting scripting languages / roc encode?
-  - [ ] rename the 140/430 structs to have 'uniform' or 'storage' in their names
-  - [ ] generate 'packed' versions of 140/430 structs
-    maybe name them 'packed', maybe the packed version gets the bare name
-
-- [ ] is it possible to develop this in a sprite?
-  ie, would the vulkan stuff even compile
-
-
-
-- [ ] allow multiple draw calls per frame
+- [X] allow multiple draw calls per frame
   split debug boxes in space invaders to a separate draw call?
 
 - [ ] update generated code to not include_str in dev profile?
-
-- [ ] move inverting matrices back to the CPU
-  maybe in the new std140 / std430 methods?
-
-- [ ] vulkan validation layer setup and tests
-  - [ ] enable the validation layers with env var instead of with code
-  - [ ] have another config option / env var for 'panic on validation error'
-    or on warning;
-  - [ ] set up automated tests that use the panic env var to check examples for validation errors
-  - [ ] another env var for writing logs to a file?
+  why?
 
 - [ ] look for opportunities to refactor (and split up) renderer.rs and build_tasks.rs
   - find chunks that could be modules and/or opaque types
 
-- [ ] is there a nice way to prevent uninitialized shader bindings?
-  - require an initial value in setup?
-  - change draw methods to require resource updates?
-    this would make code-gen more complicated
-
-- [ ] Slang-rs PRs
+- [ ] Slang-rs fixes/improvements
   - [ ] handle shape mask & bitflags correctly
-    make the existing enum private, expose new rust wrappers
 
-- [ ] see if statically linking slang is viable
+- [X] see if statically linking slang is viable
   there's a cmake flag for it, but there are other dependencies involved
-
-- [ ] Slang language PRs?
-  - [ ] add module/file name metadata to struct reflection
-    ie, make it possible to get the 'mvp' from a namespaced 'mvp::Matrices' type
-
-- [ ] performance & scale on 4k monitor
-  performance and sprite scale also affected on the smaller monitor?
-  seems like maybe a PopOS thing, maybe 2027 is the year of linux on the desktop
 
 - [-] 2D SDF example
   [[https://danielchasehooper.com/posts/code-animated-rick]]
@@ -327,19 +284,6 @@
   in the blit compute shader in examples/base/utils.h
   where is that defined and how is it used?
 
-- [ ] fix linux perf bug in sprite batch example
-  sprite batch example matches the SDL_gpu framerate on windows,
-  but has a slower framerate on linux for some reason
-  - increasing MAX_FRAMES_IN_FLIGHT makes it faster at first,
-    but then it hits a wall and slows down
-    note (2026-07-28): that knob now also sets the per-frame buffer /
-    descriptor ring length, so raising it costs proportional memory and
-    per-frame CPU writes go further out of date. re-measure before tuning it
-
-- [ ] fix `just shaders` on windows
-  - [ ] sort struct fields consistently
-  - [ ] find out why spv is different
-
 - [ ] simplify basic triangle example
   use an orthographic projection instead of mvp?
 
@@ -360,34 +304,13 @@
     .build();
   #+end_src
 
-- [ ] add docs to Resources fields
-  - explain the different draw call types
-    ie, why vertex_count shows up and that it should be a multiple of 3
-    maybe change it to 'triangle count' and do the mult?
-    or make different topology options available besides triangle list
-
-- [ ] support more parameter types
-  - [ ] write-only storage buffers (StructuredBuffer)
+- [-] support more parameter types
+  - [X] write-only storage buffers (StructuredBuffer)
   - [ ] read-write storage buffers (RWStructuredBuffer)
   - [ ] push constants?
 
-- [ ] revisit ReflectedBindingType::from_slang
-  slang::BindingType::RawBuffer is not only for storage buffers?
-  slang binding type doesn't line up to slang parameter category consistently
-
 - [ ] 3D signed distance fields / Shape Up clone
   - requires read/write storage buffers (for gpu-based object picking)
-
-- [X] sprite batch example from SDL_gpu
-
-- [ ] is align(16) doing the right thing for Vertex?
- or is it doing anything?
-- [ ] do we not have to be doing align(16)?
-  - an extension promoted in 1.2 allows not using 16-byte alignment
-    https://www.reddit.com/r/vulkan/comments/1dlvapz/problems_with_memory_layout_in_storage_buffer/l9t99ba/
-    https://www.reddit.com/r/vulkan/comments/u5jiws/glsl_std140_layout_for_arrays_of_scalars/
-  - see VK_KHR_uniform_buffer_standard_layout and VK_EXT_scalar_block_layout
-- [ ] add tests or static assertions for matching struct layout
 
 - [-] handle slang modules in codegen
  ie, allow a shared MVPMatrices type
@@ -405,40 +328,12 @@
   maybe take an Into<GeneratedGPUType> type of struct for
     gpu.write_uniform()/write_storage()?
 
-- [ ] post a request for SDL_gpu to support later vulkan versions
- do I plan on using that, or continuing with vulkan?
- sticking with vulkan:
-  - bindless textures; buffer device addresses
-  - avoiding std140 layout / weird hlsl constant buffer rules
-    ie use the scalar_block_layout extension
-  using SDL_gpu:
-  - easier mac support
-  - quicker to implement
-  - access to SDL/MoonWorks community support
-
 - [ ] PR to slang docs for pipeline builders example fixes
  see docs_notes.org
   - [ ] ask in discord about skipping nested ParameterBlocks
 
-- [ ] read through shader cursor docs
- https://docs.shader-slang.org/en/latest/shader-cursors.html
- can we do a strongly-typed version of this?
-
-- [ ] go through 'learn opengl' with this renderer
-- [ ] 3D SDF example
- https://www.youtube.com/watch?v=-Xb3Kk3HhIw
-
-- [ ] add assertions/tests that struct fields are laid out correctly
-  - this needs a more complex example, probably with nested structs
-    align(16) solves the problem for the depth texture shader
-  - what's the right way to get the size of a vector or matrix?
-    slang gives us an index and count rather than a size & offset
-    std::mem::size_of::<glam::Vec3>() ?
-    the offset_of! macro?
-    it seems like these would be testing the code against my guess at the layout,
-    rather than against the actual layout
-  - assert on order before writing generated source (leave the game runnable)
-  - unit test this with a 'bad' slang file
+- [ ] go through 'learn opengl' with this renderer?
+  especially the PBR section
 
 - [ ] change ShaderAtlasEntry to allow optional vert/frag entry points
   how does that work with vertex descriptions
@@ -447,7 +342,7 @@
   create_uniform_buffer should only take types declared in uniform   buffers
   storage buffers have a different layout convention
 
-- [ ] handle shaders with different entry points in reflection
+- [X] handle shaders with different entry points in reflection
   ie, only compute, only fragment, etc
 
 - [ ] add cargo feature flags
@@ -455,28 +350,15 @@
   - [ ] shader hot reload for notify & shader_slang
     - [ ] figure out if slang precompile needs to be a workspace crate or something
 - [ ] use a config module or cli params for stuff like COLUMN_MAJOR?
+  does this really need to be toggle-able?
+  would it be better to go all-in on the vulkan way?
 
-- [ ] handle nested ParameterBlocks
+- [ ] handle nested ParameterBlocks?
   - [ ] should add_descriptor_range also skip ParameterBlock like PushConstant?
     if we don't, it changes the binding numbers assigned to the double-wrapped items,
     which seems wrong
     but that actually happens if we early return there as well? is something else wrong?
     also, does slang even support nested ParameterBlocks right now
-
-- [ ] slang reflection codegen
-  - [ ] does create_descriptor_sets overwrite what we want to reflect?
-    ie, with update_descriptor_sets in the loop
-    - still need the texture sampler & image view somehow
-      could get these fields from slang user attributes?
-    - need to hold on to reflected data in shader module, merge with updates?
-    - other resource-related things (ie, the image)
-      will have to be handled by generated rust methods
-  - [ ] handle regenerated binding code in dev mode somehow
-    - just panic for now
-    - later, move compilation to a background thread
-      send a message to rebuild the pipeline
-      need some way to ensure hot reload of the rust/script happens first
-      use hash of input shader source in output dir for dependency tracking?
 
 - [ ] split shader println into its own example
 - [ ] split up depth texture & viking room shaders
@@ -487,82 +369,51 @@
 
 
 * Future
-- [ ] look into fixing slang-rhi flags upstream
+- [X] look into fixing slang-rhi flags upstream
   avoid depending on private header files in a public build? if they care i guess
-
-- [ ] consider replacing codegen with serialization (like encase)
-  - ie, use packed cpu-side structs with 'to_storage' and 'to_uniform' methods
-  - or generate both options?
 
 - [ ] migrate off of anyhow
   - use thiserror for game api
-  - use miette or a similar crate internally
-    is it possible to get structured data (ie line numbers) out of slangc?
 
 - [ ] is there a nice way to use slang's reinterpret<T> in codegen?
   ie, use an attribute to declare color format for a type
   https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/03-convenience-features.html#reinterpret-t-operation
 
-- [ ] read about dynamic rendering
-  - [ ] sascha's 1.3 triangle
-  - [ ] vkguide?
-
 - [ ] docs with panics sections for 'Storage' types
   - unwraps rely on the handles being unique and consumable
   - generics enforced by renderer module
 
-- [ ] look into reflection-based codegen for bindless shaders
-  https://discord.com/channels/1303735196696445038/1427662446579024013/1427662446579024013
-
-- [ ] global param usage by entry point
-  https://discord.com/channels/1303735196696445038/1428804639523868794/1428919601688871075
-  this would fix using stage 'all'
-
 - [ ] switch to using real CI instead of a pre-commit hook
   or maybe a pre-push hook that checks there's no shader diff?
 
-- [ ] rewrite renderer in a new repo
+- [-] rewrite renderer in a new repo
   how much of this could be done gradually in this one?
-  - use a cargo workspace
+  - [X] use a cargo workspace
     make it easy to keep multiple working examples
     allow running codegen for a game crate that doesn't compile
-  - group one-time initialized fields into a sub-struct w/methods
-  - group sync primitive arrays with their resources in some way
+  - [ ] group one-time initialized fields into a sub-struct w/methods
+  - [ ] group sync primitive arrays with their resources in some way
     ie make it clear what's per-swapchain-image vs per-in-flight-frame
     easier since 2026-07-28: everything per-frame is one flight_slot ring,
     so render_finished (per swapchain image) is the only odd one out
-  - recreate_swapchain never recreates render_finished, which is sized per
+  - [ ] recreate_swapchain never recreates render_finished, which is sized per
     swapchain image -- panics or leaks if the image count changes
-  - use an env var for vulkan validation layer
+  - [ ] use an env var for vulkan validation layer?
     https://github.com/ash-rs/ash/issues/190#issuecomment-758269723
     maybe for logging too? ie always compile w/verbose
-  - also switch to dynamic rendering?
-    in the future, try out bindless with slang support
-  - maybe pregenerate mipmaps offline instead of doing it in vulkan at runtime
-    can image-rs do this? need to pack them as well
-    see if theres an stb tool or something
-    or use slang auto-diff!
+  - [ ] use ktx2 and pregenerate mipmaps during export
 
 - [ ] make a spinning cube from scratch in slang
 
-- [ ] set up switching between intel & nvidia graphics w/POP_OS?
-  - [ ] figure out why it started using intel graphics
-  - [ ] make sure the code is choosing a dedicated graphics card if it's availble
+- [X] set up switching between intel & nvidia graphics w/POP_OS?
+  - [X] figure out why it started using intel graphics
+  - [X] make sure the code is choosing a dedicated graphics card if it's availble
 
-
-- [ ] look at Sascha Willems' other examples
 - [ ] move on to https://vkguide.dev/ ?
-  - use egui w/ash crate
+  try out push constants and other features
 
-- [ ] consider adding a separate queue & command buffer for memory transfer
-  https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/02_Staging_buffer.html#_transfer_queue
-
-- [ ] learn how to use a gpu memory allocator
+- [X] learn how to use a gpu memory allocator
   particularly the two crates the ash egui crate integrates with
-- [ ] start recreating bevy 2d platformer with this tech stack?
-
-- [ ] find out if hot-reloading pipeline code is possible
-  ie, use lifecycle methods from
 
 - [ ] understand stage & access masks better
   - [ ] review usage in ImageMemoryBarrier & in SubpassDependency
@@ -570,22 +421,12 @@
   "The color attachment differs for every swap chain image, but the same depth image can be used by all of them because only a single subpass is running at the same time due to our semaphores."
   so we'd need to do a depth image per swapchain image if there were multiple subpasses using them?
   how does SDL3_gpu handle that?
-- [ ] review how barriers are used in the mipmap chapter
 
 - [ ] try out using draw indirect & gpu culling
 
-- [ ] generate build-time mipmaps
-  - [ ] generate & use separate half-sized files with image-rs
-  - [ ] combine & use into one packed sheet
-
-- [ ] regenerate reflection structs during hot reload
-
-- [ ] see if it's possible to use slang-rs compiler options CapabilityID
-  instead of cli-style profile '+spirv_1_5'
-
 - [ ] better printf and validation layers setup
   control the validation layers with env vars
-  use the env vars described here:
+  use the env vars described here?
   https://www.lunarg.com/wp-content/uploads/2021/08/Using-Debug-Printf-02August2021.pdf
 
 - [ ] try to avoid the vk::ShaderStageFlags::ALL in add_global_scope_parameters
@@ -596,6 +437,10 @@
     https://docs.shader-slang.org/en/latest/parameter-blocks.html#global-scope
     there is reference to this in the slangc json code;
       there are steps after/if codegen was done
+
+  - [ ] global param usage by entry point
+    https://discord.com/channels/1303735196696445038/1428804639523868794/1428919601688871075
+    this would fix using stage 'all'
 
 - [ ] handle unbounded count in bindings (bitwise not 0)
   see SLANG_UNBOUNDED_SIZE
@@ -616,14 +461,10 @@
 - [ ] move the vk color format restriction on entry point fields out of codegen
   make the enum of supported glam types / primitives part of StructEntryPointParameter
 
-- [ ] replace ReflectionJson::layout_bindings with directly inlining data in generated code
-
-- [ ] support more types in std 430 layout
+- [X] support more types in std 430 layout
   ie, arrays as struct fields
 
-- [ ] use a different log level or filter for shader debug printf?
-
-- [ ] try out the CRT-Royale shader or other blurrier ones with the Dracula image
+- [ ] try out the CRT-Royale shader or other CRT effects with the Dracula image
   https://docs.libretro.com/shader/crt/
 
 - [ ] figure out the right way to scale/upscale egui for a 4k monitor
@@ -639,8 +480,9 @@
 - [ ] are ref-counted platform resource heaps still going to be a thing?
 - [ ] will there be some way to say "I'm trying to implement this interface"
   like to get nicer error messages
+  'where aliases'?
 - [X] I think we can hack some reflection in via Encode/Decode
-  is that considered friendly/supported?
+  is that considered friendly/supported? apparently
 
 
 * Other Graphics Resources
