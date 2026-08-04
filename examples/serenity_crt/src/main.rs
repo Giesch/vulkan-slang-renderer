@@ -59,8 +59,6 @@ impl Game for SerenityCRT {
     where
         Self: Sized,
     {
-        // lossless rgba8 + zstd, single level; regenerate with
-        // `just serenity_crt textures`
         let image_name = "serenity_crt/castlevania_pixel_art.ktx2";
         let file_path = manifest_path!["textures", image_name];
         let texture = load_ktx2_texture(renderer, &file_path, TextureFilter::Nearest)?;

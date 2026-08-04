@@ -92,7 +92,6 @@ impl Game for VikingRoom {
     {
         let (vertices, indices) = Self::load_vertices()?;
 
-        // bc7 with a pre-baked mip chain; regenerate with `just viking_room textures`
         const IMAGE_FILE_NAME: &str = "viking_room.ktx2";
         let file_path = manifest_path!["textures", IMAGE_FILE_NAME];
 

@@ -159,8 +159,6 @@ impl Game for SpaceInvaders {
         let debug_boxes_buffer = renderer.create_storage_buffer::<DebugBox>(MAX_DEBUG_BOXES)?;
         let sprites_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
 
-        // lossless rgba8 + zstd, single level; regenerate with
-        // `just space_invaders textures` (or `sprites`, which chains into it)
         let sprite_sheet_texture = load_texture(renderer, "sprite_sheet.ktx2")?;
 
         let resources = Resources {

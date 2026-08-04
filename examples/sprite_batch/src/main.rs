@@ -78,8 +78,6 @@ impl Game for SpriteBatch {
         let params_buffer = renderer.create_uniform_buffer::<SpriteBatchParams>()?;
         let sprites_buffer = renderer.create_immutable_buffer::<Sprite>(sprites.len() as u32)?;
 
-        // lossless rgba8 + zstd, single level; regenerate with
-        // `just sprite_batch textures`
         let image_file_name = "ravioli_atlas.ktx2";
         let file_path = manifest_path!["textures", image_file_name];
         let texture = load_ktx2_texture(renderer, &file_path, TextureFilter::Nearest)?;

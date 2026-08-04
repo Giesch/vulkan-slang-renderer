@@ -55,7 +55,6 @@ impl Game for KochCurve {
     where
         Self: Sized,
     {
-        // bc7 with a pre-baked mip chain; regenerate with `just koch_curve textures`
         const IMAGE_FILE_NAME: &str = "istockphoto-uffizi-blurred-612x612.ktx2";
         let file_path = manifest_path!["textures", IMAGE_FILE_NAME];
         let cube_map = load_ktx2_texture(renderer, &file_path, TextureFilter::Linear)?;

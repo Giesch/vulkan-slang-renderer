@@ -93,7 +93,6 @@ impl Game for DepthTextureGame {
     where
         Self: Sized,
     {
-        // bc7 with a pre-baked mip chain; regenerate with `just depth_texture textures`
         const IMAGE_FILE_NAME: &str = "texture.ktx2";
         let file_path = manifest_path!["textures", IMAGE_FILE_NAME];
 
