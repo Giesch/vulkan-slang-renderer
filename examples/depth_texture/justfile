@@ -1,0 +1,18 @@
+# Recipes for the depth_texture example, invoked from the repo root as
+# `just depth_texture <recipe>` (the root justfile declares this dir as a
+# module).
+#
+# NOTE just runs a submodule's recipes with the working directory set to the
+# submodule's directory, so every path below is relative to
+# examples/depth_texture/.
+
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
+# encode the quad texture as bc7 with a mip chain (4x less vram than rgba8)
+[unix]
+textures:
+    ctt textures/texture.jpg \
+        -o textures/texture.ktx2 \
+        -f bc7 --mipmap --quality very-slow --zstd=19

@@ -53,6 +53,8 @@ Keep the root justfile for workspace-wide tasks only (`shaders`, `sweep`,
 cargo check --workspace --all-targets  # check every crate, example, and test
 just shaders               # regenerate ALL examples' shader bindings
 just shaders EXAMPLE       # regenerate one example's bindings
+just textures              # re-encode ALL examples' source images to ktx2
+just EXAMPLE textures      # re-encode one example's source images
 just test                  # Run tests (snapshot testing via insta)
 cargo insta test --workspace --accept  # accept all modified snapshots
 just lint                  # Clippy with warnings as errors
@@ -65,6 +67,9 @@ cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection
 ### After changes
 - Always run `just shaders EXAMPLE` after modifying an example's `.slang`
   files (`just shaders` regenerates all of them).
+- Always run `just textures EXAMPLE` after adding or replacing an example's
+  source image, and commit the regenerated `.ktx2` alongside it. See
+  [`docs/textures.md`](docs/textures.md).
 - Always use `cargo check --workspace --all-targets` when changing rust files
   as a first pass. NOTE both flags: `--workspace` covers every member crate
   (each example is one), `--all-targets` covers tests, benches and
@@ -107,6 +112,17 @@ mltrs shaders init         # seeds shaders/source with mltrs.slang + mltrs/
 mltrs shaders compile      # emits shaders/compiled + src/generated (imports `mltrs::…`)
 # src/main.rs: mod generated; impl Game for MyGame; MyGame::run()
 ```
+
+## Textures
+
+Every example texture is a committed KTX2 with pre-baked mips, encoded from a
+committed source image by `ctt` (`cargo install ctt-cli`) via `just textures`.
+Two format groups: **BC7** for models/photographic content, **lossless
+`rgba8unorm` + zstd, single level** for pixel art. Load with
+`mltrs::ktx::load_ktx2_texture`, never `util::load_image` + `create_texture`.
+
+See [`docs/textures.md`](docs/textures.md) before adding a texture or changing
+the encode flags.
 
 ## Testing
 
