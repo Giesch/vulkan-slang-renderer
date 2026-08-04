@@ -22,3 +22,4 @@ pretty_env_logger.workspace = true
 sdl3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+zstd.workspace = true

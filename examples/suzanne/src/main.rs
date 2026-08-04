@@ -6,7 +6,7 @@ use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Vec2, Vec3};
 
 use mltrs::game::Game;
-use mltrs::ktx::load_ktx2;
+use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
     DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
@@ -91,14 +91,7 @@ impl Game for Suzanne {
         for i in 0..3 {
             let file_name = format!("suzanne{i}.ktx2");
             let file_path = manifest_path!["models", "suzanne", file_name.as_str()];
-            let ktx = load_ktx2(&file_path)?;
-            let texture = renderer.create_texture_with_mips(
-                &ktx.source_file_name,
-                ktx.format,
-                ktx.extent,
-                &ktx.mip_slices(),
-                TextureFilter::Linear,
-            )?;
+            let texture = load_ktx2_texture(renderer, &file_path, TextureFilter::Linear)?;
             textures.push(texture);
         }
 
