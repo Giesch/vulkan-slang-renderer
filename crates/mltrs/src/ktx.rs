@@ -28,9 +28,6 @@ impl KtxTexture {
 }
 
 /// Read a KTX2 file and upload its pre-baked mip levels as a texture.
-///
-/// The whole of the usual call site; use [`load_ktx2`] directly only when the
-/// decoded levels are wanted for something other than an immediate upload.
 pub fn load_ktx2_texture(
     renderer: &mut Renderer,
     file_path: &Path,

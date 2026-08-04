@@ -3010,8 +3010,6 @@ fn choose_physical_device(
 
         let missing_features: Vec<&str> = [
             (features.sampler_anisotropy, "samplerAnisotropy"),
-            // BC7 textures are loaded from ktx2; rejecting the device here
-            // names the reason, rather than failing per-texture later on
             (features.texture_compression_bc, "textureCompressionBC"),
             (
                 vulkan_11_features.shader_draw_parameters,
@@ -4282,9 +4280,6 @@ fn create_texture_from_mips(
         mip_levels,
     )?;
 
-    // the level count decides whether there is a chain to sample across, not a
-    // caller flag: a pre-baked single-level image with mipmaps: true would cap
-    // the LOD at a level that isn't there
     let texture_sampler = create_texture_sampler(
         device,
         physical_device_properties,
