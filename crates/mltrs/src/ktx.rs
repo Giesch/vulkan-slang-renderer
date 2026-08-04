@@ -1,14 +1,15 @@
 //! Loading of KTX2 texture files (<https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html>)
 //!
-//! Only 2D, non-array, non-cubemap textures with pre-baked mip levels
-//! and no supercompression are supported.
+//! Only 2D, non-array, non-cubemap textures with pre-baked mip levels are
+//! supported. Of the supercompression schemes, only zstd is; BasisLZ needs
+//! transcoding rather than decompression.
 
 use std::path::Path;
 
 use anyhow::Context;
 use ash::vk;
 
-use crate::renderer::format_block_info;
+use crate::renderer::{Renderer, TextureFilter, TextureHandle, format_block_info};
 
 /// A decoded KTX2 texture, ready for upload via
 /// [`Renderer::create_texture_with_mips`](crate::renderer::Renderer::create_texture_with_mips).
@@ -26,6 +27,23 @@ impl KtxTexture {
     }
 }
 
+/// Read a KTX2 file and upload its pre-baked mip levels as a texture.
+pub fn load_ktx2_texture(
+    renderer: &mut Renderer,
+    file_path: &Path,
+    filter: TextureFilter,
+) -> anyhow::Result<TextureHandle> {
+    let ktx = load_ktx2(file_path)?;
+
+    renderer.create_texture_with_mips(
+        &ktx.source_file_name,
+        ktx.format,
+        ktx.extent,
+        &ktx.mip_slices(),
+        filter,
+    )
+}
+
 pub fn load_ktx2(file_path: &Path) -> anyhow::Result<KtxTexture> {
     let bytes = std::fs::read(file_path)
         .with_context(|| format!("failed to read ktx2 file: {file_path:?}"))?;
@@ -35,11 +53,13 @@ pub fn load_ktx2(file_path: &Path) -> anyhow::Result<KtxTexture> {
 
     let header = reader.header();
 
-    // NOTE zstd supercompression could be supported here by decompressing
-    // each level to its uncompressed_byte_length
-    if let Some(scheme) = header.supercompression_scheme {
-        anyhow::bail!("unsupported ktx2 supercompression: {scheme:?} in {file_path:?}");
-    }
+    let zstd_compressed = match header.supercompression_scheme {
+        None => false,
+        Some(ktx2::SupercompressionScheme::Zstandard) => true,
+        Some(scheme) => {
+            anyhow::bail!("unsupported ktx2 supercompression: {scheme:?} in {file_path:?}")
+        }
+    };
 
     // None means VK_FORMAT_UNDEFINED, ie Basis Universal data needing transcode
     let Some(ktx_format) = header.format else {
@@ -82,13 +102,26 @@ pub fn load_ktx2(file_path: &Path) -> anyhow::Result<KtxTexture> {
         let expected_size = mip_width.div_ceil(block.block_width) as usize
             * mip_height.div_ceil(block.block_height) as usize
             * block.block_bytes as usize;
+
+        // expected_size comes from the image dimensions, so using it as the
+        // output bound keeps a bogus level.uncompressed_byte_length from
+        // driving a huge allocation; the check below then sees the
+        // decompressed size, which is the invariant worth checking
+        let data = if zstd_compressed {
+            zstd::bulk::decompress(level.data, expected_size).with_context(|| {
+                format!("failed to decompress zstd mip level {i}: {file_path:?}")
+            })?
+        } else {
+            level.data.to_vec()
+        };
+
         anyhow::ensure!(
-            level.data.len() == expected_size,
+            data.len() == expected_size,
             "mip level {i} has {} bytes, expected {expected_size}: {file_path:?}",
-            level.data.len(),
+            data.len(),
         );
 
-        mip_data.push(level.data.to_vec());
+        mip_data.push(data);
     }
     debug_assert!(mip_data.len() == header.level_count as usize);
 

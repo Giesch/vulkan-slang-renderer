@@ -3010,6 +3010,7 @@ fn choose_physical_device(
 
         let missing_features: Vec<&str> = [
             (features.sampler_anisotropy, "samplerAnisotropy"),
+            (features.texture_compression_bc, "textureCompressionBC"),
             (
                 vulkan_11_features.shader_draw_parameters,
                 "shaderDrawParameters",
@@ -3255,6 +3256,8 @@ fn create_logical_device(
 
     let mut features = vk::PhysicalDeviceFeatures::default()
         .sampler_anisotropy(true)
+        // BC7, for the ktx2 textures; see format_block_info
+        .texture_compression_bc(true)
         .sample_rate_shading(ENABLE_SAMPLE_SHADING);
     if cfg!(debug_assertions) {
         // features used by shader println
@@ -4046,12 +4049,23 @@ pub struct FormatBlockInfo {
 
 /// The whitelist of texture formats supported for pre-baked mip uploads.
 /// Block-compressed formats (eg. BC7) can be added here as needed.
+///
+/// NOTE anything block-compressed added here needs its device feature enabled
+/// in `create_logical_device` and required in `choose_physical_device`, or the
+/// format is unusable no matter what this returns.
 pub fn format_block_info(format: vk::Format) -> Option<FormatBlockInfo> {
     match format {
         vk::Format::R8G8B8A8_SRGB | vk::Format::R8G8B8A8_UNORM => Some(FormatBlockInfo {
             block_bytes: 4,
             block_width: 1,
             block_height: 1,
+        }),
+
+        // needs textureCompressionBC
+        vk::Format::BC7_SRGB_BLOCK | vk::Format::BC7_UNORM_BLOCK => Some(FormatBlockInfo {
+            block_bytes: 16,
+            block_width: 4,
+            block_height: 4,
         }),
 
         _ => None,
@@ -4266,12 +4280,12 @@ fn create_texture_from_mips(
         mip_levels,
     )?;
 
-    // this path always uploads a mip chain, so only the filter varies
     let texture_sampler = create_texture_sampler(
         device,
         physical_device_properties,
         TextureOptions {
             filter: texture_filter,
+            mipmaps: mip_levels > 1,
             ..Default::default()
         },
     )?;

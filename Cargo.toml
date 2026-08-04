@@ -40,6 +40,8 @@ thiserror = "2.0.17"
 tobj = "4.0.3"
 uuid = { version = "1.18.1", features = ["v4"] }
 vk-mem = "0.5.0"
+# ktx2 supercompression; decode only
+zstd = "0.13.3"
 
 [workspace.lints.clippy]
 type_complexity = "allow"
