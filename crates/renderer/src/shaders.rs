@@ -9,6 +9,8 @@ mod reflection;
 
 use json::*;
 
+pub use shader_slang::OptimizationLevel;
+
 /// whether to use column-major or row-major matricies with slang
 /// https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/a1-01-matrix-layout.html
 const MATRIX_LAYOUT: MatrixLayout = MatrixLayout::RowMajor;
@@ -50,13 +52,25 @@ pub fn prepare_reflected_shader(
     source_file_name: &str,
     search_path: &str,
 ) -> anyhow::Result<ReflectedShader> {
+    prepare_reflected_shader_with_optimization(
+        source_file_name,
+        search_path,
+        OptimizationLevel::High,
+    )
+}
+
+pub fn prepare_reflected_shader_with_optimization(
+    source_file_name: &str,
+    search_path: &str,
+    optimization: OptimizationLevel,
+) -> anyhow::Result<ReflectedShader> {
     let global_session = slang::GlobalSession::new().unwrap();
     let search_path = CString::new(search_path).unwrap();
 
     let session_options = slang::CompilerOptions::default()
         .vulkan_use_entry_point_name(true)
         .language(slang::SourceLanguage::Slang)
-        .optimization(slang::OptimizationLevel::High)
+        .optimization(optimization)
         .emit_spirv_directly(true);
     let session_options = match MATRIX_LAYOUT {
         MatrixLayout::ColumnMajor => session_options.matrix_layout_column(true),
@@ -134,13 +148,25 @@ pub fn prepare_reflected_compute_shader(
     source_file_name: &str,
     search_path: &str,
 ) -> anyhow::Result<ReflectedComputeShader> {
+    prepare_reflected_compute_shader_with_optimization(
+        source_file_name,
+        search_path,
+        OptimizationLevel::High,
+    )
+}
+
+pub fn prepare_reflected_compute_shader_with_optimization(
+    source_file_name: &str,
+    search_path: &str,
+    optimization: OptimizationLevel,
+) -> anyhow::Result<ReflectedComputeShader> {
     let global_session = slang::GlobalSession::new().unwrap();
     let search_path = CString::new(search_path).unwrap();
 
     let session_options = slang::CompilerOptions::default()
         .vulkan_use_entry_point_name(true)
         .language(slang::SourceLanguage::Slang)
-        .optimization(slang::OptimizationLevel::High)
+        .optimization(optimization)
         .emit_spirv_directly(true);
     let session_options = match MATRIX_LAYOUT {
         MatrixLayout::ColumnMajor => session_options.matrix_layout_column(true),
