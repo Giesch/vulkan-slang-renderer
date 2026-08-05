@@ -9,7 +9,10 @@ use std::path::Path;
 use anyhow::Context;
 use ash::vk;
 
-use crate::renderer::{Renderer, TextureFilter, TextureHandle, format_block_info};
+use crate::renderer::{
+    Renderer, SamplerOptions, TextureFilter, TextureHandle, format_block_info, level_byte_len,
+    mip_extent,
+};
 
 /// A decoded KTX2 texture, ready for upload via
 /// [`Renderer::create_texture_with_mips`](crate::renderer::Renderer::create_texture_with_mips).
@@ -27,10 +30,12 @@ impl KtxTexture {
     }
 }
 
-/// Read a KTX2 file and upload its pre-baked mip levels as a texture.
+/// Read a KTX2 file and upload its pre-baked mip levels as a texture, wrapped
+/// the default `Repeat` on both axes.
 ///
-/// The whole of the usual call site; use [`load_ktx2`] directly only when the
-/// decoded levels are wanted for something other than an immediate upload.
+/// Pair [`load_ktx2`] with [`Renderer::create_texture_with_mips`]
+/// directly to vary the wrap modes, or when the decoded levels are wanted
+/// for something other than an upload.
 pub fn load_ktx2_texture(
     renderer: &mut Renderer,
     file_path: &Path,
@@ -43,7 +48,10 @@ pub fn load_ktx2_texture(
         ktx.format,
         ktx.extent,
         &ktx.mip_slices(),
-        filter,
+        SamplerOptions {
+            filter,
+            ..Default::default()
+        },
     )
 }
 
@@ -81,8 +89,8 @@ pub fn load_ktx2(file_path: &Path) -> anyhow::Result<KtxTexture> {
         header.face_count == 1,
         "cubemap textures are unsupported: {file_path:?}"
     );
-    // 0 legally means 'generate the mip chain at runtime';
-    // that case is covered by Renderer::create_texture
+    // 0 legally means 'generate the mip chain at runtime', which the renderer
+    // never does — every level it uploads has to be in the file
     anyhow::ensure!(
         header.level_count >= 1,
         "expected pre-baked mip levels: {file_path:?}"
@@ -100,11 +108,7 @@ pub fn load_ktx2(file_path: &Path) -> anyhow::Result<KtxTexture> {
 
     let mut mip_data = Vec::with_capacity(header.level_count as usize);
     for (i, level) in reader.levels().enumerate() {
-        let mip_width = (extent.width >> i).max(1);
-        let mip_height = (extent.height >> i).max(1);
-        let expected_size = mip_width.div_ceil(block.block_width) as usize
-            * mip_height.div_ceil(block.block_height) as usize
-            * block.block_bytes as usize;
+        let expected_size = level_byte_len(block, mip_extent(extent, i));
 
         // expected_size comes from the image dimensions, so using it as the
         // output bound keeps a bogus level.uncompressed_byte_length from

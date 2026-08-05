@@ -37,10 +37,40 @@ It requires the `textureCompressionBC` device feature, which the renderer enable
 `create_logical_device` and *requires* in `choose_physical_device`, so a device that
 lacks it is rejected by name rather than failing per-texture.
 
+`choose_physical_device` goes one level further and proves that **every** format in
+`TEXTURE_FORMATS` — both RGBA8 spellings and both BC7 ones — supports
+`SAMPLED_IMAGE | TRANSFER_DST | SAMPLED_IMAGE_FILTER_LINEAR` before it accepts a
+device. Nothing conformant can fail that (the Vulkan mandatory-format table covers
+RGBA8, and `textureCompressionBC` covers BC7), which is the point: a device that
+somehow can't is named at startup, and no texture load has to ask.
+
 **Pixel art gets a single level on purpose.** `Nearest`-filtered 2D content never
-minifies, so a mip chain is wasted. The sampler follows the level count rather than a
-caller flag (`create_texture_from_mips`), so a one-level image gets `max_lod = 0` and
-anisotropy off instead of a LOD clamp pointing at a level that isn't there.
+minifies, so a mip chain is wasted.
+
+**The renderer never generates mip levels.** Every level it uploads came from the
+file, which is why there is no mip flag anywhere in the options.
+
+**There is one upload path**, `create_texture_from_levels` in `renderer.rs`, and both
+public entry points are calls into it:
+
+| entry point | levels | format from | sampling |
+|---|---|---|---|
+| `create_texture_with_mips` | the file's chain | the file's `vkFormat` | `SamplerOptions` |
+| `create_texture{,_with_options}` | one | `TextureOptions::color_space` | `TextureOptions::sampler` |
+
+So `create_texture_with_options` is the one-level RGBA8 case of a mip upload — the
+`color_space` is just how a caller holding raw bytes names the format a KTX2 file
+would have carried. Everything downstream is shared: the staging buffer and its
+block-aligned per-level offsets, the layout transitions, the image view, and the
+sampler. The only format gate left there is membership of `TEXTURE_FORMATS`, since
+device support was settled at startup. That sampler reads the **level count**, so a
+one-level image gets `max_lod = 0` and anisotropy off instead of a LOD clamp pointing
+at a level that isn't there.
+
+Each level's byte length is checked against what its extent implies in the format's
+block layout (`level_byte_len`), so a short slice fails before the copy rather than
+reading past the level it was given. The KTX2 loader sizes its zstd output with the
+same helper.
 
 ## Adding or changing a texture
 
@@ -63,12 +93,14 @@ dependency so ordering is not left to the caller —
 
 - **`watercolor`** — `paper_height.png` is read on the CPU into a `Vec<f32>` luma
   buffer and never becomes a GPU texture, so no container or block format applies.
-- **`multi_mesh`** — generates its images in memory; there are no files to convert,
-  and its comment about a full mip chain destroying the wrap/filter test still holds.
+- **`multi_mesh`** — generates its 8×8 images in memory; there are no files to
+  convert. Single-level suits it: a mip chain would average the checkerboard to flat
+  gray at distance and destroy the wrap/filter test its panels exist for.
 - **`toon_link`** — needs more than a recipe: its 44 PNGs are gitignored and produced
-  by `convert_link`, it wants `BC7_UNORM_BLOCK` rather than sRGB, and its per-entry
-  `wrap_u`/`wrap_v` can't survive `create_texture_with_mips`, which takes only a
-  `TextureFilter`. See `llm_notes/texture_pipeline.md` §7.
+  by `convert_link`, and it wants `BC7_UNORM_BLOCK` rather than sRGB. Its per-entry
+  `wrap_u`/`wrap_v` used to be the third blocker; `create_texture_with_mips` now takes
+  `SamplerOptions`, so pairing `ktx::load_ktx2` with it carries them. See
+  `llm_notes/texture_pipeline.md` §7.
 
 ## Determinism
 
