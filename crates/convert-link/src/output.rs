@@ -114,7 +114,6 @@ fn build_textures(model: &Model) -> Vec<mm::TextureEntry> {
                 wrap_u: h.wrap_s,
                 wrap_v: h.wrap_t,
                 filter: h.min_filter,
-                mipmaps: h.mipmap_count > 1,
                 runtime_substitution: substitution,
             }
         })

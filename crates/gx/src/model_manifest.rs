@@ -521,7 +521,6 @@ pub struct TextureEntry {
     pub wrap_u: WrapMode,
     pub wrap_v: WrapMode,
     pub filter: FilterMode,
-    pub mipmaps: bool,
     /// Set on ramp slots whose pixels are replaced at conversion time
     /// (e.g. `ZBtoonEX` ← `toonex`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -723,7 +722,6 @@ mod tests {
                 wrap_u: WrapMode::Clamp,
                 wrap_v: WrapMode::Clamp,
                 filter: FilterMode::Linear,
-                mipmaps: false,
                 runtime_substitution: None,
             }],
             materials: vec![],

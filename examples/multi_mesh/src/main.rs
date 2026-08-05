@@ -29,8 +29,8 @@ use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use mltrs::game::Game;
 use mltrs::renderer::{
     BlendMode, CullMode, DrawError, DrawIndexed, FrameRenderer, MeshHandle, PipelineHandle,
-    RasterState, Renderer, RgbaPixels, TextureColorSpace, TextureFilter, TextureHandle,
-    TextureOptions, TextureWrap, UniformBufferHandle,
+    RasterState, Renderer, RgbaPixels, SamplerOptions, TextureColorSpace, TextureFilter,
+    TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -432,14 +432,13 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
     // sRGB transfer moves it a lot
     let gray = solid_image(128, 128, 128);
 
-    // a full mip chain would average an 8x8 checkerboard to flat gray at
-    // distance and destroy the wrap/filter test; the Link work needs this
-    // path anyway
-    let unmipped = |wrap: TextureWrap, filter: TextureFilter| TextureOptions {
-        filter,
-        wrap_u: wrap,
-        wrap_v: wrap,
-        mipmaps: false,
+    // the same wrap mode on both axes, which is all these panels vary
+    let sampling = |wrap: TextureWrap, filter: TextureFilter| TextureOptions {
+        sampler: SamplerOptions {
+            filter,
+            wrap_u: wrap,
+            wrap_v: wrap,
+        },
         ..Default::default()
     };
 
@@ -474,7 +473,7 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
         textures.push(renderer.create_texture_with_options(
             name,
             pixels(&checker)?,
-            unmipped(wrap, filter),
+            sampling(wrap, filter),
         )?);
     }
 
@@ -487,7 +486,6 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
             name,
             pixels(&gray)?,
             TextureOptions {
-                mipmaps: false,
                 color_space,
                 ..Default::default()
             },

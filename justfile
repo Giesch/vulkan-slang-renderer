@@ -75,7 +75,7 @@ shaders example="all":
     cargo fmt
 
 # the examples with a `textures` recipe; add new ones here
-texture_examples := "depth_texture koch_curve serenity_crt space_invaders sprite_batch suzanne viking_room"
+examples_with_textures := "depth_texture koch_curve serenity_crt space_invaders sprite_batch suzanne viking_room"
 
 # re-encode every example's source images to ktx2 (needs `cargo install ctt-cli`)
 [unix]
@@ -84,7 +84,7 @@ textures:
     set -euo pipefail
     # NOTE the artifacts are committed, so this is only needed after changing a
     # source image -- it is deliberately not part of `just pre-commit`.
-    for e in {{texture_examples}}; do just "$e" textures; done
+    for e in {{examples_with_textures}}; do just "$e" textures; done
 
 # re-seed every example's vendored engine slang modules from the cli's canonical copies
 [unix]

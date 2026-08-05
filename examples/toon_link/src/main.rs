@@ -36,8 +36,8 @@ use mltrs::game::Game;
 use gx::model_manifest::{self as mm, Batch, Manifest, MaterialEntry, TextureEntry};
 use mltrs::renderer::{
     BlendMode, CullMode, DepthCompare, DrawError, DrawIndexed, FrameRenderer, MeshHandle,
-    PipelineHandle, RasterState, Renderer, RgbaPixels, TextureColorSpace, TextureFilter,
-    TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle,
+    PipelineHandle, RasterState, Renderer, RgbaPixels, SamplerOptions, TextureColorSpace,
+    TextureFilter, TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -611,10 +611,11 @@ fn texture_options(entry: &TextureEntry) -> anyhow::Result<TextureOptions> {
         other => anyhow::bail!("unmapped GX texture filter {other}"),
     };
     Ok(TextureOptions {
-        filter,
-        wrap_u: wrap(entry.wrap_u),
-        wrap_v: wrap(entry.wrap_v),
-        mipmaps: entry.mipmaps,
+        sampler: SamplerOptions {
+            filter,
+            wrap_u: wrap(entry.wrap_u),
+            wrap_v: wrap(entry.wrap_v),
+        },
         // Hardcoded Unorm on purpose:
         // GX has no sRGB anywhere, so the stored texels are raw values
         // the shader consumes directly (the fragment shader
@@ -1093,10 +1094,11 @@ impl Game for ToonLink {
             "toon_link_white_square",
             RgbaPixels::new(1, 1, &[255; 4])?,
             TextureOptions {
-                filter: TextureFilter::Linear,
-                wrap_u: TextureWrap::ClampToEdge,
-                wrap_v: TextureWrap::ClampToEdge,
-                mipmaps: false,
+                sampler: SamplerOptions {
+                    filter: TextureFilter::Linear,
+                    wrap_u: TextureWrap::ClampToEdge,
+                    wrap_v: TextureWrap::ClampToEdge,
+                },
                 color_space: TextureColorSpace::Unorm,
             },
         )?;
