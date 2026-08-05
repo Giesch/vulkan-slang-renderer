@@ -1,6 +1,11 @@
 #+title: Todo
 
 * Possible Next Directions
+- [-] adopt BC7 compression for textures consistently
+  - [X] add the option
+  - [ ] get it working for toon link as well
+  - [ ] review docs/textures.md
+
 - [-] Bindless Textures
   https://discord.com/channels/1303735196696445038/1427662446579024013/1427662446579024013
   - [X] make a plan

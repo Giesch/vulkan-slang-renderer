@@ -115,12 +115,6 @@ mltrs shaders compile      # emits shaders/compiled + src/generated (imports `ml
 
 ## Textures
 
-Every example texture is a committed KTX2 with pre-baked mips, encoded from a
-committed source image by `ctt` (`cargo install ctt-cli`) via `just textures`.
-Two format groups: **BC7** for models/photographic content, **lossless
-`rgba8unorm` + zstd, single level** for pixel art. Load with
-`mltrs::ktx::load_ktx2_texture`, never `util::load_image` + `create_texture`.
-
 See [`docs/textures.md`](docs/textures.md) before adding a texture or changing
 the encode flags.
 

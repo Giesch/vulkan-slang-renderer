@@ -25,13 +25,12 @@ use std::time::Instant;
 
 use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
-use image::{DynamicImage, Rgba, RgbaImage};
 
 use mltrs::game::Game;
 use mltrs::renderer::{
     BlendMode, CullMode, DrawError, DrawIndexed, FrameRenderer, MeshHandle, PipelineHandle,
-    RasterState, Renderer, TextureColorSpace, TextureFilter, TextureHandle, TextureOptions,
-    TextureWrap, UniformBufferHandle,
+    RasterState, Renderer, RgbaPixels, SamplerOptions, TextureColorSpace, TextureFilter,
+    TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -433,19 +432,21 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
     // sRGB transfer moves it a lot
     let gray = solid_image(128, 128, 128);
 
-    // a full mip chain would average an 8x8 checkerboard to flat gray at
-    // distance and destroy the wrap/filter test; the Link work needs this
-    // path anyway
-    let unmipped = |wrap: TextureWrap, filter: TextureFilter| TextureOptions {
-        filter,
-        wrap_u: wrap,
-        wrap_v: wrap,
-        mipmaps: false,
+    // the same wrap mode on both axes, which is all these panels vary
+    let sampling = |wrap: TextureWrap, filter: TextureFilter| TextureOptions {
+        sampler: SamplerOptions {
+            filter,
+            wrap_u: wrap,
+            wrap_v: wrap,
+        },
         ..Default::default()
     };
 
-    let mut textures =
-        vec![renderer.create_texture_with_options("white", &white, TextureOptions::default())?];
+    let mut textures = vec![renderer.create_texture_with_options(
+        "white",
+        pixels(&white)?,
+        TextureOptions::default(),
+    )?];
 
     for (name, wrap, filter) in [
         (
@@ -471,8 +472,8 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
     ] {
         textures.push(renderer.create_texture_with_options(
             name,
-            &checker,
-            unmipped(wrap, filter),
+            pixels(&checker)?,
+            sampling(wrap, filter),
         )?);
     }
 
@@ -483,9 +484,8 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
     ] {
         textures.push(renderer.create_texture_with_options(
             name,
-            &gray,
+            pixels(&gray)?,
             TextureOptions {
-                mipmaps: false,
                 color_space,
                 ..Default::default()
             },
@@ -497,26 +497,29 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
 
 const TEXTURE_SIZE: u32 = 8;
 
-fn solid_image(r: u8, g: u8, b: u8) -> DynamicImage {
-    DynamicImage::ImageRgba8(RgbaImage::from_pixel(
-        TEXTURE_SIZE,
-        TEXTURE_SIZE,
-        Rgba([r, g, b, 255]),
-    ))
+fn pixels(bytes: &[u8]) -> anyhow::Result<RgbaPixels<'_>> {
+    RgbaPixels::new(TEXTURE_SIZE, TEXTURE_SIZE, bytes)
 }
 
-fn checker_image() -> DynamicImage {
+fn solid_image(r: u8, g: u8, b: u8) -> Vec<u8> {
+    [r, g, b, 255].repeat((TEXTURE_SIZE * TEXTURE_SIZE) as usize)
+}
+
+fn checker_image() -> Vec<u8> {
     const CELL: u32 = TEXTURE_SIZE / 2;
 
-    let image = RgbaImage::from_fn(TEXTURE_SIZE, TEXTURE_SIZE, |x, y| {
-        if (x / CELL + y / CELL).is_multiple_of(2) {
-            Rgba([245, 245, 245, 255])
-        } else {
-            Rgba([20, 20, 60, 255])
+    let mut bytes = Vec::with_capacity((TEXTURE_SIZE * TEXTURE_SIZE * 4) as usize);
+    for y in 0..TEXTURE_SIZE {
+        for x in 0..TEXTURE_SIZE {
+            bytes.extend_from_slice(if (x / CELL + y / CELL).is_multiple_of(2) {
+                &[245, 245, 245, 255]
+            } else {
+                &[20, 20, 60, 255]
+            });
         }
-    });
+    }
 
-    DynamicImage::ImageRgba8(image)
+    bytes
 }
 
 // --- camera and placement ---

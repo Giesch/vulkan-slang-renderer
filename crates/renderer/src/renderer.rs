@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
+use anyhow::Context as _;
 use ash::vk;
 use glam::Vec2;
 use sdl3::sys::vulkan::SDL_Vulkan_DestroySurface;
@@ -490,83 +491,239 @@ impl Renderer {
         }
     }
 
-    /// Create an sRGB, mipmapped, REPEAT-wrapped texture — the long-standing
-    /// default. Use [`Self::create_texture_with_options`] to vary any of that.
+    /// Create an sRGB, REPEAT-wrapped texture from a single image.
     pub fn create_texture(
         &mut self,
         source_file_name: impl Into<String>,
-        image: &image::DynamicImage,
+        image: RgbaPixels<'_>,
         texture_filter: TextureFilter,
     ) -> anyhow::Result<TextureHandle> {
         self.create_texture_with_options(
             source_file_name,
             image,
             TextureOptions {
-                filter: texture_filter,
+                sampler: SamplerOptions {
+                    filter: texture_filter,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         )
     }
 
-    /// Create a texture with explicit image and sampler options: filter, wrap
-    /// modes, whether to generate a mip chain, and whether the stored values
-    /// are sRGB-encoded or raw.
+    /// Create a texture with explicit image and sampler options
+    ///
+    /// The result is single-level with no mips, like [`Self::create_texture`].
     pub fn create_texture_with_options(
         &mut self,
         source_file_name: impl Into<String>,
-        image: &image::DynamicImage,
+        image: RgbaPixels<'_>,
         options: TextureOptions,
     ) -> anyhow::Result<TextureHandle> {
-        let texture = create_texture(
-            source_file_name.into(),
-            image,
-            &self.allocator,
-            &self.instance,
-            &self.device,
-            self.physical_device,
-            self.physical_device_properties,
-            self.command_pool,
-            self.graphics_queue,
-            options,
-        )?;
+        let extent = vk::Extent2D::default()
+            .width(image.width())
+            .height(image.height());
 
-        let handle = self.textures.add(texture);
-
-        Ok(handle)
+        self.create_texture_with_mips(
+            source_file_name,
+            texture_format(options.color_space),
+            extent,
+            &[image.bytes()],
+            options.sampler,
+        )
     }
 
     /// Create a texture from pre-baked mip level data, such as from a KTX2 file.
-    /// Unlike [`Self::create_texture`], this uploads all provided mip levels
-    /// directly instead of generating them at runtime.
     ///
     /// `mip_data` must contain one entry per mip level, level 0 (largest) first;
-    /// the extent of level `i` is derived as `(extent >> i).max(1)`.
+    /// the extent of level `i` is derived as `(extent >> i).max(1)`, and each
+    /// level's byte length must match that extent in `format`'s block layout.
     pub fn create_texture_with_mips(
         &mut self,
         source_file_name: impl Into<String>,
         format: vk::Format,
         extent: vk::Extent2D,
         mip_data: &[&[u8]],
-        texture_filter: TextureFilter,
+        sampler_options: SamplerOptions,
     ) -> anyhow::Result<TextureHandle> {
-        let texture = create_texture_from_mips(
+        let texture = self.create_texture_from_levels(
             source_file_name.into(),
             format,
             extent,
             mip_data,
-            &self.allocator,
-            &self.instance,
-            &self.device,
-            self.physical_device,
-            self.physical_device_properties,
-            self.command_pool,
-            self.graphics_queue,
-            texture_filter,
+            sampler_options,
         )?;
 
         let handle = self.textures.add(texture);
 
         Ok(handle)
+    }
+
+    fn create_texture_from_levels(
+        &self,
+        source_file_name: String,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        levels: &[&[u8]],
+        sampler_options: SamplerOptions,
+    ) -> anyhow::Result<Texture> {
+        let (texture_image, texture_image_memory) =
+            self.upload_texture_levels(format, extent, levels)?;
+
+        let mip_levels = levels.len() as u32;
+        let texture_image_view = create_image_view(
+            &self.device,
+            texture_image,
+            format,
+            vk::ImageAspectFlags::COLOR,
+            mip_levels,
+        )?;
+
+        let texture_sampler = create_texture_sampler(
+            &self.device,
+            self.physical_device_properties,
+            sampler_options,
+            mip_levels,
+        )?;
+
+        Ok(Texture {
+            source_file_name,
+            image: texture_image,
+            image_ownership: texture::ImageOwnership::Owned(texture_image_memory),
+            mip_levels,
+            image_view: texture_image_view,
+            sampler: texture_sampler,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        })
+    }
+
+    /// Stages every mip level into one buffer, and copies them into a fresh
+    /// image, which is left in `SHADER_READ_ONLY_OPTIMAL`.
+    fn upload_texture_levels(
+        &self,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        levels: &[&[u8]],
+    ) -> anyhow::Result<(vk::Image, vk_mem::Allocation)> {
+        anyhow::ensure!(!levels.is_empty(), "expected at least one mip level");
+        let mip_levels = levels.len() as u32;
+        anyhow::ensure!(
+            mip_levels <= extent.width.max(extent.height).ilog2() + 1,
+            "too many mip levels for extent"
+        );
+
+        let block = format_block_info(format)
+            .ok_or_else(|| anyhow::anyhow!("unsupported texture format: {format:?}"))?;
+
+        for (i, level) in levels.iter().enumerate() {
+            let expected = level_byte_len(block, mip_extent(extent, i));
+            let bytes = level.len();
+            anyhow::ensure!(
+                bytes == expected,
+                "mip level {i} has {bytes} bytes, expected {expected} for {format:?}",
+            );
+        }
+
+        // vkCmdCopyBufferToImage requires each region's bufferOffset to be
+        // a multiple of the texel block size and of 4
+        let offset_alignment = (block.block_bytes as u64).max(4);
+        let mut level_offsets = Vec::with_capacity(levels.len());
+        let mut buffer_size: u64 = 0;
+        for level in levels {
+            let offset = buffer_size.next_multiple_of(offset_alignment);
+            level_offsets.push(offset);
+            buffer_size = offset + level.len() as u64;
+        }
+
+        let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
+            &self.allocator,
+            buffer_size,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            BufferMemory::Staging,
+        )?;
+
+        unsafe {
+            let mapped_dst = self.allocator.map_memory(&mut staging_buffer_memory)?;
+            for (level, &offset) in levels.iter().zip(&level_offsets) {
+                std::ptr::copy_nonoverlapping(
+                    level.as_ptr(),
+                    mapped_dst.add(offset as usize),
+                    level.len(),
+                );
+            }
+            self.allocator.unmap_memory(&mut staging_buffer_memory);
+        }
+
+        let image_options = ImageOptions {
+            extent,
+            format,
+            tiling: vk::ImageTiling::OPTIMAL,
+            // no TRANSFER_SRC: the levels are uploaded directly, never blitted
+            usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            mip_levels,
+            msaa_samples: vk::SampleCountFlags::TYPE_1,
+        };
+        let (vk_image, image_memory) = create_vk_image(&self.allocator, image_options)?;
+
+        transition_image_layout(
+            &self.device,
+            self.command_pool,
+            self.graphics_queue,
+            vk_image,
+            format,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            mip_levels,
+        )?;
+
+        let regions: Vec<vk::BufferImageCopy> = level_offsets
+            .iter()
+            .enumerate()
+            .map(|(i, &offset)| {
+                let image_subresource = vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(i as u32)
+                    .base_array_layer(0)
+                    .layer_count(1);
+
+                let level_extent = mip_extent(extent, i);
+
+                vk::BufferImageCopy::default()
+                    .buffer_offset(offset)
+                    .buffer_row_length(0)
+                    .buffer_image_height(0)
+                    .image_subresource(image_subresource)
+                    .image_offset(vk::Offset3D::default())
+                    .image_extent(level_extent.into())
+            })
+            .collect();
+
+        copy_buffer_to_image(
+            &self.device,
+            self.command_pool,
+            self.graphics_queue,
+            staging_buffer,
+            vk_image,
+            &regions,
+        )?;
+
+        transition_image_layout(
+            &self.device,
+            self.command_pool,
+            self.graphics_queue,
+            vk_image,
+            format,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            mip_levels,
+        )?;
+
+        unsafe {
+            self.allocator
+                .destroy_buffer(staging_buffer, &mut staging_buffer_memory);
+        }
+
+        Ok((vk_image, image_memory))
     }
 
     pub fn drop_texture(&mut self, texture_handle: TextureHandle) {
@@ -651,7 +808,8 @@ impl Renderer {
         let sampler = create_texture_sampler(
             &self.device,
             self.physical_device_properties,
-            TextureOptions::default(),
+            SamplerOptions::default(),
+            1,
         )?;
 
         let texture = texture::Texture {
@@ -2794,35 +2952,85 @@ pub enum TextureWrap {
 /// `Srgb` applies the sRGB→linear transfer on sample (the right choice for
 /// authored color images); `Unorm` hands the raw value to the shader, which is
 /// what fixed-function pipelines that do their own math on raw values need.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextureColorSpace {
+    #[default]
     Srgb,
     Unorm,
 }
 
-/// Image and sampler options for [`Renderer::create_texture_with_options`].
-/// [`TextureOptions::default()`] reproduces what [`Renderer::create_texture`]
-/// has always done.
+/// Settings that live in the `VkSampler` rather than the image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TextureOptions {
+pub struct SamplerOptions {
     pub filter: TextureFilter,
     pub wrap_u: TextureWrap,
     pub wrap_v: TextureWrap,
-    /// generate and sample a full mip chain; anisotropic filtering is enabled
-    /// with it, and disabled without it
-    pub mipmaps: bool,
-    pub color_space: TextureColorSpace,
 }
 
-impl Default for TextureOptions {
+impl Default for SamplerOptions {
     fn default() -> Self {
         Self {
             filter: TextureFilter::Linear,
             wrap_u: TextureWrap::Repeat,
             wrap_v: TextureWrap::Repeat,
-            mipmaps: true,
-            color_space: TextureColorSpace::Srgb,
         }
+    }
+}
+
+/// Options for [`Renderer::create_texture_with_options`]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TextureOptions {
+    pub sampler: SamplerOptions,
+    pub color_space: TextureColorSpace,
+}
+
+/// Borrowed RGBA8 texel data
+/// four bytes per texel, rows top to bottom, no padding
+#[derive(Debug, Clone, Copy)]
+pub struct RgbaPixels<'a> {
+    width: u32,
+    height: u32,
+    bytes: &'a [u8],
+}
+
+impl<'a> RgbaPixels<'a> {
+    pub fn new(width: u32, height: u32, bytes: &'a [u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            width > 0 && height > 0,
+            "expected a non-empty image, got {width}x{height}"
+        );
+
+        // u32 * u32 * 4 overflows u32 but not usize on the 64-bit targets this
+        // builds for; checked anyway so a 32-bit build can't wrap into a
+        // too-small expectation that a short buffer would satisfy
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|texels| texels.checked_mul(4))
+            .with_context(|| format!("image dimensions overflow: {width}x{height}"))?;
+
+        anyhow::ensure!(
+            bytes.len() == expected,
+            "expected {expected} rgba bytes for {width}x{height}, got {}",
+            bytes.len(),
+        );
+
+        Ok(Self {
+            width,
+            height,
+            bytes,
+        })
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
     }
 }
 
@@ -3037,6 +3245,31 @@ fn choose_physical_device(
             continue;
         }
 
+        // Require that every texture format we use can be sampled
+        let unsupported_formats: Vec<String> = TEXTURE_FORMATS
+            .iter()
+            .filter(|(format, _block)| {
+                find_supported_format(
+                    instance,
+                    physical_device,
+                    &[*format],
+                    vk::ImageTiling::OPTIMAL,
+                    texture_format_features(),
+                )
+                .is_none()
+            })
+            .map(|(format, _block)| format!("{format:?}"))
+            .collect();
+
+        if !unsupported_formats.is_empty() {
+            log::warn!(
+                "skipping device {}: cannot sample texture formats: {}",
+                device_name_as_string(props),
+                unsupported_formats.join(", ")
+            );
+            continue;
+        }
+
         devices_with_indices_and_props.push((physical_device, indices, props));
     }
 
@@ -3057,7 +3290,8 @@ fn choose_physical_device(
         anyhow::bail!(
             "no suitable graphics device available \
              (requires Vulkan 1.3 with dynamicRendering, synchronization2, \
-             timelineSemaphore, and bufferDeviceAddress)"
+             timelineSemaphore, and bufferDeviceAddress, plus linear-filtered \
+             sampling of the RGBA8 and BC7 texture formats)"
         );
     };
 
@@ -4047,382 +4281,69 @@ pub struct FormatBlockInfo {
     pub block_height: u32,
 }
 
-/// The whitelist of texture formats supported for pre-baked mip uploads.
-/// Block-compressed formats (eg. BC7) can be added here as needed.
+impl FormatBlockInfo {
+    const RGBA8: Self = Self {
+        block_bytes: 4,
+        block_width: 1,
+        block_height: 1,
+    };
+
+    const BC7: Self = Self {
+        block_bytes: 16,
+        block_width: 4,
+        block_height: 4,
+    };
+}
+
+/// The whitelist of texture formats supported for uploads, with the block
+/// layout each one stores its levels in. Block-compressed formats (eg. BC7) can
+/// be added here as needed.
+///
+/// `choose_physical_device` proves every entry is samplable before accepting a
+/// device, so nothing downstream re-checks the device.
 ///
 /// NOTE anything block-compressed added here needs its device feature enabled
 /// in `create_logical_device` and required in `choose_physical_device`, or the
-/// format is unusable no matter what this returns.
+/// format is unusable no matter what this list says.
+const TEXTURE_FORMATS: [(vk::Format, FormatBlockInfo); 4] = [
+    (vk::Format::R8G8B8A8_SRGB, FormatBlockInfo::RGBA8),
+    (vk::Format::R8G8B8A8_UNORM, FormatBlockInfo::RGBA8),
+    // needs textureCompressionBC
+    (vk::Format::BC7_SRGB_BLOCK, FormatBlockInfo::BC7),
+    (vk::Format::BC7_UNORM_BLOCK, FormatBlockInfo::BC7),
+];
+
+/// What every format in [`TEXTURE_FORMATS`] has to support to be uploaded and
+/// sampled.
+fn texture_format_features() -> vk::FormatFeatureFlags {
+    vk::FormatFeatureFlags::SAMPLED_IMAGE
+        | vk::FormatFeatureFlags::TRANSFER_DST
+        | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR
+}
+
+/// The block layout `format` stores its levels in, or `None` if it isn't one
+/// the renderer uploads. See [`TEXTURE_FORMATS`].
 pub fn format_block_info(format: vk::Format) -> Option<FormatBlockInfo> {
-    match format {
-        vk::Format::R8G8B8A8_SRGB | vk::Format::R8G8B8A8_UNORM => Some(FormatBlockInfo {
-            block_bytes: 4,
-            block_width: 1,
-            block_height: 1,
-        }),
-
-        // needs textureCompressionBC
-        vk::Format::BC7_SRGB_BLOCK | vk::Format::BC7_UNORM_BLOCK => Some(FormatBlockInfo {
-            block_bytes: 16,
-            block_width: 4,
-            block_height: 4,
-        }),
-
-        _ => None,
-    }
-}
-
-fn create_texture(
-    source_file_name: String,
-    input_image: &image::DynamicImage,
-    allocator: &vk_mem::Allocator,
-    instance: &ash::Instance,
-    device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
-    physical_device_properties: vk::PhysicalDeviceProperties,
-    command_pool: vk::CommandPool,
-    graphics_queue: vk::Queue,
-    options: TextureOptions,
-) -> anyhow::Result<Texture> {
-    let (texture_image, texture_image_memory, mip_levels) = create_texture_image(
-        input_image,
-        allocator,
-        instance,
-        device,
-        physical_device,
-        command_pool,
-        graphics_queue,
-        options,
-    )?;
-
-    let texture_image_view = create_image_view(
-        device,
-        texture_image,
-        texture_format(options.color_space),
-        vk::ImageAspectFlags::COLOR,
-        mip_levels,
-    )?;
-
-    let texture_sampler = create_texture_sampler(device, physical_device_properties, options)?;
-
-    Ok(Texture {
-        source_file_name,
-        image: texture_image,
-        image_ownership: texture::ImageOwnership::Owned(texture_image_memory),
-        mip_levels,
-        image_view: texture_image_view,
-        sampler: texture_sampler,
-        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-    })
-}
-
-fn create_texture_image(
-    image: &image::DynamicImage,
-    allocator: &vk_mem::Allocator,
-    instance: &ash::Instance,
-    device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
-    command_pool: vk::CommandPool,
-    graphics_queue: vk::Queue,
-    options: TextureOptions,
-) -> Result<(vk::Image, vk_mem::Allocation, u32), anyhow::Error> {
-    let bytes = image.to_rgba8().into_raw();
-    debug_assert!(
-        bytes.len() == (image.width() * image.height() * 4) as usize,
-        "expected rgba bytes size"
-    );
-
-    let format = texture_format(options.color_space);
-
-    let mip_levels = if options.mipmaps {
-        image.width().max(image.height()).ilog2() + 1
-    } else {
-        1
-    };
-
-    let buffer_size = bytes.len() as u64;
-    let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
-        allocator,
-        buffer_size,
-        vk::BufferUsageFlags::TRANSFER_SRC,
-        BufferMemory::Staging,
-    )?;
-
-    unsafe { write_to_gpu_buffer(allocator, &mut staging_buffer_memory, &bytes)? };
-
-    let extent = vk::Extent2D::default()
-        .width(image.width())
-        .height(image.height());
-    let image_options = ImageOptions {
-        extent,
-        format,
-        tiling: vk::ImageTiling::OPTIMAL,
-        usage: vk::ImageUsageFlags::TRANSFER_DST
-            | vk::ImageUsageFlags::SAMPLED
-            | vk::ImageUsageFlags::TRANSFER_SRC, // for mipmap
-        mip_levels,
-        msaa_samples: vk::SampleCountFlags::TYPE_1,
-    };
-    let (vk_image, image_memory) = create_vk_image(allocator, image_options)?;
-
-    transition_image_layout(
-        device,
-        command_pool,
-        graphics_queue,
-        vk_image,
-        format,
-        vk::ImageLayout::UNDEFINED,
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        mip_levels,
-    )?;
-
-    let image_subresource = vk::ImageSubresourceLayers::default()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .mip_level(0)
-        .base_array_layer(0)
-        .layer_count(1);
-    let region = vk::BufferImageCopy::default()
-        .buffer_offset(0)
-        .buffer_row_length(0)
-        .buffer_image_height(0)
-        .image_subresource(image_subresource)
-        .image_offset(vk::Offset3D::default())
-        .image_extent(extent.into());
-
-    copy_buffer_to_image(
-        device,
-        command_pool,
-        graphics_queue,
-        staging_buffer,
-        vk_image,
-        &[region],
-    )?;
-
-    if options.mipmaps {
-        // this also leaves every level in SHADER_READ_ONLY_OPTIMAL
-        generate_mipmaps(
-            device,
-            command_pool,
-            graphics_queue,
-            vk_image,
-            (extent.width as i32, extent.height as i32),
-            mip_levels,
-            instance,
-            physical_device,
-            format,
-        )?;
-    } else {
-        // no blits to do, but the single level still has to leave the copy's
-        // TRANSFER_DST_OPTIMAL layout
-        transition_image_layout(
-            device,
-            command_pool,
-            graphics_queue,
-            vk_image,
-            format,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            mip_levels,
-        )?;
-    }
-
-    unsafe {
-        allocator.destroy_buffer(staging_buffer, &mut staging_buffer_memory);
-    }
-
-    Ok((vk_image, image_memory, mip_levels))
-}
-
-fn create_texture_from_mips(
-    source_file_name: String,
-    format: vk::Format,
-    extent: vk::Extent2D,
-    mip_data: &[&[u8]],
-    allocator: &vk_mem::Allocator,
-    instance: &ash::Instance,
-    device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
-    physical_device_properties: vk::PhysicalDeviceProperties,
-    command_pool: vk::CommandPool,
-    graphics_queue: vk::Queue,
-    texture_filter: TextureFilter,
-) -> anyhow::Result<Texture> {
-    let format_properties =
-        unsafe { instance.get_physical_device_format_properties(physical_device, format) };
-    let mut required_features =
-        vk::FormatFeatureFlags::SAMPLED_IMAGE | vk::FormatFeatureFlags::TRANSFER_DST;
-    if texture_filter == TextureFilter::Linear {
-        required_features |= vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR;
-    }
-    if !format_properties
-        .optimal_tiling_features
-        .contains(required_features)
-    {
-        anyhow::bail!("format {format:?} does not support sampling on this device");
-    }
-
-    let (texture_image, texture_image_memory) = create_texture_image_from_mips(
-        format,
-        extent,
-        mip_data,
-        allocator,
-        device,
-        command_pool,
-        graphics_queue,
-    )?;
-
-    let mip_levels = mip_data.len() as u32;
-    let texture_image_view = create_image_view(
-        device,
-        texture_image,
-        format,
-        vk::ImageAspectFlags::COLOR,
-        mip_levels,
-    )?;
-
-    let texture_sampler = create_texture_sampler(
-        device,
-        physical_device_properties,
-        TextureOptions {
-            filter: texture_filter,
-            mipmaps: mip_levels > 1,
-            ..Default::default()
-        },
-    )?;
-
-    Ok(Texture {
-        source_file_name,
-        image: texture_image,
-        image_ownership: texture::ImageOwnership::Owned(texture_image_memory),
-        mip_levels,
-        image_view: texture_image_view,
-        sampler: texture_sampler,
-        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-    })
-}
-
-fn create_texture_image_from_mips(
-    format: vk::Format,
-    extent: vk::Extent2D,
-    mip_data: &[&[u8]],
-    allocator: &vk_mem::Allocator,
-    device: &ash::Device,
-    command_pool: vk::CommandPool,
-    graphics_queue: vk::Queue,
-) -> Result<(vk::Image, vk_mem::Allocation), anyhow::Error> {
-    anyhow::ensure!(!mip_data.is_empty(), "expected at least one mip level");
-    let mip_levels = mip_data.len() as u32;
-    anyhow::ensure!(
-        mip_levels <= extent.width.max(extent.height).ilog2() + 1,
-        "too many mip levels for extent"
-    );
-
-    let block = format_block_info(format)
-        .ok_or_else(|| anyhow::anyhow!("unsupported texture format: {format:?}"))?;
-
-    // vkCmdCopyBufferToImage requires each region's bufferOffset to be
-    // a multiple of the texel block size and of 4
-    let offset_alignment = (block.block_bytes as u64).max(4);
-    let mut level_offsets = Vec::with_capacity(mip_data.len());
-    let mut buffer_size: u64 = 0;
-    for level in mip_data {
-        let offset = buffer_size.next_multiple_of(offset_alignment);
-        level_offsets.push(offset);
-        buffer_size = offset + level.len() as u64;
-    }
-
-    let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
-        allocator,
-        buffer_size,
-        vk::BufferUsageFlags::TRANSFER_SRC,
-        BufferMemory::Staging,
-    )?;
-
-    unsafe {
-        let mapped_dst = allocator.map_memory(&mut staging_buffer_memory)?;
-        for (level, &offset) in mip_data.iter().zip(&level_offsets) {
-            std::ptr::copy_nonoverlapping(
-                level.as_ptr(),
-                mapped_dst.add(offset as usize),
-                level.len(),
-            );
-        }
-        allocator.unmap_memory(&mut staging_buffer_memory);
-    }
-
-    let image_options = ImageOptions {
-        extent,
-        format,
-        tiling: vk::ImageTiling::OPTIMAL,
-        // no TRANSFER_SRC: the mip levels are uploaded directly, not blitted
-        usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-        mip_levels,
-        msaa_samples: vk::SampleCountFlags::TYPE_1,
-    };
-    let (vk_image, image_memory) = create_vk_image(allocator, image_options)?;
-
-    transition_image_layout(
-        device,
-        command_pool,
-        graphics_queue,
-        vk_image,
-        format,
-        vk::ImageLayout::UNDEFINED,
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        mip_levels,
-    )?;
-
-    let regions: Vec<vk::BufferImageCopy> = level_offsets
+    TEXTURE_FORMATS
         .iter()
-        .enumerate()
-        .map(|(i, &offset)| {
-            let image_subresource = vk::ImageSubresourceLayers::default()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .mip_level(i as u32)
-                .base_array_layer(0)
-                .layer_count(1);
+        .find(|(candidate, _block)| *candidate == format)
+        .map(|(_format, block)| *block)
+}
 
-            let mip_extent = vk::Extent3D {
-                width: (extent.width >> i).max(1),
-                height: (extent.height >> i).max(1),
-                depth: 1,
-            };
-
-            vk::BufferImageCopy::default()
-                .buffer_offset(offset)
-                .buffer_row_length(0)
-                .buffer_image_height(0)
-                .image_subresource(image_subresource)
-                .image_offset(vk::Offset3D::default())
-                .image_extent(mip_extent)
-        })
-        .collect();
-
-    copy_buffer_to_image(
-        device,
-        command_pool,
-        graphics_queue,
-        staging_buffer,
-        vk_image,
-        &regions,
-    )?;
-
-    transition_image_layout(
-        device,
-        command_pool,
-        graphics_queue,
-        vk_image,
-        format,
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        mip_levels,
-    )?;
-
-    unsafe {
-        allocator.destroy_buffer(staging_buffer, &mut staging_buffer_memory);
+/// The extent of mip level `level`, halved per level and clamped at 1.
+pub fn mip_extent(extent: vk::Extent2D, level: usize) -> vk::Extent2D {
+    vk::Extent2D {
+        width: (extent.width >> level).max(1),
+        height: (extent.height >> level).max(1),
     }
+}
 
-    Ok((vk_image, image_memory))
+/// The exact byte length one level of `extent` occupies in `block`'s layout.
+/// In whole blocks, so a compressed level rounds its dimensions up.
+pub fn level_byte_len(block: FormatBlockInfo, extent: vk::Extent2D) -> usize {
+    extent.width.div_ceil(block.block_width) as usize
+        * extent.height.div_ceil(block.block_height) as usize
+        * block.block_bytes as usize
 }
 
 #[derive(Clone, Copy)]
@@ -4678,32 +4599,28 @@ fn vk_address_mode(wrap: TextureWrap) -> vk::SamplerAddressMode {
 fn create_texture_sampler(
     device: &ash::Device,
     physical_device_properties: vk::PhysicalDeviceProperties,
-    options: TextureOptions,
+    options: SamplerOptions,
+    mip_levels: u32,
 ) -> Result<vk::Sampler, anyhow::Error> {
     let filter = match options.filter {
         TextureFilter::Linear => vk::Filter::LINEAR,
         TextureFilter::Nearest => vk::Filter::NEAREST,
     };
+    let mipped = mip_levels > 1;
     // anisotropy only means something with a mip chain to sample across
-    let max_anisotropy = if options.mipmaps {
+    let max_anisotropy = if mipped {
         physical_device_properties.limits.max_sampler_anisotropy
     } else {
         1.0
     };
-    // the same flag that sized the image caps the LOD, so image and sampler
-    // can't disagree (a mismatch samples a level that isn't there)
-    let max_lod = if options.mipmaps {
-        vk::LOD_CLAMP_NONE
-    } else {
-        0.0
-    };
+    let max_lod = if mipped { vk::LOD_CLAMP_NONE } else { 0.0 };
     let create_info = vk::SamplerCreateInfo::default()
         .mag_filter(filter)
         .min_filter(filter)
         .address_mode_u(vk_address_mode(options.wrap_u))
         .address_mode_v(vk_address_mode(options.wrap_v))
         .address_mode_w(vk_address_mode(options.wrap_u))
-        .anisotropy_enable(options.mipmaps)
+        .anisotropy_enable(mipped)
         .max_anisotropy(max_anisotropy)
         .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
         .unnormalized_coordinates(false)
@@ -4812,126 +4729,6 @@ fn has_stencil_component(format: vk::Format) -> bool {
         vk::Format::D24_UNORM_S8_UINT,
     ]
     .contains(&format)
-}
-
-fn generate_mipmaps(
-    device: &ash::Device,
-    command_pool: vk::CommandPool,
-    graphics_queue: vk::Queue,
-    image: vk::Image,
-    tex_extent: (i32, i32),
-    mip_levels: u32,
-    instance: &ash::Instance,
-    physical_device: vk::PhysicalDevice,
-    format: vk::Format,
-) -> Result<(), anyhow::Error> {
-    let format_properties =
-        unsafe { instance.get_physical_device_format_properties(physical_device, format) };
-    let linear_blit_support = format_properties
-        .optimal_tiling_features
-        .contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR);
-    if !linear_blit_support {
-        anyhow::bail!("no linear blitting support");
-    }
-
-    let command_buffer = begin_single_time_commands(device, command_pool)?;
-
-    // base reused barrier values
-    let subresource_range = vk::ImageSubresourceRange::default()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .base_array_layer(0)
-        .layer_count(1)
-        .level_count(1);
-    let mut barrier = vk::ImageMemoryBarrier2::default()
-        .image(image)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .subresource_range(subresource_range);
-
-    // record blit commands
-    let mut mip_width = tex_extent.0;
-    let mut mip_height = tex_extent.1;
-    for i in 1..mip_levels {
-        barrier.subresource_range.base_mip_level = i - 1;
-        barrier.old_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
-        barrier.new_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        // level 0 is written by a copy, levels above by the previous blit
-        barrier.src_stage_mask = vk::PipelineStageFlags2::ALL_TRANSFER;
-        barrier.src_access_mask = vk::AccessFlags2::TRANSFER_WRITE;
-        barrier.dst_stage_mask = vk::PipelineStageFlags2::BLIT;
-        barrier.dst_access_mask = vk::AccessFlags2::TRANSFER_READ;
-
-        cmd_barrier2(device, command_buffer, &[barrier]);
-
-        let src_subresource = vk::ImageSubresourceLayers::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .mip_level(i - 1)
-            .base_array_layer(0)
-            .layer_count(1);
-        let dst_subresource = vk::ImageSubresourceLayers::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .mip_level(i)
-            .base_array_layer(0)
-            .layer_count(1);
-        let blit = vk::ImageBlit::default()
-            .src_offsets([
-                vk::Offset3D::default(),
-                vk::Offset3D::default().x(mip_width).y(mip_height).z(1),
-            ])
-            .src_subresource(src_subresource)
-            .dst_offsets([
-                vk::Offset3D::default(),
-                vk::Offset3D::default()
-                    .x(if mip_width > 1 { mip_width / 2 } else { 1 })
-                    .y(if mip_height > 1 { mip_height / 2 } else { 1 })
-                    .z(1),
-            ])
-            .dst_subresource(dst_subresource);
-
-        unsafe {
-            let regions = [blit];
-            device.cmd_blit_image(
-                command_buffer,
-                image,
-                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &regions,
-                vk::Filter::LINEAR,
-            )
-        };
-
-        barrier.old_layout = vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
-        barrier.new_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-        barrier.src_stage_mask = vk::PipelineStageFlags2::BLIT;
-        barrier.src_access_mask = vk::AccessFlags2::TRANSFER_READ;
-        barrier.dst_stage_mask = vk::PipelineStageFlags2::FRAGMENT_SHADER;
-        barrier.dst_access_mask = vk::AccessFlags2::SHADER_READ;
-
-        cmd_barrier2(device, command_buffer, &[barrier]);
-
-        if mip_width > 1 {
-            mip_width /= 2;
-        }
-
-        if mip_height > 1 {
-            mip_height /= 2;
-        }
-    }
-
-    barrier.subresource_range.base_mip_level = mip_levels - 1;
-    barrier.old_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
-    barrier.new_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-    barrier.src_stage_mask = vk::PipelineStageFlags2::ALL_TRANSFER;
-    barrier.src_access_mask = vk::AccessFlags2::TRANSFER_WRITE;
-    barrier.dst_stage_mask = vk::PipelineStageFlags2::FRAGMENT_SHADER;
-    barrier.dst_access_mask = vk::AccessFlags2::SHADER_READ;
-
-    cmd_barrier2(device, command_buffer, &[barrier]);
-
-    end_single_time_commands(device, command_pool, graphics_queue, command_buffer)?;
-
-    Ok(())
 }
 
 fn get_max_usable_sample_count(

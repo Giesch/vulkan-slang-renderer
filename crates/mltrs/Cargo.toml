@@ -15,7 +15,6 @@ ash.workspace = true
 egui.workspace = true
 facet.workspace = true
 glam.workspace = true
-image.workspace = true
 ktx2.workspace = true
 log.workspace = true
 pretty_env_logger.workspace = true
