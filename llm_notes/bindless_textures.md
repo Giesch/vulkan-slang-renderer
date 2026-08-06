@@ -1,6 +1,6 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-1 done, Phases 2+ not started.** Design note for adopting bindless
+**Status: Phases 0-2 done, Phases 3+ not started.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
 The phases below were **revised after the Phase 0 spike** — the measured answers are
@@ -170,10 +170,10 @@ tests in `crates/cli/src/build_tasks.rs` next to `enum_vertex_inputs_are_rejecte
 (they reuse the `reflect_rejected_shader` helper declared above them) — scalar
 handle field, handle array, handle in a vertex-input position.
 
-## Phase 2 — device features (behaviorally invisible; land alone)
+## Phase 2 — device features (behaviorally invisible; land alone) ✅ done
 
-`create_logical_device` (renderer.rs:3474) currently requests zero
-descriptor-indexing bits. Add to `vulkan_12_features` (:3510):
+`create_logical_device` (renderer.rs:3474) requested zero descriptor-indexing
+bits. Added to `vulkan_12_features` (:3510):
 
 ```rust
 .descriptor_indexing(true)
@@ -189,7 +189,7 @@ descriptor-indexing bits. Add to `vulkan_12_features` (:3510):
 `shader_sampled_image_array_dynamic_indexing` is **also required** — the spike's
 disassembly loads the heap index from a buffer (`OpLoad` → `OpAccessChain` into
 the runtime array), which is non-constant indexing of a sampled-image array.
-It's a **core-1.0 `VkPhysicalDeviceFeatures` bit**, so it goes on the base
+It's a **core-1.0 `VkPhysicalDeviceFeatures` bit**, so it went on the base
 `features` builder (renderer.rs:3491), *not* on `vulkan_12_features`.
 Universally supported in practice, but validation flags its absence.
 
@@ -198,11 +198,19 @@ nothing the compiler emits needs it, because `NonUniformEXT` never appears. Add 
 only alongside whatever resolves that (see Phase 6) — requesting it now would imply
 a guarantee we don't have.
 
-Mirror every bit — including the core-1.0 one — in the physical-device gate
-(renderer.rs:3209-3237) and extend the bail message at renderer.rs:3290-3295.
+All six bits — including the core-1.0 one — are mirrored in the physical-device
+gate (renderer.rs:3219-3237), which is what turns an unsupported device into a
+`log::warn!` naming the exact missing feature rather than a device-creation
+failure. The bail message at renderer.rs:3290-3295 summarizes the group instead
+of enumerating all six; the per-device warn already prints exact names.
 
-**Verify:** `just sweep` stays clean. Lavapipe supports descriptor indexing, so CI
-covers this.
+Both feature requests went in the **unconditional** part of their builders, not
+the `cfg!(debug_assertions)` blocks the shader-println features use — the heap
+exists in release builds too.
+
+**Verified:** `cargo check --workspace --all-targets`, `just lint`, and
+`just test` clean; `just sweep` 16 ok / 0 fail with the injected-fault self-test
+still firing. Lavapipe supports descriptor indexing, so CI covers this.
 
 ## Phase 3 — the heap, created but not bound
 
@@ -467,7 +475,7 @@ an existing latent bug worth fixing before trusting any macOS result.
 |---|---|
 | 0 | ✅ scratch compile + `spirv-dis`; answers in [bindless_textures/phase_0_spike.md](bindless_textures/phase_0_spike.md) |
 | 1 | ✅ `just test` + three rejection tests |
-| 2 | `cargo check --workspace --all-targets`, `just lint`, `just sweep` |
+| 2 | ✅ `cargo check --workspace --all-targets`, `just lint`, `just sweep` |
 | 3 | `just sweep` — validation clean with the heap allocated but unbound |
 | 4 | `just sweep` + `just watch <example>`; hot reload still works; `just test` (reflection JSON snapshots) |
 | 5 | `just test` (snapshots), new alignment fixtures |

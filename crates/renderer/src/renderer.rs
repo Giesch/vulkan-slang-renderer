@@ -3220,6 +3220,10 @@ fn choose_physical_device(
             (features.sampler_anisotropy, "samplerAnisotropy"),
             (features.texture_compression_bc, "textureCompressionBC"),
             (
+                features.shader_sampled_image_array_dynamic_indexing,
+                "shaderSampledImageArrayDynamicIndexing",
+            ),
+            (
                 vulkan_11_features.shader_draw_parameters,
                 "shaderDrawParameters",
             ),
@@ -3227,6 +3231,23 @@ fn choose_physical_device(
             (
                 vulkan_12_features.buffer_device_address,
                 "bufferDeviceAddress",
+            ),
+            (vulkan_12_features.descriptor_indexing, "descriptorIndexing"),
+            (
+                vulkan_12_features.runtime_descriptor_array,
+                "runtimeDescriptorArray",
+            ),
+            (
+                vulkan_12_features.descriptor_binding_partially_bound,
+                "descriptorBindingPartiallyBound",
+            ),
+            (
+                vulkan_12_features.descriptor_binding_sampled_image_update_after_bind,
+                "descriptorBindingSampledImageUpdateAfterBind",
+            ),
+            (
+                vulkan_12_features.descriptor_binding_update_unused_while_pending,
+                "descriptorBindingUpdateUnusedWhilePending",
             ),
             (vulkan_13_features.dynamic_rendering, "dynamicRendering"),
             (vulkan_13_features.synchronization2, "synchronization2"),
@@ -3290,8 +3311,10 @@ fn choose_physical_device(
         anyhow::bail!(
             "no suitable graphics device available \
              (requires Vulkan 1.3 with dynamicRendering, synchronization2, \
-             timelineSemaphore, and bufferDeviceAddress, plus linear-filtered \
-             sampling of the RGBA8 and BC7 texture formats)"
+             timelineSemaphore and bufferDeviceAddress, the descriptor-indexing \
+             features used by the bindless texture heap (runtimeDescriptorArray, \
+             partially-bound and update-after-bind sampled images), plus \
+             linear-filtered sampling of the RGBA8 and BC7 texture formats)"
         );
     };
 
@@ -3492,6 +3515,8 @@ fn create_logical_device(
         .sampler_anisotropy(true)
         // BC7, for the ktx2 textures; see format_block_info
         .texture_compression_bc(true)
+        // for indexing the bindless texture heap by a value loaded from a buffer
+        .shader_sampled_image_array_dynamic_indexing(true)
         .sample_rate_shading(ENABLE_SAMPLE_SHADING);
     if cfg!(debug_assertions) {
         // features used by shader println
@@ -3509,7 +3534,15 @@ fn create_logical_device(
 
     let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default()
         .timeline_semaphore(true)
-        .buffer_device_address(true);
+        .buffer_device_address(true)
+        // the bindless texture heap: slang lowers DescriptorHandle<T> to an
+        // unbounded UniformConstant array, backed here by a fixed-size,
+        // partially-bound set written after it has been bound
+        .descriptor_indexing(true)
+        .runtime_descriptor_array(true)
+        .descriptor_binding_partially_bound(true)
+        .descriptor_binding_sampled_image_update_after_bind(true)
+        .descriptor_binding_update_unused_while_pending(true);
     if cfg!(debug_assertions) {
         // features used by shader println
         vulkan_12_features = vulkan_12_features
