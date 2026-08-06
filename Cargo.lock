@@ -1163,7 +1163,7 @@ dependencies = [
  "glam",
  "heck",
  "insta",
- "mltrs-renderer",
+ "mltrs-slang-reflection",
  "rspirv",
  "serde_json",
  "uuid",

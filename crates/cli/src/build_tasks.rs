@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use askama::Template;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 
-use mltrs_renderer::shaders::json::*;
-use mltrs_renderer::shaders::{ReflectedComputeShader, ReflectedShader};
-use mltrs_renderer::shaders::{
+use mltrs_slang_reflection::json::*;
+use mltrs_slang_reflection::{ReflectedComputeShader, ReflectedShader};
+use mltrs_slang_reflection::{
     prepare_reflected_compute_shader_with_optimization, prepare_reflected_shader_with_optimization,
 };
 
-pub use mltrs_renderer::shaders::OptimizationLevel;
+pub use mltrs_slang_reflection::OptimizationLevel;
 
 use crate::util::relative_path;
 
@@ -1562,7 +1562,7 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
         .iter()
         .map(|(load, rust)| (load.as_str(), rust.as_str()))
         .collect();
-    mltrs_renderer::shaders::reflect_shared_module_types(&module_refs, search_path)
+    mltrs_slang_reflection::reflect_shared_module_types(&module_refs, search_path)
         .unwrap_or_else(|e| panic!("failed to reflect shared modules: {e}"))
 }
 
@@ -1765,7 +1765,7 @@ mod tests {
     use super::*;
 
     use crate::util::manifest_path;
-    use mltrs_renderer::shaders::prepare_reflected_shader;
+    use mltrs_slang_reflection::prepare_reflected_shader;
 
     /// Shader discovery must be sorted, not in `read_dir` order: that order reaches
     /// the generated `shader_atlas.rs` and its snapshots, so an unsorted walk makes
