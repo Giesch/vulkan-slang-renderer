@@ -126,6 +126,12 @@ crate. Each becomes an extension trait:
    → one private `trait ToVk` (assoc. type) + a private `trait VkCreate`, both
    crate-internal to the renderer. Call sites (`renderer.rs:4872`, `:4938`,
    `:5010`) are unchanged apart from the trait import.
+   <!-- NOTE (as implemented): this landed in phase 1, not phase 2 as the Phases
+   section below schedules it. Moving the json types is itself what orphans these
+   impls, so phase 1 cannot compile without it. The same applies to
+   `ReflectedStageFlags::from_slang` and `ReflectedBindingType::from_slang`,
+   which became free functions for one commit; phase 2 restored them as inherent
+   constructors once the reflection code sat in the same crate as the types. -->
 
 3. **`CompiledShader::spv_bytes`** (`shaders.rs:315`) — the single reason the
    slang machinery touches `ash` (`ash::util::read_spv`). Only the renderer's
@@ -211,7 +217,14 @@ fires later and describes the wrong problem.
 `ReflectedStageFlags::from_slang` (`reflection/pipeline_layout.rs:301`) keeps its
 `slang::Stage` parameter. It needs the `Stage::None → ReflectedStageFlags::Empty`
 mapping, which `ShaderStage` deliberately does not model, and it is entirely
-internal to the new crate — the *reflected* type it produces
+internal to the new crate
+
+<!-- NOTE (as implemented): "internal" was not true as written. `from_slang` was
+a `pub fn` in an inherent impl on `ReflectedStageFlags`, which *is* public (it is
+re-exported from `json`) -- and inherent methods on a public type are reachable
+regardless of the privacy of the module the impl is written in. So `slang::Stage`
+was still in the public API. Both `from_slang`s are now `pub(crate)`. -->
+ — the *reflected* type it produces
 (`ReflectedStageFlags`) is what crosses the boundary, and that is already ours.
 
 ## 5. CLI dependency
@@ -246,6 +259,9 @@ New `crates/slang-reflection` with `json/{parameters,pipeline_builders}.rs`, the
 `ReflectionJson`/`ComputeReflectionJson` structs, the fixture, and the roundtrip
 test. Add `mltrs-slang-reflection` to `[workspace.dependencies]`. Renderer gains
 the dep and the `shaders::json` re-export façade. Do §3.1 (`ReflectionLayoutBindings`).
+<!-- NOTE (as implemented): §3.2 had to land here too — see the annotation on
+§3.2. -->
+
 *Verify:* `cargo check --workspace --all-targets`, `just test`, `just shaders`
 leaves the tree clean, `just sweep`.
 
