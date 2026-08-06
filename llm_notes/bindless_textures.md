@@ -28,7 +28,8 @@ buffer per material, sharing only the mesh.
 `DescriptorHandle<T>` lowers to a `uint2` of **ordinary data** — measured, not
 assumed — which is the same shape the renderer already committed to for buffers:
 BDA pointers in a param block, with `StructuredBuffer` descriptors actively rejected
-(reflection/parameters.rs:298, pipeline_layout.rs:328). A texture handle can
+(reflection/parameters.rs:298; reflection/pipeline_layout.rs:328 is a
+documented-unreachable `panic!` backstop behind it). A texture handle can
 therefore live inside a std430 struct behind an `ImmutableAddr<T>`:
 
 ```slang
@@ -51,7 +52,7 @@ prerequisite for the batching sketched in
 
 - **Raw descriptor arrays** (`Texture2D textures[]` + `NonUniformResourceIndex`)
   would require hand-written `[[vk::binding]]` annotations, which breaks the
-  positional-binding assumption stated twice in pipeline_layout.rs:187,239.
+  positional-binding assumption stated twice in reflection/pipeline_layout.rs:187,239.
 - **Overriding `getDescriptorFromHandle`** is an escape hatch, not a starting
   point. It stays available later *without touching shader source*. Deferring it
   costs nothing **until something needs a material index that varies within a
@@ -68,7 +69,7 @@ prerequisite for the batching sketched in
 
 ## What's already in place
 
-- Vulkan 1.3 floor with `bufferDeviceAddress` — gated at renderer.rs:3219-3237,
+- Vulkan 1.3 floor with `bufferDeviceAddress` — gated at renderer.rs:3209-3237,
   enabled at :3510-3512. Descriptor indexing is core 1.2, so it costs no new
   extension.
 - Every texture already carries its own view + sampler (`Texture`,
@@ -77,7 +78,8 @@ prerequisite for the batching sketched in
 - `addr.rs` is the exact template for the new handle type: `#[repr]` newtype,
   `PhantomData<fn() -> T>`, `const _: () = assert!(size_of == 8)`,
   `pub(super)` constructor so only the renderer can mint one.
-- `bindless_space_index` is exposed by the slang-rs fork and already pinned in the
+- `bindless_space_index` is exposed by the `shader-slang` crate (our fork of the
+  repo named slang-rs), already pinned in the
   root `Cargo.toml` (`v0.1.1+slang-2026.13.1`), as is
   `ShaderReflection::bindless_space_index()`. **No further slang-rs work is
   needed.** `slang_IBindlessResourceMetadata` (`slang-sys/src/bindings.rs:1041`) is
@@ -87,7 +89,9 @@ prerequisite for the batching sketched in
   the reflection walk finding any field whose declared `full_name()` starts with
   `DescriptorHandle<`.
 - Retire-after-N-frames precedent for resources still referenced by in-flight
-  command buffers: `old_pipelines` (renderer.rs:116-120, freed at :2620-2644).
+  command buffers: `old_pipelines` (renderer.rs:116-121, freed at :2619-2645).
+  No phase uses it anymore — textures are immortal for now — but it's the
+  pattern for the future heap remove API (see Phase 3's future-work note).
 
 ## Non-goals
 
@@ -122,9 +126,12 @@ The short version:
   collisions itself and reflection reports the truth. It is *not* a usage signal.
 
 `bindless_space_index` is a **target** option — it goes on `TargetDesc`, not the
-session `CompilerOptions`. Both `prepare_reflected_shader_with_optimization`
-(shaders.rs:80-82) and the compute equivalent (shaders.rs:176-178) build their own
-target desc, so both need it.
+session `CompilerOptions`. But Phase 4 drops passing it entirely: the spike's
+unset-option row shows reflection reports the index fine without it, so no
+`TargetDesc` changes are needed. If the option is ever passed after all, there
+are **three** target-desc constructions to cover, not two:
+`prepare_reflected_shader_with_optimization` (shaders.rs:80-82), the compute
+equivalent (:176-178), and `reflect_shared_module_types` (:256-258).
 
 ## Phase 1 — reject handle fields loudly (lands alone, before any Vulkan work)
 
@@ -136,15 +143,28 @@ that first, so every later intermediate state of this branch is safe.
   `full_name()` starting with `DescriptorHandle<` and bail, in the style of the
   `StructuredBuffer` rejection (:298).
 - It goes in the **early-continue block alongside the existing enum special case**
-  (:180-190), *not* in the `TypeKind::Resource` match — the type reflects as
+  (:177-198), *not* in the `TypeKind::Resource` match — the type reflects as
   `TypeKind::Vector`, so by the time the `kind()` match runs the information is
-  gone. The enum case exists for exactly this reason and is the model to copy.
+  gone. The enum case is the model for the *placement* only: it checks
+  `field.ty().kind() == TypeKind::Enum`, while the `full_name()`-prefix
+  technique this check needs is the one the *pointer* arm already uses
+  (:360-364). Don't inherit the enum arm's `Binding::Uniform`-only bail
+  wholesale either — a handle in a vertex-input position needs its own message.
+- **Arrays of handles bypass this check**: the `TypeKind::Array` arm
+  (reflection/parameters.rs:433-471) never recurses into
+  `reflect_struct_fields`, so `Sampler2D.Handle handles[4]` won't hit the loud
+  rejection. It *is* still rejected — `validate_array_element` only accepts
+  16-byte vec4-shaped elements — but with a generic array message, same shape
+  as the existing `enum_arrays_are_rejected` case. Acceptable; add a fixture to
+  pin it (this also closes the spike's open question about handle arrays on the
+  reflection side).
 - Phase 5 flips this from rejection to support. The *shape* rejection (anything
   that isn't `Sampler2D`) survives into Phase 5, and is what lets Phase 3 create
   only one heap binding.
 
-**Verify:** `just test`, plus a rejection test next to `structured_buffer_is_rejected`
-(crates/cli/src/build_tasks.rs:2335).
+**Verify:** `just test`, plus rejection tests next to `structured_buffer_is_rejected`
+(crates/cli/src/build_tasks.rs:2335) — scalar handle field, handle array, handle
+in a vertex-input position.
 
 ## Phase 2 — device features (behaviorally invisible; land alone)
 
@@ -162,13 +182,20 @@ descriptor-indexing bits. Add to `vulkan_12_features` (:3510):
 `runtime_descriptor_array` is **required** — the spike confirmed Slang emits
 `OpTypeRuntimeArray` and `OpCapability RuntimeDescriptorArray`.
 
+`shader_sampled_image_array_dynamic_indexing` is **also required** — the spike's
+disassembly loads the heap index from a buffer (`OpLoad` → `OpAccessChain` into
+the runtime array), which is non-constant indexing of a sampled-image array.
+It's a **core-1.0 `VkPhysicalDeviceFeatures` bit**, so it goes on the base
+`features` builder (renderer.rs:3491), *not* on `vulkan_12_features`.
+Universally supported in practice, but validation flags its absence.
+
 `shader_sampled_image_array_non_uniform_indexing` is deliberately **omitted**:
 nothing the compiler emits needs it, because `NonUniformEXT` never appears. Add it
 only alongside whatever resolves that (see Phase 6) — requesting it now would imply
 a guarantee we don't have.
 
-Mirror every bit in the physical-device gate (renderer.rs:3219-3237) and extend the
-bail message at renderer.rs:3290-3295.
+Mirror every bit — including the core-1.0 one — in the physical-device gate
+(renderer.rs:3209-3237) and extend the bail message at renderer.rs:3290-3295.
 
 **Verify:** `just sweep` stays clean. Lavapipe supports descriptor indexing, so CI
 covers this.
@@ -195,21 +222,51 @@ Phase 4. Keeping them apart is what makes this phase independently verifiable.
   long as nothing indexes past the count.
 - Its own pool with `DescriptorPoolCreateFlags::UPDATE_AFTER_BIND_POOL` and the
   matching `DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL`.
+- **Stage flags: `ShaderStageFlags::ALL`**, matching how reflected global
+  bindings already come out (reflection/pipeline_layout.rs:40, :262). And don't
+  assume `MAX_BINDLESS_TEXTURES` fits: validate it at startup against
+  `maxPerStageDescriptorUpdateAfterBindSampledImages` and
+  `maxDescriptorSetUpdateAfterBindSampledImages` — the suitability gate only
+  warn-skips devices, so a too-small limit must fail loudly here instead.
 - **One set, not `MAX_FRAMES_IN_FLIGHT` copies.** Update-after-bind is exactly
   what removes the need to duplicate.
-- `insert_texture(&Texture) -> BindlessIndex` writes one descriptor. Slot release
-  on `destroy_texture` must be **deferred `MAX_FRAMES_IN_FLIGHT` frames** before
-  reuse — writing a never-referenced slot is safe under
-  `PARTIALLY_BOUND` + `UPDATE_UNUSED_WHILE_PENDING`, but overwriting one an
-  in-flight command buffer still references is not. Reuse the retirement pattern
-  at renderer.rs:2620-2644.
+- `insert_texture(&Texture) -> BindlessIndex` writes one descriptor. Take the
+  image layout from `texture.image_layout` rather than hardcoding
+  `SHADER_READ_ONLY_OPTIMAL` — the sampled aliases that
+  `storage_texture_as_sampled` (renderer.rs:794) creates live in `GENERAL` —
+  mirroring what `create_descriptor_sets` already does at renderer.rs:4219.
+- **Textures are immortal for now; there is no slot release.** The slot
+  allocator is a monotonic counter checked against `MAX_BINDLESS_TEXTURES` — no
+  free-list. As part of this phase, delete the dead `drop_texture`
+  (renderer.rs:729, zero callers in the workspace) and the then-dead
+  `TextureStorage::take` (texture.rs:33, whose only caller is `drop_texture`).
+  `destroy_texture` stays: the shutdown `take_all` path (renderer.rs:2880) uses
+  it after `device_wait_idle`, where immediate destruction is safe.
+- **Future work, out of scope here:** when texture removal is needed, it comes
+  as a bindless-specific add/remove API on the heap — deferred slot reuse *and*
+  deferred Vulkan object destruction, both `MAX_FRAMES_IN_FLIGHT` frames, via
+  the retirement pattern at renderer.rs:2619-2645 (writing a never-referenced
+  slot is safe under `PARTIALLY_BOUND` + `UPDATE_UNUSED_WHILE_PENDING`, but
+  overwriting or destroying one an in-flight command buffer still references is
+  not). Note that pattern currently lives in the
+  `#[cfg(debug_assertions)]`-only hot-reload path and would need an
+  unconditional home in the frame loop. Bound (classic-path) textures stay
+  owned by their pipelines / immortal either way.
 
 Then:
 
-- Store the slot on `Texture` (texture.rs:55-64); allocate it in
-  `create_texture_with_options` (renderer.rs:517) and `create_texture_with_mips`
-  (:541) so *every* texture gets one. Release in the destroy path and `take_all`
-  (texture.rs:37).
+- Store the slot **in the returned `TextureHandle`** (texture.rs:4-9), not on
+  `Texture`: `Gpu` (renderer.rs:5132-5136) has no access to `TextureStorage`,
+  so Phase 5's accessor can only work if the handle itself carries the slot —
+  and with no release path, nothing else ever needs to look it up. Note **slab
+  index ≠ heap slot** stays true as a matter of principle even though both are
+  monotonic today; keep them as separate fields. Allocate in a single private
+  renderer method (e.g. `register_texture`) wrapping both `textures.add` call
+  sites — `create_texture_with_mips` (renderer.rs:557, which `create_texture`
+  :495 and `create_texture_with_options` :517 both funnel into) and
+  `storage_texture_as_sampled` (renderer.rs:825), which bypasses the
+  `create_texture_*` chain entirely — so *every* texture gets one, and any
+  future creation path must visibly opt in.
 
 **Verify:** `just sweep` clean with validation on. The heap is allocated and
 populated but referenced by nothing, so any error here is a pure layout/lifetime
@@ -220,7 +277,7 @@ bug.
 Much smaller than it looks. The spike measured `descriptor_set_count() == 0` and a
 single reflected binding range (the `ParameterBlock`): **the heap never enters
 `ReflectedPipelineLayout` at all.** So `reflect_pipeline_layout`
-(pipeline_layout.rs:11-27), the `descriptor_sets_for_frame` chunk width
+(reflection/pipeline_layout.rs:11-27), the `descriptor_sets_for_frame` chunk width
 (renderer.rs:2301, picking at :2315), and `descriptor_pool_sizes` (renderer.rs:4043)
 need **no changes** — there is nothing to filter out and nothing that can leak in.
 This work is purely additive.
@@ -243,9 +300,21 @@ This work is purely additive.
 - Append and bind **only for shaders that declare a handle** — the `DescriptorHandle<`
   scan from Phase 1/5. The reported space index is not a usage signal; a handle-free
   shader still reports one.
-- `assert_shader_interface_unchanged` (renderer.rs:4814) gates hot reload on the
-  reflected interface. The heap index is now part of that interface, and it shifts
-  if a shader gains or loses a parameter block — confirm that behaves sanely.
+- **The bind-after-each-pipeline rule has one implicit exception: egui.**
+  `egui_ash_renderer` records its own pipeline and descriptor binds into our
+  command buffer (renderer.rs:~2256), and the rule holds only because egui is
+  recorded **last** — nothing of ours binds after it. Leave a comment at the
+  egui call site stating that ordering invariant, so a pass added after egui
+  doesn't hit a mysteriously-unbound heap.
+- **Hot reload:** `assert_shader_interface_unchanged` (renderer.rs:4814) is a
+  whole-JSON equality compare that **panics** ("run `just shaders` and
+  rebuild"). The heap index and the per-shader uses-heap flag become part of
+  that interface, so adding or removing a handle during `just dev` is a hard
+  stop like any other interface change — expected, but it means handle-bearing
+  shaders can't be iterated live across interface changes. The check is
+  debug-only; release builds trust the embedded JSON, which is why the
+  uses-heap flag genuinely must live in the reflection JSON rather than be
+  recomputed.
 
 **Verify:** `just sweep` + `just watch <example>`; hot reload still works. Also
 `just test` — putting the heap index in the reflection JSON regenerates the `.json`
@@ -267,13 +336,23 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
   `BindlessHandle<T>` — 8 bytes (`uint2`), `PhantomData<fn() -> T>`,
   `const _: () = assert!(size_of::<BindlessHandle<T>>() == 8)`, `Serialize`,
   `pub(super)` constructor. Minted from a `TextureHandle` by an accessor mirroring
-  `Gpu::addr` (renderer.rs:5178). Only the low 32 bits carry the slot index — the
-  default lowering reads component 0 only — but the type stays 8 bytes to match the
-  layout.
+  `Gpu::addr` (renderer.rs:5178) — which works only because Phase 3 stored the
+  slot **in the `TextureHandle`**: `Gpu` (renderer.rs:5132-5136) holds just
+  `flight_slot` and the buffer storages, so the accessor must read the slot
+  straight off the handle, no `TextureStorage` lookup. Only the low 32 bits
+  carry the slot index — the default lowering reads component 0 only — but the
+  type stays 8 bytes to match the layout.
 - `crates/cli/src/build_tasks.rs`:
-  - `gather_struct_defs` (:881) emits the field as `BindlessHandle<Marker>`; add it
-    to the size/alignment tables that already special-case the 8-byte `Addr` types
-    (:1339-1342, :1378-1381).
+  - `gather_struct_defs` (:881) emits the field as `BindlessHandle<Marker>`; add
+    it to **three** tables, not two. The pair that already special-cases the
+    8-byte `Addr` types (:1339-1342, :1378-1381) are both *alignment*-only; the
+    size table is the test-only `rust_size_of` (:2037) feeding the
+    `field_size_tripwire` test. That table has no `Addr<` arm today, so
+    pointer-width fields are silently skipped by the tripwire — contradicting
+    the `Pointer` arm's own comment (:2078-2080). Add the `Addr`/`ReadAddr`/
+    `ImmutableAddr` arm alongside the `BindlessHandle<` one; the compile-time
+    checks matter more here than usual (see Verification), so the handle should
+    not join the silently-skipped set.
   - `required_resource` (:1070) must return `None` for handle fields.
 - Add alignment fixtures under `crates/cli/fixtures/alignment/` — handle alone,
   handle next to an `Addr`, handle inside a pointee struct. CLAUDE.md requires
@@ -302,7 +381,9 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
   and even that likely stays uniform if the material index comes from `gl_DrawID`.
   The decoration is only needed if the index varies *within* one draw — packed into
   vertex or instance data. That's the point at which the `getDescriptorFromHandle`
-  non-goal has to be revisited.
+  non-goal has to be revisited, together with the
+  `shader_sampled_image_array_non_uniform_indexing` bit Phase 2 omits — the two
+  must land together (the decoration without the feature is a validation error).
 - `just shaders <name>` after each; `just test`; `just sweep`;
   `just toon_link link-verify-p1`.
 
@@ -312,6 +393,22 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
   it currently says texture binding remains per-pipeline descriptors.
 - Update `docs/` for the shader-authoring workflow (handles are data, not
   `Resources` entries).
+- **State the uniformity invariant as a hard rule in `docs/`**, not just here:
+  *a texture handle — and any index used to select the struct that carries it —
+  must be dynamically uniform within a draw.* Don't source handles or their
+  selecting indices from vertex or instance data, and don't select between two
+  handles per-invocation (e.g. a per-pixel ternary on two material textures) —
+  both produce a divergent heap access that Slang compiles without
+  `NonUniformEXT` and without complaint. Nothing enforces this: not the
+  compiler, not validation (it's data-dependent), not reflection (which sees
+  declarations, not indexing expressions), and not `just sweep` — the failure
+  is wrong-texture rendering on wave-scalarizing hardware (AMD) while staying
+  green on hardware that tolerates it. Divergent indexing becomes legal only
+  when the `getDescriptorFromHandle` override lands together with the
+  `shader_sampled_image_array_non_uniform_indexing` feature bit (core 1.2, and
+  part of the `descriptorIndexing` bundle Vulkan 1.3 mandates — no extension
+  needed; see Phase 6). If the `mltrs::TexHandle` alias from Phase 6 is added,
+  repeat the rule in a comment there — it's what shader authors actually read.
 
 ---
 
