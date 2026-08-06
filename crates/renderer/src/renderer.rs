@@ -5279,25 +5279,28 @@ impl<'f> FrameRenderer<'f> {
         self.renderer.render_scale
     }
 
+    /// Queue a compute dispatch, inserting a barrier with a previous one.
     pub fn dispatch(&mut self, pipeline: &PipelineHandle<Compute>, x: u32, y: u32, z: u32) {
+        match self.pending_compute.last() {
+            Some(PendingComputeCommand::Dispatch { .. }) => {
+                self.push_compute_barrier();
+            }
+            Some(PendingComputeCommand::Barrier { .. }) => {}
+            None => {}
+        }
+
         self.pending_compute.push(PendingComputeCommand::Dispatch {
             pipeline_index: pipeline.index(),
             group_count: [x, y, z],
         });
     }
 
-    pub fn memory_barrier(
-        &mut self,
-        src_stage: vk::PipelineStageFlags2,
-        dst_stage: vk::PipelineStageFlags2,
-        src_access: vk::AccessFlags2,
-        dst_access: vk::AccessFlags2,
-    ) {
+    fn push_compute_barrier(&mut self) {
         self.pending_compute.push(PendingComputeCommand::Barrier {
-            src_stage,
-            dst_stage,
-            src_access,
-            dst_access,
+            src_stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+            dst_stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+            src_access: vk::AccessFlags2::SHADER_WRITE,
+            dst_access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
         });
     }
 
