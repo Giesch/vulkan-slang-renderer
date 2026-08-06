@@ -1,44 +1,15 @@
-use serde::{Deserialize, Serialize};
+//! The reflection json types, plus the vulkan-facing pieces of them.
+//!
+//! The types themselves live in `mltrs-slang-reflection`, which knows nothing
+//! about vulkan. They are re-exported here so that `mltrs::shaders::json::…`
+//! stays a valid path for generated code, and the translation into vulkan
+//! descriptions lives on this side of the boundary.
+
+pub use mltrs_slang_reflection::json::*;
 
 use crate::renderer::LayoutDescription;
 
-mod parameters;
-pub use parameters::*;
-
-mod pipeline_builders;
-pub use pipeline_builders::*;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReflectionJson {
-    pub source_file_name: String,
-    pub global_parameters: Vec<GlobalParameter>,
-    pub vertex_entry_point: EntryPoint,
-    pub fragment_entry_point: EntryPoint,
-    pub pipeline_layout: ReflectedPipelineLayout,
-}
-
-impl ReflectionJson {
-    pub fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
-        layout_bindings_from_pipeline_layout(&self.pipeline_layout)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ComputeReflectionJson {
-    pub source_file_name: String,
-    pub global_parameters: Vec<GlobalParameter>,
-    pub compute_entry_point: EntryPoint,
-    pub workgroup_size: [u32; 3],
-    pub pipeline_layout: ReflectedPipelineLayout,
-}
-
-impl ComputeReflectionJson {
-    pub fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
-        layout_bindings_from_pipeline_layout(&self.pipeline_layout)
-    }
-}
+pub use crate::renderer::ReflectionLayoutBindings;
 
 pub fn layout_bindings_from_pipeline_layout(
     pipeline_layout: &ReflectedPipelineLayout,
@@ -96,24 +67,4 @@ pub fn layout_bindings_from_pipeline_layout(
                 .collect()
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // hot reload compares embedded vs freshly-reflected layouts via Value
-    // equality (assert_shader_interface_unchanged); this guards against a
-    // future lossy serde attribute making that comparison flap
-    #[test]
-    fn reflection_value_roundtrip_is_stable() {
-        let raw = include_str!("fixtures/basic_triangle.json");
-        let parsed: ReflectionJson = serde_json::from_str(raw).unwrap();
-        let reparsed: ReflectionJson =
-            serde_json::from_str(&serde_json::to_string(&parsed).unwrap()).unwrap();
-        assert_eq!(
-            serde_json::to_value(&parsed).unwrap(),
-            serde_json::to_value(&reparsed).unwrap()
-        );
-    }
 }

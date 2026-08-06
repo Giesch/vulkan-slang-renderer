@@ -4961,7 +4961,53 @@ impl ComputeShaderPipelineLayout {
     }
 }
 
-impl shaders::json::ReflectedDescriptorSetLayout {
+/// The vulkan descriptions a reflected shader interface asks for, one set per
+/// descriptor set.
+///
+/// An extension trait rather than an inherent method because the json types are
+/// defined in `mltrs-slang-reflection`, which has no `ash` dependency. Every
+/// generated atlas entry globs `mltrs::renderer::*`, so re-exporting it from
+/// this module is what keeps `self.reflection_json.layout_bindings()` resolving
+/// in generated code.
+pub trait ReflectionLayoutBindings {
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
+}
+
+impl ReflectionLayoutBindings for shaders::json::ReflectionJson {
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
+        shaders::json::layout_bindings_from_pipeline_layout(&self.pipeline_layout)
+    }
+}
+
+impl ReflectionLayoutBindings for shaders::json::ComputeReflectionJson {
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
+        shaders::json::layout_bindings_from_pipeline_layout(&self.pipeline_layout)
+    }
+}
+
+/// The vulkan value a reflected type describes.
+///
+/// An extension trait rather than an inherent method for the same reason as
+/// [`ReflectionLayoutBindings`]: the reflected types are defined in
+/// `mltrs-slang-reflection`, which carries no `ash` dependency.
+trait ToVk {
+    type Vk;
+
+    fn to_vk(&self) -> Self::Vk;
+}
+
+/// Creates the vulkan object a reflected type describes.
+///
+/// Separate from [`ToVk`] because these need a device and can fail.
+trait VkCreate {
+    type Created;
+
+    unsafe fn vk_create(&self, device: &ash::Device) -> Result<Self::Created, vk::Result>;
+}
+
+impl VkCreate for shaders::json::ReflectedDescriptorSetLayout {
+    type Created = vk::DescriptorSetLayout;
+
     unsafe fn vk_create(
         &self,
         device: &ash::Device,
@@ -4973,7 +5019,9 @@ impl shaders::json::ReflectedDescriptorSetLayout {
     }
 }
 
-impl shaders::json::ReflectedDescriptorSetLayoutBinding {
+impl ToVk for shaders::json::ReflectedDescriptorSetLayoutBinding {
+    type Vk = vk::DescriptorSetLayoutBinding<'static>;
+
     fn to_vk(&self) -> vk::DescriptorSetLayoutBinding<'static> {
         vk::DescriptorSetLayoutBinding::default()
             .stage_flags(self.stage_flags.to_vk())
@@ -4983,8 +5031,10 @@ impl shaders::json::ReflectedDescriptorSetLayoutBinding {
     }
 }
 
-impl shaders::json::ReflectedBindingType {
-    fn to_vk(self) -> vk::DescriptorType {
+impl ToVk for shaders::json::ReflectedBindingType {
+    type Vk = vk::DescriptorType;
+
+    fn to_vk(&self) -> vk::DescriptorType {
         match self {
             Self::Sampler => vk::DescriptorType::SAMPLER,
             Self::Texture => vk::DescriptorType::SAMPLED_IMAGE,
@@ -4995,7 +5045,12 @@ impl shaders::json::ReflectedBindingType {
     }
 }
 
-impl shaders::json::ReflectedPipelineLayout {
+impl VkCreate for shaders::json::ReflectedPipelineLayout {
+    type Created = (
+        vk::PipelineLayout,
+        Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
+    );
+
     unsafe fn vk_create(
         &self,
         device: &ash::Device,
@@ -5107,7 +5162,9 @@ impl DescriptorCounts {
     }
 }
 
-impl shaders::json::ReflectedPushConstantRange {
+impl ToVk for shaders::json::ReflectedPushConstantRange {
+    type Vk = vk::PushConstantRange;
+
     fn to_vk(&self) -> vk::PushConstantRange {
         vk::PushConstantRange::default()
             .stage_flags(self.stage_flags.to_vk())
@@ -5116,8 +5173,10 @@ impl shaders::json::ReflectedPushConstantRange {
     }
 }
 
-impl shaders::json::ReflectedStageFlags {
-    fn to_vk(self) -> vk::ShaderStageFlags {
+impl ToVk for shaders::json::ReflectedStageFlags {
+    type Vk = vk::ShaderStageFlags;
+
+    fn to_vk(&self) -> vk::ShaderStageFlags {
         match self {
             Self::Vertex => vk::ShaderStageFlags::VERTEX,
             Self::Fragment => vk::ShaderStageFlags::FRAGMENT,

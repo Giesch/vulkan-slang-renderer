@@ -8,6 +8,8 @@ publish = false
 workspace = true
 
 [dependencies]
+mltrs-slang-reflection.workspace = true
+
 anyhow.workspace = true
 ash.workspace = true
 egui.workspace = true
