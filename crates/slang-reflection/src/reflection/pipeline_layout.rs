@@ -298,7 +298,7 @@ impl DescriptorSetLayoutBuilder {
 
 impl ReflectedStageFlags {
     // cpp getShaderStageFlags
-    pub fn from_slang(stage: slang::Stage) -> Self {
+    pub(crate) fn from_slang(stage: slang::Stage) -> Self {
         match stage {
             slang::Stage::Vertex => Self::Vertex,
             slang::Stage::Fragment => Self::Fragment,
@@ -313,7 +313,7 @@ impl ReflectedStageFlags {
 
 impl ReflectedBindingType {
     // cpp mapSlangBindingTypeToVulkanDescriptorType
-    pub fn from_slang(binding_type: slang::BindingType) -> Self {
+    pub(crate) fn from_slang(binding_type: slang::BindingType) -> Self {
         let mutable = binding_type.is_mutable();
 
         match binding_type.base() {

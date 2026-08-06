@@ -15,7 +15,61 @@ mod reflection;
 
 use json::*;
 
-pub use shader_slang::OptimizationLevel;
+/// How hard slang should work on the spir-v it emits.
+///
+/// A 1:1 mirror of `slang::OptimizationLevel` rather than a re-export, so that
+/// no `shader_slang` type appears in this crate's public API: a slang-rs
+/// upgrade that renames a variant stops at `to_slang` below instead of
+/// rippling straight through into the cli.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OptimizationLevel {
+    /// don't optimize at all
+    None,
+    /// balance code quality against compilation time
+    Default,
+    /// optimize aggressively
+    #[default]
+    High,
+    /// may take a very long time, or trade space for speed severely
+    Maximal,
+}
+
+impl OptimizationLevel {
+    fn to_slang(self) -> slang::OptimizationLevel {
+        match self {
+            Self::None => slang::OptimizationLevel::None,
+            Self::Default => slang::OptimizationLevel::Default,
+            Self::High => slang::OptimizationLevel::High,
+            Self::Maximal => slang::OptimizationLevel::Maximal,
+        }
+    }
+}
+
+/// The shader stages this engine supports.
+///
+/// Deliberately a narrowing of `slang::Stage` rather than a mirror of all 18 of
+/// its variants: the rest are rejected anyway, and `from_slang` returning
+/// `None` is what lets that rejection happen at the point of compilation, where
+/// the stage and the source file are both still in hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShaderStage {
+    Vertex,
+    Fragment,
+    Compute,
+}
+
+impl ShaderStage {
+    fn from_slang(stage: slang::Stage) -> Option<Self> {
+        match stage {
+            slang::Stage::Vertex => Some(Self::Vertex),
+            slang::Stage::Fragment => Some(Self::Fragment),
+            slang::Stage::Compute => Some(Self::Compute),
+
+            // raytracing, mesh, tesselation, geometry, hull, domain, …
+            _ => None,
+        }
+    }
+}
 
 /// whether to use column-major or row-major matricies with slang
 /// https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/a1-01-matrix-layout.html
@@ -76,7 +130,7 @@ pub fn prepare_reflected_shader_with_optimization(
     let session_options = slang::CompilerOptions::default()
         .vulkan_use_entry_point_name(true)
         .language(slang::SourceLanguage::Slang)
-        .optimization(optimization)
+        .optimization(optimization.to_slang())
         .emit_spirv_directly(true);
     let session_options = match MATRIX_LAYOUT {
         MatrixLayout::ColumnMajor => session_options.matrix_layout_column(true),
@@ -111,21 +165,24 @@ pub fn prepare_reflected_shader_with_optimization(
             &session,
             &shader_module,
             &cpu_constants_module,
+            source_file_name,
         )?;
 
-        if compiled_shader.stage == slang::Stage::Vertex {
+        if compiled_shader.stage == ShaderStage::Vertex {
             vertex_shader = Some(compiled_shader)
-        } else if compiled_shader.stage == slang::Stage::Fragment {
+        } else if compiled_shader.stage == ShaderStage::Fragment {
             fragment_shader = Some(compiled_shader)
         }
 
         components.push(entry_point.clone().into());
     }
 
-    let vertex_shader = vertex_shader
-        .unwrap_or_else(|| panic!("failed to load vertex entry point for: {source_file_name}"));
-    let fragment_shader = fragment_shader
-        .unwrap_or_else(|| panic!("failed to load fragment entry point for: {source_file_name}"));
+    let Some(vertex_shader) = vertex_shader else {
+        anyhow::bail!("no vertex entry point in {source_file_name}");
+    };
+    let Some(fragment_shader) = fragment_shader else {
+        anyhow::bail!("no fragment entry point in {source_file_name}");
+    };
 
     let program = session.create_composite_component_type(&components)?;
     let linked_program = program.link()?;
@@ -172,7 +229,7 @@ pub fn prepare_reflected_compute_shader_with_optimization(
     let session_options = slang::CompilerOptions::default()
         .vulkan_use_entry_point_name(true)
         .language(slang::SourceLanguage::Slang)
-        .optimization(optimization)
+        .optimization(optimization.to_slang())
         .emit_spirv_directly(true);
     let session_options = match MATRIX_LAYOUT {
         MatrixLayout::ColumnMajor => session_options.matrix_layout_column(true),
@@ -206,20 +263,23 @@ pub fn prepare_reflected_compute_shader_with_optimization(
             &session,
             &shader_module,
             &cpu_constants_module,
+            source_file_name,
         )?;
 
-        assert!(
-            compiled_shader.stage == slang::Stage::Compute,
-            "expected compute stage, got {:?}",
-            compiled_shader.stage
-        );
+        if compiled_shader.stage != ShaderStage::Compute {
+            anyhow::bail!(
+                "expected a compute entry point in {source_file_name}, got {:?}",
+                compiled_shader.stage
+            );
+        }
         compute_shader = Some(compiled_shader);
 
         components.push(entry_point.clone().into());
     }
 
-    let compute_shader = compute_shader
-        .unwrap_or_else(|| panic!("failed to load compute entry point for: {source_file_name}"));
+    let Some(compute_shader) = compute_shader else {
+        anyhow::bail!("no compute entry point in {source_file_name}");
+    };
 
     let program = session.create_composite_component_type(&components)?;
     let linked_program = program.link()?;
@@ -311,7 +371,7 @@ fn collect_struct_and_enum_decls(
 
 pub struct CompiledShader {
     pub entry_point_name: CString,
-    pub stage: slang::Stage,
+    pub stage: ShaderStage,
     pub shader_bytecode: Vec<u8>,
 }
 
@@ -329,6 +389,7 @@ fn compile_shader(
     session: &slang::Session,
     shader_module: &slang::Module,
     cpu_constants_module: &slang::Module,
+    source_file_name: &str,
 ) -> anyhow::Result<CompiledShader> {
     let program = session.create_composite_component_type(&[
         shader_module.clone().into(),
@@ -343,12 +404,19 @@ fn compile_shader(
     let mut refl_entry_points = program_layout.entry_points();
     assert!(refl_entry_points.len() == 1);
     let reflection_entry_point = refl_entry_points.next().unwrap();
-    let stage = reflection_entry_point.stage();
+
+    let slang_stage = reflection_entry_point.stage();
+    let entry_point_name = CString::new(reflection_entry_point.name().unwrap())?;
+
+    let stage = ShaderStage::from_slang(slang_stage).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unsupported shader stage {slang_stage:?} for entry point {entry_point_name:?} \
+             in {source_file_name}; only vertex, fragment and compute are supported"
+        )
+    })?;
 
     let shader_bytecode: slang::Blob = linked_program.entry_point_code(0, 0)?;
     let shader_bytecode = shader_bytecode.as_slice().to_vec();
-
-    let entry_point_name = CString::new(reflection_entry_point.name().unwrap())?;
 
     Ok(CompiledShader {
         entry_point_name,
