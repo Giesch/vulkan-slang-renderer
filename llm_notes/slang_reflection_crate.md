@@ -2,7 +2,9 @@
 
 Extract the slang compile/reflect machinery out of `crates/renderer` into a new
 library crate, so that **`mltrs-slang-reflection` is the only crate in the
-workspace with a direct dependency on `shader-slang`**.
+workspace with a direct dependency on `shader-slang`** — and so that no
+`shader_slang::` type appears in its public API either, making the boundary a
+real seam rather than a bookkeeping one (§4).
 
 The shader watcher (`crates/renderer/src/shader_watcher.rs`) stays exactly where
 it is — it's `notify`-based and has no slang dependency; moving it is a separate
@@ -136,7 +138,7 @@ crate. Each becomes an extension trait:
 *with* the reflection code, so it stays an inherent impl in its defining crate —
 no change needed.
 
-## 4. slang types in the public API
+## 4. slang types in the public API — wrap them
 
 Two slang types currently leak through `mltrs_renderer::shaders`:
 
@@ -145,13 +147,72 @@ Two slang types currently leak through `mltrs_renderer::shaders`:
 - `CompiledShader::stage: slang::Stage` — public field, but no consumer outside
   `shaders.rs` reads it
 
-**Decision: re-export, don't wrap (for now).** `mltrs-slang-reflection` re-exports
-`OptimizationLevel`; downstream crates use it without declaring `shader-slang` in
-their own `Cargo.toml`, which satisfies "only direct dependency". Defining our
-own `OptimizationLevel` enum + a `Stage` enum would make the boundary genuinely
-opaque (so a slang-rs upgrade couldn't ripple past the new crate) — worth doing,
-but it's a separate change and would touch the CLI's flag parsing. Noted in
-`tech_debt.md` rather than done here.
+A re-export would technically satisfy "only direct dependency" (nothing else
+declares `shader-slang` in its `Cargo.toml`), but it leaves the boundary
+transparent: a slang-rs upgrade that renames a variant still ripples straight
+through into `build_tasks.rs`. **Decision: own both types.** After this, no
+`shader_slang::` type appears in the new crate's public API at all.
+
+### `OptimizationLevel` — 1:1 mirror
+
+`SlangOptimizationLevel` (`slang-sys/src/bindings.rs:480`) is a stable, tiny
+`#[repr(u32)]` enum, so mirror it exactly:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OptimizationLevel {
+    /// don't optimize at all
+    None,
+    /// balance code quality against compilation time
+    Default,
+    /// optimize aggressively
+    #[default]
+    High,
+    /// may take a very long time, or trade space for speed severely
+    Maximal,
+}
+```
+
+with a private `fn to_slang(self) -> slang::OptimizationLevel`. Keeping the name
+`OptimizationLevel` means the existing call sites (`OptimizationLevel::High` in
+`build_tasks.rs:1804,1870,1915,2133` and `main.rs:131`, `::None` at
+`build_tasks.rs:2815`) are untouched — only the import path changes, which phase
+3 was already changing. `Default`/`Maximal` are unused today but cost nothing and
+keep the mirror honest.
+
+### `ShaderStage` — narrowing, not mirroring
+
+`SlangStage` (`bindings.rs:404`) has 18 variants (Hull, Domain, RayGeneration,
+Mesh, …). Mirroring all of them would be pure noise: this engine supports exactly
+three, and already rejects the rest — `prepare_reflected_shader` panics unless it
+finds both a vertex and a fragment entry point, and
+`prepare_reflected_compute_shader` asserts `stage == Compute`. So:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShaderStage { Vertex, Fragment, Compute }
+
+impl ShaderStage {
+    fn from_slang(stage: slang::Stage) -> Option<Self> { … }
+}
+```
+
+`CompiledShader::stage` changes from `slang::Stage` to `ShaderStage`. Nothing
+outside `shaders.rs` reads that field, so the change is contained.
+
+The upside beyond hiding the type: `from_slang` returning `Option` turns
+"shader declares a geometry entry point" into an ordered `anyhow::bail!` at the
+point of compilation — naming the stage and the source file — instead of the
+current panic-at-a-distance ("failed to load vertex entry point for: …") that
+fires later and describes the wrong problem.
+
+### What stays taking `slang::Stage`
+
+`ReflectedStageFlags::from_slang` (`reflection/pipeline_layout.rs:301`) keeps its
+`slang::Stage` parameter. It needs the `Stage::None → ReflectedStageFlags::Empty`
+mapping, which `ShaderStage` deliberately does not model, and it is entirely
+internal to the new crate — the *reflected* type it produces
+(`ReflectedStageFlags`) is what crosses the boundary, and that is already ours.
 
 ## 5. CLI dependency
 
@@ -192,19 +253,28 @@ leaves the tree clean, `just sweep`.
 `shaders.rs`'s compile entry points, `reflection.rs`, `reflection/*` move over.
 Do §3.2 (`ToVk`/`VkCreate`) and §3.3 (`SpvBytes`). Drop `shader-slang` from
 `crates/renderer/Cargo.toml`. Renderer's `shaders.rs` is now the façade plus
-`atlas`.
+`atlas`. The façade still re-exports slang's `OptimizationLevel` at this point.
 *Verify:* the same, plus `grep shader-slang crates/*/Cargo.toml` returns only
 `crates/slang-reflection/Cargo.toml`.
 
-**Phase 3 — repoint the CLI.**
+**Phase 3 — wrap the slang enums.**
+§4: add `OptimizationLevel` and `ShaderStage`, convert at the slang call sites,
+switch `CompiledShader::stage`, and replace the entry-point panics with the
+`bail!` that `ShaderStage::from_slang` makes possible. Nothing outside the new
+crate changes — the name `OptimizationLevel` and its `::High`/`::None` variants
+are preserved, so `build_tasks.rs` still compiles against the renderer façade.
+*Verify:* `cargo check --workspace --all-targets`, `just test`, plus
+`grep -rn "shader_slang\|slang::" crates/slang-reflection/src/lib.rs` shows no
+slang type in a `pub` signature.
+
+**Phase 4 — repoint the CLI.**
 §5. Drop `mltrs-renderer` from `crates/cli/Cargo.toml`.
 *Verify:* `just test` (build_tasks.rs changed), `just shaders`, and confirm
 `cargo tree -p mltrs-cli` has no `ash`/`sdl3`.
 
-**Phase 4 — docs.**
+**Phase 5 — docs.**
 Update the workspace-layout section of `CLAUDE.md` with the new crate and the
-"only direct slang-rs dependency" invariant. Add the `OptimizationLevel`/`Stage`
-wrapping question to `llm_notes/tech_debt.md`.
+"only direct slang-rs dependency" invariant.
 
 ## Risks
 
