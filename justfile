@@ -169,6 +169,30 @@ setup-precommit:
     chmod +x .git/hooks/pre-commit
 
 # lint and test for git pre-commit hook
-pre-commit: shaders && lint test
+[unix]
+pre-commit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # A commit that only touches markdown/org can't break the build, so skip it
+    # NOTE -z so paths with spaces/unicode arrive verbatim rather than quoted,
+    # and an explicit count so an empty index (e.g. `commit --amend --no-edit`)
+    # still runs the checks instead of trivially satisfying "only docs".
+    staged=0
+    docs_only=1
+    while IFS= read -r -d '' path; do
+        staged=$((staged + 1))
+        case "$path" in
+            *.md | *.org) ;;
+            *) docs_only=0; break ;;
+        esac
+    done < <(git diff --cached --name-only -z)
+    if [ "$staged" -gt 0 ] && [ "$docs_only" -eq 1 ]; then
+        echo "pre-commit: markdown/org only -- skipping shaders, lint, and test"
+        exit 0
+    fi
+    {{just_executable()}} _pre-commit-checks
+
+# the actual pre-commit work; `pre-commit` skips this for docs-only commits
+_pre-commit-checks: shaders && lint test
     git add 'examples/*/shaders/compiled/*' 'examples/*/src/generated/*'
 
