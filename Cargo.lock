@@ -1187,7 +1187,6 @@ dependencies = [
  "sdl3",
  "serde",
  "serde_json",
- "shader-slang",
  "thiserror 2.0.17",
  "vk-mem",
 ]
@@ -1196,8 +1195,10 @@ dependencies = [
 name = "mltrs-slang-reflection"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
  "serde_json",
+ "shader-slang",
 ]
 
 [[package]]

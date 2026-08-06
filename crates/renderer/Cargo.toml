@@ -23,6 +23,5 @@ notify.workspace = true
 sdl3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-shader-slang.workspace = true
 thiserror.workspace = true
 vk-mem.workspace = true

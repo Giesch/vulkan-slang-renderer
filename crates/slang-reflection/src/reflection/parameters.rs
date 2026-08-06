@@ -3,7 +3,7 @@
 
 use shader_slang as slang;
 
-use crate::shaders::json::*;
+use crate::json::*;
 
 pub struct Parameters {
     pub global_parameters: Vec<GlobalParameter>,

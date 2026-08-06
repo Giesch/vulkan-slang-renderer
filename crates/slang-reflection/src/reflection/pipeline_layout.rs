@@ -6,7 +6,7 @@
 
 use shader_slang as slang;
 
-use crate::shaders::json::*;
+use crate::json::*;
 
 pub fn reflect_pipeline_layout(
     program_layout: &slang::reflection::Shader,
@@ -238,7 +238,7 @@ impl DescriptorSetLayoutBuilder {
 
         // this relies on using no manual binding annotations
         let vk_binding_index = self.binding_ranges.len() as u32;
-        let descriptor_type = binding_type_from_slang(binding_type);
+        let descriptor_type = ReflectedBindingType::from_slang(binding_type);
 
         // the cpp library uses 'Uniform' as a default arg for size()
         let size = type_layout.size(slang::ParameterCategory::Uniform);
@@ -273,7 +273,7 @@ impl DescriptorSetLayoutBuilder {
     ) {
         for entry_point in program_layout.entry_points() {
             pipeline_layout_builder.current_stage_flags =
-                stage_flags_from_slang(entry_point.stage());
+                ReflectedStageFlags::from_slang(entry_point.stage());
             self.add_descriptor_ranges_for_parameter_block_element(
                 entry_point.type_layout().unwrap(),
                 pipeline_layout_builder,
@@ -296,56 +296,53 @@ impl DescriptorSetLayoutBuilder {
     }
 }
 
-// NOTE free functions rather than inherent impls only because the reflected
-// types now live in `mltrs-slang-reflection` while this code is still in the
-// renderer; they go back to being `from_slang` constructors once the reflection
-// half moves across too.
+impl ReflectedStageFlags {
+    // cpp getShaderStageFlags
+    pub fn from_slang(stage: slang::Stage) -> Self {
+        match stage {
+            slang::Stage::Vertex => Self::Vertex,
+            slang::Stage::Fragment => Self::Fragment,
+            slang::Stage::Compute => Self::Compute,
+            slang::Stage::None => Self::Empty,
 
-// cpp getShaderStageFlags
-fn stage_flags_from_slang(stage: slang::Stage) -> ReflectedStageFlags {
-    match stage {
-        slang::Stage::Vertex => ReflectedStageFlags::Vertex,
-        slang::Stage::Fragment => ReflectedStageFlags::Fragment,
-        slang::Stage::Compute => ReflectedStageFlags::Compute,
-        slang::Stage::None => ReflectedStageFlags::Empty,
-
-        // raytracing, mesh, tesselation, dispatch, & count
-        _ => unimplemented!(),
+            // raytracing, mesh, tesselation, dispatch, & count
+            _ => unimplemented!(),
+        }
     }
 }
 
-// cpp mapSlangBindingTypeToVulkanDescriptorType
-fn binding_type_from_slang(binding_type: slang::BindingType) -> ReflectedBindingType {
-    let mutable = binding_type.is_mutable();
+impl ReflectedBindingType {
+    // cpp mapSlangBindingTypeToVulkanDescriptorType
+    pub fn from_slang(binding_type: slang::BindingType) -> Self {
+        let mutable = binding_type.is_mutable();
 
-    match binding_type.base() {
-        slang::BaseBindingType::Sampler => ReflectedBindingType::Sampler,
-        slang::BaseBindingType::Texture if mutable => ReflectedBindingType::StorageImage,
-        slang::BaseBindingType::Texture => ReflectedBindingType::Texture,
-        slang::BaseBindingType::ConstantBuffer => ReflectedBindingType::ConstantBuffer,
-        slang::BaseBindingType::CombinedTextureSampler => {
-            ReflectedBindingType::CombinedTextureSampler
-        }
-        // unreachable in practice: parameters reflection rejects structured
-        // buffers first with a friendlier, field-specific error
-        slang::BaseBindingType::RawBuffer => panic!(
-            "StructuredBuffer descriptors are unsupported; \
+        match binding_type.base() {
+            slang::BaseBindingType::Sampler => Self::Sampler,
+            slang::BaseBindingType::Texture if mutable => Self::StorageImage,
+            slang::BaseBindingType::Texture => Self::Texture,
+            slang::BaseBindingType::ConstantBuffer => Self::ConstantBuffer,
+            slang::BaseBindingType::CombinedTextureSampler => Self::CombinedTextureSampler,
+            // unreachable in practice: parameters reflection rejects structured
+            // buffers first with a friendlier, field-specific error
+            slang::BaseBindingType::RawBuffer => panic!(
+                "StructuredBuffer descriptors are unsupported; \
                 use a BDA pointer (LayoutPtr<T, Std430DataLayout>) instead"
-        ),
+            ),
 
-        slang::BaseBindingType::PushConstant => todo!(),
-        slang::BaseBindingType::ParameterBlock => todo!(),
+            slang::BaseBindingType::PushConstant => todo!(),
+            slang::BaseBindingType::ParameterBlock => todo!(),
 
-        slang::BaseBindingType::VaryingInput => todo!(),
-        slang::BaseBindingType::VaryingOutput => todo!(),
-        slang::BaseBindingType::TypedBuffer => todo!(),
-        slang::BaseBindingType::InputRenderTarget => todo!(),
-        slang::BaseBindingType::InlineUniformData => todo!(),
-        slang::BaseBindingType::RayTracingAccelerationStructure => todo!(),
-        slang::BaseBindingType::ExistentialValue => todo!(),
-        slang::BaseBindingType::Unknown => todo!(),
-        slang::BaseBindingType::Unrecognized(bits) => {
-            todo!("unrecognized slang binding type: {bits:#x}")
+            slang::BaseBindingType::VaryingInput => todo!(),
+            slang::BaseBindingType::VaryingOutput => todo!(),
+            slang::BaseBindingType::TypedBuffer => todo!(),
+            slang::BaseBindingType::InputRenderTarget => todo!(),
+            slang::BaseBindingType::InlineUniformData => todo!(),
+            slang::BaseBindingType::RayTracingAccelerationStructure => todo!(),
+            slang::BaseBindingType::ExistentialValue => todo!(),
+            slang::BaseBindingType::Unknown => todo!(),
+            slang::BaseBindingType::Unrecognized(bits) => {
+                todo!("unrecognized slang binding type: {bits:#x}")
+            }
         }
     }
 }

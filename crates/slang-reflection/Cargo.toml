@@ -8,7 +8,9 @@ publish = false
 workspace = true
 
 [dependencies]
+anyhow.workspace = true
 serde.workspace = true
+shader-slang.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

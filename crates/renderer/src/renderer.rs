@@ -17,6 +17,8 @@ use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader, ShaderAt
 
 #[cfg(debug_assertions)]
 use crate::shader_watcher;
+#[cfg(debug_assertions)]
+use crate::shaders::SpvBytes as _;
 use crate::shaders::json::ReflectedDescriptorSetLayout;
 #[cfg(debug_assertions)]
 use log::*;

@@ -1,6 +1,6 @@
 use shader_slang as slang;
 
-use super::json::*;
+use crate::json::*;
 
 mod parameters;
 use parameters::*;
