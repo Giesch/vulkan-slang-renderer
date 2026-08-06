@@ -1,10 +1,15 @@
 #+title: Todo
 
 * Possible Next Directions
+- [ ] llm skills for style guides?
+  - minimal comments
+  - meaningful variable names in shaders
+  - slang formatting rules?
+
 - [-] adopt BC7 compression for textures consistently
   - [X] add the option
-  - [ ] get it working for toon link as well
-  - [ ] review docs/textures.md
+  - [-] get it working for toon link as well
+  - [ ] review/rewrite docs/textures.md
 
 - [-] Bindless Textures
   https://discord.com/channels/1303735196696445038/1427662446579024013/1427662446579024013

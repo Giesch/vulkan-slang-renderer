@@ -432,7 +432,6 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
     // sRGB transfer moves it a lot
     let gray = solid_image(128, 128, 128);
 
-    // the same wrap mode on both axes, which is all these panels vary
     let sampling = |wrap: TextureWrap, filter: TextureFilter| TextureOptions {
         sampler: SamplerOptions {
             filter,

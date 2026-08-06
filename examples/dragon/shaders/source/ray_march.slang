@@ -49,7 +49,8 @@ public float3 rayMarch<W>(
         if (let hit = world.closestShape(currentPosition)) {
             closestDistance = hit.distance;
 
-            if (closestDistance < world.minHitDistance) { // hit
+            if (closestDistance < world.minHitDistance) {
+                // hit
                 return basicLighting(
                     world,
                     currentPosition,
@@ -61,7 +62,8 @@ public float3 rayMarch<W>(
             }
         }
 
-        if (distanceTraveled >= MAX_DISTANCE) { // miss
+        if (distanceTraveled >= MAX_DISTANCE) {
+            // miss
             break;
         }
 

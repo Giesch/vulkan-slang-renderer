@@ -1,26 +1,35 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: planned, not started.** Design note for adopting bindless texture access
-using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering. Supersedes the
-"not planned" note in [render-graph/03_bindless.md](render-graph/03_bindless.md),
-which stays useful as background on descriptor indexing and Metal argument buffers.
-For how this relates to the BDA work, see
+**Status: Phase 0 spiked, Phases 1+ not started.** Design note for adopting bindless
+texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
+
+The phases below were **revised after the Phase 0 spike** — the measured answers are
+in [bindless_textures/phase_0_spike.md](bindless_textures/phase_0_spike.md), and
+several of them contradicted what this doc originally assumed. Two phase boundaries
+moved, one instruction ("bind the heap once per command buffer") turned out to be
+wrong, and the `BINDLESS_SPACE_INDEX` constant the spike recommended was dropped
+again on review. Read the spike doc for the evidence; this doc is the plan.
+
+Supersedes the "not planned" note in
+[render-graph/03_bindless.md](render-graph/03_bindless.md), which stays useful as
+background on descriptor indexing and Metal argument buffers. For how this relates
+to the BDA work, see
 [vulkan_1_3_migration/bindless_vs_bda_terminology.md](vulkan_1_3_migration/bindless_vs_bda_terminology.md).
 
 ## Why
 
 A texture is currently welded to a pipeline. `create_descriptor_sets`
-(renderer.rs:3904) runs exactly once, at pipeline creation, from a positionally
+(renderer.rs:4141) runs exactly once, at pipeline creation, from a positionally
 ordered `&[&Texture]`; changing a texture means a new pipeline. `toon_link` pays
 this in full — `build_material_pipelines`
-(examples/toon_link/src/main.rs:778-825) creates one pipeline *and* one uniform
+(examples/toon_link/src/main.rs:780-826) creates one pipeline *and* one uniform
 buffer per material, sharing only the mesh.
 
-`DescriptorHandle<T>` lowers to a `uint2` of **ordinary data**, which is the same
-shape the renderer already committed to for buffers: BDA pointers in a param block,
-with `StructuredBuffer` descriptors actively rejected
-(reflection/parameters.rs:299, pipeline_layout.rs:329). A texture handle can
-Obviouslytherefore live inside a std430 struct behind an `ImmutableAddr<T>`:
+`DescriptorHandle<T>` lowers to a `uint2` of **ordinary data** — measured, not
+assumed — which is the same shape the renderer already committed to for buffers:
+BDA pointers in a param block, with `StructuredBuffer` descriptors actively rejected
+(reflection/parameters.rs:298, pipeline_layout.rs:328). A texture handle can
+therefore live inside a std430 struct behind an `ImmutableAddr<T>`:
 
 ```slang
 struct Material {
@@ -34,7 +43,7 @@ struct ToonLinkParams {
 }
 ```
 
-That collapses toon_link to one pipeline plus a material buffer, and is the
+That collapses toon_link to one pipeline plus a material buffer, and is a
 prerequisite for the batching sketched in
 [render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md).
 
@@ -42,10 +51,13 @@ prerequisite for the batching sketched in
 
 - **Raw descriptor arrays** (`Texture2D textures[]` + `NonUniformResourceIndex`)
   would require hand-written `[[vk::binding]]` annotations, which breaks the
-  positional-binding assumption stated twice in pipeline_layout.rs:192,244.
+  positional-binding assumption stated twice in pipeline_layout.rs:187,239.
 - **Overriding `getDescriptorFromHandle`** is an escape hatch, not a starting
-  point. It stays available later *without touching shader source*, so deferring
-  it costs nothing. Reach for it only if we want a single mutable-type heap
+  point. It stays available later *without touching shader source*. Deferring it
+  costs nothing **until something needs a material index that varies within a
+  single draw** — the spike found Slang emits no `NonUniformEXT` and offers no
+  source-level way to request it, and this override is the only seam where the
+  decoration could be added. It is also the way to a single mutable-type heap
   (`BindlessDescriptorOptions.VkMutable`, needs `VK_EXT_mutable_descriptor_type`)
   or a layout that doesn't match Slang's default.
 - **`VK_EXT_descriptor_heap`** (Slang's `spvDescriptorHeapEXT` capability) shipped
@@ -56,99 +68,131 @@ prerequisite for the batching sketched in
 
 ## What's already in place
 
-- Vulkan 1.3 floor with `bufferDeviceAddress` (renderer.rs:3273-3286); descriptor
-  indexing is core 1.2, so it costs no new extension.
+- Vulkan 1.3 floor with `bufferDeviceAddress` — gated at renderer.rs:3219-3237,
+  enabled at :3510-3512. Descriptor indexing is core 1.2, so it costs no new
+  extension.
 - Every texture already carries its own view + sampler (`Texture`,
-  renderer/texture.rs:55-65) and lives in an append-only slab
+  renderer/texture.rs:55-64) and lives in an append-only slab
   (`TextureStorage`, texture.rs:11-43) — the natural backing for heap slots.
 - `addr.rs` is the exact template for the new handle type: `#[repr]` newtype,
   `PhantomData<fn() -> T>`, `const _: () = assert!(size_of == 8)`,
   `pub(super)` constructor so only the renderer can mint one.
-- `CompilerOptionName::BindlessSpaceIndex = 93` already exists in the vendored
-  bindings (`slang-sys/src/bindings.rs:586`), as do
-  `spReflection_getBindlessSpaceIndex` (:2816) and
-  `slang_IBindlessResourceMetadata` (:1041).
+- `bindless_space_index` is exposed by the slang-rs fork and already pinned in the
+  root `Cargo.toml` (`v0.1.1+slang-2026.13.1`), as is
+  `ShaderReflection::bindless_space_index()`. **No further slang-rs work is
+  needed.** `slang_IBindlessResourceMetadata` (`slang-sys/src/bindings.rs:1041`) is
+  *not* usable — bindgen emitted it as an opaque struct with no vtable, so
+  `usesBindlessResourceHeap()` can't be called without hand-writing the vtable and
+  a `castAs` path. We don't need it: "does this shader use the heap" is answered by
+  the reflection walk finding any field whose declared `full_name()` starts with
+  `DescriptorHandle<`.
 - Retire-after-N-frames precedent for resources still referenced by in-flight
-  command buffers: `old_pipelines` (renderer.rs:115-120, freed at :2456-2486).
+  command buffers: `old_pipelines` (renderer.rs:116-120, freed at :2620-2644).
 
 ## Non-goals
 
 - `VK_EXT_descriptor_heap` / `spvDescriptorHeapEXT`.
-- Overriding `getDescriptorFromHandle`.
-- `VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT` — see Phase 2.
+- Overriding `getDescriptorFromHandle` — *conditional*: this is the only lever for
+  `NonUniformEXT`, so it stops being a non-goal the moment a material index varies
+  within one draw. See Phase 6.
+- `VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT` — see Phase 3.
 - Storage images (`RWTexture2D`, watercolor) stay on per-pipeline descriptors.
 - egui keeps its own descriptors (`renderer/egui.rs`, third-party renderer).
 - Uniform buffers stay descriptor-bound; something has to carry the handles.
 
 ---
 
-## Phase 0 — spike, then fill in this section
+## Phase 0 — spike ✅ done
 
-Throwaway work. **Everything downstream depends on the answers, so record them
-here before writing Phase 1 code.**
+**Answers are in [bindless_textures/phase_0_spike.md](bindless_textures/phase_0_spike.md).**
+The short version:
 
-1. Add `option!(BindlessSpaceIndex, bindless_space_index(index: i32));` to the
-   slang-rs fork's `CompilerOptions` impl (`src/lib.rs:~800`, alongside
-   `emit_spirv_directly`). The option name enum is already bound; only the
-   high-level builder is missing it. Tag a new version, bump the git dep in the
-   root `Cargo.toml`.
-2. Write a scratch shader putting `Sampler2D.Handle` in a `ParameterBlock`,
-   compile it through `prepare_reflected_shader_with_optimization`
-   (shaders.rs:62), and `spirv-dis` the result.
-3. Answer, in writing:
-   - **What does `slang::reflection` report for the handle field?** TypeKind,
-     `full_name()`, and whether it lands in the `Uniform` parameter category with
-     a `Uniform{offset,size}` binding. This drives every codegen decision in
-     Phase 4. Also check what it reports for a handle nested inside a
-     `Ptr<..., Std430DataLayout>` pointee.
-   - **What global arrays does Slang emit?** Set index, binding indices,
-     descriptor types, and whether they're `OpTypeRuntimeArray` (unbounded) or
-     sized. Docs say the default binding layout is `0` sampler,
-     `1` combined texture sampler, `2` texture/texel/buffer, `3` unknown — confirm.
-   - **Does it emit `NonUniformEXT` automatically**, or do we need
-     `NonUniformResourceIndex` at the use site?
-   - **Does `spReflection_getBindlessSpaceIndex` return the space we asked for**,
-     and does `IBindlessResourceMetadata::usesBindlessResourceHeap()` correctly
-     report false when no handle is used? (It matters: a shader with no handles
-     must not get a heap set bound.)
-4. Pick `BINDLESS_SPACE_INDEX`. It must not collide with sets Slang assigns to
-   nested `ParameterBlock`s, and `reserve_slot` (pipeline_layout.rs:155) shows
-   those are dense from 0. Something like `4` with a runtime assert against
-   reflection.
+- A handle reflects as **`TypeKind::Vector`** (a `uint2`) in the `Uniform` category,
+  size/align 8 — including inside a `Std430DataLayout` pointee. Its identity
+  survives only on the **declared** type's `full_name()`
+  (`DescriptorHandle<Sampler2D<...>>`), so today's reflection silently degrades it
+  to a `uint2` with **no error at all**. That footgun is what Phase 1 closes.
+- Slang emits one unbounded `UniformConstant` `OpTypeRuntimeArray` per descriptor
+  type, in the bindless space. Binding map confirmed: **0 sampler, 1 combined image
+  sampler, 2 sampled image**. A handle-free shader emits nothing.
+  `RuntimeDescriptorArray` capability is required.
+- **`NonUniformEXT` is never emitted**, and there is no source-level way to request
+  it — not on the index, not on the handle.
+- The reported bindless space is `max(requested, first free space)`; Slang resolves
+  collisions itself and reflection reports the truth. It is *not* a usage signal.
 
-## Phase 1 — device features (behaviorally invisible; land alone)
+`bindless_space_index` is a **target** option — it goes on `TargetDesc`, not the
+session `CompilerOptions`. Both `prepare_reflected_shader_with_optimization`
+(shaders.rs:80-82) and the compute equivalent (shaders.rs:176-178) build their own
+target desc, so both need it.
 
-`create_logical_device` (renderer.rs:3273) currently requests zero
-descriptor-indexing bits. Add to `vulkan_12_features`:
+## Phase 1 — reject handle fields loudly (lands alone, before any Vulkan work)
+
+Today a `Sampler2D.Handle` field compiles, generates a `UVec2` binding, and passes
+every generated `offset_of!`/`size_of` assertion while being silently wrong. Close
+that first, so every later intermediate state of this branch is safe.
+
+- In `crates/renderer/src/shaders/reflection/parameters.rs`, detect a declared
+  `full_name()` starting with `DescriptorHandle<` and bail, in the style of the
+  `StructuredBuffer` rejection (:298).
+- It goes in the **early-continue block alongside the existing enum special case**
+  (:180-190), *not* in the `TypeKind::Resource` match — the type reflects as
+  `TypeKind::Vector`, so by the time the `kind()` match runs the information is
+  gone. The enum case exists for exactly this reason and is the model to copy.
+- Phase 5 flips this from rejection to support. The *shape* rejection (anything
+  that isn't `Sampler2D`) survives into Phase 5, and is what lets Phase 3 create
+  only one heap binding.
+
+**Verify:** `just test`, plus a rejection test next to `structured_buffer_is_rejected`
+(crates/cli/src/build_tasks.rs:2335).
+
+## Phase 2 — device features (behaviorally invisible; land alone)
+
+`create_logical_device` (renderer.rs:3474) currently requests zero
+descriptor-indexing bits. Add to `vulkan_12_features` (:3510):
 
 ```rust
 .descriptor_indexing(true)
 .runtime_descriptor_array(true)
 .descriptor_binding_partially_bound(true)
-.shader_sampled_image_array_non_uniform_indexing(true)
 .descriptor_binding_sampled_image_update_after_bind(true)
 .descriptor_binding_update_unused_while_pending(true)
 ```
 
-Mirror every bit in the physical-device gate (renderer.rs:3001-3037) and extend
-the bail message at renderer.rs:3055-3060. `runtime_descriptor_array` is only
-needed if Phase 0 shows Slang emits `OpTypeRuntimeArray`.
+`runtime_descriptor_array` is **required** — the spike confirmed Slang emits
+`OpTypeRuntimeArray` and `OpCapability RuntimeDescriptorArray`.
+
+`shader_sampled_image_array_non_uniform_indexing` is deliberately **omitted**:
+nothing the compiler emits needs it, because `NonUniformEXT` never appears. Add it
+only alongside whatever resolves that (see Phase 6) — requesting it now would imply
+a guarantee we don't have.
+
+Mirror every bit in the physical-device gate (renderer.rs:3219-3237) and extend the
+bail message at renderer.rs:3290-3295.
 
 **Verify:** `just sweep` stays clean. Lavapipe supports descriptor indexing, so CI
 covers this.
 
-## Phase 2 — the heap (renderer-owned; still no shader uses it)
+## Phase 3 — the heap, created but not bound
 
-New module `crates/renderer/src/renderer/descriptor_heap.rs`.
+New module `crates/renderer/src/renderer/descriptor_heap.rs`. **Nothing is bound in
+this phase** — binding requires pipeline layouts that declare the heap set, which is
+Phase 4. Keeping them apart is what makes this phase independently verifiable.
 
-- **Fixed-size arrays, not variable count.** Only the *last* binding in a set may
+- **One binding: 1, combined image sampler.** The binding *numbers* are fixed by
+  Slang (0 sampler, 1 combined, 2 sampled image), so this is a real constraint, not
+  a convention. Only binding 1 is created, which is sound because Phase 1 rejects
+  every handle shape other than `Sampler2D`. Adding separate texture/sampler
+  handles later means adding bindings 0 and 2 *and* relaxing that rejection
+  together.
+- **Fixed-size array, not variable count.** Only the *last* binding in a set may
   carry `VARIABLE_DESCRIPTOR_COUNT`, and Slang puts several arrays in the one
   bindless set — that collision is [slang#8063](https://github.com/shader-slang/slang/issues/8063).
   Use a fixed `MAX_BINDLESS_TEXTURES` (start ~4096) plus
   `DescriptorBindingFlags::PARTIALLY_BOUND`. It also dodges
-  [MoltenVK#2278](https://github.com/KhronosGroup/MoltenVK/issues/2278).
-- Bindings must match whatever Phase 0 observed. Create only the ones we use —
-  combined image sampler to start, since every example already uses `Sampler2D`.
+  [MoltenVK#2278](https://github.com/KhronosGroup/MoltenVK/issues/2278). The shader
+  side declares an unbounded array; that's compatible with a fixed-count layout as
+  long as nothing indexes past the count.
 - Its own pool with `DescriptorPoolCreateFlags::UPDATE_AFTER_BIND_POOL` and the
   matching `DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL`.
 - **One set, not `MAX_FRAMES_IN_FLIGHT` copies.** Update-after-bind is exactly
@@ -158,71 +202,85 @@ New module `crates/renderer/src/renderer/descriptor_heap.rs`.
   reuse — writing a never-referenced slot is safe under
   `PARTIALLY_BOUND` + `UPDATE_UNUSED_WHILE_PENDING`, but overwriting one an
   in-flight command buffer still references is not. Reuse the retirement pattern
-  at renderer.rs:2456-2486.
+  at renderer.rs:2620-2644.
 
 Then:
 
-- Store the slot on `Texture` (texture.rs:55-65); allocate it in
-  `create_texture_with_options` (renderer.rs:514) and `create_texture_with_mips`
-  (:544) so *every* texture gets one. Release in the destroy path and `take_all`
+- Store the slot on `Texture` (texture.rs:55-64); allocate it in
+  `create_texture_with_options` (renderer.rs:517) and `create_texture_with_mips`
+  (:541) so *every* texture gets one. Release in the destroy path and `take_all`
   (texture.rs:37).
-- Bind the heap set once per command buffer, before the per-draw loop, at
-  `first_set = BINDLESS_SPACE_INDEX`.
 
-**Verify:** `just sweep` clean with validation on. Nothing samples through the heap
-yet, so any error here is a pure layout/lifetime bug.
+**Verify:** `just sweep` clean with validation on. The heap is allocated and
+populated but referenced by nothing, so any error here is a pure layout/lifetime
+bug.
 
-## Phase 3 — pipeline layouts must include the heap set
+## Phase 4 — pipeline layouts and per-pipeline binding
 
-This is the fiddly phase; three places assume "the pipeline owns all its sets."
+Much smaller than it looks. The spike measured `descriptor_set_count() == 0` and a
+single reflected binding range (the `ParameterBlock`): **the heap never enters
+`ReflectedPipelineLayout` at all.** So `reflect_pipeline_layout`
+(pipeline_layout.rs:11-27), the `descriptor_sets_for_frame` chunk width
+(renderer.rs:2301, picking at :2315), and `descriptor_pool_sizes` (renderer.rs:4043)
+need **no changes** — there is nothing to filter out and nothing that can leak in.
+This work is purely additive.
 
-- `reflect_pipeline_layout` (pipeline_layout.rs:11-27) must **skip** the bindless
-  space so it isn't allocated per-pipeline. Drop that index from
-  `descriptor_set_layouts` based on `spReflection_getBindlessSpaceIndex`.
-- `ReflectedPipelineLayout::vk_create` (renderer.rs:5187-5222) must append the heap
-  set layout at `BINDLESS_SPACE_INDEX`, with empty placeholder layouts for any gap
-  indices — `vkCreatePipelineLayout` takes a dense array.
-- `descriptor_sets_for_frame` (renderer.rs:2143-2155) chunks
-  `pipeline.descriptor_sets` by `layout.descriptor_set_layouts.len()`. That length
-  now includes the heap layout, but the heap set is neither per-frame nor
-  per-pipeline. Keep the chunk width tied to the *reflected* sets only, and bind
-  the heap separately. Same for `picking_descriptor_sets_for_frame` (:2157).
-- `create_descriptor_pool` / `descriptor_pool_sizes` (renderer.rs:3806-3871) size
-  the per-pipeline pool from `descriptor_set_layouts`. If the heap layout leaks in,
-  every pipeline tries to allocate thousands of descriptors. Add an assertion, not
-  just a filter.
-- `assert_shader_interface_unchanged` (renderer.rs:5003) gates hot reload on the
-  reflected interface; confirm the skipped bindless set doesn't make two
-  equivalent shaders compare unequal.
+- **No `BINDLESS_SPACE_INDEX` constant.** Don't pass a floor; let Slang place the
+  heap immediately after the reflected sets, and record
+  `reflection.bindless_space_index()` in the reflection JSON as per-shader data. A
+  `VkDescriptorSetLayout` doesn't encode its own set number, so one heap layout and
+  one heap set work at whatever index each shader reports. This also means no gap
+  indices, so `vk_create` (renderer.rs:4965/4999) just **appends** the heap layout —
+  no empty placeholder layouts.
+- **Bind the heap after each `cmd_bind_pipeline`, not once per command buffer.**
+  Pipeline-layout compatibility preserves a binding at set N only across layouts
+  with identical set layouts for 0..N. Set 0 is the per-shader param block, so it
+  differs between every pair of pipelines and each pipeline switch disturbs the heap
+  binding. Add a second `cmd_bind_descriptor_sets` at `first_set = <heap index>`
+  next to the existing bind-from-0 calls (renderer.rs:1584, :1770, :2048). Cheap;
+  the failure mode if skipped is a "descriptor set not bound" validation error at
+  the first pipeline switch.
+- Append and bind **only for shaders that declare a handle** — the `DescriptorHandle<`
+  scan from Phase 1/5. The reported space index is not a usage signal; a handle-free
+  shader still reports one.
+- `assert_shader_interface_unchanged` (renderer.rs:4814) gates hot reload on the
+  reflected interface. The heap index is now part of that interface, and it shifts
+  if a shader gains or loses a parameter block — confirm that behaves sanely.
 
-## Phase 4 — reflection and codegen for handle fields
+**Verify:** `just sweep` + `just watch <example>`; hot reload still works. Also
+`just test` — putting the heap index in the reflection JSON regenerates the `.json`
+snapshots.
+
+## Phase 5 — reflection and codegen for handle fields
 
 The `Resources` struct is *not* where handles go — that's the whole point. A handle
 is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
 
 - `crates/renderer/src/shaders/json/parameters.rs`: add
   `StructField::DescriptorHandle(DescriptorHandleStructField { field_name, resource_shape })`
-  to the enum at :82.
-- `crates/renderer/src/shaders/reflection/parameters.rs`: recognize the handle
-  type next to the pointer case (:353-427), parsing `full_name()` the same way
-  pointer access modes are parsed today. Reject unsupported shapes with a
-  field-specific message in the style of the StructuredBuffer error at :299.
+  to the enum at :84.
+- `crates/renderer/src/shaders/reflection/parameters.rs`: turn Phase 1's rejection
+  into recognition, in the same early-continue block. Parse the declared
+  `full_name()` the way pointer access modes are parsed today (:352-427). Keep a
+  field-specific rejection for unsupported shapes.
 - New `crates/renderer/src/renderer/bindless.rs`, modeled on `addr.rs`:
   `BindlessHandle<T>` — 8 bytes (`uint2`), `PhantomData<fn() -> T>`,
   `const _: () = assert!(size_of::<BindlessHandle<T>>() == 8)`, `Serialize`,
   `pub(super)` constructor. Minted from a `TextureHandle` by an accessor mirroring
-  `Gpu::addr` (renderer.rs:5367).
+  `Gpu::addr` (renderer.rs:5178). Only the low 32 bits carry the slot index — the
+  default lowering reads component 0 only — but the type stays 8 bytes to match the
+  layout.
 - `crates/cli/src/build_tasks.rs`:
-  - `gather_struct_defs` (:881) emits the field as
-    `BindlessHandle<Marker>`; add it to the size/alignment tables that already
-    special-case the 8-byte `Addr` types (:1339-1342, :1378-1381).
+  - `gather_struct_defs` (:881) emits the field as `BindlessHandle<Marker>`; add it
+    to the size/alignment tables that already special-case the 8-byte `Addr` types
+    (:1339-1342, :1378-1381).
   - `required_resource` (:1070) must return `None` for handle fields.
 - Add alignment fixtures under `crates/cli/fixtures/alignment/` — handle alone,
   handle next to an `Addr`, handle inside a pointee struct. CLAUDE.md requires
   `just test` for any `build_tasks.rs` / template change; accept snapshots with
   `cargo insta test --workspace --accept`.
 
-## Phase 5 — vendored slang and first consumers
+## Phase 6 — vendored slang and first consumers
 
 - `DescriptorHandle` is core-module, so no new vendored module is strictly needed.
   Consider a `mltrs::TexHandle` typealias in `crates/cli/vendor/mltrs/` for
@@ -230,13 +288,25 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
 - Convert `depth_texture` first — one texture, one param block, minimal proof
   (examples/depth_texture/shaders/source/depth_texture.shader.slang).
 - Then `toon_link` for the actual payoff: `build_material_pipelines`
-  (examples/toon_link/src/main.rs:778-825) collapses to one pipeline plus a
-  `Material` buffer behind `ImmutableAddr`. This is where per-material pipelines
-  and per-material uniform buffers both disappear.
+  (examples/toon_link/src/main.rs:780-826) collapses to one pipeline plus a
+  `Material` buffer behind `ImmutableAddr`. Per-material pipelines and per-material
+  uniform buffers both disappear.
+
+  **This does not need `NonUniformEXT`.** toon_link issues one index-range draw per
+  batch (main.rs:1178-1186) and keeps doing so; the material index is uniform within
+  each draw. The win here is ~24 fewer pipelines and ~24 fewer uniform buffers, not
+  fewer draws.
+
+  Merging those draws is the follow-on
+  ([render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)),
+  and even that likely stays uniform if the material index comes from `gl_DrawID`.
+  The decoration is only needed if the index varies *within* one draw — packed into
+  vertex or instance data. That's the point at which the `getDescriptorFromHandle`
+  non-goal has to be revisited.
 - `just shaders <name>` after each; `just test`; `just sweep`;
   `just toon_link link-verify-p1`.
 
-## Phase 6 — docs
+## Phase 7 — docs
 
 - Rewrite the status header on [render-graph/03_bindless.md](render-graph/03_bindless.md);
   it currently says texture binding remains per-pipeline descriptors.
@@ -258,7 +328,9 @@ argument-buffer lowering if a Metal target is ever added. Three parameters chang
 - **No variable descriptor count** (already the plan), and treat `UPDATE_AFTER_BIND`
   as needing real testing on Metal rather than assumed.
 - **Prefer combined image samplers** over separate texture + sampler, so one heap
-  binding lights up instead of two.
+  binding lights up instead of two. This is already what Phase 3 does, and the spike
+  confirmed a `Sampler2D.Handle` lights up only binding 1 while the separate form
+  lights up 0 and 2.
 
 The macOS floor doesn't move: requiring Vulkan 1.3 + `bufferDeviceAddress` already
 pins us to recent MoltenVK on Apple Silicon. The honest caveat is maturity — the
@@ -273,17 +345,18 @@ an existing latent bug worth fixing before trusting any macOS result.
 
 | Phase | Check |
 |---|---|
-| 0 | scratch compile + `spirv-dis`; answers written into this doc |
-| 1 | `cargo check --workspace --all-targets`, `just lint`, `just sweep` |
-| 2 | `just sweep` — validation clean with the heap allocated but unused |
-| 3 | `just sweep` + `just watch <example>`; hot reload still works |
-| 4 | `just test` (snapshots), new alignment fixtures |
-| 5 | `just shaders`, `just test`, `just sweep`, `just toon_link link-verify-p1` |
+| 0 | ✅ scratch compile + `spirv-dis`; answers in [bindless_textures/phase_0_spike.md](bindless_textures/phase_0_spike.md) |
+| 1 | `just test` + a new rejection test |
+| 2 | `cargo check --workspace --all-targets`, `just lint`, `just sweep` |
+| 3 | `just sweep` — validation clean with the heap allocated but unbound |
+| 4 | `just sweep` + `just watch <example>`; hot reload still works; `just test` (reflection JSON snapshots) |
+| 5 | `just test` (snapshots), new alignment fixtures |
+| 6 | `just shaders`, `just test`, `just sweep`, `just toon_link link-verify-p1` |
 
 Per [`docs/testing.md`](../docs/testing.md), read before accepting any snapshot or
 adding a validation check. Layout bugs behind device addresses and heap indices
 produce no validation errors, which is why the generated `offset_of!`/`size_of`
-assertions (build_tasks.rs:1180) matter more here than usual.
+assertions (build_tasks.rs:1189) matter more here than usual.
 
 ## References
 
