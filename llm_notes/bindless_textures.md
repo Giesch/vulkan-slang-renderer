@@ -1,6 +1,6 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phase 0 spiked, Phases 1+ not started.** Design note for adopting bindless
+**Status: Phases 0-1 done, Phases 2+ not started.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
 The phases below were **revised after the Phase 0 spike** — the measured answers are
@@ -133,38 +133,42 @@ are **three** target-desc constructions to cover, not two:
 `prepare_reflected_shader_with_optimization` (shaders.rs:80-82), the compute
 equivalent (:176-178), and `reflect_shared_module_types` (:256-258).
 
-## Phase 1 — reject handle fields loudly (lands alone, before any Vulkan work)
+## Phase 1 — reject handle fields loudly ✅ done
 
 Today a `Sampler2D.Handle` field compiles, generates a `UVec2` binding, and passes
-every generated `offset_of!`/`size_of` assertion while being silently wrong. Close
-that first, so every later intermediate state of this branch is safe.
+every generated `offset_of!`/`size_of` assertion while being silently wrong. Closed
+first, so every later intermediate state of this branch is safe.
 
-- In `crates/renderer/src/shaders/reflection/parameters.rs`, detect a declared
-  `full_name()` starting with `DescriptorHandle<` and bail, in the style of the
+- In `crates/renderer/src/shaders/reflection/parameters.rs`, a declared
+  `full_name()` starting with `DescriptorHandle<` bails, in the style of the
   `StructuredBuffer` rejection (:298).
-- It goes in the **early-continue block alongside the existing enum special case**
+- It went in the **early-continue block alongside the existing enum special case**
   (:177-198), *not* in the `TypeKind::Resource` match — the type reflects as
   `TypeKind::Vector`, so by the time the `kind()` match runs the information is
   gone. The enum case is the model for the *placement* only: it checks
   `field.ty().kind() == TypeKind::Enum`, while the `full_name()`-prefix
-  technique this check needs is the one the *pointer* arm already uses
-  (:360-364). Don't inherit the enum arm's `Binding::Uniform`-only bail
-  wholesale either — a handle in a vertex-input position needs its own message.
-- **Arrays of handles bypass this check**: the `TypeKind::Array` arm
-  (reflection/parameters.rs:433-471) never recurses into
-  `reflect_struct_fields`, so `Sampler2D.Handle handles[4]` won't hit the loud
-  rejection. It *is* still rejected — `validate_array_element` only accepts
-  16-byte vec4-shaped elements — but with a generic array message, same shape
-  as the existing `enum_arrays_are_rejected` case. Acceptable; add a fixture to
-  pin it (this also closes the spike's open question about handle arrays on the
-  reflection side).
+  technique this check needs is the one the *pointer* arm already uses. Both
+  decode sites now share a `declared_full_name` helper. The guard is
+  deliberately **not** gated on `Binding::Uniform` the way the enum arm is: a
+  handle in a vertex-input position has a `VaryingInput` binding, and gating
+  would let exactly that case fall through to the `Vector` arm.
+- ~~**Arrays of handles bypass this check**~~ — **measured wrong.** Slang prints
+  an array's declared `full_name()` as the element's with `[N]` appended
+  (`DescriptorHandle<Sampler2D<vector<float,4>>>[4]`), so the prefix guard fires
+  on arrays too and they get the same specific message. The `TypeKind::Array`
+  arm still never recurses into `reflect_struct_fields`, so if that suffix form
+  ever changes the fallback is `validate_array_element`'s generic vec4-only
+  message — vaguer, but still loud. `handle_arrays_are_rejected` pins the
+  current behaviour. (This also closes the spike's open question about handle
+  arrays on the reflection side.)
 - Phase 5 flips this from rejection to support. The *shape* rejection (anything
   that isn't `Sampler2D`) survives into Phase 5, and is what lets Phase 3 create
   only one heap binding.
 
-**Verify:** `just test`, plus rejection tests next to `structured_buffer_is_rejected`
-(crates/cli/src/build_tasks.rs:2335) — scalar handle field, handle array, handle
-in a vertex-input position.
+**Verified:** `just test` green with no snapshot changes, plus three rejection
+tests in `crates/cli/src/build_tasks.rs` next to `enum_vertex_inputs_are_rejected`
+(they reuse the `reflect_rejected_shader` helper declared above them) — scalar
+handle field, handle array, handle in a vertex-input position.
 
 ## Phase 2 — device features (behaviorally invisible; land alone)
 
@@ -443,7 +447,7 @@ an existing latent bug worth fixing before trusting any macOS result.
 | Phase | Check |
 |---|---|
 | 0 | ✅ scratch compile + `spirv-dis`; answers in [bindless_textures/phase_0_spike.md](bindless_textures/phase_0_spike.md) |
-| 1 | `just test` + a new rejection test |
+| 1 | ✅ `just test` + three rejection tests |
 | 2 | `cargo check --workspace --all-targets`, `just lint`, `just sweep` |
 | 3 | `just sweep` — validation clean with the heap allocated but unbound |
 | 4 | `just sweep` + `just watch <example>`; hot reload still works; `just test` (reflection JSON snapshots) |

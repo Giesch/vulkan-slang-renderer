@@ -299,7 +299,11 @@ at pipeline creation and fail loudly if a shader ever grows past it.
   its own `prepare_reflected_compute_shader_with_optimization` (`shaders.rs:158`)
   with a separately-built `TargetDesc`, so it needs the same option added.
 - Arrays of handles, and handles in a struct nested more than one level inside a
-  pointee, were not tested.
+  pointee, were not tested. **Partly answered in Phase 1:** an array of handles
+  reflects with declared `full_name()` = `DescriptorHandle<Sampler2D<vector<float,4>>>[4]`
+  — the element's name with `[N]` appended — so a `DescriptorHandle<` prefix
+  check catches arrays as well as scalars. Nothing about their *layout* was
+  measured; Phase 5 still has to.
 - Whether `spirv-opt`/`OptimizationLevel::High` ever hoists or coalesces the heap
   access chain in a way that matters — the spike ran at `High` throughout and the
   output looked stable, but nothing stresses it.

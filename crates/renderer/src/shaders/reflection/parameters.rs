@@ -197,6 +197,19 @@ fn reflect_struct_fields(
             continue;
         }
 
+        // DescriptorHandle lowers to a uint2;
+        // avoid accidentally treating it as a vector below
+        if let Some(declared) = field.ty() {
+            let declared_name = declared_full_name(declared);
+            if declared_name.starts_with("DescriptorHandle<") {
+                anyhow::bail!(
+                    "field '{field_name}' ({declared_name}): texture handle fields are \
+                    not supported yet; declare the texture as a Texture2D/Sampler2D \
+                    resource in the parameter block instead"
+                );
+            }
+        }
+
         let field_json = match field_type_layout.kind() {
             slang::TypeKind::Scalar => {
                 let slang_scalar_type = field_type_layout.scalar_type().unwrap();
@@ -358,10 +371,7 @@ fn reflect_struct_fields(
                 }
 
                 let ptr_type = field_type_layout.ty().unwrap();
-                let ptr_type_name = ptr_type
-                    .full_name()
-                    .map(|blob| String::from_utf8_lossy(blob.as_slice()).to_string())
-                    .unwrap_or_default();
+                let ptr_type_name = declared_full_name(ptr_type);
 
                 // A default `T*` pointee uses slang's natural (C-like) layout, which
                 // reflection misreports for layout-annotated pointers and glam types
@@ -477,6 +487,17 @@ fn reflect_struct_fields(
     }
 
     Ok(fields)
+}
+
+/// A slang type's declared full name, eg.
+/// `Ptr<Item, Access.Immutable, AddressSpace.Device, Std430DataLayout>` or
+/// `DescriptorHandle<Sampler2D<vector<float,4>>>`. This is the only place some
+/// type identities survive: a pointer's layout annotation and a descriptor
+/// handle both vanish from the *layout* type.
+fn declared_full_name(ty: &slang::reflection::Type) -> String {
+    ty.full_name()
+        .map(|blob| String::from_utf8_lossy(blob.as_slice()).to_string())
+        .unwrap_or_default()
 }
 
 /// Only 16-byte vector elements (float4/int4/uint4) have stride == size in
