@@ -104,6 +104,15 @@ slots. No in-tree example does this; nothing prevents it.
 ## GPU-side hazards
 
 ### 10. Barrier discipline is fully manual
+**CLOSED 2026-08-06.** All three compute edges are now renderer-owned. The
+compute→graphics one was automated 2026-07-28 (`remove_pipelined_compute.md`);
+`FrameRenderer::dispatch` now also inserts a conservative COMPUTE→COMPUTE
+barrier whenever the previous queued command was a dispatch, and the public
+`memory_barrier` was removed along with watercolor's `compute_barrier` helper
+and its call sites. Conservative, not derived: dispatches on disjoint resources
+are serialized until a parallel-dispatch opt-out exists. The original text
+below is false as of that change.
+
 `record_compute_commands` replays exactly the queued Dispatch/Barrier list —
 **no implicit barrier** between consecutive dispatches, none between compute
 and the render pass (src/renderer.rs:1318-1403, 1441-1443). A forgotten
@@ -174,7 +183,7 @@ lives in the API surface, not in the methods.
 | 7 | sort_storage_by | Deleted (CPU-side sort instead) |
 | 8 | Stale tail / count desync | Partial (atomic same-struct delivery; tail stayed documented-undefined) |
 | 9 | Addresses at rest | **No** (refs only covered parameter blocks) |
-| 10 | Manual barriers | Partial (compute→graphics eliminated via previous-only; compute→compute still manual) |
+| 10 | Manual barriers | Yes as of 2026-08-06 (compute→compute now auto-inserted by `dispatch`; was "partial" — compute→graphics only) |
 | 11 | Same-slot aliasing | **No** (compute could still take current() as both read and write) |
 | 12 | Skipped-dispatch rewind | No (future work) |
 | 13 | BDA out-of-bounds | No (future work: length-carrying buffers) |

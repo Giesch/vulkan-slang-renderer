@@ -218,15 +218,6 @@ fn window_to_canvas(position: Vec2, window_size: Vec2, canvas_size: Vec2) -> Vec
     (((normalized - 0.5) * scale + 0.5) * canvas_size).clamp(Vec2::ZERO, canvas_size)
 }
 
-fn compute_barrier(renderer: &mut FrameRenderer) {
-    renderer.memory_barrier(
-        vk::PipelineStageFlags2::COMPUTE_SHADER,
-        vk::PipelineStageFlags2::COMPUTE_SHADER,
-        vk::AccessFlags2::SHADER_WRITE,
-        vk::AccessFlags2::SHADER_READ,
-    );
-}
-
 // Pigment data from Curtis et al. "Computer-Generated Watercolor" Figure 5 (a-l)
 #[derive(Clone, Copy)]
 #[repr(u32)]
@@ -910,7 +901,6 @@ impl Game for Watercolor {
         if point_count > 0 {
             let (wx, wy) = workgroups(paint_brush_compute::WORKGROUP_SIZE);
             renderer.dispatch(&self.brush_pipelines[self.sim_parity as usize], wx, wy, 1);
-            compute_barrier(&mut renderer);
         }
 
         let sim = self.sim_parity;
@@ -919,14 +909,12 @@ impl Game for Watercolor {
         {
             let (wx, wy) = workgroups(wc_update_velocity_compute::WORKGROUP_SIZE);
             renderer.dispatch(&self.update_velocity_pipelines[sim as usize], wx, wy, 1);
-            compute_barrier(&mut renderer);
         }
 
         // 3. Divergence (reads velocity after update)
         {
             let (wx, wy) = workgroups(wc_divergence_compute::WORKGROUP_SIZE);
             renderer.dispatch(&self.divergence_pipelines[sim as usize], wx, wy, 1);
-            compute_barrier(&mut renderer);
         }
 
         // 4. Pressure Jacobi iterations (ping-pong pressure)
@@ -936,36 +924,35 @@ impl Game for Watercolor {
                 let p_idx = self.pressure_parity as usize;
                 renderer.dispatch(&self.pressure_jacobi_pipelines[p_idx], wx, wy, 1);
                 self.pressure_parity = !self.pressure_parity;
-                compute_barrier(&mut renderer);
             }
         }
 
         // 5. Project velocity
+        //
+        // The one edge the automatic barrier over-synchronizes: project
+        // velocity writes u/v, blur H reads wet_mask, so the two could run in
+        // parallel. Nothing expresses that yet.
         {
             let (wx, wy) = workgroups(wc_project_velocity_compute::WORKGROUP_SIZE);
             renderer.dispatch(&self.project_velocity_pipelines[sim as usize], wx, wy, 1);
-            // No barrier needed: project velocity writes u/v, blur H reads wet_mask — no hazard
         }
 
         // 6. Gaussian blur H (wet_mask → blur_temp)
         {
             let (wx, wy) = workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE);
             renderer.dispatch(&self.blur_h_pipelines[sim as usize], wx, wy, 1);
-            compute_barrier(&mut renderer);
         }
 
         // 7. Gaussian blur V (blur_temp → blurred_mask)
         {
             let (wx, wy) = workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE);
             renderer.dispatch(&self.blur_v_pipeline, wx, wy, 1);
-            compute_barrier(&mut renderer);
         }
 
         // 8. Flow outward (blurred_mask → flow formula into pressure + saturation)
         {
             let (wx, wy) = workgroups(wc_flow_outward_compute::WORKGROUP_SIZE);
             renderer.dispatch(&self.flow_outward_pipelines[sim as usize], wx, wy, 1);
-            compute_barrier(&mut renderer);
         }
 
         // 9. Advect + transfer pigment (combined)
@@ -973,7 +960,6 @@ impl Game for Watercolor {
             let (wx, wy) = workgroups(wc_advect_and_transfer_pigment_compute::WORKGROUP_SIZE);
             let advect_idx = sim as usize * 2 + self.deposit_parity as usize;
             renderer.dispatch(&self.advect_and_transfer_pipelines[advect_idx], wx, wy, 1);
-            compute_barrier(&mut renderer);
         }
 
         // 10. Capillary flow (saturation + wet_mask at sim → writes to !sim)
