@@ -336,6 +336,25 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
   into recognition, in the same early-continue block. Parse the declared
   `full_name()` the way pointer access modes are parsed today (:352-427). Keep a
   field-specific rejection for unsupported shapes.
+- **The prefix alone is not enough to accept a field — split off the `[N]`
+  suffix first.** Phase 1 measured that an array's declared `full_name()` is the
+  element's with `[N]` appended, so `starts_with("DescriptorHandle<")` matches
+  `DescriptorHandle<Sampler2D<vector<float,4>>>[4]` too. Flipping the guard
+  naively would emit one 8-byte `BindlessHandle` for a 32-byte field. That does
+  not pass silently — the generated `offset_of!` on the following field, or
+  `size_of` on the struct if the array is last, fails to compile — but a compile
+  error inside generated code is a far worse diagnostic than a reflection bail
+  naming the field, which is the whole reason Phase 1 exists.
+- **Arrays of handles should stay rejected**, and now for a better reason than
+  the spike's "not tested". A handle is an 8-byte element, and only 16-byte
+  vector elements have stride == size in *both* std140 and std430 (see
+  `validate_array_element`'s docstring and the `std140_arrays` fixture comment).
+  An 8-byte element rounds up to a 16-byte stride under std140 but stays 8 under
+  std430, so `Sampler2D.Handle h[4]` would lay out differently in a
+  `ParameterBlock` than in a `Std430DataLayout` pointee. Supporting handle
+  arrays is therefore a stride-aware-codegen problem, not a bindless one — the
+  same blocker every other non-vec4 array element has. Reasoned from the repo's
+  documented layout rules; a handle array's actual stride was never measured.
 - New `crates/renderer/src/renderer/bindless.rs`, modeled on `addr.rs`:
   `BindlessHandle<T>` — 8 bytes (`uint2`), `PhantomData<fn() -> T>`,
   `const _: () = assert!(size_of::<BindlessHandle<T>>() == 8)`, `Serialize`,
