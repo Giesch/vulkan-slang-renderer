@@ -277,10 +277,8 @@ pub fn dev_compile_slang_compute_shaders(
     prepare_reflected_compute_shader(source_file_name, search_path.to_str().unwrap())
 }
 
-/// `modules` pairs a slang load name (eg. "mltrs/addr") with the rust module
-/// name its types are recorded under (eg. "mltrs"); the two only differ for
-/// modules that live in a subdirectory of the shader source dir.
 pub fn reflect_shared_module_types(
+    // slang load name to rust module name
     modules: &[(&str, &str)],
     search_path: &str,
 ) -> anyhow::Result<HashMap<String, String>> {
@@ -316,7 +314,7 @@ pub fn reflect_shared_module_types(
         let module = session.load_module(load_name)?;
         let module_decl = module.module_reflection();
 
-        collect_struct_and_enum_decls(module_decl, rust_module_name, &mut type_to_module);
+        collect_struct_and_enum_declarations(module_decl, rust_module_name, &mut type_to_module);
     }
 
     Ok(type_to_module)
@@ -324,7 +322,7 @@ pub fn reflect_shared_module_types(
 
 /// records every struct/enum declared in `decl`'s subtree,
 /// looking through namespace declarations (eg. `namespace mltrs { ... }`)
-fn collect_struct_and_enum_decls(
+fn collect_struct_and_enum_declarations(
     decl: &slang::reflection::Decl,
     rust_module_name: &str,
     type_to_module: &mut HashMap<String, String>,
@@ -338,7 +336,7 @@ fn collect_struct_and_enum_decls(
                 }
             }
             slang::DeclKind::Namespace => {
-                collect_struct_and_enum_decls(child, rust_module_name, type_to_module);
+                collect_struct_and_enum_declarations(child, rust_module_name, type_to_module);
             }
             _ => {}
         }

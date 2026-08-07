@@ -30,9 +30,6 @@ pub struct ComputeReflectionJson {
 mod tests {
     use super::*;
 
-    // hot reload compares embedded vs freshly-reflected layouts via Value
-    // equality (assert_shader_interface_unchanged); this guards against a
-    // future lossy serde attribute making that comparison flap
     #[test]
     fn reflection_value_roundtrip_is_stable() {
         let raw = include_str!("fixtures/basic_triangle.json");
