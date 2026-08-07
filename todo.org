@@ -1,6 +1,8 @@
 #+title: Todo
 
 * Possible Next Directions
+- [ ] Bindless Textures
+
 - [ ] llm skills for style guides?
   - minimal comments
   - meaningful variable names in shaders
@@ -10,16 +12,6 @@
   - [X] add the option
   - [-] get it working for toon link as well
   - [ ] review/rewrite docs/textures.md
-
-- [-] Bindless Textures
-  https://discord.com/channels/1303735196696445038/1427662446579024013/1427662446579024013
-  - [X] make a plan
-  - [X] updates to slang-rs
-    - [X] expose the needed compiler option
-      bindless_space_index, in v0.1.1+slang-2026.13.1
-    - [X] other bugfixes/maintainence changes
-  - [ ] try out a small example
-  - [ ] migrate other examples
 
 - [ ] Make a Quaternion / Rotor demo/explanation
   https://eater.net/quaternions
