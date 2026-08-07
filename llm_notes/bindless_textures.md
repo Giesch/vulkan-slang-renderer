@@ -1,6 +1,6 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-2 done, Phases 3+ not started.** Design note for adopting bindless
+**Status: Phases 0-3 done, Phases 4+ not started.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
 The phases below were **revised after the Phase 0 spike** — the measured answers are
@@ -212,7 +212,7 @@ exists in release builds too.
 `just test` clean; `just sweep` 16 ok / 0 fail with the injected-fault self-test
 still firing. Lavapipe supports descriptor indexing, so CI covers this.
 
-## Phase 3 — the heap, created but not bound
+## Phase 3 — the heap, created but not bound ✅ done
 
 New module `crates/renderer/src/renderer/descriptor_heap.rs`. **Nothing is bound in
 this phase** — binding requires pipeline layouts that declare the heap set, which is
@@ -232,14 +232,41 @@ Phase 4. Keeping them apart is what makes this phase independently verifiable.
   [MoltenVK#2278](https://github.com/KhronosGroup/MoltenVK/issues/2278). The shader
   side declares an unbounded array; that's compatible with a fixed-count layout as
   long as nothing indexes past the count.
-- Its own pool with `DescriptorPoolCreateFlags::UPDATE_AFTER_BIND_POOL` and the
-  matching `DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL`.
+- Its own pool with `DescriptorPoolCreateFlags::UPDATE_AFTER_BIND` and the
+  matching `DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL`. ~~pool flag
+  `UPDATE_AFTER_BIND_POOL`~~ — the two flags are spelled differently in ash: the
+  *pool* constant is `UPDATE_AFTER_BIND`, only the *layout* one carries the
+  `_POOL` suffix.
+- **The binding flags matter as much as the create flags**, and this plan
+  originally listed only `PARTIALLY_BOUND`. The set uses
+  `PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING`:
+  `UPDATE_AFTER_BIND` is the bit that actually grants update-after-bind
+  semantics (and hence the "one set, not `MAX_FRAMES_IN_FLIGHT` copies" claim
+  below), and all three features were requested in Phase 2.
 - **Stage flags: `ShaderStageFlags::ALL`**, matching how reflected global
   bindings already come out (reflection/pipeline_layout.rs:40, :262). And don't
-  assume `MAX_BINDLESS_TEXTURES` fits: validate it at startup against
-  `maxPerStageDescriptorUpdateAfterBindSampledImages` and
-  `maxDescriptorSetUpdateAfterBindSampledImages` — the suitability gate only
-  warn-skips devices, so a too-small limit must fail loudly here instead.
+  assume `MAX_BINDLESS_TEXTURES` fits: validate it at startup, **in the
+  device-suitability gate** (`descriptor_heap::undersized_limits`, called from
+  `choose_physical_device`), *not* in `DescriptorHeap::new`.
+  ~~a too-small limit must fail loudly in the heap because the suitability gate
+  only warn-skips~~ — wrong twice over. Warn-skipping isn't a soft failure: the
+  gate's closing `bail!` is just as loud. And checking after a device is already
+  chosen throws away the fallback — a machine with one undersized GPU and one
+  capable GPU hard-fails instead of picking the capable one. Measured: with the
+  constant temporarily raised to 2,000,000, the gate skips llvmpipe with a warn
+  naming all four limits and their values, and the example runs on Intel Iris Xe
+  instead. This also matches Phase 2, which mirrored all six feature bits into
+  the gate for the same reason. The model to copy is `unsupported_formats`
+  (renderer.rs:3298) — a `Vec<String>` of formatted reasons — not
+  `missing_features`, whose bare `&str` names can't carry the offending value.
+  **Four limits, not the two this plan originally named**: a combined
+  image sampler consumes a sampler descriptor *and* a sampled-image descriptor,
+  so `maxPerStageDescriptorUpdateAfterBind{Samplers,SampledImages}` and
+  `maxDescriptorSetUpdateAfterBind{Samplers,SampledImages}` all apply. They're
+  read off `VkPhysicalDeviceVulkan12Properties`, matching the
+  `PhysicalDeviceVulkan12Features` style at renderer.rs:3210. Measured headroom
+  at 4096 slots is enormous everywhere checked: Intel Iris Xe 2.0e8, RTX 3070 Ti
+  1048576, llvmpipe (what CI runs) 1000000.
 - **One set, not `MAX_FRAMES_IN_FLIGHT` copies.** Update-after-bind is exactly
   what removes the need to duplicate.
 - `insert_texture(&Texture) -> BindlessIndex` writes one descriptor. Take the
@@ -279,10 +306,37 @@ Then:
   `storage_texture_as_sampled` (renderer.rs:825), which bypasses the
   `create_texture_*` chain entirely — so *every* texture gets one, and any
   future creation path must visibly opt in.
+- **`register_texture` must destroy the texture when the heap is full.** Not
+  anticipated by this plan, found by testing it (see below): the `Texture` is
+  fully created — image, allocation, view, sampler — before it reaches the slab,
+  so an `insert_texture` error that just propagates leaks all four. Nothing else
+  can free it, because a texture is only ever freed via `TextureStorage`. The
+  symptom is not a leak message but a hard `abort()` inside VMA's
+  "Some allocations were not freed before destruction of this memory block!"
+  assertion at renderer teardown, which is a thoroughly misleading place to
+  start debugging from.
 
 **Verify:** `just sweep` clean with validation on. The heap is allocated and
 populated but referenced by nothing, so any error here is a pure layout/lifetime
 bug.
+
+**Verified:** `cargo check --workspace --all-targets`, `just lint` and
+`just test` clean, the latter with **no snapshot changes** (as expected — this
+phase touches no reflection, codegen or template code). `just sweep` 16 ok /
+0 fail with the injected-fault self-test still firing.
+
+A green sweep alone doesn't distinguish "the heap works" from "the heap code
+never ran", so both failure paths were confirmed positively by temporarily
+moving `MAX_BINDLESS_TEXTURES`:
+
+- **= 1**: `toon_link` fails on its second texture with the intended
+  `bindless texture heap is full` error. This is also what surfaced the
+  leak-on-full bug above — before the fix, the same run aborted inside VMA
+  instead of reporting the error.
+- **= 2,000,000**: the suitability gate warn-skips llvmpipe naming all four
+  limits and their values. Under the lavapipe-pinned sweep (no other device) that
+  ends at the clean "no suitable graphics device available" bail; with the pin
+  dropped it falls back to Intel Iris Xe and runs normally.
 
 ## Phase 4 — pipeline layouts and per-pipeline binding
 
@@ -476,7 +530,7 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 0 | ✅ scratch compile + `spirv-dis`; answers in [bindless_textures/phase_0_spike.md](bindless_textures/phase_0_spike.md) |
 | 1 | ✅ `just test` + three rejection tests |
 | 2 | ✅ `cargo check --workspace --all-targets`, `just lint`, `just sweep` |
-| 3 | `just sweep` — validation clean with the heap allocated but unbound |
+| 3 | ✅ `just sweep` 16 ok / 0 fail with the heap allocated but unbound, plus a temporary `MAX_BINDLESS_TEXTURES = 1` run to prove the write path executes |
 | 4 | `just sweep` + `just watch <example>`; hot reload still works; `just test` (reflection JSON snapshots) |
 | 5 | `just test` (snapshots), new alignment fixtures |
 | 6 | `just shaders`, `just test`, `just sweep`, `just toon_link link-verify-p1` |

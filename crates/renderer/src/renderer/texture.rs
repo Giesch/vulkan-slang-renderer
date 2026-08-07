@@ -1,11 +1,16 @@
 use ash::vk;
 
+use super::descriptor_heap::BindlessIndex;
+
 #[derive(Debug)]
 pub struct TextureHandle {
     #[expect(unused)] // for debugging
     #[cfg(debug_assertions)]
     source_file_name: String,
     index: usize,
+    /// This texture's slot in the bindless heap, distinct from `index`.
+    #[expect(unused)] // read by the shader-visible handle accessor, still to come
+    bindless_slot: BindlessIndex,
 }
 
 pub(super) struct TextureStorage(Vec<Option<Texture>>);
@@ -15,11 +20,12 @@ impl TextureStorage {
         Self(Default::default())
     }
 
-    pub fn add(&mut self, texture: Texture) -> TextureHandle {
+    pub fn add(&mut self, texture: Texture, bindless_slot: BindlessIndex) -> TextureHandle {
         let handle = TextureHandle {
             #[cfg(debug_assertions)]
             source_file_name: texture.source_file_name.clone(),
             index: self.0.len(),
+            bindless_slot,
         };
         self.0.push(Some(texture));
 
@@ -28,10 +34,6 @@ impl TextureStorage {
 
     pub fn get(&self, handle: &TextureHandle) -> &Texture {
         self.0[handle.index].as_ref().unwrap()
-    }
-
-    pub fn take(&mut self, handle: TextureHandle) -> Texture {
-        self.0[handle.index].take().unwrap()
     }
 
     pub fn take_all(&mut self) -> Vec<Texture> {

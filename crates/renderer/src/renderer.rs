@@ -56,6 +56,9 @@ pub mod facet_egui;
 mod picking;
 use picking::PickingResources;
 
+mod descriptor_heap;
+use descriptor_heap::DescriptorHeap;
+
 /// enables both the validation layer and debug utils logging
 pub const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
 /// applies MSAA-like sampling within textures
@@ -183,6 +186,7 @@ pub struct Renderer {
     /// meshes shared between pipelines; freed only at renderer teardown
     meshes: Vec<VertexAndIndexBuffers>,
     textures: TextureStorage,
+    descriptor_heap: DescriptorHeap,
     storage_textures: StorageTextureStorage,
     uniform_buffers: UniformBufferStorage,
     storage_buffers: StorageBufferStorage,
@@ -333,6 +337,8 @@ impl Renderer {
             std::mem::ManuallyDrop::new(unsafe { vk_mem::Allocator::new(allocator_create_info)? })
         };
 
+        let descriptor_heap = DescriptorHeap::new(&device)?;
+
         let msaa_samples =
             get_max_usable_sample_count(physical_device_properties, max_msaa_samples);
 
@@ -465,6 +471,7 @@ impl Renderer {
             compute_pipelines,
             meshes,
             textures,
+            descriptor_heap,
             storage_textures: StorageTextureStorage::new(),
             uniform_buffers,
             storage_buffers,
@@ -554,9 +561,23 @@ impl Renderer {
             sampler_options,
         )?;
 
-        let handle = self.textures.add(texture);
+        let handle = self.register_texture(texture)?;
 
         Ok(handle)
+    }
+
+    fn register_texture(&mut self, texture: Texture) -> anyhow::Result<TextureHandle> {
+        let bindless_slot = match self.descriptor_heap.insert_texture(&self.device, &texture) {
+            Ok(bindless_slot) => bindless_slot,
+            Err(error) => {
+                // the texture isn't in the slab yet, so nothing else would ever free it
+                // if the heap turns out to be full
+                self.destroy_texture(texture);
+                return Err(error);
+            }
+        };
+
+        Ok(self.textures.add(texture, bindless_slot))
     }
 
     fn create_texture_from_levels(
@@ -726,11 +747,6 @@ impl Renderer {
         Ok((vk_image, image_memory))
     }
 
-    pub fn drop_texture(&mut self, texture_handle: TextureHandle) {
-        let texture = self.textures.take(texture_handle);
-        self.destroy_texture(texture);
-    }
-
     fn destroy_texture(&mut self, texture: Texture) {
         unsafe {
             self.device.destroy_sampler(texture.sampler, None);
@@ -822,7 +838,7 @@ impl Renderer {
             image_layout: vk::ImageLayout::GENERAL,
         };
 
-        let handle = self.textures.add(texture);
+        let handle = self.register_texture(texture)?;
 
         Ok(handle)
     }
@@ -2877,6 +2893,8 @@ impl Drop for Renderer {
 
             self.cleanup_swapchain();
 
+            self.descriptor_heap.destroy(&self.device);
+
             for texture in self.textures.take_all() {
                 self.destroy_texture(texture);
             }
@@ -3266,6 +3284,17 @@ fn choose_physical_device(
             continue;
         }
 
+        let undersized_limits = undersized_limits(instance, physical_device);
+        if !undersized_limits.is_empty() {
+            log::warn!(
+                "skipping device {}: descriptor limits too small for the bindless \
+                 texture heap: {}",
+                device_name_as_string(props),
+                undersized_limits.join(", ")
+            );
+            continue;
+        }
+
         // Require that every texture format we use can be sampled
         let unsupported_formats: Vec<String> = TEXTURE_FORMATS
             .iter()
@@ -3312,9 +3341,10 @@ fn choose_physical_device(
             "no suitable graphics device available \
              (requires Vulkan 1.3 with dynamicRendering, synchronization2, \
              timelineSemaphore and bufferDeviceAddress, the descriptor-indexing \
-             features used by the bindless texture heap (runtimeDescriptorArray, \
-             partially-bound and update-after-bind sampled images), plus \
-             linear-filtered sampling of the RGBA8 and BC7 texture formats)"
+             features and limits used by the bindless texture heap \
+             (runtimeDescriptorArray, partially-bound and update-after-bind \
+             sampled images), plus linear-filtered sampling of the RGBA8 and \
+             BC7 texture formats)"
         );
     };
 
@@ -3341,6 +3371,49 @@ fn choose_physical_device(
     }
 
     Ok(chosen_device)
+}
+
+/// Names the update-after-bind limits this device reports as too small to hold
+/// `MAX_BINDLESS_TEXTURES`, each with its value; empty means the device is fine.
+///
+/// A combined image sampler consumes a sampler descriptor *and* a sampled-image
+/// descriptor, so all four update-after-bind limits apply.
+pub fn undersized_limits(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+) -> Vec<String> {
+    let mut vulkan_12_properties = vk::PhysicalDeviceVulkan12Properties::default();
+    let mut properties2 =
+        vk::PhysicalDeviceProperties2::default().push_next(&mut vulkan_12_properties);
+    unsafe { instance.get_physical_device_properties2(physical_device, &mut properties2) };
+
+    [
+        (
+            vulkan_12_properties.max_per_stage_descriptor_update_after_bind_samplers,
+            "maxPerStageDescriptorUpdateAfterBindSamplers",
+        ),
+        (
+            vulkan_12_properties.max_per_stage_descriptor_update_after_bind_sampled_images,
+            "maxPerStageDescriptorUpdateAfterBindSampledImages",
+        ),
+        (
+            vulkan_12_properties.max_descriptor_set_update_after_bind_samplers,
+            "maxDescriptorSetUpdateAfterBindSamplers",
+        ),
+        (
+            vulkan_12_properties.max_descriptor_set_update_after_bind_sampled_images,
+            "maxDescriptorSetUpdateAfterBindSampledImages",
+        ),
+    ]
+    .into_iter()
+    .filter(|(limit, _name)| *limit < descriptor_heap::MAX_BINDLESS_TEXTURES)
+    .map(|(limit, name)| {
+        format!(
+            "{name} is {limit}, need {}",
+            descriptor_heap::MAX_BINDLESS_TEXTURES
+        )
+    })
+    .collect()
 }
 
 fn device_name_as_string(props: vk::PhysicalDeviceProperties) -> String {
