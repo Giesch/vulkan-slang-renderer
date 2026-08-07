@@ -2760,6 +2760,115 @@ float4 fragMain() : SV_Target {
         );
     }
 
+    // A DescriptorHandle lowers to a uint2 of ordinary data, so its *layout*
+    // kind is Vector and reflection would silently emit a UVec2 field — every
+    // generated offset_of!/size_of assertion passes while the app writes raw
+    // integers into what the shader treats as a descriptor index. Nothing else
+    // catches this: it is not a descriptor binding, so the pipeline layout
+    // never sees it either. Same declared-type guard as the enum case.
+    #[cfg(not(windows))]
+    #[test]
+    fn handle_fields_are_rejected() {
+        let source = r#"#language slang 2026
+
+module handle_field;
+
+struct Params {
+    Sampler2D.Handle tex;
+}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(1.0);
+}
+
+[shader("fragment")]
+float4 fragMain(float2 uv) : SV_Target {
+    return params.tex.Sample(uv);
+}
+"#;
+        let message = reflect_rejected_shader("handle_field", source);
+        assert!(
+            message.contains("field 'tex'")
+                && message.contains("DescriptorHandle<")
+                && message.contains("texture handle fields are not supported yet"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // An array's declared full_name() is the element's with `[N]` appended, so
+    // the prefix guard fires on an array of handles too and they get the same
+    // specific message. Worth pinning: the TypeKind::Array arm never recurses
+    // into reflect_struct_fields, so if that suffix form ever changes the only
+    // remaining gate is the generic vec4-only array check — a much vaguer error
+    // for the same mistake.
+    #[cfg(not(windows))]
+    #[test]
+    fn handle_arrays_are_rejected() {
+        let source = r#"#language slang 2026
+
+module handle_array;
+
+struct Params {
+    Sampler2D.Handle textures[4];
+}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(1.0);
+}
+
+[shader("fragment")]
+float4 fragMain(float2 uv) : SV_Target {
+    return params.textures[0].Sample(uv);
+}
+"#;
+        let message = reflect_rejected_shader("handle_array", source);
+        assert!(
+            message.contains("field 'textures'")
+                && message.contains("DescriptorHandle<Sampler2D<vector<float,4>>>[4]")
+                && message.contains("texture handle fields are not supported yet"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // The handle guard sits before the layout-kind match and is deliberately not
+    // gated on the binding, so it also intercepts vertex inputs — where there is
+    // no uniform binding and the Vector arm would have accepted the uint2.
+    #[cfg(not(windows))]
+    #[test]
+    fn handle_vertex_inputs_are_rejected() {
+        let source = r#"#language slang 2026
+
+module handle_vertex_input;
+
+struct Vertex {
+    float3 position;
+    Sampler2D.Handle tex;
+}
+
+[shader("vertex")]
+float4 vertMain(Vertex vertex) : SV_Position {
+    return float4(vertex.position, 1.0);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        let message = reflect_rejected_shader("handle_vertex_input", source);
+        assert!(
+            message.contains("field 'tex'")
+                && message.contains("texture handle fields are not supported yet"),
+            "unexpected error message: {message}"
+        );
+    }
+
     // heck folds SCREAMING_CASE and UpperCamel onto the same variant name;
     // rustc's own duplicate-variant error names neither slang case.
     #[test]

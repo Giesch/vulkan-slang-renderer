@@ -1,11 +1,16 @@
 # Review of the bindless-textures plan
 
-**Status: review, 2026-08-06.** A code-verified review of
+**Status: review, 2026-08-06 — addressed.** A code-verified review of
 [../bindless_textures.md](../bindless_textures.md) and
 [phase_0_spike.md](phase_0_spike.md), written before Phase 1 started. Every
 claim below was checked against the code at the commit current on this date
 (`6f48010`); line references are to that state, corrected where the plan's
 had drifted.
+
+**Later the same day, the plan was updated to incorporate every item below**
+(items 1-11 and the doc nits); items 2-4 additionally carry inline resolution
+notes recording decisions that went beyond the review's suggestion. This
+document stays as the record of what the review found.
 
 Overall the plan is sound — the spike measured the right things, the phase
 ordering (reject → features → heap → binding → codegen) keeps every
@@ -45,6 +50,13 @@ layout, not `SHADER_READ_ONLY_OPTIMAL`, so `insert_texture` must take the
 layout from `texture.image_layout` (as `create_descriptor_sets` already does
 at renderer.rs:4219) rather than hardcoding it.
 
+**Resolution (2026-08-06):** the plan now allocates slots in a single private
+renderer method (e.g. `register_texture`) wrapping both `textures.add` call
+sites — not inside `TextureStorage::add` (it has no device access), and not by
+changing watercolor (`storage_texture_as_sampled` is a public API, and
+watercolor's use of it is the only sweep coverage of `GENERAL`-layout aliased
+textures in the heap). `insert_texture` reads `texture.image_layout`.
+
 ### 3. "Release in the destroy path" targets a path that is dead and already unsafe
 
 `drop_texture` (renderer.rs:729) has **zero callers** in the workspace, and
@@ -60,6 +72,13 @@ currently-uncalled path — in which case nothing in `just sweep` exercises the
 deferral logic, and the plan's verification table overstates what Phase 3's
 sweep proves.
 
+**Resolution (2026-08-06):** textures are immortal for now. Phase 3 deletes
+`drop_texture` and the then-dead `TextureStorage::take` outright (keeping
+`destroy_texture` for the post-`device_wait_idle` shutdown path), and builds no
+slot-release machinery. Removal returns later as a bindless-specific heap
+add/remove API with deferred slot reuse *and* deferred object destruction;
+bound (classic-path) textures stay owned by their pipelines / immortal.
+
 ### 4. Phase 5's `Gpu::addr`-style accessor can't be written as described
 
 `Gpu` (renderer.rs:5132-5136) holds only `flight_slot`, `uniform_buffers`,
@@ -70,6 +89,12 @@ the texture slab (or a slot table), or the slot gets stored inside
 `TextureStorage` never reuses slab indices (tombstones only), so the heap
 slot allocator must be its own free-list — **slab index ≠ heap slot**. The
 plan implies this (slot stored on `Texture`) but never says it.
+
+**Resolution (2026-08-06):** with textures immortal (see item 3), the
+free-list collapses to a monotonic counter; slab index ≠ heap slot still
+holds. The accessor question is resolved by the second option: the slot is
+stored **in the `TextureHandle`** at creation, so the `Gpu` accessor reads it
+off the handle with no `TextureStorage` lookup.
 
 ### 5. The codegen-table pointer is slightly off
 
@@ -183,3 +208,8 @@ Item 3. Building slot release on top of an uncalled, immediate-destroy
 `drop_texture` fix (or an explicit "textures are immortal for now" statement
 in Phase 3) would make the plan honest about what `just sweep` can actually
 verify.
+
+**Resolution (2026-08-06):** settled as immortal-for-now — the dead path gets
+deleted in Phase 3 instead of built upon, so there is no untested deferral
+logic and the Phase 3 sweep claim is honest. See the resolutions on items 2-4
+above for the details.
