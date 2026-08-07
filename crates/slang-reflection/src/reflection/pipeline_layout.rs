@@ -10,8 +10,15 @@ use crate::json::*;
 
 pub fn reflect_pipeline_layout(
     program_layout: &slang::reflection::Shader,
+    declares_bindless_handle: bool,
 ) -> ReflectedPipelineLayout {
-    let mut pipeline_layout_builder = PipelineLayoutBuilder::new();
+    let bindless_heap_set = declares_bindless_handle
+        // Slang can return -1 for 'no reserved heap space', but also returns 1
+        // in cases where the heap is allocated but unused
+        .then(|| u32::try_from(program_layout.bindless_space_index()).ok())
+        .flatten();
+
+    let mut pipeline_layout_builder = PipelineLayoutBuilder::new(bindless_heap_set);
 
     let mut default_descriptor_set_layout_builder =
         DescriptorSetLayoutBuilder::reserve_slot(&mut pipeline_layout_builder);
@@ -30,14 +37,16 @@ pub struct PipelineLayoutBuilder {
     descriptor_set_layouts: Vec<Option<ReflectedDescriptorSetLayout>>,
     push_constant_ranges: Vec<ReflectedPushConstantRange>,
     current_stage_flags: ReflectedStageFlags,
+    bindless_heap_set: Option<u32>,
 }
 
 impl PipelineLayoutBuilder {
-    pub fn new() -> Self {
+    pub fn new(bindless_heap_set: Option<u32>) -> Self {
         Self {
             descriptor_set_layouts: vec![],
             push_constant_ranges: vec![],
             current_stage_flags: ReflectedStageFlags::All,
+            bindless_heap_set,
         }
     }
 
@@ -137,6 +146,7 @@ impl PipelineLayoutBuilder {
         ReflectedPipelineLayout {
             descriptor_set_layouts,
             push_constant_ranges: self.push_constant_ranges,
+            bindless_heap_set: self.bindless_heap_set,
         }
     }
 }

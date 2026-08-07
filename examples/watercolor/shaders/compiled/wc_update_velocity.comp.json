@@ -250,6 +250,7 @@
         ]
       }
     ],
-    "pushConstantRanges": []
+    "pushConstantRanges": [],
+    "bindlessHeapSet": null
   }
 }

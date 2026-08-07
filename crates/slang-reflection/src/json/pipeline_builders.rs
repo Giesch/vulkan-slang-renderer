@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 pub struct ReflectedPipelineLayout {
     pub descriptor_set_layouts: Vec<ReflectedDescriptorSetLayout>,
     pub push_constant_ranges: Vec<ReflectedPushConstantRange>,
+
+    /// The descriptor set index slang reserved for its bindless texture heap,
+    /// or None when this shader declares no `DescriptorHandle` field.
+    pub bindless_heap_set: Option<u32>,
 }
 
 /// reflected data for creating a vulkan DescriptorSetLayout

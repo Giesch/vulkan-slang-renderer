@@ -1,6 +1,6 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-3 done, Phases 4+ not started.** Design note for adopting bindless
+**Status: Phases 0-4 done, Phases 5+ not started.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
 The phases below were **revised after the Phase 0 spike** — the measured answers are
@@ -338,7 +338,7 @@ moving `MAX_BINDLESS_TEXTURES`:
   ends at the clean "no suitable graphics device available" bail; with the pin
   dropped it falls back to Intel Iris Xe and runs normally.
 
-## Phase 4 — pipeline layouts and per-pipeline binding
+## Phase 4 — pipeline layouts and per-pipeline binding ✅ done
 
 Much smaller than it looks. The spike measured `descriptor_set_count() == 0` and a
 single reflected binding range (the `ParameterBlock`): **the heap never enters
@@ -355,17 +355,45 @@ This work is purely additive.
   one heap set work at whatever index each shader reports. This also means no gap
   indices, so `vk_create` (renderer.rs:4965/4999) just **appends** the heap layout —
   no empty placeholder layouts.
+  **The index and the usage flag landed as one field**, `bindless_heap_set:
+  Option<u32>` on `ReflectedPipelineLayout` — they are only ever read together,
+  and `None` is exactly "don't append, don't bind". Measured across all 27
+  shaders in the workspace: every one reports space **1**, which is also every
+  one's reflected set count, so the append is a no-gap append everywhere today.
+  That correspondence is *asserted*, not assumed —
+  `PipelineLayoutBuilder::build()` flattens away unused reserved slots, so a
+  future nested or empty parameter block is the shape that could break it. The
+  check runs **before any set layout is created**: bailing partway through that
+  loop leaks every layout made so far, and the resulting
+  "has not been destroyed" validation error prints *ahead* of the real message.
+  (Found by running the forced-mismatch case below, not by reading the code.)
 - **Bind the heap after each `cmd_bind_pipeline`, not once per command buffer.**
   Pipeline-layout compatibility preserves a binding at set N only across layouts
   with identical set layouts for 0..N. Set 0 is the per-shader param block, so it
   differs between every pair of pipelines and each pipeline switch disturbs the heap
   binding. Add a second `cmd_bind_descriptor_sets` at `first_set = <heap index>`
-  next to the existing bind-from-0 calls (renderer.rs:1584, :1770, :2048). Cheap;
+  next to the existing bind-from-0 calls (~~renderer.rs:1584, :1770, :2048~~ —
+  stale; the three sites are the compute dispatch, the picking pass and the main
+  draw loop, wrapped in `Renderer::cmd_bind_bindless_heap`). Cheap;
   the failure mode if skipped is a "descriptor set not bound" validation error at
   the first pipeline switch.
 - Append and bind **only for shaders that declare a handle** — the `DescriptorHandle<`
   scan from Phase 1/5. The reported space index is not a usage signal; a handle-free
   shader still reports one.
+
+  **Confirmed, and it needed confirming.** slang-rs documents
+  `bindless_space_index()` as returning `-1` when no heap space was reserved,
+  and the spike only ever measured a non-negative value with an explicit floor
+  requested — so with the floor now dropped it was genuinely open whether the
+  return value had become self-gating. It has not: every handle-free shader in
+  the workspace reports **1**, not `-1`. Hence a separate flag,
+  `DECLARES_BINDLESS_HANDLE` in `shaders/reflection.rs`.
+
+  That flag is a hardcoded `false` for this phase, and unavoidably so: Phase 1
+  rejects every handle field, so no shader that would set it can reach
+  reflection. **The Phase 4 code path therefore does not execute under any
+  normal run** — which is why the forced-true run below is the actual
+  verification, not the sweep. Phase 5 is what makes the flag real.
 - **The bind-after-each-pipeline rule has one implicit exception: egui.**
   `egui_ash_renderer` records its own pipeline and descriptor binds into our
   command buffer (renderer.rs:~2256), and the rule holds only because egui is
@@ -386,6 +414,40 @@ This work is purely additive.
 `just test` — putting the heap index in the reflection JSON regenerates the `.json`
 snapshots.
 
+**Verified:** `cargo check --workspace --all-targets`, `just lint` and
+`just test` clean. `just shaders` regenerated all 27 compiled JSONs and the
+snapshot diffs were confirmed to be *only* the new `"bindlessHeapSet": null`
+key before accepting. `crates/renderer/src/shaders/fixtures/basic_triangle.json`
+is a hand-copy of the example's compiled JSON (it backs
+`reflection_value_roundtrip_is_stable`) and had to be re-copied by hand —
+`just shaders` does not touch it. `just sweep` 16 ok / 0 fail with the
+injected-fault self-test still firing.
+
+The field is deliberately **not** `#[serde(default)]`: a stale committed
+`.json` should fail loudly at atlas init rather than read as `None`.
+
+As in Phase 3, a green sweep proves nothing here on its own — with the flag
+false everywhere, none of the new code runs. Both directions were forced:
+
+- **`DECLARES_BINDLESS_HANDLE = true`**: all 27 shaders report
+  `bindlessHeapSet: 1`, every pipeline layout declares the heap set and every
+  draw, dispatch and picking pass binds it. `just sweep` 16 ok / 0 fail with
+  validation on — so the layout, the set index and the three bind sites are all
+  correct against a real driver, covering the graphics (all examples), compute
+  (particles, watercolor) and picking (gpu_picking) paths.
+- **forced index of 3** against one reflected set: `basic_triangle` exits with
+  the intended `bindless heap set index 3 does not follow the 1 reflected
+  descriptor set(s)` error. This is the run that surfaced the leak described
+  above — before moving the check ahead of the creation loop, the same run also
+  printed a `VkDescriptorSetLayout has not been destroyed` validation error
+  first.
+
+Hot reload was checked live (lavapipe + `SDL_VIDEODRIVER=offscreen`), both
+paths: touching a shader logs `recompiling shaders...` →
+`finished recompiling shaders` with no validation output, and adding a field to
+the param block still panics with `shader interface changed`. The heap index
+now being part of that compared JSON does not change either outcome.
+
 ## Phase 5 — reflection and codegen for handle fields
 
 The `Resources` struct is *not* where handles go — that's the whole point. A handle
@@ -398,6 +460,14 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
   into recognition, in the same early-continue block. Parse the declared
   `full_name()` the way pointer access modes are parsed today (:352-427). Keep a
   field-specific rejection for unsupported shapes.
+- **Replace `DECLARES_BINDLESS_HANDLE` in `shaders/reflection.rs`**, which
+  Phase 4 left as a hardcoded `false` because nothing could set it. It has to
+  become "did the parameter walk see a handle field", threaded up to
+  `reflect_pipeline_layout`'s `declares_bindless_handle` argument — most likely
+  by scanning the produced `global_parameters` for the new
+  `StructField::DescriptorHandle` variant, which needs no plumbing through the
+  recursive `reflect_struct_fields`. Until this lands, no shader can reach the
+  heap regardless of what Phases 2-4 built.
 - **The prefix alone is not enough to accept a field — split off the `[N]`
   suffix first.** Phase 1 measured that an array's declared `full_name()` is the
   element's with `[N]` appended, so `starts_with("DescriptorHandle<")` matches
@@ -531,7 +601,7 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 1 | ✅ `just test` + three rejection tests |
 | 2 | ✅ `cargo check --workspace --all-targets`, `just lint`, `just sweep` |
 | 3 | ✅ `just sweep` 16 ok / 0 fail with the heap allocated but unbound, plus a temporary `MAX_BINDLESS_TEXTURES = 1` run to prove the write path executes |
-| 4 | `just sweep` + `just watch <example>`; hot reload still works; `just test` (reflection JSON snapshots) |
+| 4 | ✅ `just sweep` 16 ok / 0 fail, hot reload live-checked both ways, `just test` with only the new JSON key; plus forced `DECLARES_BINDLESS_HANDLE = true` and forced-mismatch runs to prove the path executes |
 | 5 | `just test` (snapshots), new alignment fixtures |
 | 6 | `just shaders`, `just test`, `just sweep`, `just toon_link link-verify-p1` |
 

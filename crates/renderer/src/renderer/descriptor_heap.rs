@@ -89,6 +89,18 @@ impl DescriptorHeap {
         })
     }
 
+    /// Appended to the pipeline layout of every shader that declares a handle.
+    /// Owned here, not by the pipeline that borrows it.
+    pub(super) fn layout(&self) -> vk::DescriptorSetLayout {
+        self.layout
+    }
+
+    /// Only one set shared by every frame in flight;
+    /// update-after-bind is what makes that safe.
+    pub(super) fn set(&self) -> vk::DescriptorSet {
+        self.set
+    }
+
     /// Claim the next slot and write the texture's descriptor into it.
     pub(super) fn insert_texture(
         &mut self,

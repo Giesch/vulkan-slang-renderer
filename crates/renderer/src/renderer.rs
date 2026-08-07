@@ -1220,6 +1220,7 @@ impl Renderer {
 
         let picking_pipeline_layout = ShaderPipelineLayout::create_from_atlas(
             &self.device,
+            self.descriptor_heap.layout(),
             &*picking_config.shader,
             #[cfg(debug_assertions)]
             self.shaders_source_dir,
@@ -1320,6 +1321,7 @@ impl Renderer {
     ) -> anyhow::Result<PipelineHandle<Compute>> {
         let pipeline_layout = ComputeShaderPipelineLayout::create_from_atlas(
             &self.device,
+            self.descriptor_heap.layout(),
             &*config.shader,
             #[cfg(debug_assertions)]
             self.shaders_source_dir,
@@ -1450,6 +1452,7 @@ impl Renderer {
 
         let pipeline_layout = ShaderPipelineLayout::create_from_atlas(
             &self.device,
+            self.descriptor_heap.layout(),
             &*config.shader,
             #[cfg(debug_assertions)]
             self.shaders_source_dir,
@@ -1607,7 +1610,16 @@ impl Renderer {
                             compute_descriptor_sets,
                             &[],
                         );
+                    }
 
+                    self.cmd_bind_bindless_heap(
+                        command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        compute_pipeline.layout.pipeline_layout,
+                        compute_pipeline.layout.bindless_heap_set,
+                    );
+
+                    unsafe {
                         self.device.cmd_dispatch(
                             command_buffer,
                             group_count[0],
@@ -1793,7 +1805,16 @@ impl Renderer {
                     picking_descriptor_sets,
                     &[],
                 );
+            }
 
+            self.cmd_bind_bindless_heap(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                picking_pipeline.layout.pipeline_layout,
+                picking_pipeline.layout.bindless_heap_set,
+            );
+
+            unsafe {
                 self.device.cmd_draw(command_buffer, 3, 1, 0, 0);
                 self.device.cmd_end_rendering(command_buffer);
             }
@@ -2066,15 +2087,19 @@ impl Renderer {
                 self.device.cmd_bind_descriptor_sets(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
-                    self.pipelines
-                        .get_by_index(*pipeline_index)
-                        .layout
-                        .pipeline_layout,
+                    pipeline.layout.pipeline_layout,
                     0,
                     descriptor_sets,
                     &[],
                 );
             }
+
+            self.cmd_bind_bindless_heap(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline.layout.pipeline_layout,
+                pipeline.layout.bindless_heap_set,
+            );
 
             match draw_call {
                 DrawCallConfig::VertexCount(vertex_count) => unsafe {
@@ -2239,6 +2264,11 @@ impl Renderer {
         }
 
         // EGUI RENDERING (separate 1-sample rendering for egui overlay)
+        //
+        // NOTE egui_ash_renderer records its own pipeline and descriptor binds
+        // into our command buffer, which clobbers the bindless heap binding
+        // (see cmd_bind_bindless_heap). That's only harmless because egui is
+        // recorded last — a pass added after this one has to rebind.
         if let Some(egui) = &mut self.egui {
             let label = vk::DebugUtilsLabelEXT::default()
                 .label_name(c"Egui")
@@ -2328,6 +2358,32 @@ impl Renderer {
             .chunks(descriptor_sets_per_frame)
             .nth(self.flight_slot)
             .unwrap()
+    }
+
+    /// Binds the bindless texture heap for a pipeline that declares a handle.
+    fn cmd_bind_bindless_heap(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        bind_point: vk::PipelineBindPoint,
+        pipeline_layout: vk::PipelineLayout,
+        bindless_heap_set: Option<u32>,
+    ) {
+        let Some(first_set) = bindless_heap_set else {
+            return;
+        };
+
+        // every frame in flight uses the one bindless set; see DescriptorHeap
+        let sets = [self.descriptor_heap.set()];
+        unsafe {
+            self.device.cmd_bind_descriptor_sets(
+                command_buffer,
+                bind_point,
+                pipeline_layout,
+                first_set,
+                &sets,
+                &[],
+            );
+        }
     }
 
     fn picking_descriptor_sets_for_frame(
@@ -2685,6 +2741,7 @@ impl Renderer {
     ) -> Result<(), anyhow::Error> {
         let mut tmp_pipeline_layout = match ShaderPipelineLayout::create_from_atlas(
             &self.device,
+            self.descriptor_heap.layout(),
             &*self.pipelines.get_by_index(pipeline_index).shader,
             #[cfg(debug_assertions)]
             self.shaders_source_dir,
@@ -2742,6 +2799,7 @@ impl Renderer {
 
         let mut tmp_layout = match ComputeShaderPipelineLayout::create_from_atlas(
             &self.device,
+            self.descriptor_heap.layout(),
             &*compute_pipeline.shader,
             #[cfg(debug_assertions)]
             self.shaders_source_dir,
@@ -4945,12 +5003,17 @@ struct ShaderPipelineLayout {
     // they need special handling during hot reload
     pipeline_layout: ash::vk::PipelineLayout,
     descriptor_set_layouts: Vec<(ash::vk::DescriptorSetLayout, DescriptorCounts)>,
+
+    /// Where the bindless texture heap sits in `pipeline_layout`
+    /// needs to be rebound after every `cmd_bind_pipeline`.
+    bindless_heap_set: Option<u32>,
 }
 
 impl ShaderPipelineLayout {
     #[cfg(debug_assertions)]
     fn create_from_atlas(
         device: &ash::Device,
+        bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ShaderAtlasEntry,
         shaders_source_dir: &std::path::Path,
     ) -> Result<Self, anyhow::Error> {
@@ -4976,32 +5039,39 @@ impl ShaderPipelineLayout {
             entry_point_name: fragment_shader.entry_point_name,
         };
 
-        let (pipeline_layout, descriptor_set_layouts) =
-            unsafe { reflection_json.pipeline_layout.vk_create(device)? };
+        let (pipeline_layout, descriptor_set_layouts) = unsafe {
+            reflection_json
+                .pipeline_layout
+                .vk_create(device, bindless_heap_layout)?
+        };
 
         Ok(ShaderPipelineLayout {
             vertex_shader,
             fragment_shader,
             pipeline_layout,
             descriptor_set_layouts,
+            bindless_heap_set: reflection_json.pipeline_layout.bindless_heap_set,
         })
     }
 
     #[cfg(not(debug_assertions))]
     fn create_from_atlas(
         device: &ash::Device,
+        bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ShaderAtlasEntry,
     ) -> Result<Self, anyhow::Error> {
         let precompiled = shader.precompiled_shaders();
+        let reflected_layout = shader.pipeline_layout();
 
         let (pipeline_layout, descriptor_set_layouts) =
-            unsafe { shader.pipeline_layout().vk_create(device)? };
+            unsafe { reflected_layout.vk_create(device, bindless_heap_layout)? };
 
         Ok(ShaderPipelineLayout {
             vertex_shader: precompiled.vert,
             fragment_shader: precompiled.frag,
             pipeline_layout,
             descriptor_set_layouts,
+            bindless_heap_set: reflected_layout.bindless_heap_set,
         })
     }
 }
@@ -5013,12 +5083,16 @@ pub(crate) struct ComputeShaderPipelineLayout {
     // they need special handling during hot reload
     pipeline_layout: ash::vk::PipelineLayout,
     descriptor_set_layouts: Vec<(ash::vk::DescriptorSetLayout, DescriptorCounts)>,
+
+    /// see [`ShaderPipelineLayout::bindless_heap_set`]
+    bindless_heap_set: Option<u32>,
 }
 
 impl ComputeShaderPipelineLayout {
     #[cfg(debug_assertions)]
     fn create_from_atlas(
         device: &ash::Device,
+        bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ComputeShaderAtlasEntry,
         shaders_source_dir: &std::path::Path,
     ) -> Result<Self, anyhow::Error> {
@@ -5041,30 +5115,37 @@ impl ComputeShaderPipelineLayout {
             entry_point_name: compute_shader.entry_point_name,
         };
 
-        let (pipeline_layout, descriptor_set_layouts) =
-            unsafe { reflection_json.pipeline_layout.vk_create(device)? };
+        let (pipeline_layout, descriptor_set_layouts) = unsafe {
+            reflection_json
+                .pipeline_layout
+                .vk_create(device, bindless_heap_layout)?
+        };
 
         Ok(ComputeShaderPipelineLayout {
             compute_shader,
             pipeline_layout,
             descriptor_set_layouts,
+            bindless_heap_set: reflection_json.pipeline_layout.bindless_heap_set,
         })
     }
 
     #[cfg(not(debug_assertions))]
     fn create_from_atlas(
         device: &ash::Device,
+        bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ComputeShaderAtlasEntry,
     ) -> Result<Self, anyhow::Error> {
         let precompiled = shader.precompiled_compute_shader();
+        let reflected_layout = shader.pipeline_layout();
 
         let (pipeline_layout, descriptor_set_layouts) =
-            unsafe { shader.pipeline_layout().vk_create(device)? };
+            unsafe { reflected_layout.vk_create(device, bindless_heap_layout)? };
 
         Ok(ComputeShaderPipelineLayout {
             compute_shader: precompiled,
             pipeline_layout,
             descriptor_set_layouts,
+            bindless_heap_set: reflected_layout.bindless_heap_set,
         })
     }
 }
@@ -5137,22 +5218,41 @@ impl ToVk for shaders::json::ReflectedBindingType {
     }
 }
 
-impl VkCreate for shaders::json::ReflectedPipelineLayout {
-    type Created = (
-        vk::PipelineLayout,
-        Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
-    );
-
+/// A pipeline layout needs the bindless heap layout to append, so it cannot use
+/// the plain [`VkCreate`] signature.
+trait VkCreatePipelineLayout {
+    /// The bindless heap layout is appended for shaders that declare a texture handle.
+    /// The bindless heap is separate from the ones returned here.
     unsafe fn vk_create(
         &self,
         device: &ash::Device,
-    ) -> Result<
-        (
-            vk::PipelineLayout,
-            Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
-        ),
-        vk::Result,
-    > {
+        bindless_heap_layout: vk::DescriptorSetLayout,
+    ) -> anyhow::Result<(
+        vk::PipelineLayout,
+        Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
+    )>;
+}
+
+impl VkCreatePipelineLayout for shaders::json::ReflectedPipelineLayout {
+    unsafe fn vk_create(
+        &self,
+        device: &ash::Device,
+        bindless_heap_layout: vk::DescriptorSetLayout,
+    ) -> anyhow::Result<(
+        vk::PipelineLayout,
+        Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
+    )> {
+        if let Some(heap_set) = self.bindless_heap_set {
+            // slang places the heap immediately after the reflected sets, so
+            // appending is enough and no empty placeholder layouts are needed.
+            anyhow::ensure!(
+                heap_set as usize == self.descriptor_set_layouts.len(),
+                "bindless heap set index {heap_set} does not follow the {} reflected \
+                 descriptor set(s); appending it would leave a gap",
+                self.descriptor_set_layouts.len()
+            );
+        }
+
         let mut descriptor_set_layouts = Vec::with_capacity(self.descriptor_set_layouts.len());
         for reflected_set_layout in &self.descriptor_set_layouts {
             let counts = DescriptorCounts::from_descriptor_set_layout(reflected_set_layout);
@@ -5166,7 +5266,11 @@ impl VkCreate for shaders::json::ReflectedPipelineLayout {
             .map(|r| r.to_vk())
             .collect();
 
-        let set_layouts: Vec<_> = descriptor_set_layouts.iter().map(|t| t.0).collect();
+        let mut set_layouts: Vec<_> = descriptor_set_layouts.iter().map(|t| t.0).collect();
+        if self.bindless_heap_set.is_some() {
+            set_layouts.push(bindless_heap_layout);
+        }
+
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&set_layouts)
             .push_constant_ranges(&push_constant_ranges);
