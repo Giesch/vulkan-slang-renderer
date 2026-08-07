@@ -5069,14 +5069,6 @@ impl ComputeShaderPipelineLayout {
     }
 }
 
-/// The vulkan descriptions a reflected shader interface asks for, one set per
-/// descriptor set.
-///
-/// An extension trait rather than an inherent method because the json types are
-/// defined in `mltrs-slang-reflection`, which has no `ash` dependency. Every
-/// generated atlas entry globs `mltrs::renderer::*`, so re-exporting it from
-/// this module is what keeps `self.reflection_json.layout_bindings()` resolving
-/// in generated code.
 pub trait ReflectionLayoutBindings {
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
 }
@@ -5093,20 +5085,12 @@ impl ReflectionLayoutBindings for shaders::json::ComputeReflectionJson {
     }
 }
 
-/// The vulkan value a reflected type describes.
-///
-/// An extension trait rather than an inherent method for the same reason as
-/// [`ReflectionLayoutBindings`]: the reflected types are defined in
-/// `mltrs-slang-reflection`, which carries no `ash` dependency.
 trait ToVk {
     type Vk;
 
     fn to_vk(&self) -> Self::Vk;
 }
 
-/// Creates the vulkan object a reflected type describes.
-///
-/// Separate from [`ToVk`] because these need a device and can fail.
 trait VkCreate {
     type Created;
 

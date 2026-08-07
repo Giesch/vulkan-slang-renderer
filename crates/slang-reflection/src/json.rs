@@ -1,10 +1,3 @@
-//! The on-disk reflection format.
-//!
-//! These are the types `mltrs shaders compile` serializes into
-//! `shaders/compiled/*.json` and bakes into the generated atlas entries, so
-//! they are deliberately graphics-API-agnostic: the renderer translates them
-//! into vulkan objects on its own side of the boundary.
-
 use serde::{Deserialize, Serialize};
 
 mod parameters;

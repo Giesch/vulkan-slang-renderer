@@ -1,10 +1,3 @@
-//! The reflection json types, plus the vulkan-facing pieces of them.
-//!
-//! The types themselves live in `mltrs-slang-reflection`, which knows nothing
-//! about vulkan. They are re-exported here so that `mltrs::shaders::json::…`
-//! stays a valid path for generated code, and the translation into vulkan
-//! descriptions lives on this side of the boundary.
-
 pub use mltrs_slang_reflection::json::*;
 
 use crate::renderer::LayoutDescription;

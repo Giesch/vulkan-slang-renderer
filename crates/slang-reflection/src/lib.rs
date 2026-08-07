@@ -1,10 +1,3 @@
-//! Slang compilation and reflection, with no graphics API dependency.
-//!
-//! This is the only crate in the workspace that depends on `shader-slang`, and
-//! no `shader_slang` type appears in its public API — the reflected data it
-//! hands back (`json::…`) is plain serde structs. Turning that data into vulkan
-//! objects is the renderer's job.
-
 use std::collections::HashMap;
 use std::ffi::CString;
 
@@ -15,22 +8,12 @@ mod reflection;
 
 use json::*;
 
-/// How hard slang should work on the spir-v it emits.
-///
-/// A 1:1 mirror of `slang::OptimizationLevel` rather than a re-export, so that
-/// no `shader_slang` type appears in this crate's public API: a slang-rs
-/// upgrade that renames a variant stops at `to_slang` below instead of
-/// rippling straight through into the cli.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptimizationLevel {
-    /// don't optimize at all
     None,
-    /// balance code quality against compilation time
     Default,
-    /// optimize aggressively
     #[default]
     High,
-    /// may take a very long time, or trade space for speed severely
     Maximal,
 }
 
@@ -45,12 +28,6 @@ impl OptimizationLevel {
     }
 }
 
-/// The shader stages this engine supports.
-///
-/// Deliberately a narrowing of `slang::Stage` rather than a mirror of all 18 of
-/// its variants: the rest are rejected anyway, and `from_slang` returning
-/// `None` is what lets that rejection happen at the point of compilation, where
-/// the stage and the source file are both still in hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderStage {
     Vertex,
@@ -65,7 +42,6 @@ impl ShaderStage {
             slang::Stage::Fragment => Some(Self::Fragment),
             slang::Stage::Compute => Some(Self::Compute),
 
-            // raytracing, mesh, tesselation, geometry, hull, domain, …
             _ => None,
         }
     }
