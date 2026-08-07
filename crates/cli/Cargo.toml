@@ -12,7 +12,7 @@ name = "mltrs"
 path = "src/main.rs"
 
 [dependencies]
-mltrs-renderer.workspace = true
+mltrs-slang-reflection.workspace = true
 
 anyhow.workspace = true
 askama.workspace = true

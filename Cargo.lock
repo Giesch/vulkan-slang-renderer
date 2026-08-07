@@ -1163,7 +1163,7 @@ dependencies = [
  "glam",
  "heck",
  "insta",
- "mltrs-renderer",
+ "mltrs-slang-reflection",
  "rspirv",
  "serde_json",
  "uuid",
@@ -1182,13 +1182,23 @@ dependencies = [
  "glam",
  "heck",
  "log",
+ "mltrs-slang-reflection",
  "notify",
  "sdl3",
  "serde",
  "serde_json",
- "shader-slang",
  "thiserror 2.0.17",
  "vk-mem",
+]
+
+[[package]]
+name = "mltrs-slang-reflection"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "shader-slang",
 ]
 
 [[package]]

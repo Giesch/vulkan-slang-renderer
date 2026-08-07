@@ -12,6 +12,7 @@ edition = "2024"
 gx = { path = "crates/gx" }
 mltrs = { path = "crates/mltrs" }
 mltrs-renderer = { path = "crates/renderer" }
+mltrs-slang-reflection = { path = "crates/slang-reflection" }
 
 # external
 anyhow = "1.0.100"

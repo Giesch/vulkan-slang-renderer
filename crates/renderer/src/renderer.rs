@@ -17,6 +17,8 @@ use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader, ShaderAt
 
 #[cfg(debug_assertions)]
 use crate::shader_watcher;
+#[cfg(debug_assertions)]
+use crate::shaders::SpvBytes as _;
 use crate::shaders::json::ReflectedDescriptorSetLayout;
 #[cfg(debug_assertions)]
 use log::*;
@@ -5067,7 +5069,37 @@ impl ComputeShaderPipelineLayout {
     }
 }
 
-impl shaders::json::ReflectedDescriptorSetLayout {
+pub trait ReflectionLayoutBindings {
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
+}
+
+impl ReflectionLayoutBindings for shaders::json::ReflectionJson {
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
+        shaders::json::layout_bindings_from_pipeline_layout(&self.pipeline_layout)
+    }
+}
+
+impl ReflectionLayoutBindings for shaders::json::ComputeReflectionJson {
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
+        shaders::json::layout_bindings_from_pipeline_layout(&self.pipeline_layout)
+    }
+}
+
+trait ToVk {
+    type Vk;
+
+    fn to_vk(&self) -> Self::Vk;
+}
+
+trait VkCreate {
+    type Created;
+
+    unsafe fn vk_create(&self, device: &ash::Device) -> Result<Self::Created, vk::Result>;
+}
+
+impl VkCreate for shaders::json::ReflectedDescriptorSetLayout {
+    type Created = vk::DescriptorSetLayout;
+
     unsafe fn vk_create(
         &self,
         device: &ash::Device,
@@ -5079,7 +5111,9 @@ impl shaders::json::ReflectedDescriptorSetLayout {
     }
 }
 
-impl shaders::json::ReflectedDescriptorSetLayoutBinding {
+impl ToVk for shaders::json::ReflectedDescriptorSetLayoutBinding {
+    type Vk = vk::DescriptorSetLayoutBinding<'static>;
+
     fn to_vk(&self) -> vk::DescriptorSetLayoutBinding<'static> {
         vk::DescriptorSetLayoutBinding::default()
             .stage_flags(self.stage_flags.to_vk())
@@ -5089,8 +5123,10 @@ impl shaders::json::ReflectedDescriptorSetLayoutBinding {
     }
 }
 
-impl shaders::json::ReflectedBindingType {
-    fn to_vk(self) -> vk::DescriptorType {
+impl ToVk for shaders::json::ReflectedBindingType {
+    type Vk = vk::DescriptorType;
+
+    fn to_vk(&self) -> vk::DescriptorType {
         match self {
             Self::Sampler => vk::DescriptorType::SAMPLER,
             Self::Texture => vk::DescriptorType::SAMPLED_IMAGE,
@@ -5101,7 +5137,12 @@ impl shaders::json::ReflectedBindingType {
     }
 }
 
-impl shaders::json::ReflectedPipelineLayout {
+impl VkCreate for shaders::json::ReflectedPipelineLayout {
+    type Created = (
+        vk::PipelineLayout,
+        Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
+    );
+
     unsafe fn vk_create(
         &self,
         device: &ash::Device,
@@ -5213,7 +5254,9 @@ impl DescriptorCounts {
     }
 }
 
-impl shaders::json::ReflectedPushConstantRange {
+impl ToVk for shaders::json::ReflectedPushConstantRange {
+    type Vk = vk::PushConstantRange;
+
     fn to_vk(&self) -> vk::PushConstantRange {
         vk::PushConstantRange::default()
             .stage_flags(self.stage_flags.to_vk())
@@ -5222,8 +5265,10 @@ impl shaders::json::ReflectedPushConstantRange {
     }
 }
 
-impl shaders::json::ReflectedStageFlags {
-    fn to_vk(self) -> vk::ShaderStageFlags {
+impl ToVk for shaders::json::ReflectedStageFlags {
+    type Vk = vk::ShaderStageFlags;
+
+    fn to_vk(&self) -> vk::ShaderStageFlags {
         match self {
             Self::Vertex => vk::ShaderStageFlags::VERTEX,
             Self::Fragment => vk::ShaderStageFlags::FRAGMENT,

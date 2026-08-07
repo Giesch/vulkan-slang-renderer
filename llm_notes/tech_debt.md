@@ -28,6 +28,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 9. [`pipeline_config` consumes the atlas entry, so a shader can build only one pipeline](#9-pipeline_config-consumes-the-atlas-entry-so-a-shader-can-build-only-one-pipeline---done) — **done**
 10. [The codegen emits unformatted Rust and relies on the caller running `cargo fmt`](#10-the-codegen-emits-unformatted-rust-and-relies-on-the-caller-running-cargo-fmt) — consumer-visible churn, only the justfile hides it
 11. [Vendored slang modules conflate engine API with example-shared conveniences](#11-vendored-slang-modules-conflate-engine-api-with-example-shared-conveniences) — public API surface wider than intended, and no mechanism for the modules actually being duplicated
+12. [The sweep's fixed timeout fails the two pipeline-heaviest examples on a GPU-less box](#12-the-sweeps-fixed-timeout-fails-the-two-pipeline-heaviest-examples-on-a-gpu-less-box) — **false red**, and one of its two spellings accuses §1
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -361,6 +362,12 @@ per-example timeout overrides in the sweep script, a longer default (costs
 ~every example's window), or a note in `docs/testing.md` telling a slow-box
 operator to retry the failing example with a bigger window before treating
 it as red. The last is cheapest and probably enough.
+
+> **Promoted to [§12](#12-the-sweeps-fixed-timeout-fails-the-two-pipeline-heaviest-examples-on-a-gpu-less-box) (2026-08).** Re-measured in a later container
+> session, and the paragraph above understates it in two ways: `multi_mesh`
+> is affected too, and below ~15s the failure is not `no frames` at all but
+> `FAIL(no clean teardown) … exit 137`, which accuses §1. The numbers there
+> supersede the ones here.
 
 **Done means.** §3/§4/§5/§6 of `build_reproducibility.md` get their fixes
 (the §3 recipe half landed with the workspace migration); the disk footprint
@@ -868,3 +875,87 @@ a recipe that regenerates every copy from it. Editing a copy in place is caught 
 by that recipe or by `just pre-commit` — rather than committed. `just shaders` and
 `just test` pass with the examples' imports updated for whatever left the `mltrs`
 prelude.
+
+## 12. The sweep's fixed timeout fails the two pipeline-heaviest examples on a GPU-less box
+
+**Context.** Measured in a fresh container (4 cores, no GPU, lavapipe
+`llvmpipe (LLVM 20.1.2, 256 bits)` as the only working ICD) while investigating
+a reported watercolor failure. Sharpens the `SWEEP_TIMEOUT` paragraph in §6,
+which saw one of the two failure modes on one of the two affected examples.
+Nothing is wrong with either example — this is a measurement-harness entry.
+
+**The problem.** `scripts/headless-sweep.sh` gives every example the same
+`SWEEP_TIMEOUT` (default 10s) to reach its first frame. That budget is tuned for
+a real GPU. Under lavapipe every pipeline is JIT-compiled by LLVM at creation,
+and debug builds additionally slang-compile every shader at startup through the
+hot-reload path (`create_from_atlas`). A full sweep at the default gives
+**13 ok / 1 skip / 2 fail**, both failures spurious:
+
+| example | pipelines | verdict at 10s | at 16s | at 18s |
+|---|---|---|---|---|
+| `watercolor` | 21 (11 shaders × ping/pong parity) | `no clean teardown`, exit 137 | `no frames` | ok |
+| `multi_mesh` | 17 (1 shader, `P_CUBE`…`P_GRAY_UNORM`) | `no frames` | ok | ok |
+| every other example | 1–2 | ok | ok | ok |
+
+The driver is **pipeline count, not shader count** — `multi_mesh` has a single
+`.shader.slang` and is the second-slowest to first frame. Slang compilation is
+the smaller half: compiling watercolor's 11 shaders via `mltrs shaders compile`
+takes ~4.8s of its ~17-18s startup (`basic_triangle`, 1 shader: ~1.0s), so the
+remaining ~12s is pipeline creation.
+
+**Why the 10s spelling is the bad one.** Where SIGTERM lands decides which
+failure you get, and the early one points at the wrong entry:
+
+- **before SDL's event loop exists** (watercolor at 10s) — SDL never converts
+  SIGTERM to `SDL_QUIT`, so `-k 5` SIGKILLs it 5s later. Exit 137 hits the
+  `143 | 137` arm (`headless-sweep.sh:282`), whose message —
+  `FAIL(no clean teardown): watercolor died on a signal` — was written to catch
+  a process that skipped `drain_gpu` and `Drop for Renderer`, i.e. **§1**. The
+  log is empty at `RUST_LOG=warn`, so there is nothing in it to contradict the
+  reading. A process that never finished *starting* is indicted for a teardown
+  bug it does not have.
+- **after the loop is up, before the first frame** (both at 15-16s) — clean
+  exit, zero frames, `VKR_SWEEP` exit 3, `FAIL(no frames)`. This is §6's
+  spelling: still false, but at least it names the thing that went wrong.
+
+Both are false reds, and the sweep's whole value is that a red means something.
+
+**Why it's tolerable today.** On a developer box with a real GPU the margin is
+wide and the sweep is green. The knob already exists and needs no code change —
+`SWEEP_TIMEOUT=25 ./scripts/headless-sweep.sh` passes clean. The cost is
+paid by whoever runs the sweep somewhere new: two failures, one of which sends
+them reading `Drop for Renderer`.
+
+**Adjacent, same cause, smaller margin.** The self-test's own budget is
+`SWEEP_SELF_TEST_TIMEOUT` (5s) against `basic_triangle`. It SIGKILLed once on a
+cold page cache immediately after a build — `FAIL: self-test: exit 137, but not
+from the injected viewport fault`, empty log — then passed at 5s, 10s and 15s
+once warm. That message aborts the entire sweep by design (a broken detector is
+worse than no sweep), so the flakiest budget in the script is also the one that
+takes everything else down with it.
+
+**Fix — pick one; they are not exclusive.**
+
+1. **Per-example overrides.** An associative array of exceptions in the script
+   (`watercolor=30 multi_mesh=25`), defaulting to today's 10s. Cheapest, keeps
+   the fast examples fast, but hard-codes a list that drifts as examples grow —
+   the next pipeline-heavy example is red until someone edits the script.
+2. **Scale the budget when the ICD is software.** The script already resolves
+   `$lvp_icd` and pins `VK_ICD_FILENAMES` to it (`:44-53`), so it knows it is on
+   lavapipe before it runs anything: multiply the default there. Self-adjusting,
+   one line, and it targets the actual variable — a GPU box keeps the tight
+   window that makes a hang obvious.
+3. **Make the diagnosis honest regardless of the budget.** Independent of 1/2
+   and the most valuable of the three: have the `137` arm distinguish
+   "died before presenting a frame" from "died during teardown" before blaming
+   the latter. The renderer already counts presented frames for `VKR_SWEEP`'s
+   exit 3; a marker line at first present would let the script say
+   *"never reached the first frame in Ns — widen `SWEEP_TIMEOUT`"* instead of
+   accusing §1. Note the sequencing constraint: raising the default (1 or 2)
+   *hides* the 137 spelling without fixing it, so if only one lands, land this.
+
+**Done means.** `just sweep` passes on a GPU-less 4-core box with no env vars
+set. An example that genuinely hangs, and one that genuinely leaks at teardown,
+still fail — with different messages, neither of which says `no clean teardown`
+for a startup that ran out of time. `just sweep-self-test` does not depend on
+page-cache warmth.

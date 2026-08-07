@@ -15,14 +15,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workspace layout
 
+- `crates/slang-reflection` (package `mltrs-slang-reflection`) — the slang
+  compile/reflect machinery and the `json` reflection format. **The only crate
+  in the workspace that may depend on `shader-slang`**, and no `shader_slang`
+  type appears in its public API: `OptimizationLevel` and `ShaderStage` are
+  ours, not re-exports. Keep it free of `ash`, `vk-mem` and `sdl3` — that is
+  what lets `mltrs shaders compile` build without a graphics stack.
 - `crates/renderer` (package `mltrs-renderer`) — the renderer, editor widgets,
-  env_config, and the shader compile/reflection machinery.
+  env_config, and the shader watcher. `shaders.rs` is a façade over
+  `mltrs-slang-reflection` plus the vulkan-facing pieces: the `atlas` traits,
+  and the `ReflectionLayoutBindings` / `ToVk` / `VkCreate` / `SpvBytes`
+  extension traits (the reflected types are defined in the other crate, so
+  these cannot be inherent impls).
 - `crates/mltrs` — the consumer-facing engine crate: `Game` trait, app loop,
   asset helpers; re-exports the renderer modules.
 - `crates/cli` (package `mltrs-cli`, binary `mltrs`) — shader codegen
   (`mltrs shaders compile`) and project seeding (`mltrs shaders init`);
   owns the askama templates, the vendored engine slang modules, and the
-  snapshot-test fixtures.
+  snapshot-test fixtures. Depends on `mltrs-slang-reflection`, *not* the
+  renderer — keep it that way.
 - `crates/gx` — GameCube manifest schema shared by `convert-link` and the
   `toon_link` example.
 - `crates/convert-link` (binary `convert_link`) — Wind Waker asset converter.
