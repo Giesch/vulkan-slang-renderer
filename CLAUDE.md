@@ -42,36 +42,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   bindings, and its own assets. The examples are the first consumers of the
   `mltrs` CLI workflow.
 
-### Per-example recipes
-
-An example that needs its own build tasks carries a `justfile` (and a
-`scripts/` dir) inside its crate; the root justfile declares each one as a
-`mod`, so they run as `just <example> <recipe>` — e.g.
-`just toon_link link-verify-p1`, `just sdf_2d beats`. `just --list` at the root
-shows them all. **just sets the working directory to the example's crate dir**
-when running a submodule recipe, so paths in those justfiles and scripts are
-crate-relative, not repo-relative.
-
-`toon_link` also keeps its gitignored, machine-local Wind Waker assets inside
-the crate at `examples/toon_link/assets/link/`.
-
 Keep the root justfile for workspace-wide tasks only (`shaders`, `sweep`,
-`test`, `lint`, `dev`, `pre-commit`).
+`test`, `lint`, `dev`, `pre-commit`); per-example recipes live in the example's
+own justfile (see `examples/CLAUDE.md`).
 
 ## Build Commands
 
+`just --list` shows every workspace recipe and every example's own recipes.
+
 ```bash
-cargo check --workspace --all-targets  # check every crate, example, and test
-just shaders               # regenerate ALL examples' shader bindings
-just shaders EXAMPLE       # regenerate one example's bindings
-just textures              # re-encode ALL examples' source images to ktx2
-just EXAMPLE textures      # re-encode one example's source images
-just test                  # Run tests (snapshot testing via insta)
-cargo insta test --workspace --accept  # accept all modified snapshots
-just lint                  # Clippy with warnings as errors
-just watch EXAMPLE         # build, then run one example for a few seconds
-just sweep                 # run EVERY example headlessly, fail on validation output
-just EXAMPLE               # list one example's own recipes (if it has a justfile)
 cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection json
 ```
 
@@ -131,15 +110,7 @@ the encode flags.
 
 ## Testing
 
-```bash
-just test                  # Non-interactive (CI)
-just insta                 # Interactive review
-cargo insta test --workspace --accept  # Re-run and accept every changed snapshot
-just sweep                 # run all examples, checking for vulkan validation errors
-just sweep-self-test       # check that the sweep still detects an injected fault
-```
-
-Always run `just test` when changing `crates/cli/src/build_tasks.rs`.
+`cargo insta test --workspace --accept` accepts every changed snapshot.
 
 Run `just sweep` when a change could affect what the renderer records or destroys.
 
