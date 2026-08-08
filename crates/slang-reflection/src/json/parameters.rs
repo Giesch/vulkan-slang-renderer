@@ -90,6 +90,69 @@ pub enum StructField {
     Pointer(PointerStructField),
     Array(ArrayStructField),
     Enum(EnumStructField),
+    DescriptorHandle(DescriptorHandleStructField),
+}
+
+impl GlobalParameter {
+    /// Whether this parameter declares a bindless texture handle anywhere in
+    /// its field tree, which is what decides whether the heap set is appended
+    /// to the shader's pipeline layout and bound before its draws.
+    pub fn declares_bindless_handle(&self) -> bool {
+        let Self::ParameterBlock(block) = self;
+        fields_declare_bindless_handle(&block.element_type.fields)
+    }
+}
+
+impl StructField {
+    pub fn binding(&self) -> Option<&Binding> {
+        match self {
+            Self::Scalar(s) => Some(&s.binding),
+            Self::Vector(VectorStructField::Bound(v)) => Some(&v.binding),
+            Self::Vector(VectorStructField::Semantic(_)) => None,
+            Self::Struct(s) => Some(&s.binding),
+            Self::Matrix(m) => Some(&m.binding),
+            Self::Resource(r) => Some(&r.binding),
+            Self::Pointer(p) => Some(&p.binding),
+            Self::Array(a) => Some(&a.binding),
+            Self::Enum(e) => Some(&e.binding),
+            Self::DescriptorHandle(h) => Some(&h.binding),
+        }
+    }
+
+    pub fn field_name(&self) -> &str {
+        match self {
+            Self::Scalar(s) => &s.field_name,
+            Self::Vector(VectorStructField::Bound(v)) => &v.field_name,
+            Self::Vector(VectorStructField::Semantic(v)) => &v.field_name,
+            Self::Struct(s) => &s.field_name,
+            Self::Matrix(m) => &m.field_name,
+            Self::Resource(r) => &r.field_name,
+            Self::Pointer(p) => &p.field_name,
+            Self::Array(a) => &a.field_name,
+            Self::Enum(e) => &e.field_name,
+            Self::DescriptorHandle(h) => &h.field_name,
+        }
+    }
+}
+
+/// Recursively check whether any field contains a bindless handle
+fn fields_declare_bindless_handle(fields: &[StructField]) -> bool {
+    fields.iter().any(|field| match field {
+        StructField::DescriptorHandle(_) => true,
+
+        StructField::Struct(s) => fields_declare_bindless_handle(&s.struct_type.fields),
+        StructField::Pointer(p) => fields_declare_bindless_handle(&p.pointee_type.fields),
+        StructField::Resource(r) => match &r.result_type {
+            ResourceResultType::Struct(s) => fields_declare_bindless_handle(&s.fields),
+            ResourceResultType::Scalar(_) | ResourceResultType::Vector(_) => false,
+        },
+
+        StructField::Scalar(_)
+        | StructField::Vector(_)
+        | StructField::Matrix(_)
+        | StructField::Array(_)
+        | StructField::Enum(_) => false,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +330,22 @@ pub enum PointerAccess {
     Immutable,
 }
 
+/// A slang `DescriptorHandle<T>` field (eg. `Sampler2D.Handle`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescriptorHandleStructField {
+    pub field_name: String,
+    pub binding: Binding,
+    pub shape: DescriptorHandleShape,
+}
+
+/// The descriptor type a handle resolves to. We only support combined image samplers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DescriptorHandleShape {
+    Sampler2D,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum VectorElementType {
@@ -350,5 +429,84 @@ impl EnumTagType {
         match self {
             Self::Uint32 | Self::Int32 => 4,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uniform(offset: usize, size: usize) -> Binding {
+        Binding::Uniform(OffsetSizeBinding { offset, size })
+    }
+
+    fn handle_field() -> StructField {
+        StructField::DescriptorHandle(DescriptorHandleStructField {
+            field_name: "tex".to_string(),
+            binding: uniform(0, 8),
+            shape: DescriptorHandleShape::Sampler2D,
+        })
+    }
+
+    fn scalar_field() -> StructField {
+        StructField::Scalar(ScalarStructField {
+            field_name: "scale".to_string(),
+            binding: uniform(0, 4),
+            scalar_type: ScalarType::Float32,
+        })
+    }
+
+    fn block(fields: Vec<StructField>) -> GlobalParameter {
+        GlobalParameter::ParameterBlock(ParameterBlockGlobalParameter {
+            parameter_name: "params".to_string(),
+            element_type: ParameterBlockElementType {
+                type_name: "Params".to_string(),
+                fields,
+            },
+        })
+    }
+
+    #[test]
+    fn a_handle_free_block_declares_no_handle() {
+        assert!(!block(vec![scalar_field()]).declares_bindless_handle());
+    }
+
+    #[test]
+    fn a_top_level_handle_is_found() {
+        assert!(block(vec![scalar_field(), handle_field()]).declares_bindless_handle());
+    }
+
+    // The nesting cases are the ones worth pinning: a stop at the top level
+    // would leave the heap unbound for exactly the per-material layout bindless
+    // exists to enable, and nothing downstream would say so — the shader would
+    // sample an unbound descriptor set.
+    #[test]
+    fn a_handle_in_a_nested_struct_is_found() {
+        let nested = StructField::Struct(StructStructField {
+            field_name: "inner".to_string(),
+            binding: uniform(0, 16),
+            struct_type: StructFieldType {
+                type_name: "Inner".to_string(),
+                fields: vec![handle_field()],
+            },
+        });
+
+        assert!(block(vec![nested]).declares_bindless_handle());
+    }
+
+    #[test]
+    fn a_handle_in_a_pointer_pointee_is_found() {
+        let pointer = StructField::Pointer(PointerStructField {
+            field_name: "materials".to_string(),
+            binding: uniform(0, 8),
+            pointee_type: StructFieldType {
+                type_name: "Material".to_string(),
+                fields: vec![handle_field()],
+            },
+            pointee_size: 16,
+            access: PointerAccess::Immutable,
+        });
+
+        assert!(block(vec![pointer]).declares_bindless_handle());
     }
 }

@@ -763,11 +763,16 @@ fn generate_std430_struct_fields(
         });
         let Some(mut gen_field) = gather_struct_defs(source_field, defs, alignment_for_nested)
         else {
+            assert_no_uniform_bytes_dropped(source_field);
             continue;
         };
 
         // Get the expected offset from reflection
-        let Some((expected_offset, field_size)) = field_offset_size(source_field) else {
+        let Some(OffsetSize {
+            offset: expected_offset,
+            size: field_size,
+        }) = field_offset_size(source_field)
+        else {
             // No offset info (e.g. semantic field), just add the field
             generated_fields.push(gen_field);
             continue;
@@ -826,17 +831,22 @@ fn generate_std140_struct_fields(
         if matches!(source_field, StructField::Resource(_)) {
             // Still need to gather struct definitions for StructuredBuffer element types
             let _ = gather_struct_defs(source_field, defs, Some(Alignment::Std140));
+            assert_no_uniform_bytes_dropped(source_field);
             continue;
         }
 
         // Get the generated field (and recurse for nested structs)
         let Some(mut gen_field) = gather_struct_defs(source_field, defs, Some(Alignment::Std140))
         else {
+            assert_no_uniform_bytes_dropped(source_field);
             continue;
         };
 
-        // Get the expected offset from reflection
-        let Some((expected_offset, field_size)) = field_offset_size(source_field) else {
+        let Some(OffsetSize {
+            offset: expected_offset,
+            size: field_size,
+        }) = field_offset_size(source_field)
+        else {
             // No offset info (e.g. semantic field), just add the field
             generated_fields.push(gen_field);
             continue;
@@ -1049,6 +1059,18 @@ fn gather_struct_defs(
             Some(GeneratedStructFieldDefinition::new(
                 array.field_name.to_snake_case(),
                 format!("[{element_type}; {}]", array.element_count),
+            ))
+        }
+
+        StructField::DescriptorHandle(handle) => {
+            // a bindless texture handle
+            let shape_marker = match handle.shape {
+                DescriptorHandleShape::Sampler2D => "Sampler2D",
+            };
+
+            Some(GeneratedStructFieldDefinition::new(
+                handle.field_name.to_snake_case(),
+                format!("BindlessHandle<{shape_marker}>"),
             ))
         }
 
@@ -1287,24 +1309,32 @@ enum RequiredResourceType {
     UniformBuffer(String),
 }
 
-/// Extracts offset and size from a StructField's binding
-fn field_offset_size(field: &StructField) -> Option<(usize, usize)> {
-    let binding = match field {
-        StructField::Scalar(s) => Some(&s.binding),
-        StructField::Vector(VectorStructField::Bound(v)) => Some(&v.binding),
-        StructField::Vector(VectorStructField::Semantic(_)) => None,
-        StructField::Matrix(m) => Some(&m.binding),
-        StructField::Struct(s) => Some(&s.binding),
-        StructField::Pointer(p) => Some(&p.binding),
-        StructField::Array(a) => Some(&a.binding),
-        StructField::Enum(e) => Some(&e.binding),
-        StructField::Resource(_) => None,
-    };
+#[derive(Debug)]
+struct OffsetSize {
+    offset: usize,
+    size: usize,
+}
 
-    binding.and_then(|b| match b {
-        Binding::Uniform(u) => Some((u.offset, u.size)),
+/// Extracts offset and size from a StructField's binding.
+/// Only a uniform binding owns bytes in the enclosing struct.
+fn field_offset_size(field: &StructField) -> Option<OffsetSize> {
+    match field.binding()? {
+        Binding::Uniform(u) => Some(OffsetSize {
+            offset: u.offset,
+            size: u.size,
+        }),
         _ => None,
-    })
+    }
+}
+
+/// A field with a uniform binding maps to the GPU struct.
+/// Dropping it from the generated struct emits no size assert for it.
+fn assert_no_uniform_bytes_dropped(source_field: &StructField) {
+    assert!(
+        field_offset_size(source_field).is_none(),
+        "field '{}' has a uniform binding but was dropped from the generated struct",
+        source_field.field_name(),
+    );
 }
 
 /// Parses an emitted Rust array type string `"[T; N]"` into `(T, N)`.
@@ -1343,6 +1373,8 @@ fn field_alignment_by_name(type_name: &str) -> usize {
         {
             8
         }
+        // a DescriptorHandle is a uint2, which aligns to 8 in std140 and std430
+        s if s.starts_with("BindlessHandle<") => 8,
         _ => 16, // assume 16 for unknown/struct types
     }
 }
@@ -1382,6 +1414,8 @@ fn rust_type_alignment(type_name: &str) -> Option<usize> {
         {
             std::mem::align_of::<u64>()
         }
+        // BindlessHandle<T> is repr(transparent) over u64 for every T
+        s if s.starts_with("BindlessHandle<") => std::mem::align_of::<u64>(),
         _ => return None,
     })
 }
@@ -2024,150 +2058,36 @@ mod tests {
     }
 
     #[test]
-    fn array_fields_use_element_alignment_and_size() {
+    fn array_fields_use_element_alignment() {
         assert_eq!(field_alignment_by_name("[glam::IVec4; 3]"), 16);
         assert_eq!(rust_type_alignment("[glam::Vec4; 4]"), Some(16));
         assert_eq!(rust_type_alignment("[glam::UVec4; 8]"), Some(4));
-        assert_eq!(rust_size_of("[glam::UVec4; 8]"), Some(128));
-        assert_eq!(rust_size_of("[glam::Vec4; 4]"), Some(64));
     }
 
-    /// Returns the size of the Rust type the codegen emits for a given type name,
-    /// or None for generated struct types (whose interiors are checked field-by-field).
-    fn rust_size_of(rust_type_name: &str) -> Option<usize> {
-        if let Some((element, count)) = parse_array_type(rust_type_name) {
-            return rust_size_of(element).map(|element_size| element_size * count);
-        }
-
-        let size = match rust_type_name {
-            "f32" => std::mem::size_of::<f32>(),
-            "i32" => std::mem::size_of::<i32>(),
-            "u32" => std::mem::size_of::<u32>(),
-            "u64" => std::mem::size_of::<u64>(),
-            "glam::Vec2" => std::mem::size_of::<glam::Vec2>(),
-            "glam::Vec3" => std::mem::size_of::<glam::Vec3>(),
-            "glam::Vec4" => std::mem::size_of::<glam::Vec4>(),
-            "glam::UVec4" => std::mem::size_of::<glam::UVec4>(),
-            "glam::IVec4" => std::mem::size_of::<glam::IVec4>(),
-            "glam::Mat2" => std::mem::size_of::<glam::Mat2>(),
-            "glam::Mat3" => std::mem::size_of::<glam::Mat3>(),
-            "glam::Mat4" => std::mem::size_of::<glam::Mat4>(),
-            _ => return None,
-        };
-
-        Some(size)
+    // an example of incorrect generated code we should catch
+    fn dropped_field_owning_uniform_bytes() -> StructField {
+        StructField::Resource(ResourceStructField {
+            field_name: "dropped".to_string(),
+            binding: Binding::Uniform(OffsetSizeBinding { offset: 0, size: 8 }),
+            resource_shape: ResourceShape::Texture2D,
+            result_type: ResourceResultType::Scalar(ScalarResultType {
+                scalar_type: ScalarType::Float32,
+            }),
+        })
     }
 
-    fn check_field_sizes(fields: &[StructField], context: &str, mismatches: &mut Vec<String>) {
-        for field in fields {
-            match field {
-                StructField::Struct(s) => {
-                    let context = format!("{context}.{}", s.field_name);
-                    check_field_sizes(&s.struct_type.fields, &context, mismatches);
-                    continue;
-                }
-
-                StructField::Resource(res) => {
-                    if let ResourceResultType::Struct(s) = &res.result_type {
-                        let context = format!("{context}.{}", res.field_name);
-                        check_field_sizes(&s.fields, &context, mismatches);
-                    }
-                    continue;
-                }
-
-                StructField::Pointer(ptr) => {
-                    // check the pointee's fields, then fall through to the
-                    // leaf check for the pointer's own u64
-                    let pointee_context = format!("{context}.{}", ptr.field_name);
-                    check_field_sizes(&ptr.pointee_type.fields, &pointee_context, mismatches);
-                }
-
-                // NOTE the enum arm is deliberately inert: rust_size_of returns
-                // None for a generated type name, so the tripwire skips enums.
-                // The emitted size_of::<TheEnum>() assert is the real check.
-                StructField::Scalar(_)
-                | StructField::Vector(_)
-                | StructField::Matrix(_)
-                | StructField::Array(_)
-                | StructField::Enum(_) => {}
-            }
-
-            let Some((_offset, reflected_size)) = field_offset_size(field) else {
-                continue;
-            };
-            let Some(generated) =
-                gather_struct_defs(field, &mut GeneratedTypeDefs::default(), None)
-            else {
-                continue;
-            };
-            let Some(rust_size) = rust_size_of(&generated.type_name) else {
-                continue;
-            };
-
-            if rust_size != reflected_size {
-                mismatches.push(format!(
-                    "{context}.{}: {} is {rust_size} bytes in Rust, but the reflected GPU size is {reflected_size}",
-                    generated.field_name, generated.type_name,
-                ));
-            }
-        }
-    }
-
-    /// Asserts that every uniform-bound field's emitted Rust type has exactly the
-    /// reflected GPU size. This catches interior-stride mismatches (e.g. glam::Mat3 =
-    /// 36 contiguous bytes vs std430's 48 with 16-byte column stride) that total-size
-    /// and per-field offset asserts cannot see, because stride padding always changes
-    /// a field's total size.
-    #[cfg(not(windows))]
     #[test]
-    fn field_size_tripwire() {
-        let tmp_prefix = format!("shader-test-{}", uuid::Uuid::new_v4());
-        let tmp_dir_path = std::env::temp_dir().join(tmp_prefix);
+    #[should_panic(expected = "field 'dropped' has a uniform binding")]
+    fn std140_rejects_dropping_a_field_that_owns_uniform_bytes() {
+        let field = dropped_field_owning_uniform_bytes();
+        generate_std140_struct_fields(&[field], &mut GeneratedTypeDefs::default());
+    }
 
-        let config = Config {
-            generate_rust_source: false,
-            rust_source_dir: tmp_dir_path.join("src"),
-            shaders_source_dir: manifest_path(["fixtures", "alignment"]),
-            compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
-            import_root: "crate".to_string(),
-            optimization: OptimizationLevel::High,
-        };
-        let compiled_dir = config.compiled_shaders_dir.clone();
-
-        write_precompiled_shaders(config).unwrap();
-
-        let mut mismatches = Vec::new();
-        for entry in std::fs::read_dir(&compiled_dir).unwrap() {
-            let entry = entry.unwrap();
-            let file_name = entry.file_name().to_string_lossy().to_string();
-
-            let json_str;
-            let global_parameters = if file_name.ends_with(".comp.json") {
-                json_str = std::fs::read_to_string(entry.path()).unwrap();
-                let json: ComputeReflectionJson = serde_json::from_str(&json_str).unwrap();
-                json.global_parameters
-            } else if file_name.ends_with(".json") {
-                json_str = std::fs::read_to_string(entry.path()).unwrap();
-                let json: ReflectionJson = serde_json::from_str(&json_str).unwrap();
-                json.global_parameters
-            } else {
-                continue;
-            };
-
-            for global_parameter in &global_parameters {
-                let GlobalParameter::ParameterBlock(block) = global_parameter;
-                let context = format!("{file_name}: {}", block.parameter_name);
-                check_field_sizes(&block.element_type.fields, &context, &mut mismatches);
-            }
-        }
-
-        mismatches.sort();
-
-        assert!(
-            mismatches.is_empty(),
-            "field size mismatches (Rust type byte image != reflected GPU size):\n{}",
-            mismatches.join("\n"),
-        );
+    #[test]
+    #[should_panic(expected = "field 'dropped' has a uniform binding")]
+    fn std430_rejects_dropping_a_field_that_owns_uniform_bytes() {
+        let field = dropped_field_owning_uniform_bytes();
+        generate_std430_struct_fields(&[field], &mut GeneratedTypeDefs::default());
     }
 
     /// Pins the SPIR-V layout of Std430DataLayout pointer pointees. The generated
@@ -2760,48 +2680,57 @@ float4 fragMain() : SV_Target {
         );
     }
 
-    // A DescriptorHandle lowers to a uint2 of ordinary data, so its *layout*
-    // kind is Vector and reflection would silently emit a UVec2 field — every
-    // generated offset_of!/size_of assertion passes while the app writes raw
-    // integers into what the shader treats as a descriptor index. Nothing else
-    // catches this: it is not a descriptor binding, so the pipeline layout
-    // never sees it either. Same declared-type guard as the enum case.
+    // The accepted path is covered by the handle_* alignment fixtures; what
+    // stays here are the shapes the bindless heap cannot serve.
+    //
+    // A separate Texture2D.Handle or SamplerState.Handle lights up slang's heap
+    // bindings 2 and 0, and DescriptorHeap creates only binding 1 (combined
+    // image sampler). Accepting one would produce a shader sampling a descriptor
+    // array that was never declared, with no reflection or validation signal.
     #[cfg(not(windows))]
     #[test]
-    fn handle_fields_are_rejected() {
-        let source = r#"#language slang 2026
+    fn unsupported_handle_shapes_are_rejected() {
+        for (module, decl) in [
+            ("texture_handle", "Texture2D.Handle tex;"),
+            ("sampler_handle", "SamplerState.Handle samp;"),
+        ] {
+            let source = format!(
+                r#"#language slang 2026
 
-module handle_field;
+module {module};
 
-struct Params {
-    Sampler2D.Handle tex;
-}
+struct Params {{
+    {decl}
+    float4 tint;
+}}
 
 ParameterBlock<Params> params;
 
 [shader("vertex")]
-float4 vertMain(uint id: SV_VertexID) : SV_Position {
+float4 vertMain(uint id: SV_VertexID) : SV_Position {{
     return float4(1.0);
-}
+}}
 
 [shader("fragment")]
-float4 fragMain(float2 uv) : SV_Target {
-    return params.tex.Sample(uv);
-}
-"#;
-        let message = reflect_rejected_shader("handle_field", source);
-        assert!(
-            message.contains("field 'tex'")
-                && message.contains("DescriptorHandle<")
-                && message.contains("texture handle fields are not supported yet"),
-            "unexpected error message: {message}"
-        );
+float4 fragMain() : SV_Target {{
+    return params.tint;
+}}
+"#
+            );
+            let message = reflect_rejected_shader(module, &source);
+            assert!(
+                message.contains("DescriptorHandle<")
+                    && message.contains("only Sampler2D.Handle texture handles are supported"),
+                "unexpected error message for {module}: {message}"
+            );
+        }
     }
 
     // An array's declared full_name() is the element's with `[N]` appended, so
-    // the prefix guard fires on an array of handles too and they get the same
-    // specific message. Worth pinning: the TypeKind::Array arm never recurses
-    // into reflect_struct_fields, so if that suffix form ever changes the only
+    // the prefix guard fires on an array of handles too — which is why the
+    // accept path has to split that suffix off before trusting the prefix.
+    // Worth pinning: the TypeKind::Array arm never recurses into
+    // reflect_struct_fields, so if that suffix form ever changes the only
     // remaining gate is the generic vec4-only array check — a much vaguer error
     // for the same mistake.
     #[cfg(not(windows))]
@@ -2831,8 +2760,12 @@ float4 fragMain(float2 uv) : SV_Target {
         assert!(
             message.contains("field 'textures'")
                 && message.contains("DescriptorHandle<Sampler2D<vector<float,4>>>[4]")
-                && message.contains("texture handle fields are not supported yet"),
+                && message.contains("arrays of texture handles are not supported"),
             "unexpected error message: {message}"
+        );
+        assert!(
+            message.contains("16 under std140 but 8 under std430"),
+            "the message must name the stride reason, not just refuse: {message}"
         );
     }
 
@@ -2863,8 +2796,7 @@ float4 fragMain() : SV_Target {
 "#;
         let message = reflect_rejected_shader("handle_vertex_input", source);
         assert!(
-            message.contains("field 'tex'")
-                && message.contains("texture handle fields are not supported yet"),
+            message.contains("handle field 'tex'") && message.contains("not vertex inputs"),
             "unexpected error message: {message}"
         );
     }

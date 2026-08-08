@@ -44,6 +44,9 @@ pub use storage_buffer::*;
 pub mod addr;
 pub use addr::*;
 
+pub mod bindless;
+pub use bindless::*;
+
 pub mod storage_texture;
 pub use storage_texture::*;
 

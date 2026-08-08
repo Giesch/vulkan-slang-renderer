@@ -1,8 +1,10 @@
 pub mod addr;
+pub mod bindless;
 pub mod gpu_write;
 pub mod vertex_description;
 
 pub use addr::*;
+pub use bindless::*;
 pub use gpu_write::*;
 pub use vertex_description::*;
 

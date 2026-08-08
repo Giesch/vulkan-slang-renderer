@@ -1,5 +1,6 @@
 use ash::vk;
 
+use super::bindless::{BindlessHandle, Sampler2D};
 use super::descriptor_heap::BindlessIndex;
 
 #[derive(Debug)]
@@ -9,8 +10,15 @@ pub struct TextureHandle {
     source_file_name: String,
     index: usize,
     /// This texture's slot in the bindless heap, distinct from `index`.
-    #[expect(unused)] // read by the shader-visible handle accessor, still to come
     bindless_slot: BindlessIndex,
+}
+
+impl TextureHandle {
+    /// This texture as a shader-visible handle, to write into a param struct
+    /// declaring a `Sampler2D.Handle` field.
+    pub fn bindless_handle(&self) -> BindlessHandle<Sampler2D> {
+        BindlessHandle::from_slot(self.bindless_slot)
+    }
 }
 
 pub(super) struct TextureStorage(Vec<Option<Texture>>);

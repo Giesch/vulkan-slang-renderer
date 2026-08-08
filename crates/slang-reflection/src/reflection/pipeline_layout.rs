@@ -10,9 +10,9 @@ use crate::json::*;
 
 pub fn reflect_pipeline_layout(
     program_layout: &slang::reflection::Shader,
-    declares_bindless_handle: bool,
+    has_bindless_handle: bool,
 ) -> ReflectedPipelineLayout {
-    let bindless_heap_set = declares_bindless_handle
+    let bindless_heap_set = has_bindless_handle
         // Slang can return -1 for 'no reserved heap space', but also returns 1
         // in cases where the heap is allocated but unused
         .then(|| u32::try_from(program_layout.bindless_space_index()).ok())

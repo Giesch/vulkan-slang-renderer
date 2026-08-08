@@ -1,6 +1,7 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-4 done, Phases 5+ not started.** Design note for adopting bindless
+**Status: Phases 0-5 done, Phases 6-7 not started. Phase 8 is an optional
+follow-up, added later and a prerequisite for nothing.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
 The phases below were **revised after the Phase 0 spike** — the measured answers are
@@ -44,9 +45,11 @@ struct ToonLinkParams {
 }
 ```
 
-That collapses toon_link to one pipeline plus a material buffer, and is a
-prerequisite for the batching sketched in
+That collapses toon_link to ~~one pipeline~~ **five pipelines** plus a material
+buffer, and is a prerequisite for the batching sketched in
 [render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md).
+The floor is per-material *raster* state (blend, depth write, cull, color mask),
+which is not descriptor state and so does not go away — counted in Phase 6.
 
 ## Why this option and not the others
 
@@ -101,6 +104,7 @@ prerequisite for the batching sketched in
   within one draw. See Phase 6.
 - `VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT` — see Phase 3.
 - Storage images (`RWTexture2D`, watercolor) stay on per-pipeline descriptors.
+  Still true; Phase 8 scopes what lifting it would take, and gates it on a spike.
 - egui keeps its own descriptors (`renderer/egui.rs`, third-party renderer).
 - Uniform buffers stay descriptor-bound; something has to carry the handles.
 
@@ -448,15 +452,26 @@ paths: touching a shader logs `recompiling shaders...` →
 the param block still panics with `shader interface changed`. The heap index
 now being part of that compared JSON does not change either outcome.
 
-## Phase 5 — reflection and codegen for handle fields
+## Phase 5 — reflection and codegen for handle fields ✅ done
 
 The `Resources` struct is *not* where handles go — that's the whole point. A handle
 is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
 
-- `crates/renderer/src/shaders/json/parameters.rs`: add
+**Paths below are stale**: reflection moved to `crates/slang-reflection/src/` in
+the workspace split, so `crates/renderer/src/shaders/{json,reflection}/` is now
+`crates/slang-reflection/src/{json,reflection}/`.
+
+- ~~`crates/renderer/src/shaders/json/parameters.rs`~~
+  `crates/slang-reflection/src/json/parameters.rs`: add
   `StructField::DescriptorHandle(DescriptorHandleStructField { field_name, resource_shape })`
-  to the enum at :84.
-- `crates/renderer/src/shaders/reflection/parameters.rs`: turn Phase 1's rejection
+  to the enum at :84. **The field also needs a `binding`** — the plan omitted it,
+  but `field_offset_size` has to answer for a handle like any other uniform
+  field. Landed as `{ field_name, binding, shape }` with a new
+  `DescriptorHandleShape` enum (one `Sampler2D` case), kept separate from
+  `ResourceShape` — that one describes descriptor-*bound* resources and drives
+  the `Resources` struct a handle never appears in.
+- ~~`crates/renderer/src/shaders/reflection/parameters.rs`~~
+  `crates/slang-reflection/src/reflection/parameters.rs`: turn Phase 1's rejection
   into recognition, in the same early-continue block. Parse the declared
   `full_name()` the way pointer access modes are parsed today (:352-427). Keep a
   field-specific rejection for unsupported shapes.
@@ -468,6 +483,14 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
   `StructField::DescriptorHandle` variant, which needs no plumbing through the
   recursive `reflect_struct_fields`. Until this lands, no shader can reach the
   heap regardless of what Phases 2-4 built.
+
+  The scan landed as `GlobalParameter::declares_bindless_handle` in
+  `json/parameters.rs` rather than in the reflection walk, so it is unit-testable
+  without compiling a shader. **It must recurse**, and the pointee arm is the one
+  that matters: a handle inside a `Std430DataLayout` pointee is the whole
+  per-material use case, and a top-level-only scan would leave the heap unbound
+  for exactly it — with no downstream complaint, since the shader would simply
+  sample a set that was never bound.
 - **The prefix alone is not enough to accept a field — split off the `[N]`
   suffix first.** Phase 1 measured that an array's declared `full_name()` is the
   element's with `[N]` appended, so `starts_with("DescriptorHandle<")` matches
@@ -490,29 +513,105 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
 - New `crates/renderer/src/renderer/bindless.rs`, modeled on `addr.rs`:
   `BindlessHandle<T>` — 8 bytes (`uint2`), `PhantomData<fn() -> T>`,
   `const _: () = assert!(size_of::<BindlessHandle<T>>() == 8)`, `Serialize`,
-  `pub(super)` constructor. Minted from a `TextureHandle` by an accessor mirroring
-  `Gpu::addr` (renderer.rs:5178) — which works only because Phase 3 stored the
-  slot **in the `TextureHandle`**: `Gpu` (renderer.rs:5132-5136) holds just
-  `flight_slot` and the buffer storages, so the accessor must read the slot
+  `pub(super)` constructor. Minted from a `TextureHandle` by an accessor
+  ~~mirroring `Gpu::addr` (renderer.rs:5178)~~ — which works only because Phase 3
+  stored the slot **in the `TextureHandle`**: `Gpu` (renderer.rs:5132-5136) holds
+  just `flight_slot` and the buffer storages, so the accessor must read the slot
   straight off the handle, no `TextureStorage` lookup. Only the low 32 bits
   carry the slot index — the default lowering reads component 0 only — but the
   type stays 8 bytes to match the layout.
+
+  **It landed on `Gpu` and was then moved off it**, to
+  `TextureHandle::bindless_handle`. Mirroring `Gpu::addr` was the wrong instinct:
+  `addr` needs `Gpu` because a device address is per-frame, while a heap slot is
+  fixed for the life of the texture, so the `Gpu` version took a `&self` it never
+  read and implied a frame-dependence that doesn't exist. The gate it appeared to
+  provide was illusory too — a handle written into a param struct outlives the
+  draw closure regardless, so `Gpu` was never restricting anything. When deferred
+  slot reuse lands (Phase 3's future-work note), neither placement helps.
 - `crates/cli/src/build_tasks.rs`:
   - `gather_struct_defs` (:881) emits the field as `BindlessHandle<Marker>`; add
-    it to **three** tables, not two. The pair that already special-cases the
-    8-byte `Addr` types (:1339-1342, :1378-1381) are both *alignment*-only; the
-    size table is the test-only `rust_size_of` (:2037) feeding the
-    `field_size_tripwire` test. That table has no `Addr<` arm today, so
-    pointer-width fields are silently skipped by the tripwire — contradicting
+    it to ~~**three** tables, not two~~ **five sites**. The pair that already
+    special-cases the 8-byte `Addr` types (:1339-1342, :1378-1381) are both
+    *alignment*-only; the size table is the test-only `rust_size_of` (:2037)
+    feeding the `field_size_tripwire` test. That table has no `Addr<` arm today,
+    so pointer-width fields are silently skipped by the tripwire — contradicting
     the `Pointer` arm's own comment (:2078-2080). Add the `Addr`/`ReadAddr`/
     `ImmutableAddr` arm alongside the `BindlessHandle<` one; the compile-time
     checks matter more here than usual (see Verification), so the handle should
     not join the silently-skipped set.
-  - `required_resource` (:1070) must return `None` for handle fields.
+
+    The two the plan missed are both *exhaustive matches on `StructField`*, so
+    they don't need finding — rustc names all three (`gather_struct_defs`,
+    `field_offset_size`, `check_field_sizes`) the moment the variant is added.
+    `check_field_sizes` is the one with a judgement call: the handle belongs in
+    the leaf group that falls through to the size check, **not** in the inert
+    group next to `Enum`, because `rust_size_of` now answers 8 for it.
+  - `required_resource` (:1070) must return `None` for handle fields — **already
+    true** via its `_ => None` catch-all; no change needed.
+- **Not anticipated: `crates/cli/fixtures/check_crate` needs a `BindlessHandle`
+  stub.** `alignment_tests` runs `cargo check` on the generated fixtures against
+  that stub crate (build_tasks.rs:1925), so a new emitted type has to exist there
+  too or the new fixtures fail to compile. `src/shaders/json.rs` needs nothing —
+  it ignores unknown JSON fields.
 - Add alignment fixtures under `crates/cli/fixtures/alignment/` — handle alone,
   handle next to an `Addr`, handle inside a pointee struct. CLAUDE.md requires
   `just test` for any `build_tasks.rs` / template change; accept snapshots with
   `cargo insta test --workspace --accept`.
+
+  **Their entry points must take no parameters.** The first drafts wrote
+  `fragMain(float2 uv)` and hit `type kind reflection not implemented: Vector` —
+  a pre-existing, unrelated limit in `reflect_entry_points`, which handles only
+  `Struct` and `Scalar` entry-point parameters. Real shaders pass interstage data
+  through a struct; the fixtures sample at a constant uv instead, matching the
+  other alignment fixtures' parameter-free style.
+
+**Verified:** `cargo check --workspace --all-targets`, `just lint` and
+`just test` clean, plus `cargo fmt`. Test changes: `handle_fields_are_rejected`
+deleted (that shape is now the accepted path), `handle_arrays_are_rejected` and
+`handle_vertex_inputs_are_rejected` re-pointed at the new messages, new
+`unsupported_handle_shapes_are_rejected` (`Texture2D.Handle` / `SamplerState.Handle`),
+and four `declares_bindless_handle` unit tests covering the nested-struct and
+pointer-pointee paths.
+
+Unlike Phases 3 and 4, the green run *is* the verification here — the new
+fixtures exercise the path directly, so nothing had to be forced. What proves the
+flag actually discriminates is the **contrast**, not either half alone:
+
+- The three `handle_*` fixtures report `bindlessHeapSet: 1`; **every pre-existing
+  alignment fixture snapshot was byte-identical** (only new `.snap` files were
+  written, no modified ones).
+- `just shaders` regenerated all 27 example shaders with a **zero-byte diff** —
+  no example declares a handle yet, so the flag stays off everywhere. A diff here
+  would have meant the flag was over-triggering, which is the failure mode a
+  hardcoded `true` would also have passed the fixture half with.
+
+Measured layouts, confirming a handle is 8 bytes at 8-byte alignment in both
+layout rule sets (`handle_mixed`, std140: `scale` 0, `tex` **8** — a 4-byte gap —
+`items` 16, `mask` **24**, `tint` 32, `offset` 48, size 64; `handle_pointee`'s
+`Material`, std430: `albedo` 0, `normal` 8, `tint` 16, `roughness` 32, size 48).
+The generated `Resources` struct is empty for all three — a handle consumes no
+descriptor.
+
+`spirv-dis` on `handle_pointee.frag.spv` closes the loop between the reported
+index and the actual binary: `OpCapability RuntimeDescriptorArray`, the param
+block at `DescriptorSet 0`, and `%__slang_resource_heap` at **`DescriptorSet 1`,
+`Binding 1`** — the set the JSON reports and the one combined-image-sampler
+binding `DescriptorHeap::new` creates. No `NonUniform` decoration appears, as
+expected, which is the uniformity constraint Phase 7 has to write down.
+
+`just sweep` 16 ok / 0 fail with the injected-fault self-test still firing, and
+hot reload was re-checked live (lavapipe + `SDL_VIDEODRIVER=offscreen`): touching
+a shader mid-run logs `recompiling shaders...` → `finished recompiling shaders`
+with no validation output. Neither proves anything new on its own — no example
+reaches the heap until Phase 6 — they are regression checks that the reflection
+changes left the existing paths alone.
+
+**Still unproven, by design:** no handle *value* has reached a GPU. The layout is
+pinned by the generated `offset_of!`/`size_of` asserts and the SPIR-V above, and
+Phase 4 already swept every example with the heap forcibly bound, but
+`TextureHandle::bindless_handle` has no caller until Phase 6 converts
+`depth_texture`.
 
 ## Phase 6 — vendored slang and first consumers
 
@@ -522,14 +621,56 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
 - Convert `depth_texture` first — one texture, one param block, minimal proof
   (examples/depth_texture/shaders/source/depth_texture.shader.slang).
 - Then `toon_link` for the actual payoff: `build_material_pipelines`
-  (examples/toon_link/src/main.rs:780-826) collapses to one pipeline plus a
+  (examples/toon_link/src/main.rs:780-826) ~~collapses to one pipeline plus a
   `Material` buffer behind `ImmutableAddr`. Per-material pipelines and per-material
-  uniform buffers both disappear.
+  uniform buffers both disappear.~~ **Half right — see below.**
 
   **This does not need `NonUniformEXT`.** toon_link issues one index-range draw per
   batch (main.rs:1178-1186) and keeps doing so; the material index is uniform within
-  each draw. The win here is ~24 fewer pipelines and ~24 fewer uniform buffers, not
-  fewer draws.
+  each draw. The win here is ~~~24 fewer pipelines and~~ ~24 fewer uniform buffers,
+  not fewer draws.
+
+  **The pipeline half of that claim is wrong: bindless does not collapse
+  toon_link to one pipeline.** A pipeline here is not differentiated only by its
+  textures — `raster_state` (main.rs:693) varies cull mode, depth compare, depth
+  write, blend mode *and* color write mask per material, the last via
+  `decal_role`. None of that is descriptor state, so removing the texture
+  descriptors leaves it untouched. Bindless removes the *texture*-driven pipeline
+  explosion; the *state*-driven one survives.
+
+  **Counted, not estimated: 24 materials → 5 distinct raster states.** Derived by
+  grouping `link.manifest.json` and applying `raster_state`/`blend_mode`/
+  `decal_role` by hand (`CULL_OVERRIDE` is `None`, so cull comes from the
+  manifest):
+
+  | derived `RasterState` (cull, depth test, depth write, blend, color write) | materials |
+  |---|---|
+  | Back, LessEqual, write, Opaque, RGB | 11 |
+  | Back, Always, no-write, Blend(DstA, InvDstA), RGB — `Composite` | 4 |
+  | Back, LessEqual, no-write, Blend(SrcA, InvSrcA), A — `Mask` | 4 |
+  | Back, Always, no-write, Opaque, A — `Erase` | 4 |
+  | None, LessEqual, write, Opaque, RGB | 1 |
+
+  The one assumption is that the 12 `BlendMode::None_` materials are the opaque
+  ones (`decal_role` returns `Ok(None)` for those), which the 4/4/4 eye/brow
+  assertion at main.rs:156-158 corroborates: 12 translucent + 12 opaque = 24.
+  Worth re-deriving if the manifest changes — the honest headline for Phase 6 is
+  **24 pipelines → 5, and 24 uniform buffers → 1**.
+
+  `alpha_compare` is *not* a sixth dimension: it rides in the uniform data as a
+  shader-side discard, not in the pipeline.
+
+- **Draw-per-material is load-bearing, not a limitation to design away.** It is
+  what makes the material index dynamically uniform for free, which is the
+  property the whole uniformity constraint above is about. Visibility-buffer
+  architectures (Nanite-style material binning) exist to *recover* this property
+  after GPU-driven culling makes CPU-side material sorting impossible; toon_link
+  has not given it up and has nothing to recover. It also could not adopt that
+  shape if it wanted to — blending and per-material raster state are fixed-function
+  raster, which a per-material compute pass cannot vary, and the comment at
+  main.rs:721-723 notes that *not* writing depth is what lets the eye/brow decals
+  composite at all. The trigger for revisiting is losing CPU-side material sorting,
+  which nothing here is near.
 
   Merging those draws is the follow-on
   ([render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)),
@@ -564,6 +705,80 @@ is a uniform/std430 field the app writes, exactly like an `Addr<T>`.
   part of the `descriptorIndexing` bundle Vulkan 1.3 mandates — no extension
   needed; see Phase 6). If the `mltrs::TexHandle` alias from Phase 6 is added,
   repeat the rule in a comment there — it's what shader authors actually read.
+
+## Phase 8 — watercolor (follow-up; investigate first)
+
+Not planned as part of the original work, and **not a prerequisite for anything**.
+Added because measuring toon_link's real payoff (24 → 5, above) prompted checking
+what watercolor's would be, and it turns out to be the better demo.
+
+**The prize: 22 pipelines → 10, and every duplicate is pure descriptor
+duplication.** Counted: 18 `create_compute_pipeline` calls against 9 distinct
+`*.compute.slang` shaders — exactly 2× — plus `display_pipelines:
+[PipelineHandle<DrawVertexCount>; 4]` from one graphics shader. Every duplicate
+exists only to bind the other side of a ping-pong pair, which the source says
+outright ("Brush pipeline: 2 variants for wet_mask/pigment parity",
+"4 pipelines for (sim_parity × deposit_parity)", examples/watercolor/src/main.rs:473,652).
+
+Two reasons this beats toon_link as a showcase:
+
+- **Zero raster-state component.** toon_link's residual 5 pipelines are blend /
+  depth-write / cull / color-mask variants that bindless cannot touch. Watercolor's
+  duplicates are identical shader code with identical state and a different image
+  bound — exactly what the heap erases, with no floor underneath.
+- **Uniform by construction, with no index at all.** Parity is CPU state written
+  into the param block per frame, so the shader reads *the* handle rather than
+  selecting one. None of the uniformity hazards in Phase 7 apply, and it needs no
+  per-draw channel (contrast toon_link, where the index has to come from
+  somewhere). It is therefore the *safest* first non-trivial consumer, not just
+  the most rewarding.
+
+Synchronization is not the usual objection here: the renderer has no automatic
+barrier tracking for bindless to break (`PendingComputeCommand::Barrier` is
+already app-driven), and the `storage_texture_as_sampled` aliases already live in
+`GENERAL`, so no layout invariant changes.
+
+**Only the read half fits inside today's heap, and even that needs a source
+change.** Watercolor's compute passes read `Texture2D<float>`, which is a separate
+*sampled image* — Slang heap binding 2 — not `Sampler2D` (combined, binding 1,
+the only binding `DescriptorHeap` creates). Those declarations have to become
+`Sampler2D<float>` first. Sampling method is unaffected; a combined descriptor
+serves `Load` as well as `Sample`.
+
+**The write half (`RWTexture2D`) is out of scope until a spike says otherwise**,
+and stays a non-goal above. Storage images are `VK_DESCRIPTOR_TYPE_STORAGE_IMAGE`,
+a different type from the heap's one binding. Entering the heap would need:
+
+- **Slang's heap binding number for storage images — unmeasured.** The Phase 0
+  spike confirmed 0 sampler / 1 combined / 2 sampled and never probed storage.
+  This is the spike to run before estimating anything else here.
+- `descriptorBindingStorageImageUpdateAfterBind` and
+  `shaderStorageImageArrayDynamicIndexing`, neither requested in Phase 2.
+- `maxPerStageDescriptorUpdateAfterBindStorageImages` and
+  `maxDescriptorSetUpdateAfterBindStorageImages` in `undersized_limits`.
+- A second heap binding, plus relaxing the Phase 5 shape rejection — which Phase 3
+  notes must happen together.
+
+So the plausible shapes are: **(a)** convert reads only, keeping storage writes on
+per-pipeline descriptors — collapses the pipelines that vary by *read* target,
+which is most of them; or **(b)** spike storage-image handles first and convert
+both. Start with the spike, since it decides whether (a) is a stepping stone or
+the destination.
+
+**This does not delete `StorageTexture`.** That type owns `vk::Image`,
+`vk_mem::Allocation`, `vk::ImageView`, format and extent — it is an *ownership*
+type, and bindless changes how shaders reach a resource, not who owns it. The
+actual wart is that watercolor holds **two handles for one image**, a
+`StorageTextureHandle` plus a `TextureHandle` from `storage_texture_as_sampled`
+aliasing the same `VkImage`. Collapsing those into one texture type carrying both
+usages and both views is a separate refactor that bindless neither requires nor
+provides, and which could be done today, independently.
+
+**Verify:** `just shaders watercolor`; `just test`; `just sweep`. Watercolor is a
+simulation, so a green sweep is weak evidence — a wrong ping-pong handle renders a
+plausible-looking but wrong image with no validation output. Compare frames
+against the pre-migration build, and convert one pass at a time rather than all
+nine at once.
 
 ---
 
@@ -602,8 +817,9 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 2 | ✅ `cargo check --workspace --all-targets`, `just lint`, `just sweep` |
 | 3 | ✅ `just sweep` 16 ok / 0 fail with the heap allocated but unbound, plus a temporary `MAX_BINDLESS_TEXTURES = 1` run to prove the write path executes |
 | 4 | ✅ `just sweep` 16 ok / 0 fail, hot reload live-checked both ways, `just test` with only the new JSON key; plus forced `DECLARES_BINDLESS_HANDLE = true` and forced-mismatch runs to prove the path executes |
-| 5 | `just test` (snapshots), new alignment fixtures |
+| 5 | ✅ `just test` with three new handle fixtures at `bindlessHeapSet: 1` while every pre-existing fixture stayed byte-identical, `just shaders` zero-diff across all 27 example shaders, `spirv-dis` confirming the heap at set 1 / binding 1, `just sweep` 16 ok / 0 fail, hot reload live-checked |
 | 6 | `just shaders`, `just test`, `just sweep`, `just toon_link link-verify-p1` |
+| 8 | `just shaders watercolor`, `just test`, `just sweep` — plus a frame comparison against the pre-migration build, since a wrong ping-pong handle is silent |
 
 Per [`docs/testing.md`](../docs/testing.md), read before accepting any snapshot or
 adding a validation check. Layout bugs behind device addresses and heap indices

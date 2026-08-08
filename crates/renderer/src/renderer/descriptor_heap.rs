@@ -26,7 +26,6 @@ const COMBINED_IMAGE_SAMPLER_BINDING: u32 = 1;
 pub(super) struct BindlessIndex(u32);
 
 impl BindlessIndex {
-    #[expect(unused)] // read by the shader-visible handle accessor, still to come
     pub(super) fn to_raw(self) -> u32 {
         self.0
     }

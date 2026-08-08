@@ -1,0 +1,123 @@
+---
+source: crates/cli/src/build_tasks.rs
+info:
+  relative_path: shaders/compiled/handle_pointee.json
+---
+{
+  "sourceFileName": "handle_pointee.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "materials",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "Material",
+              "fields": [
+                {
+                  "kind": "descriptorHandle",
+                  "fieldName": "albedo",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "shape": "sampler2D"
+                },
+                {
+                  "kind": "descriptorHandle",
+                  "fieldName": "normal",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 8
+                  },
+                  "shape": "sampler2D"
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "tint",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "roughness",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 32,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            },
+            "pointeeSize": 48,
+            "access": "readWrite"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "material_index",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 4
+            },
+            "scalarType": "uint32"
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": []
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": [],
+    "bindlessHeapSet": 1
+  }
+}

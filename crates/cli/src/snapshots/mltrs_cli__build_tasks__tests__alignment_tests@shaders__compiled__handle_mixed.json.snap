@@ -1,0 +1,141 @@
+---
+source: crates/cli/src/build_tasks.rs
+info:
+  relative_path: shaders/compiled/handle_mixed.json
+---
+{
+  "sourceFileName": "handle_mixed.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "Params",
+        "fields": [
+          {
+            "kind": "scalar",
+            "fieldName": "scale",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 4
+            },
+            "scalarType": "float32"
+          },
+          {
+            "kind": "descriptorHandle",
+            "fieldName": "tex",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "shape": "sampler2D"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "items",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "Item",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "value",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 16,
+            "access": "readWrite"
+          },
+          {
+            "kind": "descriptorHandle",
+            "fieldName": "mask",
+            "binding": {
+              "kind": "uniform",
+              "offset": 24,
+              "size": 8
+            },
+            "shape": "sampler2D"
+          },
+          {
+            "kind": "vector",
+            "fieldName": "tint",
+            "binding": {
+              "kind": "uniform",
+              "offset": 32,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "offset",
+            "binding": {
+              "kind": "uniform",
+              "offset": 48,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": []
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 64
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": [],
+    "bindlessHeapSet": 1
+  }
+}

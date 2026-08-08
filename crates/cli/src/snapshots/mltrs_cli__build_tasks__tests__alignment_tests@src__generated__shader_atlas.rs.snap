@@ -4,6 +4,9 @@ info:
   relative_path: src/generated/shader_atlas.rs
 ---
 pub mod shared_enum;
+pub mod handle_mixed;
+pub mod handle_params;
+pub mod handle_pointee;
 pub mod pointer_dual_context;
 pub mod pointer_pointee_layout;
 pub mod std140_arrays;
@@ -29,6 +32,9 @@ pub mod pointer_params_compute;
 use crate::shaders::atlas::ShaderAtlasRoot;
 
 pub struct ShaderAtlas {
+    pub handle_mixed: handle_mixed::Shader,
+    pub handle_params: handle_params::Shader,
+    pub handle_pointee: handle_pointee::Shader,
     pub pointer_dual_context: pointer_dual_context::Shader,
     pub pointer_pointee_layout: pointer_pointee_layout::Shader,
     pub std140_arrays: std140_arrays::Shader,
@@ -57,6 +63,9 @@ impl ShaderAtlasRoot for ShaderAtlas {
 
     fn init() -> Self {
         Self {
+            handle_mixed: handle_mixed::Shader::init(),
+            handle_params: handle_params::Shader::init(),
+            handle_pointee: handle_pointee::Shader::init(),
             pointer_dual_context: pointer_dual_context::Shader::init(),
             pointer_pointee_layout: pointer_pointee_layout::Shader::init(),
             std140_arrays: std140_arrays::Shader::init(),

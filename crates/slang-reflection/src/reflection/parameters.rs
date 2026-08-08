@@ -202,11 +202,12 @@ fn reflect_struct_fields(
         if let Some(declared) = field.ty() {
             let declared_name = declared_full_name(declared);
             if declared_name.starts_with("DescriptorHandle<") {
-                anyhow::bail!(
-                    "field '{field_name}' ({declared_name}): texture handle fields are \
-                    not supported yet; declare the texture as a Texture2D/Sampler2D \
-                    resource in the parameter block instead"
-                );
+                fields.push(StructField::DescriptorHandle(reflect_handle_field(
+                    field_name,
+                    binding,
+                    &declared_name,
+                )?));
+                continue;
             }
         }
 
@@ -498,6 +499,64 @@ fn declared_full_name(ty: &slang::reflection::Type) -> String {
     ty.full_name()
         .map(|blob| String::from_utf8_lossy(blob.as_slice()).to_string())
         .unwrap_or_default()
+}
+
+/// Reflects a `DescriptorHandle<T>` field off its declared full name.
+/// This the only place the handle survives (see [`declared_full_name`]).
+///
+/// `declared_name` is known to start with `DescriptorHandle<`; everything this
+/// function does is decide whether the rest of it is a shape the heap can serve.
+fn reflect_handle_field(
+    field_name: String,
+    binding: Option<Binding>,
+    declared_name: &str,
+) -> anyhow::Result<DescriptorHandleStructField> {
+    // Slang prints an array's declared name as the element's with `[N]`
+    // appended, so the prefix alone matches `DescriptorHandle<...>[4]` too.
+    // Splitting it off first matters: accepting would emit one 8-byte field for
+    // a 32-byte slot, and the resulting failure is a compile error inside
+    // *generated* code rather than a message naming the field.
+    if !declared_name.ends_with('>') {
+        anyhow::bail!(
+            "field '{field_name}' ({declared_name}): arrays of texture handles are not \
+            supported. A handle is an 8-byte element, whose array stride is 16 under \
+            std140 but 8 under std430, so it cannot be laid out identically in a \
+            ParameterBlock and in a Std430DataLayout pointee; use named fields, or a \
+            BDA buffer of structs that each hold one handle"
+        );
+    }
+
+    let Some(inner) = declared_name
+        .strip_prefix("DescriptorHandle<")
+        .and_then(|s| s.strip_suffix('>'))
+    else {
+        anyhow::bail!("field '{field_name}' ({declared_name}): unparseable handle type");
+    };
+
+    // Only combined image samplers are supported
+    if !inner.starts_with("Sampler2D<") {
+        anyhow::bail!(
+            "field '{field_name}' ({declared_name}): only Sampler2D.Handle texture \
+            handles are supported; the bindless heap has a combined-image-sampler \
+            binding only"
+        );
+    }
+
+    // A handle in a vertex-input position reflects as VaryingInput, and there is
+    // no vertex format for a descriptor index. Rejecting here rather than in the
+    // Vector arm is also what keeps the guard above ungated on the binding.
+    let Some(binding @ Binding::Uniform(_)) = binding else {
+        anyhow::bail!(
+            "handle field '{field_name}': texture handles are only supported in \
+            uniform/pointee struct fields, not vertex inputs"
+        );
+    };
+
+    Ok(DescriptorHandleStructField {
+        field_name,
+        binding,
+        shape: DescriptorHandleShape::Sampler2D,
+    })
 }
 
 /// Only 16-byte vector elements (float4/int4/uint4) have stride == size in
