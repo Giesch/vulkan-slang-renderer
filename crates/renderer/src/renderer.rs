@@ -5172,26 +5172,6 @@ trait ToVk {
     fn to_vk(&self) -> Self::Vk;
 }
 
-trait VkCreate {
-    type Created;
-
-    unsafe fn vk_create(&self, device: &ash::Device) -> Result<Self::Created, vk::Result>;
-}
-
-impl VkCreate for shaders::json::ReflectedDescriptorSetLayout {
-    type Created = vk::DescriptorSetLayout;
-
-    unsafe fn vk_create(
-        &self,
-        device: &ash::Device,
-    ) -> Result<vk::DescriptorSetLayout, vk::Result> {
-        let binding_ranges: Vec<_> = self.binding_ranges.iter().map(|b| b.to_vk()).collect();
-        let create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&binding_ranges);
-
-        unsafe { device.create_descriptor_set_layout(&create_info, None) }
-    }
-}
-
 impl ToVk for shaders::json::ReflectedDescriptorSetLayoutBinding {
     type Vk = vk::DescriptorSetLayoutBinding<'static>;
 
@@ -5218,9 +5198,17 @@ impl ToVk for shaders::json::ReflectedBindingType {
     }
 }
 
-/// A pipeline layout needs the bindless heap layout to append, so it cannot use
-/// the plain [`VkCreate`] signature.
-trait VkCreatePipelineLayout {
+fn create_descriptor_set_layout(
+    device: &ash::Device,
+    reflected: &ReflectedDescriptorSetLayout,
+) -> Result<vk::DescriptorSetLayout, vk::Result> {
+    let binding_ranges: Vec<_> = reflected.binding_ranges.iter().map(|b| b.to_vk()).collect();
+    let create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&binding_ranges);
+
+    unsafe { device.create_descriptor_set_layout(&create_info, None) }
+}
+
+trait VkCreate {
     /// The bindless heap layout is appended for shaders that declare a texture handle.
     /// The bindless heap is separate from the ones returned here.
     unsafe fn vk_create(
@@ -5233,7 +5221,7 @@ trait VkCreatePipelineLayout {
     )>;
 }
 
-impl VkCreatePipelineLayout for shaders::json::ReflectedPipelineLayout {
+impl VkCreate for shaders::json::ReflectedPipelineLayout {
     unsafe fn vk_create(
         &self,
         device: &ash::Device,
@@ -5256,7 +5244,7 @@ impl VkCreatePipelineLayout for shaders::json::ReflectedPipelineLayout {
         let mut descriptor_set_layouts = Vec::with_capacity(self.descriptor_set_layouts.len());
         for reflected_set_layout in &self.descriptor_set_layouts {
             let counts = DescriptorCounts::from_descriptor_set_layout(reflected_set_layout);
-            let created_set_layout = unsafe { reflected_set_layout.vk_create(device)? };
+            let created_set_layout = create_descriptor_set_layout(device, reflected_set_layout)?;
             descriptor_set_layouts.push((created_set_layout, counts));
         }
 
