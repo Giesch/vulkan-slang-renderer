@@ -50,9 +50,5 @@
       "Bash(just shaders *)",
       "Bash(just sweep *)"
     ]
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "npx ccusage@latest statusline"
   }
 }
