@@ -1,6 +1,6 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-5 done, Phases 6-10 not started. Phase 11 is an optional
+**Status: Phases 0-6 done, Phases 7-10 not started. Phase 11 is an optional
 follow-up, added later and a prerequisite for nothing.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
@@ -621,7 +621,7 @@ Phase 4 already swept every example with the heap forcibly bound, but
 `TextureHandle::bindless_handle` has no caller until Phase 6 converts
 `depth_texture`.
 
-## Phase 6 — `depth_texture`, the first handle on a GPU
+## Phase 6 — `depth_texture`, the first handle on a GPU ✅ done
 
 One texture, one param block, no new machinery — the smallest thing that proves
 the whole Phase 0-5 stack works end to end. Ordered first for exactly that
@@ -654,6 +654,58 @@ a `descriptorTableSlot` binding to a uniform field. Then **run it** — this is 
 first handle value to cross to a GPU, and a wrong slot renders the wrong texture
 with no validation error, so the visual check is the verification, not a
 formality. `just sweep` covers it headlessly with validation on.
+
+**Verified:** `cargo check --workspace --all-targets`, `just lint` and
+`just test` clean, plus `cargo fmt`. **Zero snapshot churn** — as expected, this
+phase touches no reflection, codegen or template code; the only modified files
+are the example's shader source, its regenerated `compiled/` + `src/generated/`,
+and `main.rs`. `just sweep` 16 ok / 0 fail with the injected-fault self-test
+still firing.
+
+Every prediction in this section held exactly. `DepthTextureParams` gained
+`texture: BindlessHandle<Sampler2D>` at **offset 192** with a trailing
+`_padding_0: [u8; 8]` (std140 rounds 200 → **208**), `Resources` lost its
+`texture` field and `texture_handles` became empty, and the
+`params.texture.Sample(fragVertex.texCoord)` call site was untouched. The
+reflection JSON moved exactly as described: `bindlessHeapSet` `null` → `1`, the
+`combinedTextureSampler` range at binding 1 gone (set 0 keeps only the
+`constantBuffer` range, its size 192 → 208), and `texture` from
+`"kind": "resource"` / `descriptorTableSlot` to
+`{"kind": "descriptorHandle", "binding": {"kind": "uniform", "offset": 192,
+"size": 8}, "shape": "sampler2D"}`.
+
+`spirv-dis` on the regenerated `depth_texture.frag.spv` matches Phase 5's
+fixture disassembly: `OpCapability RuntimeDescriptorArray`, `%params` at
+`DescriptorSet 0` `Binding 0`, `%__slang_resource_heap` at **`DescriptorSet 1`,
+`Binding 1`**, and the sample reached through an `OpAccessChain` into the
+runtime array. No `NonUniform` decoration, as expected.
+
+**The visual gate, and the hole in the obvious version of it.** Ran under a real
+GPU (`SDL_VIDEODRIVER=x11`, captured with `import -window` against the window
+found via `xwininfo -root -tree`; the `cosmic-screenshot` recipe from
+link_rendering/phase_07.md:497-500 **failed here** with
+"Portal request didn't succeed: Other" in a non-interactive session, so the X11
+route is the one that works). Before/after are the same two quads at different
+z showing the same statue texture.
+
+That A/B alone proves less than it looks: `depth_texture` loads exactly one
+texture, so it takes heap slot **0** — a `bindless_handle()` stuck at zero, or a
+param field never written at all, would render *correctly*. Forced both
+directions, in the style of Phases 3-5, by temporarily loading
+`examples/viking_room/textures/viking_room.ktx2` first so it takes slot 0 and
+the quad texture takes slot **1**:
+
+- rendering with the **quad texture's** handle (slot 1) still shows the statue —
+  the non-zero slot really crosses;
+- rendering with the **decoy's** handle (slot 0) shows the viking-room atlas —
+  the slot genuinely selects, rather than the heap having one entry that any
+  index would hit.
+
+Both reverted afterwards; the scaffolding is measurement, not a deliverable.
+This is the first handle value to reach a GPU, so it also retroactively
+exercises Phase 3's `insert_texture` write, Phase 4's layout append and
+`cmd_bind_bindless_heap`, and Phase 5's codegen — none of which had ever run
+together outside a forced flag.
 
 ## Phase 7 — push constants: reflection and codegen
 

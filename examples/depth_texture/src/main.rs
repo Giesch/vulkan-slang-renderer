@@ -20,7 +20,6 @@ fn main() -> Result<(), anyhow::Error> {
     DepthTextureGame::run()
 }
 
-#[allow(unused)]
 pub struct DepthTextureGame {
     start_time: Instant,
     pipeline: PipelineHandle<DrawIndexed>,
@@ -99,7 +98,6 @@ impl Game for DepthTextureGame {
         let texture = load_ktx2_texture(renderer, &file_path, TextureFilter::Linear)?;
         let params_buffer = renderer.create_uniform_buffer::<DepthTextureParams>()?;
         let resources = Resources {
-            texture: &texture,
             params_buffer: &params_buffer,
         };
         let pipeline_config = shaders
@@ -122,7 +120,11 @@ impl Game for DepthTextureGame {
         let aspect_ratio = renderer.aspect_ratio();
         let elapsed = Instant::now() - self.start_time;
         let mvp = make_mvp_matrices(elapsed, aspect_ratio);
-        let params = DepthTextureParams { mvp };
+        let params = DepthTextureParams {
+            mvp,
+            texture: self.texture.bindless_handle(),
+            _padding_0: Default::default(),
+        };
 
         renderer.draw_indexed(&self.pipeline, |gpu| {
             gpu.write_uniform(&mut self.params_buffer, params);
