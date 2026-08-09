@@ -29,6 +29,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 10. [The codegen emits unformatted Rust and relies on the caller running `cargo fmt`](#10-the-codegen-emits-unformatted-rust-and-relies-on-the-caller-running-cargo-fmt) — consumer-visible churn, only the justfile hides it
 11. [Vendored slang modules conflate engine API with example-shared conveniences](#11-vendored-slang-modules-conflate-engine-api-with-example-shared-conveniences) — public API surface wider than intended, and no mechanism for the modules actually being duplicated
 12. [The sweep's fixed timeout fails the two pipeline-heaviest examples on a GPU-less box](#12-the-sweeps-fixed-timeout-fails-the-two-pipeline-heaviest-examples-on-a-gpu-less-box) — **false red**, and one of its two spellings accuses §1
+13. [The engine cannot screenshot itself, so the gate for validation-invisible bugs is external tooling](#13-the-engine-cannot-screenshot-itself-so-the-gate-for-validation-invisible-bugs-is-external-tooling) — verification depends on the desktop environment, not the repo
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -959,3 +960,120 @@ set. An example that genuinely hangs, and one that genuinely leaks at teardown,
 still fail — with different messages, neither of which says `no clean teardown`
 for a startup that ran out of time. `just sweep-self-test` does not depend on
 page-cache warmth.
+
+## 13. The engine cannot screenshot itself, so the gate for validation-invisible bugs is external tooling
+
+**Context.** Written after Phase 6 of
+[`bindless_textures.md`](bindless_textures.md) (2026-08), which is the fourth
+piece of work in this repo whose *actual* verification was a screenshot. Not a
+bug — the renderer is correct; this entry is about the verification path being
+outside the repo.
+
+**The problem.** There is a whole class of change here that validation, the
+sweep, the snapshots and the compile-time layout asserts all pass cleanly on,
+and that is only falsifiable by looking at pixels:
+
+- **BDA layouts** — `vulkan_1_3_migration.md:147` says it outright: "visual
+  confirmation via window screenshots (**the real gate** — BDA layout bugs are
+  invisible to validation)".
+- **Bindless heap slots** — a wrong slot samples the wrong texture with no
+  validation output at all (bindless_textures.md Phase 6).
+- **Per-draw material indices** — bindless_textures.md Phase 9 states "a green
+  sweep is weak evidence here" and specifies a four-point visual A/B as the
+  real check.
+- **Asset conversion correctness** — `link_rendering/` phases 6-9 are built
+  almost entirely on screenshot comparison against a noclip.website oracle.
+
+For every one of those, the engine's contribution is nothing. `just sweep`
+answers "did it emit validation errors and present a frame", which is a
+different question. The capture has to come from whatever the developer's
+desktop happens to provide, which makes the gate a property of the machine
+rather than of the project — and it silently degrades to "not checked" on any
+box where the tooling doesn't work.
+
+**Measured, this session.** The recipe recorded as reusable in
+`link_rendering/phase_07.md:497-500` —
+`cosmic-screenshot --interactive=false --modal=false --notify=false -s DIR` —
+**failed**, twice, with `Error taking screenshot: Portal request didn't
+succeed: Other`. The XDG desktop portal needs an interactive session and this
+one wasn't. Of `grim`, `scrot`, `maim`, `gnome-screenshot` and `spectacle`,
+**none** were installed; only ImageMagick's `import` and `ffmpeg` were. What
+worked was a three-step workaround that has nothing to do with the renderer:
+
+```bash
+SDL_VIDEODRIVER=x11 ./target/debug/depth_texture &     # force an XWayland window
+W=$(DISPLAY=:1 xwininfo -root -tree | grep '"Depth Texture"' | awk '{print $1}')
+DISPLAY=:1 import -window "$W" out.png
+```
+
+It captures the window including its letterboxed black margins, at whatever
+moment the compositor happens to hand over, and it is specific to
+Wayland-with-XWayland. On a pure-Wayland box without XWayland, or in a
+container with no compositor, there is no fallback at all — which is precisely
+where `link_rendering/phase_07.md:508-518` records the whole visual gate being
+deferred to "a machine with a GPU", weeks after the code landed.
+
+**Why it's tolerable today.** It has always eventually worked, because the
+person doing the work has been on a desktop. The cost is that every session
+re-derives the capture method (this one burned four tool probes before finding
+a working path), the recorded recipe rots, and the evidence that a phase was
+visually verified lives in prose rather than in an artifact anyone can re-run.
+
+**The important scoping point: the blocked thing is not the needed thing.**
+[`offscreen_testing.md`](offscreen_testing.md) §9 already designs the capture
+machinery in detail — `src/renderer/capture.rs`, where the
+`cmd_copy_image_to_buffer` goes (right after the `resolve_to_blit_src` barrier,
+pre-upscale and pre-egui), the `BufferMemory::Readback` allocation, the
+BGRA→RGBA swizzle, and the three prerequisite fixes (`format_block_info` must
+learn BGRA; two barrier stage masks must widen `BLIT` → `ALL_TRANSFER` or the
+copy is itself a sync-validation error; `recreate_swapchain` must drop the
+capture). But that is filed under "**Phase 2 — golden images**", and Phase 2 is
+deferred on §12's genuinely hard, deliberately-open question: *which driver do
+you bless goldens on?*
+
+**Capture does not depend on that question.** Golden *comparison* needs
+determinism, a virtual clock (§10), reproducible SPIR-V (§11) and a blessed
+driver. Writing the current frame to a PNG on request needs none of them — a
+human looks at it. Bundling the two is what has kept a ~150-line feature behind
+a research problem for a year. Splitting them off is the entire content of this
+entry.
+
+**The in-repo precedent is already load-bearing.** `picking.rs` does exactly
+this copy every frame — `cmd_copy_image_to_buffer` from the picking image into
+per-flight-slot readback buffers (`crates/renderer/src/renderer.rs:1868`).
+A screenshot is that same call with a full-extent region instead of a 1×1 one,
+and single-buffered instead of per-flight-slot. The synchronization is *easier*
+than picking's, not harder: picking tolerates two frames of staleness by design,
+while a capture can simply be read after the `drain_gpu()` that `run_loop`
+already performs.
+
+**Fix — the smallest useful version.**
+
+1. `src/renderer/capture.rs` per `offscreen_testing.md` §9, including its three
+   prerequisite fixes. Land the two barrier-mask widenings first and confirm a
+   clean `just sweep`, as §9 advises — the sweep makes that check free.
+2. Trigger it two ways: a **key binding** (F12, alongside the existing debug
+   keys) for interactive use, and a **`VKR_CAPTURE_FRAME=N`** env setting on
+   `EnvConfig` (`crates/renderer/src/env_config.rs` — the only place allowed to
+   read env vars) that captures frame N and exits, for scripted and headless
+   use. The latter is what makes a capture work under
+   `SDL_VIDEODRIVER=offscreen`, i.e. in a container with no compositor at all,
+   which no external tool can do.
+3. PNG via the `image` crate — already a workspace dependency with the `png`
+   feature (`Cargo.toml:28`), though currently only `convert-link` pulls it in,
+   so `mltrs-renderer` gains a dependency.
+
+Explicitly **not** in scope: golden comparison, blessing, a virtual clock, and
+`VKR_VALIDATION` (§5 owns that one). Those stay with `offscreen_testing.md`
+Phase 2 and its open §12. If capture lands here, Phase 2 shrinks to exactly the
+determinism problem, which is the honest shape of what's actually hard.
+
+**Done means.** `VKR_CAPTURE_FRAME=60 ./target/debug/depth_texture` writes a PNG
+of frame 60 and exits 0 under `SDL_VIDEODRIVER=offscreen` with lavapipe, on a
+box with no compositor and no screenshot tool installed. F12 in a windowed run
+writes the same thing. The captured pixels are pre-upscale and pre-egui at
+`render_extent`, so two runs at different window sizes are comparable.
+`link_rendering/phase_07.md`'s tooling note and this entry both get replaced by
+a pointer at the engine feature, and the next phase that needs a visual A/B
+produces artifacts a reviewer can open rather than a paragraph asserting someone
+looked.
