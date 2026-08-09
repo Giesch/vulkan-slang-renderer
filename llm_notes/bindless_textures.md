@@ -707,7 +707,7 @@ exercises Phase 3's `insert_texture` write, Phase 4's layout append and
 `cmd_bind_bindless_heap`, and Phase 5's codegen — none of which had ever run
 together outside a forced flag.
 
-## Phase 7 — push constants: reflection and codegen
+## Phase 7 — push constants: reflection and codegen ✅ done
 
 **Why this phase exists.** Phase 9 needs a per-draw material index, and *this
 renderer has no per-draw data channel*. Measured, not assumed: the draw loop
@@ -818,6 +818,222 @@ snapshots written, and **zero** pre-existing snapshots modified. Plus a
 `pointer_pointee_spirv_layout` (build_tasks.rs:2096) is the model. A rejection
 test for the compute case, via the existing `reflect_rejected_shader` helper.
 
+**Verified:** `cargo check --workspace --all-targets`, `just test` (29 test
+binaries, 0 failures), `just lint` and `cargo fmt` all clean. `just shaders`
+changed **nothing** — no example declares a push block, and none should before
+Phase 9.
+
+**The std430 guess held, and the fixture above would not have proven it.** The
+block as originally specified (scalar + handle + `float4x4`) lays out
+*identically* under std140 and std430 — 0 / 8 / 16, size 80 — so it would have
+passed under either rule set while appearing to confirm one. The committed
+fixture adds a nested `DrawInner { float2 v; }` plus a trailing `float`, which
+is the discriminator: std140 rounds a nested struct's alignment *and size* up to
+16, std430 uses its natural 8, and the trailing float is what stops `model`'s
+16-byte alignment from rounding both back into agreement. Reflection reported
+**96** (`inner` size 8 at offset 16, `tail` at 24, `model` at 32), not the 112 a
+std140 report would have given, and `push_constant_spirv_layout` confirms the
+*emitted* member offsets are `[(0,0), (1,8), (2,16), (3,24), (4,32)]` — the two
+are separate claims, since the generated `offset_of!` asserts are derived from
+the same reflection they would agree with.
+
+Everything else in this section held as written. `elementSize` is 96,
+`pushConstantRanges` is a **single** `all`-stage range at offset 0 (which is what
+Phase 8's "assert at most one range" rests on), `bindlessHeapSet` is `1` from a
+handle living *only* in the push block, and set 0 keeps just its
+`constantBuffer` range. The generated `Resources` has no push-block field.
+
+**Two corrections to the plan above.** First, the widening broke **five**
+irrefutable patterns, not three: build_tasks.rs:357 and :611 as predicted, the
+`let Self::ParameterBlock(block) = self;` in json/parameters.rs:100, plus two
+`let`-bindings in the reflection tests (now a shared `only_parameter_block`
+helper). Second, the category discriminator has to scan **all** categories, not
+the primary one: a block holding a descriptor as well as uniform bytes reports
+that descriptor's category first, so `category()` alone sent it to the generic
+"non-ParameterBlock global" bail instead of the specific message. It was still
+rejected either way — the silent-drop failure mode never opened — but the guard
+that names the offending field was dead until the check became
+`categories().any(...)`.
+
+The pass condition came out **tighter** than "zero pre-existing snapshots
+modified" predicted, in the only way it could: exactly one pre-existing snapshot
+changed, `alignment_tests@src__generated__shader_atlas.rs.snap`, gaining three
+purely additive lines (the module, the atlas field, the `init()` call) because a
+new fixture is a new shader. Every other shader's snapshot is byte-identical, so
+the `GlobalParameter` widening did not leak. `#[serde(tag = "kind")]` is why:
+existing JSON deserializes unchanged and the new variant emits
+`"kind": "pushConstant"`.
+
+**Beyond the plan:** the two duplicated global-parameter loops were factored into
+one `reflect_global_parameters(program_layout, PushConstants::{Supported,Rejected})`
+in the reflection crate, and `collect_parameter_block` / `resources_struct_fields`
+in codegen — the graphics and compute paths had been copies of each other, and
+adding a second variant to both would have doubled the divergence risk. Also
+pinned: a plain `ConstantBuffer<T>` global is *still* rejected
+(`a_plain_constant_buffer_global_is_rejected`), which is the test that keeps the
+kind-plus-category gate honest.
+
+**Still unproven, by design:** no push constant value has reached a GPU. There is
+no `cmd_push_constants` call yet and the range is still dropped after
+`create_pipeline_layout` — that is Phase 8.
+
+**The gate this phase built is incomplete, and the "one `All` range" claim above
+is true only in isolation.** Slang has a *second*, implicit path into
+`pushConstantRanges` that no guard here can see — `uniform` entry point
+parameters. Measured after the fact; see **Phase 7b**, which closes it.
+
+## Phase 7b — reject implicit push constants from entry point uniforms
+
+Phase 7 gates `[[vk::push_constant]]` **globals**, which is the only path
+`reflect_global_parameters` can see. Slang has a second one: a `uniform`
+parameter on an entry point is promoted to a push constant range automatically,
+never appears in `globalParameters`, and therefore walks past every guard Phase 7
+added — the one-block check, the descriptor rejection, and the compute rejection
+alike.
+
+**Measured, not assumed** (throwaway probes against
+`prepare_reflected_shader`, all on `.shader.slang`):
+
+| declaration | result |
+|---|---|
+| `fragMain(uniform Tint t)` | **accepted**; `globalParameters: []`, ranges `[{fragment, 0, 32}]` |
+| `uniform` structs on *both* stages | **accepted**; ranges `[{vertex, 0, 16}, {fragment, 0, 16}]` |
+| global push block **+** `fragMain(uniform Tint t)` | **accepted**; ranges `[{all, 0, 16}, {fragment, 0, 16}]` |
+| `fragMain(uniform float4 a)` | `todo!()` at parameters.rs:81, "type kind reflection not implemented: Vector" |
+| `vertMain(…, uniform A pa)` | `todo!()` at build_tasks.rs:340, "field without vk format in entry point parameter: glam::Vec4" |
+
+Three things follow, in ascending order of severity:
+
+- **A range exists that nothing can write.** Codegen reads only the *vertex*
+  entry point's parameters (build_tasks.rs:306); the fragment ones are used for
+  nothing but the entry point name. So the uniform struct gets no generated type,
+  no `PushConstants` alias and no `Resources` entry, while a real
+  `vk::PushConstantRange` still reaches the pipeline layout.
+- **Phase 8's "assert at most one range" is falsified by row 2.** That assert was
+  justified on a *global* block reflecting as a single `All` range, which is
+  correct and incomplete: two entry point uniforms produce two ranges with no
+  global block involved at all. Distinct stages may overlap, so this is legal
+  Vulkan — it is only invisible, not invalid.
+- **Row 3 builds an invalid layout.** `all` includes `FRAGMENT` and the second
+  range *is* `FRAGMENT` at the same offset, which is
+  `VUID-VkPipelineLayoutCreateInfo-pPushConstantRanges-00292` — two ranges must
+  not include the same stage. This fails at `vkCreatePipelineLayout`, and nothing
+  upstream says why.
+
+**The two `todo!()` rows are accidents, not guards.** Row 4 is the generic
+entry-point-parameter catch-all; row 5 is worse than it looks.
+`collect_graphics_shader_data` treats *any* struct parameter on the vertex entry
+point as the vertex input type and starts building
+`VertexInputAttributeDescription`s from its fields — it panicked only because
+`float4` has no vertex format. A `uniform` struct of `float3`/`float2`/`uint`
+fields would sail through and generate an `impl VertexDescription` for a push
+constant block. The information needed to tell them apart is already in the json
+and simply unused: a real vertex input binds `varyingInput`, a promoted uniform
+binds `uniform`.
+
+**The fix** is one guard in `reflect_entry_points`' parameter loop
+(parameters.rs:36-85), rejecting an entry point parameter whose binding occupies
+bytes rather than being a varying — nothing downstream can write one, in either
+stage. That is a smaller change than the list above suggests, and it closes the
+vertex-input confusion as a side effect, which is a **pre-existing** bug older
+than this plan: it is reachable today with no push constants involved.
+
+Deliberately *not* doing the alternative — supporting entry point uniforms as a
+second push constant channel. One channel per shader is what
+`add_push_constatant_range_for_constant_buffer`'s hard-coded `offset = 0`
+assumes (pipeline_layout.rs:53-75), and the annotated-global form is the one with
+codegen, a generated type and a place in Phase 8's API.
+
+**Verify:** rejection tests via `reflect_rejected_shader` for all three accepted
+rows in the table, asserting the message names the parameter and the entry point.
+The compute twin needs `reflect_rejected_compute_shader` for the same shape on a
+`.compute.slang`. Then confirm **zero** snapshot churn: no existing fixture or
+example declares an entry point uniform, so a green `just test` with no accepted
+snapshots is the evidence that the guard is tight rather than merely loud. Once
+this lands, Phase 8's at-most-one-range assert becomes enforced rather than
+assumed, and the sentence justifying it there should be rewritten to say so.
+
+**Detailed plan: [bindless_textures/phase_07b.md](bindless_textures/phase_07b.md)**,
+including the full measurement table and the slang documentation confirming the
+promotion is intended language behaviour rather than a version quirk.
+
+## Phase 7c — bounds-checked element addresses, mintable at queue time
+
+**Why this phase exists.** Phase 9 plans to push a bare `uint materialIndex` and
+keep the `ImmutableAddr<Material>` in the param block, because the more direct
+shape — an `ImmutableAddr<Material>` *in the push block*, which is what
+[render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)
+§4 actually specifies — cannot be written today. Two renderer-side blockers, both
+measured:
+
+- **No way to mint an address at queue time.** `Addr::from_raw` and its siblings
+  are `pub(super)` (addr.rs:17,72,139), and every public minting method hangs off
+  `Gpu`, constructed at renderer.rs:2478 and handed to `gpu_update` at :2483 —
+  *after* `submit_draws` has consumed the queued draws. This is structural to
+  `FrameRenderer`, not a property of one method: `Renderer::draw_frame` takes
+  `pending_draws` by value with the closure as a separate argument (:5691-5703),
+  so the one-shot `draw_*` wrappers don't escape it either.
+- **No pointer arithmetic, deliberately.** `to_raw()` is public, `from_raw` is
+  not, and `addr.rs` has no `offset`/`element` method. An `ImmutableAddr` is
+  always the base of a whole `ImmutableBufferHandle`, which is what makes
+  `Access.Immutable` and its SPIR-V `Restrict` sound; a fabricated address is UB,
+  not garbage pixels.
+
+**Codegen already supports the type** — `gather_struct_defs`' `StructField::Pointer`
+arm runs under `generate_std430_struct_fields`, so a pointer field in a push block
+generates today. Nothing in Phase 7 needs revisiting.
+
+**The fix**: one bounds-checked accessor in `StorageBufferStorage`, exposed from
+**both** `Gpu` (for param-block writes) and `FrameRenderer` (for push bytes at
+queue time). A `Gpu`-only method solves the arithmetic blocker and not the
+ordering one — `Gpu` exists solely inside the closure, which is the wrong side of
+the boundary. The two surfaces agree because `flight_slot` is advanced at the
+*end* of `draw_frame` (renderer.rs:2542), so at queue time it already holds the
+value `Gpu` will be built with. `assert!`, not `debug_assert!`:
+`robustBufferAccess` does not cover buffer device addresses, so an out-of-range
+element address is UB rather than a clamped read.
+
+**Ordering: before Phase 8**, since it settles Phase 8's payload design — with
+queue-time minting proven, Phase 8 keeps queue-time bytes rather than switching to
+`05` §4's closure-filled alternative. It does **not** oblige Phase 9 to change
+shape; the index form still works.
+
+**Verify:** zero snapshot churn (renderer-only), a `#[should_panic]` for
+`index == len()`, a test that both surfaces mint identical addresses in one frame,
+and a temporary `sprite_batch` conversion to prove the stride on a GPU — a wrong
+stride reads valid memory and renders a plausible image with no validation output.
+
+**Detailed plan: [bindless_textures/phase_07c.md](bindless_textures/phase_07c.md)**
+
+## Phase 7d — a non-ringed buffer for upload-once static data (follow-up)
+
+**Not a prerequisite for anything** — 7c and Phase 9 both work without it. Recorded
+because 7c's design is what made the waste visible.
+
+`create_immutable_buffer` (renderer.rs:1035) allocates one buffer *per flight
+slot*, so data that never changes after setup still gets a **different device
+address every frame**. That, not the memory, is the cost: every consumer must
+re-mint per frame, and a cached address is silently wrong one frame later.
+
+**It is double-buffering, not triple** — `MAX_FRAMES_IN_FLIGHT = 2`
+(renderer.rs:85). `05` §13.1's "pays 3x memory" is stale within its own paragraph,
+which notes the ring shrank from 3 to 2 a few lines earlier. Fix that line when
+this lands.
+
+The ring is not gratuitous: `ImmutableBufferHandle` means "the GPU never writes
+it", not "nobody writes it" — the CPU may update it between frames via
+`Gpu::write_immutable`, and `sprite_batch` does exactly that every frame
+(main.rs:150). So the fix is a **distinct handle type** with one allocation and no
+`Gpu` write accessor at all, not a change to the existing one. `sprite_batch`
+keeps the ringed type; `toon_link`'s materials move.
+
+`05` §13.1 already asks for this — "a non-ringed, GPU-owned buffer resource — one
+allocation, stable address, seeded at setup" — but its ask is broader: it also
+covers a GPU-*written* `Persistent` variant with real hazard-tracking
+consequences. **7d is only the CPU-uploaded, GPU-read-only half.**
+
+**Detailed plan: [bindless_textures/phase_07d.md](bindless_textures/phase_07d.md)**
+
 ## Phase 8 — push constants: renderer and per-draw API
 
 - **Retain the range.** It is currently dropped after `create_pipeline_layout`;
@@ -828,6 +1044,13 @@ test for the compute case, via the existing `reflect_rejected_shader` helper.
   most one range: a *global* push block reflects with stage flags `All`, because
   `current_stage_flags` is `All` when `add_global_scope_parameters` reaches it
   (pipeline_layout.rs:272), so vertex + fragment produce **one** range, not two.
+  **That holds only once Phase 7b lands** — `uniform` entry point parameters are
+  a second, implicit source of ranges, and two of them produce two ranges with no
+  global block involved. Take 7b first, or this assert fires on a shader that is
+  legal today. **Phase 7c is also a prerequisite**, for a different reason: it
+  decides whether the payload below is filled at queue time (7c's answer) or by
+  the submit closure (`05` §4's), and those are incompatible designs rather than
+  styles.
 - **Payload on `PendingDrawCommand::Draw`, not inside `DrawCallConfig`** — the
   latter is `Copy`. Store it inline as `[u8; 128]` plus a length rather than a
   `Vec<u8>`: 128 is the spec floor so it is exactly right-sized, it keeps the
@@ -861,7 +1084,10 @@ bite:
 - **Compute push blocks stay rejected** (Phase 7's gate). The dispatch path
   (renderer.rs:1568-1652) has no push call; adding one is symmetric — between
   :1622 and :1624, plus the same retained field on
-  `ComputeShaderPipelineLayout` (:5082).
+  `ComputeShaderPipelineLayout` (:5082). Scoped out to **Phase 12**, which also
+  records the hazard this phase cannot see: push constant state is one block per
+  command buffer, not one per bind point, so interleaved draws and dispatches
+  clobber each other only once *both* sides push.
 - **A push block cannot carry a BDA address.** `Gpu` — which mints
   `Addr`/`ImmutableAddr` — is constructed at renderer.rs:2474, *after* every
   `queue_draw_*` call and after `submit_draws`. So an address minted in the
@@ -1128,6 +1354,81 @@ nine at once.
 
 ---
 
+## Phase 12 — push constants in compute shaders (follow-up; no demand yet)
+
+Not part of the original work and **not a prerequisite for anything**. Added
+because Phase 7's compute rejection reads like a limitation and isn't one — this
+section is where the record of *why* it's closed lives, and what opening it costs.
+
+**There is no technical obstacle.** `VK_SHADER_STAGE_COMPUTE_BIT` is a valid
+`stageFlags` for a `VkPushConstantRange`, and `vkCmdPushConstants` takes a
+`VkPipelineLayout` rather than a bind point. Compute is arguably the *more*
+natural consumer of the feature than graphics — element counts, dispatch
+dimensions, ping-pong indices, iteration numbers. Phase 7 rejects it
+(parameters.rs, `PushConstants::Rejected`) purely because Phase 8 wires the
+graphics record loop only, and reflection accepting something no code path writes
+is the failure shape this codegen exists to prevent.
+
+**What "silently" does and doesn't mean.** Phase 7's gate comment says a compute
+push block would be "silently never written". That is exactly right at
+*generation* time — codegen would emit `pub type PushConstants = X;` on the
+compute module, a public type with no API able to write it, and nothing in the
+output would say so. At *runtime* it is weaker: the validation layers carry
+`UNASSIGNED-CoreValidation-DrawState-PushConstantsNotSet`, so a dispatch reading
+never-pushed constants would plausibly be flagged under `just sweep`. That is a
+layer heuristic rather than a VUID with guaranteed coverage, and it only fires if
+the shader actually reads the block — a maybe, not a backstop. The dead generated
+API is the reliable half of the argument.
+
+The work, all of it mirroring Phase 8 one-for-one:
+
+- **Flip the reflection gate.** `reflect_global_parameters` already takes
+  `PushConstants::{Supported, Rejected}`; `reflect_compute_entry_point` passes
+  `Rejected`. Phase 7 built the parameter for exactly this. Delete
+  `a_compute_push_constant_block_is_rejected` and add a compute fixture
+  (`crates/cli/fixtures/alignment/push_constants.compute.slang`) alongside the
+  graphics one — `pointer_params.compute.slang` is the model for a compute
+  fixture that reaches `check_crate`.
+- **Codegen:** the `unreachable!()` arm in `collect_compute_shader_data` becomes
+  a real call to `collect_push_constant_block`, and
+  `shader_compute_entry.rs.askama` gets the same `pub type PushConstants` +
+  `<= 128` assert block as the graphics template. `GeneratedComputeShaderImpl`
+  needs the `push_constant_type_name` field its graphics twin already has.
+- **Renderer:** retain the range on `ComputeShaderPipelineLayout`
+  (renderer.rs:5082), add a payload to `PendingComputeCommand::Dispatch`
+  (:5465) — same inline `[u8; 128]` + length as Phase 8, for the same reasons —
+  and call `cmd_push_constants` in `record_compute_commands` between
+  `cmd_bind_bindless_heap` (:1618-1623) and `cmd_dispatch` (:1626). `dispatch`
+  (:5529) gains a `_with_push_constants` sibling rather than a fifth parameter,
+  matching Phase 8's judgement call.
+- **The same two debug asserts, both directions.** A compute pipeline whose
+  layout declares a range receives bytes of exactly that size, and a dispatch
+  carrying bytes targets a pipeline that declares one.
+
+**The one genuinely new hazard, which graphics alone does not expose.** Push
+constant state is a single block per command buffer — it is *not* partitioned by
+bind point the way descriptor sets are, and an incompatible pipeline layout bind
+leaves it undefined. Once both graphics and compute push, interleaved draws and
+dispatches in one command buffer can clobber each other's values.
+`record_compute_commands` runs at renderer.rs:1709, in the same command buffer as
+the draw loop, so this is reachable here rather than theoretical. Verify it
+deliberately: two dispatches with different payloads separated by a draw that
+also pushes, asserting both dispatches see their own bytes. This is the reason to
+do compute's version as considered work rather than as a freebie tacked onto
+Phase 8.
+
+**Why it is not scheduled.** Nothing wants it yet. Compute usage here is narrow,
+per-dispatch varying data goes through the params UBO or a BDA pointer today, and
+Phase 9 needs per-*draw* material indices, not per-dispatch. Phase 11's watercolor
+migration is the most likely source of demand — 18 compute pipeline creations
+against 9 distinct shaders — but its duplicates are parity variants that a
+*param-block* handle already collapses with no per-dispatch channel at all, which
+is precisely what makes it the safest first consumer. So the honest trigger for
+this phase is a compute shader that genuinely needs data varying *between
+dispatches of the same pipeline*, and none exists.
+
+---
+
 ## macOS notes
 
 The feature choice doesn't change for macOS — if anything `DescriptorHandle` is the
@@ -1166,6 +1467,9 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 5 | ✅ `just test` with three new handle fixtures at `bindlessHeapSet: 1` while every pre-existing fixture stayed byte-identical, `just shaders` zero-diff across all 27 example shaders, `spirv-dis` confirming the heap at set 1 / binding 1, `just sweep` 16 ok / 0 fail, hot reload live-checked |
 | 6 | `just shaders depth_texture`, `just test`, `just sweep` — plus a **visual** run, since a wrong heap slot renders the wrong texture silently |
 | 7 | `just test` with a new `push_constants` fixture and **zero** pre-existing snapshot changes; `cargo check` of the generated layout asserts; `spirv-dis` confirming emitted member offsets match reflected ones |
+| 7b | `just test` with **zero** accepted snapshots — nothing declares an entry point uniform, so no churn is the evidence the guard is tight rather than merely loud ([detail](bindless_textures/phase_07b.md)) |
+| 7c | zero snapshot churn (renderer-only); `#[should_panic]` at `index == len()`; both surfaces mint identical addresses in one frame; a temporary `sprite_batch` element-address conversion on a real GPU ([detail](bindless_textures/phase_07c.md)) |
+| 7d | zero snapshot churn; address stable across two consecutive frames; migrate `toon_link`'s materials as the end-to-end proof, which means landing after Phase 9 ([detail](bindless_textures/phase_07d.md)) |
 | 8 | `cargo check --workspace --all-targets`, `just lint`, `just test` with no snapshot churn, `just sweep` — plus a forced push-block run, since nothing declares one yet |
 | 9 | `just shaders toon_link`, `just test`, `just sweep`, `just toon_link link-verify-p1` — plus the four-point visual A/B, since a wrong material index is silent |
 | 10 | docs only |

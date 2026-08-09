@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum GlobalParameter {
     ParameterBlock(ParameterBlockGlobalParameter),
+    PushConstant(PushConstantGlobalParameter),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +16,15 @@ pub enum GlobalParameter {
 pub struct ParameterBlockGlobalParameter {
     pub parameter_name: String,
     pub element_type: ParameterBlockElementType,
+}
+
+/// A global `[[vk::push_constant]] ConstantBuffer<T>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushConstantGlobalParameter {
+    pub parameter_name: String,
+    pub element_type: ParameterBlockElementType,
+    pub element_size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,12 +104,14 @@ pub enum StructField {
 }
 
 impl GlobalParameter {
-    /// Whether this parameter declares a bindless texture handle anywhere in
-    /// its field tree, which is what decides whether the heap set is appended
-    /// to the shader's pipeline layout and bound before its draws.
+    /// Whether this parameter declares a bindless texture handle anywhere
     pub fn declares_bindless_handle(&self) -> bool {
-        let Self::ParameterBlock(block) = self;
-        fields_declare_bindless_handle(&block.element_type.fields)
+        let fields = match self {
+            Self::ParameterBlock(block) => &block.element_type.fields,
+            Self::PushConstant(push) => &push.element_type.fields,
+        };
+
+        fields_declare_bindless_handle(fields)
     }
 }
 
@@ -155,13 +167,35 @@ fn fields_declare_bindless_handle(fields: &[StructField]) -> bool {
     })
 }
 
+/// maps to a Slang `ParameterCategory`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Binding {
     Uniform(OffsetSizeBinding),
+    PushConstant(OffsetSizeBinding),
     DescriptorTableSlot(IndexCountBinding),
     VaryingInput(IndexCountBinding),
     ConstantBuffer(IndexCountBinding),
+}
+
+impl Binding {
+    /// The offset and size a binding occupies in its enclosing block. Uniform
+    /// and push-constant fields measure bytes; every other category measures an
+    /// index into a descriptor set or a varying slot, and occupies no bytes.
+    ///
+    /// This is the line between a slang field that becomes a `#[repr(C)]` field
+    /// in the generated struct and one that does not.
+    pub fn occupied_bytes(&self) -> Option<&OffsetSizeBinding> {
+        match self {
+            Self::Uniform(bytes) | Self::PushConstant(bytes) => Some(bytes),
+
+            Self::DescriptorTableSlot(_) | Self::VaryingInput(_) | Self::ConstantBuffer(_) => None,
+        }
+    }
+
+    pub fn occupies_bytes(&self) -> bool {
+        self.occupied_bytes().is_some()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -466,6 +500,17 @@ mod tests {
         })
     }
 
+    fn push_block(fields: Vec<StructField>) -> GlobalParameter {
+        GlobalParameter::PushConstant(PushConstantGlobalParameter {
+            parameter_name: "draw".to_string(),
+            element_type: ParameterBlockElementType {
+                type_name: "Draw".to_string(),
+                fields,
+            },
+            element_size: 8,
+        })
+    }
+
     #[test]
     fn a_handle_free_block_declares_no_handle() {
         assert!(!block(vec![scalar_field()]).declares_bindless_handle());
@@ -476,10 +521,12 @@ mod tests {
         assert!(block(vec![scalar_field(), handle_field()]).declares_bindless_handle());
     }
 
-    // The nesting cases are the ones worth pinning: a stop at the top level
-    // would leave the heap unbound for exactly the per-material layout bindless
-    // exists to enable, and nothing downstream would say so — the shader would
-    // sample an unbound descriptor set.
+    #[test]
+    fn a_handle_in_a_push_block_is_found() {
+        assert!(push_block(vec![handle_field()]).declares_bindless_handle());
+        assert!(!push_block(vec![scalar_field()]).declares_bindless_handle());
+    }
+
     #[test]
     fn a_handle_in_a_nested_struct_is_found() {
         let nested = StructField::Struct(StructStructField {

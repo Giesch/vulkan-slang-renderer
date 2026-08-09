@@ -30,6 +30,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 11. [Vendored slang modules conflate engine API with example-shared conveniences](#11-vendored-slang-modules-conflate-engine-api-with-example-shared-conveniences) — public API surface wider than intended, and no mechanism for the modules actually being duplicated
 12. [The sweep's fixed timeout fails the two pipeline-heaviest examples on a GPU-less box](#12-the-sweeps-fixed-timeout-fails-the-two-pipeline-heaviest-examples-on-a-gpu-less-box) — **false red**, and one of its two spellings accuses §1
 13. [The engine cannot screenshot itself, so the gate for validation-invisible bugs is external tooling](#13-the-engine-cannot-screenshot-itself-so-the-gate-for-validation-invisible-bugs-is-external-tooling) — verification depends on the desktop environment, not the repo
+14. [Multiple `ParameterBlock` globals are supported end-to-end but never exercised](#14-multiple-parameterblock-globals-are-supported-end-to-end-but-never-exercised) — untested path, an ordering contract held together by a comment
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -1077,3 +1078,89 @@ writes the same thing. The captured pixels are pre-upscale and pre-egui at
 a pointer at the engine feature, and the next phase that needs a visual A/B
 produces artifacts a reviewer can open rather than a paragraph asserting someone
 looked.
+
+## 14. Multiple `ParameterBlock` globals are supported end-to-end but never exercised
+
+**The problem.** Reflection accepts any number of `ParameterBlock<T>` globals
+per shader, and the whole pipeline behind that is deliberately multi-set aware —
+yet **no shader in the workspace declares more than one**. Counted across every
+`examples/*/shaders/source/` and every `crates/cli/fixtures/` shader: the
+maximum is 1. So the N-block path has never run in a test, a snapshot, or a
+sweep, and nothing in CI would notice if it broke.
+
+It is not vestigial. Probed directly (throwaway test, two sibling blocks each
+holding a `float4` and a `Sampler2D`):
+
+```
+GLOBALS: 2
+SETS: [ {binding 0 constantBuffer, binding 1 combinedTextureSampler},
+        {binding 0 constantBuffer, binding 1 combinedTextureSampler} ]
+TEXTURES: ["atex", "btex"]
+BUFFERS:  ["pa_buffer", "pb_buffer"]
+```
+
+Two descriptor sets, and `Resources` gains one field per texture plus one buffer
+per block, in set order. The renderer consumes it correctly too:
+`create_descriptor_sets` (`crates/renderer/src/renderer.rs:4310`) walks sets in
+layout order carrying a running index *per resource kind*, so set 0 takes
+`pa_buffer`/`atex` and set 1 takes `pb_buffer`/`btex`.
+
+**The design is intentional**, on four pieces of in-repo evidence:
+`create_descriptor_sets` carries a comment diagramming
+`frame_0_set_0_binding_0 … frame_0_set_1_binding_1`;
+`DescriptorSetLayoutBuilder::reserve_slot` cites slang's nested-parameter-block
+ordering rules and reserves a slot to keep indices correct; `build()` handles a
+`None` slot for "a ParameterBlock that ended up only containing other
+ParameterBlocks"; and the generated `pipeline_config` carries "NOTE each of
+these must be in descriptor set layout order in the reflection json" — a
+contract that is vacuous with one set.
+
+**Why it's tolerable today.** One block per shader is what every example wants,
+and the single-block path is covered by 25+ fixtures.
+
+**Why it is nonetheless a hazard.** The ordering contract between codegen's flat
+per-kind vectors and the renderer's running per-kind indices is currently held
+together by that comment alone. A single-block shader cannot distinguish a
+correct implementation from several wrong ones, so any refactor of
+`collect_parameter_block`, `resources_struct` or `create_descriptor_sets` is
+unverifiable in that dimension. There is also a live subtlety no test pins:
+within a block, codegen pushes textures *before* the block's uniform buffer,
+while the layout puts the buffer at binding 0 and the textures after. That
+reordering is harmless only because the two kinds live in separate vectors with
+independent indices — order matters within a kind, not across. Nothing states
+that, and nothing would catch someone merging the vectors.
+
+**On removing support instead — the slang docs argue against it.** There is no
+explicit multi-block example in the slang documentation; every sample shows one
+(`docs/language-guide.md:81`, `docs/user-guide/09-reflection.md:359,657`). But
+the stated *rationale* only pays off with more than one.
+`docs/user-guide/a2-01-spirv-target-specific.md:196-200`: "a `ParameterBlock<T>`
+introduces a new descriptor set ID … designed specifically for
+D3D12/Vulkan/Metal/WebGPU, so that parameters defined in `T` can be placed into
+an independent descriptor table/descriptor set … This allows the user
+application to create and pre-populate the descriptor set and reuse it during
+command encoding". Independent pre-population and reuse *is* the
+per-update-frequency split — per-frame view params, per-material, per-object —
+and that is the canonical reason to have several. Removing support would
+foreclose the pattern parameter blocks exist to enable, to delete a loop that
+already works. Not recommended.
+
+**Fix.** Cover it rather than remove it, cheapest first:
+
+1. An alignment fixture with two blocks, each carrying a texture and distinct
+   field layouts. `alignment_tests` discovers fixtures automatically, snapshots
+   the two-set reflection, and `cargo check`s the generated `Resources` against
+   `fixtures/check_crate` — this pins the codegen half, including the flat-vector
+   ordering, for the price of one `.slang` file.
+2. Write the ordering contract down where it can be checked: a debug assert in
+   `create_descriptor_sets` that each per-kind index lands exactly at the end of
+   its vector once every set is walked. A miscount currently writes the wrong
+   resource into a descriptor with no validation error at all.
+3. Only if an example ever wants it: a real multi-block example, which is what
+   would actually exercise the renderer half under `just sweep`.
+
+**Done means.** A two-block fixture is committed and snapshotted, and
+`create_descriptor_sets` fails loudly rather than silently mis-binding when the
+flat vectors and the set layouts disagree. The `Resources` ordering comment in
+`shader_atlas_entry.rs.askama` can then point at the fixture instead of asking
+the reader to take it on faith.

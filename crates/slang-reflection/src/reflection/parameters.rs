@@ -27,44 +27,8 @@ pub fn reflect_entry_points(
     let mut vertex_entry_point: Option<EntryPoint> = None;
     let mut fragment_entry_point: Option<EntryPoint> = None;
 
-    let mut global_parameters: Vec<GlobalParameter> = vec![];
-    for global_param in program_layout.parameters() {
-        let parameter_name = global_param.name().unwrap().to_string();
-
-        if global_param.type_layout().unwrap().kind() != slang::TypeKind::ParameterBlock {
-            anyhow::bail!(
-                "non-ParameterBlock global: {parameter_name}; only ParameterBlock globals are supported"
-            )
-        }
-
-        let element_type_layout = global_param
-            .type_layout()
-            .unwrap()
-            .element_type_layout()
-            .unwrap();
-
-        let element_type = match element_type_layout.kind() {
-            slang::TypeKind::Struct => {
-                let element_type_name = element_type_layout.name().unwrap().to_string();
-                let fields = reflect_struct_fields(element_type_layout, program_layout, false)?;
-
-                ParameterBlockElementType {
-                    type_name: element_type_name,
-                    fields,
-                }
-            }
-
-            k => unimplemented!("type kind reflection not implemented: {k:?}"),
-        };
-
-        let parameter_block = ParameterBlockGlobalParameter {
-            parameter_name,
-            element_type,
-        };
-        let global_parameter = GlobalParameter::ParameterBlock(parameter_block);
-
-        global_parameters.push(global_parameter);
-    }
+    let global_parameters =
+        reflect_global_parameters(program_layout, PushConstantSupport::Supported)?;
 
     for entry_point in program_layout.entry_points() {
         let entry_point_name = entry_point.name().unwrap().to_string();
@@ -160,6 +124,122 @@ pub fn reflect_entry_points(
     Ok(parameters)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PushConstantSupport {
+    Supported,
+    Rejected,
+}
+
+/// Reflects the shader's global parameters: any number of `ParameterBlock<T>`
+/// globals, plus at most one `[[vk::push_constant]] ConstantBuffer<T>` block.
+fn reflect_global_parameters(
+    program_layout: &slang::reflection::Shader,
+    push_constant_support: PushConstantSupport,
+) -> anyhow::Result<Vec<GlobalParameter>> {
+    let mut global_parameters: Vec<GlobalParameter> = vec![];
+    let mut push_constant_block: Option<String> = None;
+
+    for global_param in program_layout.parameters() {
+        let parameter_name = global_param.name().unwrap().to_string();
+        let type_layout = global_param.type_layout().unwrap();
+
+        // we need to check for both un-annotated constant buffers that would become
+        // descriptor-based uniform buffers,
+        // and for globals with multiple parameter categories, which can mean
+        // push constants containing an incorrect descriptor resource
+        let annotated_as_push_constant = global_param
+            .categories()
+            .any(|category| category == slang::ParameterCategory::PushConstantBuffer);
+        let is_constant_buffer = type_layout.kind() == slang::TypeKind::ConstantBuffer;
+        let is_push_constant = is_constant_buffer && annotated_as_push_constant;
+
+        if type_layout.kind() != slang::TypeKind::ParameterBlock && !is_push_constant {
+            anyhow::bail!(
+                "non-ParameterBlock global: {parameter_name}; only ParameterBlock globals \
+                and [[vk::push_constant]] ConstantBuffer blocks are supported"
+            )
+        }
+
+        if is_push_constant {
+            if push_constant_support != PushConstantSupport::Supported {
+                anyhow::bail!(
+                    "push constant block '{parameter_name}': push constants are only \
+                    supported in graphics shaders; the dispatch path does not write them"
+                )
+            }
+
+            // add_push_constatant_range_for_constant_buffer hard-codes offset 0,
+            // relying on slang emitting a single range; a second block would
+            // silently overlap the first rather than sit after it.
+            if let Some(first) = &push_constant_block {
+                anyhow::bail!(
+                    "push constant block '{parameter_name}': '{first}' is already declared, \
+                    and only one push constant block per shader is supported"
+                )
+            }
+            push_constant_block = Some(parameter_name.clone());
+        }
+
+        let element_type_layout = type_layout.element_type_layout().unwrap();
+
+        let element_type = match element_type_layout.kind() {
+            slang::TypeKind::Struct => {
+                let element_type_name = element_type_layout.name().unwrap().to_string();
+                let fields = reflect_struct_fields(element_type_layout, program_layout, false)?;
+
+                ParameterBlockElementType {
+                    type_name: element_type_name,
+                    fields,
+                }
+            }
+
+            k => unimplemented!("type kind reflection not implemented: {k:?}"),
+        };
+
+        let global_parameter = if is_push_constant {
+            reject_descriptor_fields(&element_type.fields, &parameter_name)?;
+
+            GlobalParameter::PushConstant(PushConstantGlobalParameter {
+                parameter_name,
+                element_size: element_type_layout.size(slang::ParameterCategory::Uniform),
+                element_type,
+            })
+        } else {
+            GlobalParameter::ParameterBlock(ParameterBlockGlobalParameter {
+                parameter_name,
+                element_type,
+            })
+        };
+
+        global_parameters.push(global_parameter);
+    }
+
+    Ok(global_parameters)
+}
+
+/// A descriptor-backed resource inside a push block is not allowed,
+/// and would fail silently without an explicit check like this
+fn reject_descriptor_fields(fields: &[StructField], block_name: &str) -> anyhow::Result<()> {
+    for field in fields {
+        match field {
+            StructField::Resource(resource) => anyhow::bail!(
+                "push constant block '{block_name}': field '{}' is a texture or buffer \
+                descriptor, which cannot live in a push block; use a bindless handle \
+                (Sampler2D.Handle) or a BDA pointer (mltrs::Addr<T>) instead",
+                resource.field_name,
+            ),
+
+            StructField::Struct(nested) => {
+                reject_descriptor_fields(&nested.struct_type.fields, block_name)?
+            }
+
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
 fn reflect_struct_fields(
     struct_type_layout: &slang::reflection::TypeLayout,
     program_layout: &slang::reflection::Shader,
@@ -181,10 +261,7 @@ fn reflect_struct_fields(
         if let Some(declared) = field.ty()
             && declared.kind() == slang::TypeKind::Enum
         {
-            // A vertex input field reflects as VaryingInput, not Uniform. Codegen
-            // has no vk::Format for a generated enum, so reject it here with a
-            // message that names the field rather than in the format match.
-            let Some(binding @ Binding::Uniform(_)) = binding else {
+            let Some(binding) = binding.filter(Binding::occupies_bytes) else {
                 anyhow::bail!(
                     "enum field '{field_name}': enums are only supported in \
                     uniform/pointee struct fields, not vertex inputs"
@@ -442,7 +519,7 @@ fn reflect_struct_fields(
             }
 
             slang::TypeKind::Array => {
-                let Some(field_binding @ Binding::Uniform(_)) = binding else {
+                let Some(field_binding) = binding.filter(Binding::occupies_bytes) else {
                     anyhow::bail!(
                         "array field '{field_name}': arrays are only supported in \
                         uniform/pointee struct fields"
@@ -545,7 +622,7 @@ fn reflect_handle_field(
     // A handle in a vertex-input position reflects as VaryingInput, and there is
     // no vertex format for a descriptor index. Rejecting here rather than in the
     // Vector arm is also what keeps the guard above ungated on the binding.
-    let Some(binding @ Binding::Uniform(_)) = binding else {
+    let Some(binding) = binding.filter(Binding::occupies_bytes) else {
         anyhow::bail!(
             "handle field '{field_name}': texture handles are only supported in \
             uniform/pointee struct fields, not vertex inputs"
@@ -729,44 +806,8 @@ fn scalar_from_slang(scalar: slang::ScalarType) -> ScalarType {
 pub fn reflect_compute_entry_point(
     program_layout: &slang::reflection::Shader,
 ) -> anyhow::Result<ComputeParameters> {
-    let mut global_parameters: Vec<GlobalParameter> = vec![];
-    for global_param in program_layout.parameters() {
-        let parameter_name = global_param.name().unwrap().to_string();
-
-        if global_param.type_layout().unwrap().kind() != slang::TypeKind::ParameterBlock {
-            anyhow::bail!(
-                "non-ParameterBlock global: {parameter_name}; only ParameterBlock globals are supported"
-            )
-        }
-
-        let element_type_layout = global_param
-            .type_layout()
-            .unwrap()
-            .element_type_layout()
-            .unwrap();
-
-        let element_type = match element_type_layout.kind() {
-            slang::TypeKind::Struct => {
-                let element_type_name = element_type_layout.name().unwrap().to_string();
-                let fields = reflect_struct_fields(element_type_layout, program_layout, false)?;
-
-                ParameterBlockElementType {
-                    type_name: element_type_name,
-                    fields,
-                }
-            }
-
-            k => unimplemented!("type kind reflection not implemented: {k:?}"),
-        };
-
-        let parameter_block = ParameterBlockGlobalParameter {
-            parameter_name,
-            element_type,
-        };
-        let global_parameter = GlobalParameter::ParameterBlock(parameter_block);
-
-        global_parameters.push(global_parameter);
-    }
+    let global_parameters =
+        reflect_global_parameters(program_layout, PushConstantSupport::Rejected)?;
 
     let mut compute_entry_point: Option<EntryPoint> = None;
     let mut workgroup_size: Option<[u32; 3]> = None;
@@ -815,6 +856,10 @@ fn param_binding(param: &slang::reflection::VariableLayout) -> Option<Binding> {
     match category {
         slang::ParameterCategory::Uniform => {
             Some(Binding::Uniform(OffsetSizeBinding { offset, size }))
+        }
+
+        slang::ParameterCategory::PushConstantBuffer => {
+            Some(Binding::PushConstant(OffsetSizeBinding { offset, size }))
         }
 
         slang::ParameterCategory::DescriptorTableSlot => {

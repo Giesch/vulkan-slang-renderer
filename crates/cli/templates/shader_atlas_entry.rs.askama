@@ -93,6 +93,12 @@ const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 {{ assert_line }}
 {%- endfor %}
 {% endfor %}
+{%- match shader_impl.push_constant_type_name -%}
+{%- when Some with (push_constant_type_name) +%}
+// 128 bytes is the vulkan-guaranteed maxPushConstantsSize
+const _: () = assert!(std::mem::size_of::<{{ push_constant_type_name }}>() <= 128);
+{% when None -%}
+{%- endmatch %}
 {% for block in vertex_impl_blocks -%}
 impl VertexDescription for {{ block.type_name }} {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {

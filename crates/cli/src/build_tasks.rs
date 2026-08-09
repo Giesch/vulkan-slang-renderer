@@ -35,6 +35,11 @@ pub struct Config {
 const SHADER_FILE_SUFFIX: &str = ".shader.slang";
 const COMPUTE_SHADER_FILE_SUFFIX: &str = ".compute.slang";
 
+/// The vulkan-guaranteed push constant budget: `maxPushConstantsSize` is at least
+/// 128 bytes on every conformant implementation, so a block within it is portable
+/// without querying the device.
+const MAX_PUSH_CONSTANTS_SIZE: usize = 128;
+
 /// Collect the names of the `.slang` files in `dir` whose name ends with `suffix`.
 ///
 /// The result is sorted: `read_dir` yields entries in filesystem order, which
@@ -315,16 +320,12 @@ fn collect_graphics_shader_data(
                     };
                 }
 
-                let def = GeneratedStructDefinition {
-                    type_name: struct_param.type_name.to_string(),
-                    source_module: None,
-                    fields: generated_fields,
-                    // GPU-layout structs are plain old data (scalars, glam types, fixed
-                    // arrays, padding, other generated structs), so Copy always holds
-                    trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
-                    alignment: Some(Alignment::Std140),
-                    expected_size: None,
-                };
+                let def = GeneratedStructDefinition::gpu_layout(
+                    struct_param.type_name.to_string(),
+                    generated_fields,
+                    Some(Alignment::Std140),
+                    None,
+                );
 
                 let mut attribute_descriptions = vec![];
                 for (location, field) in def.fields.iter().enumerate() {
@@ -354,66 +355,27 @@ fn collect_graphics_shader_data(
         }
     }
 
-    for GlobalParameter::ParameterBlock(parameter_block) in &reflection_json.global_parameters {
-        let (param_block_fields, _struct_alignment, expected_size) =
-            generate_std140_struct_fields(&parameter_block.element_type.fields, &mut defs);
-
-        for field in &parameter_block.element_type.fields {
-            if let Some(req) = required_resource(field) {
-                required_resources.push(req);
+    let mut push_constant_type_name = None;
+    for global_parameter in &reflection_json.global_parameters {
+        match global_parameter {
+            GlobalParameter::ParameterBlock(parameter_block) => {
+                collect_parameter_block(parameter_block, &mut defs, &mut required_resources);
             }
-        }
 
-        let has_uniform_fields = !param_block_fields.is_empty();
-
-        let type_name = &parameter_block.element_type.type_name;
-        defs.struct_defs.push(GeneratedStructDefinition {
-            type_name: type_name.to_string(),
-            source_module: None,
-            fields: param_block_fields,
-            // GPU-layout structs are plain old data (scalars, glam types, fixed
-            // arrays, padding, other generated structs), so Copy always holds
-            trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
-            alignment: Some(Alignment::Std140),
-            expected_size: Some(expected_size),
-        });
-
-        let param_name = parameter_block.parameter_name.to_snake_case();
-        let element_type_name = parameter_block.element_type.type_name.clone();
-        if has_uniform_fields {
-            required_resources.push(RequiredResource {
-                field_name: format!("{param_name}_buffer"),
-                resource_type: RequiredResourceType::UniformBuffer(element_type_name),
-            })
+            GlobalParameter::PushConstant(push_constant) => {
+                let type_name = collect_push_constant_block(
+                    push_constant,
+                    &mut defs,
+                    &reflection_json.source_file_name,
+                );
+                push_constant_type_name = Some(type_name);
+            }
         }
     }
 
     defs.struct_defs.reverse();
 
-    let resources_fields = required_resources
-        .iter()
-        .map(|r| {
-            let type_name = match &r.resource_type {
-                RequiredResourceType::Texture => "&'a TextureHandle".to_string(),
-                RequiredResourceType::UniformBuffer(element_type_name) => {
-                    format!("&'a UniformBufferHandle<{element_type_name}>")
-                }
-                RequiredResourceType::StorageTexture2D => "&'a StorageTextureHandle".to_string(),
-            };
-
-            GeneratedStructFieldDefinition::new(r.field_name.clone(), type_name)
-        })
-        .collect();
-
-    let resources_struct = GeneratedStructDefinition {
-        type_name: "Resources<'a>".to_string(),
-        source_module: None,
-        fields: resources_fields,
-        trait_derives: vec![],
-        alignment: None,
-        expected_size: None,
-    };
-    defs.struct_defs.push(resources_struct);
+    defs.struct_defs.push(resources_struct(&required_resources));
 
     let shader_name = reflection_json
         .source_file_name
@@ -441,6 +403,7 @@ fn collect_graphics_shader_data(
         shader_name: shader_name.clone(),
         shader_type_name: "Shader".to_string(),
         vertex_type_name,
+        push_constant_type_name,
         resources_texture_fields,
         resources_uniform_buffer_fields,
         resources_storage_texture_fields,
@@ -564,6 +527,7 @@ struct GeneratedShaderImpl {
     shader_name: String,
     shader_type_name: String,
     vertex_type_name: Option<String>,
+    push_constant_type_name: Option<String>,
     resources_texture_fields: Vec<String>,
     resources_uniform_buffer_fields: Vec<String>,
     resources_storage_texture_fields: Vec<String>,
@@ -608,66 +572,22 @@ fn collect_compute_shader_data(
     let mut defs = GeneratedTypeDefs::default();
     let mut required_resources = vec![];
 
-    for GlobalParameter::ParameterBlock(parameter_block) in &reflection_json.global_parameters {
-        let (param_block_fields, _struct_alignment, expected_size) =
-            generate_std140_struct_fields(&parameter_block.element_type.fields, &mut defs);
-
-        for field in &parameter_block.element_type.fields {
-            if let Some(req) = required_resource(field) {
-                required_resources.push(req);
+    for global_parameter in &reflection_json.global_parameters {
+        match global_parameter {
+            GlobalParameter::ParameterBlock(parameter_block) => {
+                collect_parameter_block(parameter_block, &mut defs, &mut required_resources);
             }
-        }
 
-        let has_uniform_fields = !param_block_fields.is_empty();
-
-        let type_name = &parameter_block.element_type.type_name;
-        defs.struct_defs.push(GeneratedStructDefinition {
-            type_name: type_name.to_string(),
-            source_module: None,
-            fields: param_block_fields,
-            // GPU-layout structs are plain old data (scalars, glam types, fixed
-            // arrays, padding, other generated structs), so Copy always holds
-            trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
-            alignment: Some(Alignment::Std140),
-            expected_size: Some(expected_size),
-        });
-
-        let param_name = parameter_block.parameter_name.to_snake_case();
-        let element_type_name = parameter_block.element_type.type_name.clone();
-        if has_uniform_fields {
-            required_resources.push(RequiredResource {
-                field_name: format!("{param_name}_buffer"),
-                resource_type: RequiredResourceType::UniformBuffer(element_type_name),
-            })
+            GlobalParameter::PushConstant(push_constant) => unreachable!(
+                "push constant block '{}' in a compute shader",
+                push_constant.parameter_name,
+            ),
         }
     }
 
     defs.struct_defs.reverse();
 
-    let resources_fields = required_resources
-        .iter()
-        .map(|r| {
-            let type_name = match &r.resource_type {
-                RequiredResourceType::Texture => "&'a TextureHandle".to_string(),
-                RequiredResourceType::UniformBuffer(element_type_name) => {
-                    format!("&'a UniformBufferHandle<{element_type_name}>")
-                }
-                RequiredResourceType::StorageTexture2D => "&'a StorageTextureHandle".to_string(),
-            };
-
-            GeneratedStructFieldDefinition::new(r.field_name.clone(), type_name)
-        })
-        .collect();
-
-    let resources_struct = GeneratedStructDefinition {
-        type_name: "Resources<'a>".to_string(),
-        source_module: None,
-        fields: resources_fields,
-        trait_derives: vec![],
-        alignment: None,
-        expected_size: None,
-    };
-    defs.struct_defs.push(resources_struct);
+    defs.struct_defs.push(resources_struct(&required_resources));
 
     let shader_name = reflection_json
         .source_file_name
@@ -763,12 +683,12 @@ fn generate_std430_struct_fields(
         });
         let Some(mut gen_field) = gather_struct_defs(source_field, defs, alignment_for_nested)
         else {
-            assert_no_uniform_bytes_dropped(source_field);
+            assert_no_occupied_bytes_dropped(source_field);
             continue;
         };
 
         // Get the expected offset from reflection
-        let Some(OffsetSize {
+        let Some(OffsetSizeBinding {
             offset: expected_offset,
             size: field_size,
         }) = field_offset_size(source_field)
@@ -831,18 +751,18 @@ fn generate_std140_struct_fields(
         if matches!(source_field, StructField::Resource(_)) {
             // Still need to gather struct definitions for StructuredBuffer element types
             let _ = gather_struct_defs(source_field, defs, Some(Alignment::Std140));
-            assert_no_uniform_bytes_dropped(source_field);
+            assert_no_occupied_bytes_dropped(source_field);
             continue;
         }
 
         // Get the generated field (and recurse for nested structs)
         let Some(mut gen_field) = gather_struct_defs(source_field, defs, Some(Alignment::Std140))
         else {
-            assert_no_uniform_bytes_dropped(source_field);
+            assert_no_occupied_bytes_dropped(source_field);
             continue;
         };
 
-        let Some(OffsetSize {
+        let Some(OffsetSizeBinding {
             offset: expected_offset,
             size: field_size,
         }) = field_offset_size(source_field)
@@ -928,16 +848,12 @@ fn gather_struct_defs(
 
             try_add_struct_def(
                 &mut defs.struct_defs,
-                GeneratedStructDefinition {
-                    type_name: ptr.pointee_type.type_name.clone(),
-                    source_module: None,
+                GeneratedStructDefinition::gpu_layout(
+                    ptr.pointee_type.type_name.clone(),
                     fields,
-                    // GPU-layout structs are plain old data (scalars, glam types, fixed
-                    // arrays, padding, other generated structs), so Copy always holds
-                    trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
-                    alignment: Some(Alignment::Std430 { struct_alignment }),
-                    expected_size: Some(expected_size),
-                },
+                    Some(Alignment::Std430 { struct_alignment }),
+                    Some(expected_size),
+                ),
             );
 
             let addr_type = match ptr.access {
@@ -1004,16 +920,12 @@ fn gather_struct_defs(
                 }
             };
 
-            let sub_struct_def = GeneratedStructDefinition {
-                type_name: type_name.clone(),
-                source_module: None,
-                fields: generated_sub_fields,
-                // GPU-layout structs are plain old data (scalars, glam types, fixed
-                // arrays, padding, other generated structs), so Copy always holds
-                trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
-                alignment: nested_alignment,
+            let sub_struct_def = GeneratedStructDefinition::gpu_layout(
+                type_name.clone(),
+                generated_sub_fields,
+                nested_alignment,
                 expected_size,
-            };
+            );
             try_add_struct_def(&mut defs.struct_defs, sub_struct_def);
 
             Some(GeneratedStructFieldDefinition::new(
@@ -1086,6 +998,113 @@ fn gather_struct_defs(
                 enum_field.enum_type.tag_type.size(),
             ))
         }
+    }
+}
+
+/// Collects a `ParameterBlock<T>` global: one std140 uniform buffer struct, plus
+/// its descriptor-backed resources in descriptor set layout order.
+fn collect_parameter_block(
+    parameter_block: &ParameterBlockGlobalParameter,
+    defs: &mut GeneratedTypeDefs,
+    required_resources: &mut Vec<RequiredResource>,
+) {
+    let (param_block_fields, _struct_alignment, expected_size) =
+        generate_std140_struct_fields(&parameter_block.element_type.fields, defs);
+
+    let parameter_block_resources = parameter_block
+        .element_type
+        .fields
+        .iter()
+        .filter_map(required_resource);
+    required_resources.extend(parameter_block_resources);
+
+    let has_uniform_fields = !param_block_fields.is_empty();
+
+    defs.struct_defs.push(GeneratedStructDefinition::gpu_layout(
+        parameter_block.element_type.type_name.clone(),
+        param_block_fields,
+        Some(Alignment::Std140),
+        Some(expected_size),
+    ));
+
+    if has_uniform_fields {
+        let param_name = parameter_block.parameter_name.to_snake_case();
+        required_resources.push(RequiredResource {
+            field_name: format!("{param_name}_buffer"),
+            resource_type: RequiredResourceType::UniformBuffer(
+                parameter_block.element_type.type_name.clone(),
+            ),
+        })
+    }
+}
+
+/// Collects a `[[vk::push_constant]]` block, returning the emitted type's name.
+fn collect_push_constant_block(
+    push_constant: &PushConstantGlobalParameter,
+    defs: &mut GeneratedTypeDefs,
+    source_file_name: &str,
+) -> String {
+    let (fields, struct_alignment, expected_size) =
+        generate_std430_struct_fields(&push_constant.element_type.fields, defs);
+
+    let type_name = push_constant.element_type.type_name.clone();
+
+    // this failing would indicate a user annotating a struct field with [[vk::offset]],
+    // or a bug in slang,
+    assert_eq!(
+        expected_size, push_constant.element_size,
+        "computed std430 size of push constant block '{type_name}' \
+        disagrees with slang reflection",
+    );
+
+    assert_push_constant_size(&type_name, expected_size, source_file_name);
+
+    defs.struct_defs.push(GeneratedStructDefinition::gpu_layout(
+        type_name.clone(),
+        fields,
+        Some(Alignment::Std430 { struct_alignment }),
+        Some(expected_size),
+    ));
+
+    type_name
+}
+
+/// The generated code asserts this too, but a failing const assert reports only
+/// "evaluation of constant value failed", so we also check here
+fn assert_push_constant_size(type_name: &str, size: usize, source_file_name: &str) {
+    assert!(
+        size <= MAX_PUSH_CONSTANTS_SIZE,
+        "push constant block '{type_name}' ({source_file_name}) is {size} bytes, over the \
+        {MAX_PUSH_CONSTANTS_SIZE}-byte guaranteed budget; move a field behind a BDA pointer \
+        (mltrs::Addr<T>) or into the ParameterBlock",
+    );
+}
+
+/// The `Resources<'a>` fields for a shader's descriptor-backed resources.
+fn resources_struct(required_resources: &[RequiredResource]) -> GeneratedStructDefinition {
+    let fields = required_resources
+        .iter()
+        .map(|r| {
+            let type_name = match &r.resource_type {
+                RequiredResourceType::Texture => "&'a TextureHandle".to_string(),
+                RequiredResourceType::UniformBuffer(element_type_name) => {
+                    format!("&'a UniformBufferHandle<{element_type_name}>")
+                }
+                RequiredResourceType::StorageTexture2D => "&'a StorageTextureHandle".to_string(),
+            };
+
+            GeneratedStructFieldDefinition::new(r.field_name.clone(), type_name)
+        })
+        .collect();
+
+    // borrowed handles, not GPU bytes: no layout, no derives
+    GeneratedStructDefinition {
+        type_name: "Resources<'a>".to_string(),
+        source_module: None,
+        fields,
+        trait_derives: vec![],
+        alignment: None,
+        expected_size: None,
     }
 }
 
@@ -1171,6 +1190,27 @@ struct GeneratedStructDefinition {
 }
 
 impl GeneratedStructDefinition {
+    /// A struct mirroring a GPU memory layout.
+    ///
+    /// NOTE: `source_module` starts empty for every generated type;
+    /// `tag_source_modules` fills it in later from the type→module map.
+    fn gpu_layout(
+        type_name: String,
+        fields: Vec<GeneratedStructFieldDefinition>,
+        alignment: Option<Alignment>,
+        expected_size: Option<usize>,
+    ) -> Self {
+        Self {
+            type_name,
+            source_module: None,
+            fields,
+            // reflection only allows copyable types here
+            trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
+            alignment,
+            expected_size,
+        }
+    }
+
     fn trait_derive_line(&self) -> Option<String> {
         if self.trait_derives.is_empty() {
             return None;
@@ -1309,30 +1349,20 @@ enum RequiredResourceType {
     UniformBuffer(String),
 }
 
-#[derive(Debug)]
-struct OffsetSize {
-    offset: usize,
-    size: usize,
+/// Extracts offset and size from a StructField's binding. Only a binding that
+/// occupies bytes — a uniform block or push block field — maps to the GPU
+/// struct; the layout generators do not care which of the two it is.
+fn field_offset_size(field: &StructField) -> Option<OffsetSizeBinding> {
+    field.binding()?.occupied_bytes().cloned()
 }
 
-/// Extracts offset and size from a StructField's binding.
-/// Only a uniform binding owns bytes in the enclosing struct.
-fn field_offset_size(field: &StructField) -> Option<OffsetSize> {
-    match field.binding()? {
-        Binding::Uniform(u) => Some(OffsetSize {
-            offset: u.offset,
-            size: u.size,
-        }),
-        _ => None,
-    }
-}
-
-/// A field with a uniform binding maps to the GPU struct.
+/// A field that occupies bytes (uniform or push constant) maps to the GPU struct.
 /// Dropping it from the generated struct emits no size assert for it.
-fn assert_no_uniform_bytes_dropped(source_field: &StructField) {
+fn assert_no_occupied_bytes_dropped(source_field: &StructField) {
     assert!(
         field_offset_size(source_field).is_none(),
-        "field '{}' has a uniform binding but was dropped from the generated struct",
+        "field '{}' occupies bytes in the GPU struct but was dropped from the \
+        generated struct",
         source_field.field_name(),
     );
 }
@@ -1799,7 +1829,7 @@ mod tests {
     use super::*;
 
     use crate::util::manifest_path;
-    use mltrs_slang_reflection::prepare_reflected_shader;
+    use mltrs_slang_reflection::{prepare_reflected_compute_shader, prepare_reflected_shader};
 
     /// Shader discovery must be sorted, not in `read_dir` order: that order reaches
     /// the generated `shader_atlas.rs` and its snapshots, so an unsorted walk makes
@@ -2065,7 +2095,7 @@ mod tests {
     }
 
     // an example of incorrect generated code we should catch
-    fn dropped_field_owning_uniform_bytes() -> StructField {
+    fn dropped_field_occupying_bytes() -> StructField {
         StructField::Resource(ResourceStructField {
             field_name: "dropped".to_string(),
             binding: Binding::Uniform(OffsetSizeBinding { offset: 0, size: 8 }),
@@ -2077,17 +2107,63 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "field 'dropped' has a uniform binding")]
-    fn std140_rejects_dropping_a_field_that_owns_uniform_bytes() {
-        let field = dropped_field_owning_uniform_bytes();
+    #[should_panic(expected = "field 'dropped' occupies bytes in the GPU struct")]
+    fn std140_rejects_dropping_a_field_that_occupies_bytes() {
+        let field = dropped_field_occupying_bytes();
         generate_std140_struct_fields(&[field], &mut GeneratedTypeDefs::default());
     }
 
     #[test]
-    #[should_panic(expected = "field 'dropped' has a uniform binding")]
-    fn std430_rejects_dropping_a_field_that_owns_uniform_bytes() {
-        let field = dropped_field_owning_uniform_bytes();
+    #[should_panic(expected = "field 'dropped' occupies bytes in the GPU struct")]
+    fn std430_rejects_dropping_a_field_that_occupies_bytes() {
+        let field = dropped_field_occupying_bytes();
         generate_std430_struct_fields(&[field], &mut GeneratedTypeDefs::default());
+    }
+
+    /// The `(member index, byte offset)` pairs SPIR-V decorates a struct type with,
+    /// sorted by member. This is the *emitted* layout, as opposed to the reflected
+    /// one the generated `offset_of!` asserts pin.
+    #[cfg(not(windows))]
+    fn member_offsets(module: &rspirv::dr::Module, struct_id: u32) -> Vec<(u32, u32)> {
+        use rspirv::dr::Operand;
+        use rspirv::spirv::{Decoration, Op};
+
+        let mut offsets: Vec<(u32, u32)> = module
+            .annotations
+            .iter()
+            .filter(|inst| inst.class.opcode == Op::MemberDecorate)
+            .filter_map(|inst| match inst.operands.as_slice() {
+                [
+                    Operand::IdRef(target),
+                    Operand::LiteralBit32(member),
+                    Operand::Decoration(Decoration::Offset),
+                    Operand::LiteralBit32(offset),
+                ] if *target == struct_id => Some((*member, *offset)),
+                _ => None,
+            })
+            .collect();
+        offsets.sort_unstable();
+        offsets
+    }
+
+    /// The type ids of a struct type's members, in declaration order.
+    #[cfg(not(windows))]
+    fn member_type_ids(module: &rspirv::dr::Module, struct_id: u32) -> Vec<u32> {
+        use rspirv::dr::Operand;
+        use rspirv::spirv::Op;
+
+        module
+            .types_global_values
+            .iter()
+            .find(|inst| inst.class.opcode == Op::TypeStruct && inst.result_id == Some(struct_id))
+            .expect("struct type not found")
+            .operands
+            .iter()
+            .map(|operand| match operand {
+                Operand::IdRef(id) => *id,
+                _ => unreachable!("struct member operands are type ids"),
+            })
+            .collect()
     }
 
     /// Pins the SPIR-V layout of Std430DataLayout pointer pointees. The generated
@@ -2129,24 +2205,7 @@ mod tests {
             })
             .expect("no PhysicalStorageBuffer pointer type in SPIR-V");
 
-        let member_offsets = |struct_id: u32| -> Vec<(u32, u32)> {
-            let mut offsets: Vec<(u32, u32)> = module
-                .annotations
-                .iter()
-                .filter(|inst| inst.class.opcode == Op::MemberDecorate)
-                .filter_map(|inst| match inst.operands.as_slice() {
-                    [
-                        Operand::IdRef(target),
-                        Operand::LiteralBit32(member),
-                        Operand::Decoration(Decoration::Offset),
-                        Operand::LiteralBit32(offset),
-                    ] if *target == struct_id => Some((*member, *offset)),
-                    _ => None,
-                })
-                .collect();
-            offsets.sort_unstable();
-            offsets
-        };
+        let member_offsets = |struct_id: u32| member_offsets(&module, struct_id);
 
         // HostileData under std430 (see pointer_pointee_layout.shader.slang)
         assert_eq!(
@@ -2180,20 +2239,69 @@ mod tests {
         assert_eq!(array_stride, 112);
 
         // nested pointee structs: InnerA (member 4), InnerB (member 6)
-        let struct_def = module
+        let member_types = member_type_ids(&module, pointee_struct_id);
+        // natural layout would put InnerA.v at 4
+        assert_eq!(member_offsets(member_types[4]), vec![(0, 0), (1, 16)]);
+        assert_eq!(member_offsets(member_types[6]), vec![(0, 0), (1, 8)]);
+    }
+
+    /// The push-block twin of `pointer_pointee_spirv_layout`. Reflection reporting
+    /// std430 and slang *emitting* std430 are two different claims: the generated
+    /// `offset_of!` asserts only pin the first, since they are generated from the
+    /// same reflection they would agree with. A std140-shaped emission would round
+    /// `DrawInner` up to 16 and shift every member after it.
+    #[cfg(not(windows))]
+    #[test]
+    fn push_constant_spirv_layout() {
+        use rspirv::dr::Operand;
+        use rspirv::spirv::{Op, StorageClass};
+
+        let search_path = manifest_path(["fixtures", "alignment"]);
+        let reflected =
+            prepare_reflected_shader("push_constants.shader.slang", search_path.to_str().unwrap())
+                .unwrap();
+
+        // the fragment stage is the one that reads every member of the block
+        let module = rspirv::dr::load_bytes(&reflected.fragment_shader.shader_bytecode)
+            .expect("failed to parse SPIR-V");
+
+        let push_constant_ptr_type = module
+            .types_global_values
+            .iter()
+            .find_map(|inst| match (inst.class.opcode, inst.operands.first()) {
+                (Op::Variable, Some(Operand::StorageClass(StorageClass::PushConstant))) => {
+                    inst.result_type
+                }
+                _ => None,
+            })
+            .expect("no PushConstant variable in SPIR-V");
+
+        let block_struct_id = module
             .types_global_values
             .iter()
             .find(|inst| {
-                inst.class.opcode == Op::TypeStruct && inst.result_id == Some(pointee_struct_id)
+                inst.class.opcode == Op::TypePointer
+                    && inst.result_id == Some(push_constant_ptr_type)
             })
-            .expect("pointee struct type not found");
-        let member_type = |index: usize| match struct_def.operands[index] {
-            Operand::IdRef(id) => id,
-            _ => unreachable!("struct member operands are type ids"),
-        };
-        // natural layout would put InnerA.v at 4
-        assert_eq!(member_offsets(member_type(4)), vec![(0, 0), (1, 16)]);
-        assert_eq!(member_offsets(member_type(6)), vec![(0, 0), (1, 8)]);
+            .and_then(|inst| match inst.operands.as_slice() {
+                [
+                    Operand::StorageClass(StorageClass::PushConstant),
+                    Operand::IdRef(pointee),
+                ] => Some(*pointee),
+                _ => None,
+            })
+            .expect("the PushConstant variable's type is not a pointer to a block");
+
+        // DrawConstants under std430 (see push_constants.shader.slang)
+        assert_eq!(
+            member_offsets(&module, block_struct_id),
+            vec![(0, 0), (1, 8), (2, 16), (3, 24), (4, 32)],
+        );
+
+        // the nested struct is the std430/std140 discriminator: std140 would give
+        // it size 16 and push `tail` from 24 to 32
+        let member_types = member_type_ids(&module, block_struct_id);
+        assert_eq!(member_offsets(&module, member_types[2]), vec![(0, 0)]);
     }
 
     // A bare `T*` pointee uses slang's natural layout, which codegen would
@@ -2340,8 +2448,7 @@ float4 fragMain() : SV_Target {
         std::fs::remove_dir_all(&tmp_dir).ok();
 
         let reflected = result.expect("an Access.Immutable pointer field must be accepted");
-        let GlobalParameter::ParameterBlock(block) =
-            &reflected.reflection_json.global_parameters[0];
+        let block = only_parameter_block(&reflected);
         let access = block
             .element_type
             .fields
@@ -2400,8 +2507,7 @@ float4 fragMain() : SV_Target {
         std::fs::remove_dir_all(&tmp_dir).ok();
 
         let reflected = result.expect("an enum field must be accepted");
-        let GlobalParameter::ParameterBlock(block) =
-            &reflected.reflection_json.global_parameters[0];
+        let block = only_parameter_block(&reflected);
         let enum_field = block
             .element_type
             .fields
@@ -2488,6 +2594,21 @@ float4 fragMain() : SV_Target {
         );
     }
 
+    /// The first global parameter of a reflected shader, which every caller here
+    /// declares as a `ParameterBlock`.
+    #[cfg(not(windows))]
+    fn only_parameter_block(reflected: &ReflectedShader) -> &ParameterBlockGlobalParameter {
+        match &reflected.reflection_json.global_parameters[0] {
+            GlobalParameter::ParameterBlock(block) => block,
+            GlobalParameter::PushConstant(push) => {
+                panic!(
+                    "expected a ParameterBlock global, got push block '{}'",
+                    push.parameter_name
+                )
+            }
+        }
+    }
+
     /// Compiles an inline shader that is expected to be rejected, and returns the
     /// rendered error. The fixture lives in a temp dir because every shader in
     /// shaders/test must compile.
@@ -2500,6 +2621,25 @@ float4 fragMain() : SV_Target {
         std::fs::write(tmp_dir.join(&file_name), source).unwrap();
 
         let result = prepare_reflected_shader(&file_name, tmp_dir.to_str().unwrap());
+
+        std::fs::remove_dir_all(&tmp_dir).ok();
+
+        match result {
+            Ok(_) => panic!("'{module_name}' must be rejected"),
+            Err(err) => format!("{err:#}"),
+        }
+    }
+
+    /// The compute twin of [`reflect_rejected_shader`].
+    #[cfg(not(windows))]
+    fn reflect_rejected_compute_shader(module_name: &str, source: &str) -> String {
+        let tmp_dir = std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let file_name = format!("{module_name}.compute.slang");
+        std::fs::write(tmp_dir.join(&file_name), source).unwrap();
+
+        let result = prepare_reflected_compute_shader(&file_name, tmp_dir.to_str().unwrap());
 
         std::fs::remove_dir_all(&tmp_dir).ok();
 
@@ -2799,6 +2939,170 @@ float4 fragMain() : SV_Target {
             message.contains("handle field 'tex'") && message.contains("not vertex inputs"),
             "unexpected error message: {message}"
         );
+    }
+
+    // The push-constant gate keys on the parameter's *category*, not just its type
+    // kind: a plain `ConstantBuffer<T>` global has the same TypeKind::ConstantBuffer
+    // but is a descriptor-backed UBO with no push-constant range, which codegen
+    // would emit as a std430 struct nothing ever writes.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_plain_constant_buffer_global_is_rejected() {
+        let source = r#"#language slang 2026
+
+module plain_constant_buffer;
+
+struct Params {
+    float4 tint;
+}
+
+ConstantBuffer<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(1.0);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return params.tint;
+}
+"#;
+        let message = reflect_rejected_shader("plain_constant_buffer", source);
+        assert!(
+            message.contains("non-ParameterBlock global: params"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // add_push_constatant_range_for_constant_buffer hard-codes offset 0 on the
+    // assumption slang emits one range per shader, so a second block would overlap
+    // the first rather than follow it.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_second_push_constant_block_is_rejected() {
+        let source = r#"#language slang 2026
+
+module two_push_blocks;
+
+struct First {
+    float a;
+}
+
+struct Second {
+    float b;
+}
+
+[[vk::push_constant]] ConstantBuffer<First> one;
+[[vk::push_constant]] ConstantBuffer<Second> two;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(one.a, two.b, 0.0, 1.0);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        let message = reflect_rejected_shader("two_push_blocks", source);
+        assert!(
+            message.contains("push constant block 'two'")
+                && message.contains("'one' is already declared")
+                && message.contains("only one push constant block per shader"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // A descriptor in a push block reflects with a DescriptorTableSlot binding, so
+    // assert_no_occupied_bytes_dropped does not fire and the reflected block size —
+    // uniform bytes only — still matches the generated struct. Without this gate
+    // the field would simply disappear, with nothing downstream saying so.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_descriptor_in_a_push_block_is_rejected() {
+        let source = r#"#language slang 2026
+
+module push_block_descriptor;
+
+struct DrawConstants {
+    float scale;
+    Texture2D<float4> albedo;
+}
+
+[[vk::push_constant]] ConstantBuffer<DrawConstants> draw;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(draw.scale);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return draw.albedo.Load(int3(0, 0, 0));
+}
+"#;
+        let message = reflect_rejected_shader("push_block_descriptor", source);
+        assert!(
+            message.contains("push constant block 'draw'")
+                && message.contains("field 'albedo'")
+                && message.contains("cannot live in a push block"),
+            "unexpected error message: {message}"
+        );
+        assert!(
+            message.contains("Sampler2D.Handle") && message.contains("Addr<T>"),
+            "the message must point at the alternatives: {message}"
+        );
+    }
+
+    // Nothing in the dispatch path calls cmd_push_constants, so a compute push
+    // block would reflect and generate cleanly while never being written — the
+    // shader would read whatever the last graphics draw happened to leave behind.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_compute_push_constant_block_is_rejected() {
+        let source = r#"#language slang 2026
+
+module compute_push_block;
+
+struct DrawConstants {
+    uint count;
+}
+
+struct Params {
+    LayoutPtr<DrawConstants, Std430DataLayout> data;
+}
+
+ParameterBlock<Params> params;
+[[vk::push_constant]] ConstantBuffer<DrawConstants> draw;
+
+[numthreads(64, 1, 1)]
+[shader("compute")]
+void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
+    params.data[dispatchThreadID.x].count = draw.count;
+}
+"#;
+        let message = reflect_rejected_compute_shader("compute_push_block", source);
+        assert!(
+            message.contains("push constant block 'draw'")
+                && message.contains("only supported in graphics shaders"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // 128 bytes is the vulkan-guaranteed maxPushConstantsSize. The generated code
+    // asserts this too, but a failing const assert reports only "evaluation of
+    // constant value failed" — no shader, no block, no size.
+    #[test]
+    #[should_panic(expected = "push constant block 'TooBig' (huge.shader.slang) is 144 bytes")]
+    fn an_oversized_push_constant_block_is_rejected() {
+        assert_push_constant_size("TooBig", 144, "huge.shader.slang");
+    }
+
+    #[test]
+    fn a_push_constant_block_at_the_budget_is_accepted() {
+        assert_push_constant_size("Exact", MAX_PUSH_CONSTANTS_SIZE, "exact.shader.slang");
     }
 
     // heck folds SCREAMING_CASE and UpperCamel onto the same variant name;

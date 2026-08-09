@@ -9,6 +9,7 @@ pub mod handle_params;
 pub mod handle_pointee;
 pub mod pointer_dual_context;
 pub mod pointer_pointee_layout;
+pub mod push_constants;
 pub mod std140_arrays;
 pub mod std140_enums;
 pub mod std140_matrices;
@@ -37,6 +38,7 @@ pub struct ShaderAtlas {
     pub handle_pointee: handle_pointee::Shader,
     pub pointer_dual_context: pointer_dual_context::Shader,
     pub pointer_pointee_layout: pointer_pointee_layout::Shader,
+    pub push_constants: push_constants::Shader,
     pub std140_arrays: std140_arrays::Shader,
     pub std140_enums: std140_enums::Shader,
     pub std140_matrices: std140_matrices::Shader,
@@ -68,6 +70,7 @@ impl ShaderAtlasRoot for ShaderAtlas {
             handle_pointee: handle_pointee::Shader::init(),
             pointer_dual_context: pointer_dual_context::Shader::init(),
             pointer_pointee_layout: pointer_pointee_layout::Shader::init(),
+            push_constants: push_constants::Shader::init(),
             std140_arrays: std140_arrays::Shader::init(),
             std140_enums: std140_enums::Shader::init(),
             std140_matrices: std140_matrices::Shader::init(),

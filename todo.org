@@ -3,6 +3,15 @@
 * Possible Next Directions
 - [ ] Bindless Textures
 
+- [ ] Fable code reviews
+  - [ ] split up large modules
+  - [ ] look for types to extract
+    ie, move invariants into the type system
+  - [ ] audit the test suite
+    - [ ] remove tests covered by types / by construction
+    - [ ] remove tests covered by const asserts
+    - [ ] look for deduplication opportunities
+
 - [ ] llm skills for style guides?
   - minimal comments
   - meaningful variable names in shaders
