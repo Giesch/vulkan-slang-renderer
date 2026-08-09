@@ -1,8 +1,16 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-5 done, Phases 6-7 not started. Phase 8 is an optional
+**Status: Phases 0-5 done, Phases 6-10 not started. Phase 11 is an optional
 follow-up, added later and a prerequisite for nothing.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
+
+**Phases 6-9 were one phase until Phase 6 planning found a prerequisite this
+doc never anticipated**: the toon_link payoff needs a per-draw material index,
+and this renderer has no per-draw data channel at all. Real push-constant
+support is that channel, and it is a reflection + codegen + renderer job in its
+own right — hence Phases 7 and 8, which are not bindless work and would be
+worth doing regardless. See Phase 7's opening for the measurement that ruled out
+the cheaper `firstInstance` alternative.
 
 The phases below were **revised after the Phase 0 spike** — the measured answers are
 in [bindless_textures/phase_0_spike.md](bindless_textures/phase_0_spike.md), and
@@ -49,7 +57,7 @@ That collapses toon_link to ~~one pipeline~~ **five pipelines** plus a material
 buffer, and is a prerequisite for the batching sketched in
 [render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md).
 The floor is per-material *raster* state (blend, depth write, cull, color mask),
-which is not descriptor state and so does not go away — counted in Phase 6.
+which is not descriptor state and so does not go away — counted in Phase 9.
 
 ## Why this option and not the others
 
@@ -59,7 +67,7 @@ which is not descriptor state and so does not go away — counted in Phase 6.
 - **Overriding `getDescriptorFromHandle`** is an escape hatch, not a starting
   point. It stays available later *without touching shader source*. Deferring it
   costs nothing **until something needs a material index that varies within a
-  single draw** — the spike found Slang emits no `NonUniformEXT` and offers no
+  single draw** (see Phase 9) — the spike found Slang emits no `NonUniformEXT` and offers no
   source-level way to request it, and this override is the only seam where the
   decoration could be added. It is also the way to a single mutable-type heap
   (`BindlessDescriptorOptions.VkMutable`, needs `VK_EXT_mutable_descriptor_type`)
@@ -101,10 +109,10 @@ which is not descriptor state and so does not go away — counted in Phase 6.
 - `VK_EXT_descriptor_heap` / `spvDescriptorHeapEXT`.
 - Overriding `getDescriptorFromHandle` — *conditional*: this is the only lever for
   `NonUniformEXT`, so it stops being a non-goal the moment a material index varies
-  within one draw. See Phase 6.
+  within one draw. See Phase 9.
 - `VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT` — see Phase 3.
 - Storage images (`RWTexture2D`, watercolor) stay on per-pipeline descriptors.
-  Still true; Phase 8 scopes what lifting it would take, and gates it on a spike.
+  Still true; Phase 11 scopes what lifting it would take, and gates it on a spike.
 - egui keeps its own descriptors (`renderer/egui.rs`, third-party renderer).
 - Uniform buffers stay descriptor-bound; something has to carry the handles.
 
@@ -199,7 +207,7 @@ Universally supported in practice, but validation flags its absence.
 
 `shader_sampled_image_array_non_uniform_indexing` is deliberately **omitted**:
 nothing the compiler emits needs it, because `NonUniformEXT` never appears. Add it
-only alongside whatever resolves that (see Phase 6) — requesting it now would imply
+only alongside whatever resolves that (see Phase 9) — requesting it now would imply
 a guarantee we don't have.
 
 All six bits — including the core-1.0 one — are mirrored in the physical-device
@@ -598,7 +606,7 @@ index and the actual binary: `OpCapability RuntimeDescriptorArray`, the param
 block at `DescriptorSet 0`, and `%__slang_resource_heap` at **`DescriptorSet 1`,
 `Binding 1`** — the set the JSON reports and the one combined-image-sampler
 binding `DescriptorHeap::new` creates. No `NonUniform` decoration appears, as
-expected, which is the uniformity constraint Phase 7 has to write down.
+expected, which is the uniformity constraint Phase 10 has to write down.
 
 `just sweep` 16 ok / 0 fail with the injected-fault self-test still firing, and
 hot reload was re-checked live (lavapipe + `SDL_VIDEODRIVER=offscreen`): touching
@@ -613,77 +621,351 @@ Phase 4 already swept every example with the heap forcibly bound, but
 `TextureHandle::bindless_handle` has no caller until Phase 6 converts
 `depth_texture`.
 
-## Phase 6 — vendored slang and first consumers
+## Phase 6 — `depth_texture`, the first handle on a GPU
 
-- `DescriptorHandle` is core-module, so no new vendored module is strictly needed.
-  Consider a `mltrs::TexHandle` typealias in `crates/cli/vendor/mltrs/` for
-  symmetry with `addr.slang`; if added, re-seed with `just vendor-shaders`.
-- Convert `depth_texture` first — one texture, one param block, minimal proof
-  (examples/depth_texture/shaders/source/depth_texture.shader.slang).
-- Then `toon_link` for the actual payoff: `build_material_pipelines`
-  (examples/toon_link/src/main.rs:780-826) ~~collapses to one pipeline plus a
-  `Material` buffer behind `ImmutableAddr`. Per-material pipelines and per-material
-  uniform buffers both disappear.~~ **Half right — see below.**
+One texture, one param block, no new machinery — the smallest thing that proves
+the whole Phase 0-5 stack works end to end. Ordered first for exactly that
+reason: Phases 7 and 8 are a large detour, and it would be foolish to take them
+before knowing a handle value survives the trip.
 
-  **This does not need `NonUniformEXT`.** toon_link issues one index-range draw per
-  batch (main.rs:1178-1186) and keeps doing so; the material index is uniform within
-  each draw. The win here is ~~~24 fewer pipelines and~~ ~24 fewer uniform buffers,
-  not fewer draws.
+- `Sampler2D texture` → `Sampler2D.Handle texture`
+  (examples/depth_texture/shaders/source/depth_texture.shader.slang:14). The
+  `params.texture.Sample(...)` call site at :44 is unchanged — pinned by the
+  `handle_params` fixture.
+- After `just shaders depth_texture`: the generated `Resources` loses its
+  `texture` field (a handle consumes no descriptor), `DepthTextureParams` gains
+  a `BindlessHandle<Sampler2D>` — expect offset 192, after the 192-byte
+  `mvp` — and `main.rs` writes it in `draw` as `self.texture.bindless_handle()`.
+  **Keep the `TextureHandle` field**: it is what owns the heap slot, and since
+  Phase 3 stored the slot on the handle it is also the only way to reach it.
+- **No `mltrs::TexHandle` typealias.** This plan originally said "consider one
+  for symmetry with `addr.slang`" — decided against. `Addr<T>` needs an alias
+  because `Ptr<T, Access, AddressSpace, Layout>` is unreadable; `Sampler2D.Handle`
+  is already terse, and an alias would hide that it is a *combined* image
+  sampler, which is the one distinction the heap actually constrains (binding 1,
+  not 0 or 2 — Phase 3). So there is no new vendored module and no
+  `just vendor-shaders` re-seed, and the uniformity rule that would have lived
+  in its comment goes in `docs/` instead (Phase 10).
 
-  **The pipeline half of that claim is wrong: bindless does not collapse
-  toon_link to one pipeline.** A pipeline here is not differentiated only by its
-  textures — `raster_state` (main.rs:693) varies cull mode, depth compare, depth
-  write, blend mode *and* color write mask per material, the last via
-  `decal_role`. None of that is descriptor state, so removing the texture
-  descriptors leaves it untouched. Bindless removes the *texture*-driven pipeline
-  explosion; the *state*-driven one survives.
+**Verify:** `just test`, then read the regenerated
+`shaders/compiled/depth_texture.json`: `bindlessHeapSet` flips `null` → `1`, the
+`combinedTextureSampler` range at binding 1 disappears, and `texture` moves from
+a `descriptorTableSlot` binding to a uniform field. Then **run it** — this is the
+first handle value to cross to a GPU, and a wrong slot renders the wrong texture
+with no validation error, so the visual check is the verification, not a
+formality. `just sweep` covers it headlessly with validation on.
 
-  **Counted, not estimated: 24 materials → 5 distinct raster states.** Derived by
-  grouping `link.manifest.json` and applying `raster_state`/`blend_mode`/
-  `decal_role` by hand (`CULL_OVERRIDE` is `None`, so cull comes from the
-  manifest):
+## Phase 7 — push constants: reflection and codegen
 
-  | derived `RasterState` (cull, depth test, depth write, blend, color write) | materials |
-  |---|---|
-  | Back, LessEqual, write, Opaque, RGB | 11 |
-  | Back, Always, no-write, Blend(DstA, InvDstA), RGB — `Composite` | 4 |
-  | Back, LessEqual, no-write, Blend(SrcA, InvSrcA), A — `Mask` | 4 |
-  | Back, Always, no-write, Opaque, A — `Erase` | 4 |
-  | None, LessEqual, write, Opaque, RGB | 1 |
+**Why this phase exists.** Phase 9 needs a per-draw material index, and *this
+renderer has no per-draw data channel*. Measured, not assumed: the draw loop
+records `cmd_draw_indexed(index_count, 1, first_index, 0, 0)` (renderer.rs:2121),
+descriptor sets are bound per-pipeline with no dynamic offsets (`&[]`,
+renderer.rs:2096), and `cmd_push_constants` is called **nowhere** in the
+workspace. With 5 pipelines each drawing several batches, the index has to vary
+between draws that share a pipeline *and* its one descriptor set. Nothing today
+can carry it.
 
-  The one assumption is that the 12 `BlendMode::None_` materials are the opaque
-  ones (`decal_role` returns `Ok(None)` for those), which the 4/4/4 eye/brow
-  assertion at main.rs:156-158 corroborates: 12 translucent + 12 opaque = 24.
-  Worth re-deriving if the manifest changes — the honest headline for Phase 6 is
-  **24 pipelines → 5, and 24 uniform buffers → 1**.
+**Why not the cheap trick.** `vkCmdDrawIndexed`'s `firstInstance` is a ~15-line
+change and would be dynamically uniform by construction (instance count is
+always 1). It is a trap. Slang lowers HLSL semantics with **D3D** meaning:
+disassembling a committed artifact,
+`spirv-dis examples/sprite_batch/shaders/compiled/sprite_batch.vert.spv` shows
+`SV_VertexID` becoming `VertexIndex - BaseVertex` —
 
-  `alpha_compare` is *not* a sixth dimension: it rides in the uniform data as a
-  shader-side discard, not in the pipeline.
+```
+OpCapability DrawParameters
+OpDecorate %8 BuiltIn BaseVertex
+OpDecorate %gl_VertexIndex BuiltIn VertexIndex
+%70 = OpISub %int %69 %68
+```
 
-- **Draw-per-material is load-bearing, not a limitation to design away.** It is
-  what makes the material index dynamically uniform for free, which is the
-  property the whole uniformity constraint above is about. Visibility-buffer
-  architectures (Nanite-style material binning) exist to *recover* this property
-  after GPU-driven culling makes CPU-side material sorting impossible; toon_link
-  has not given it up and has nothing to recover. It also could not adopt that
-  shape if it wanted to — blending and per-material raster state are fixed-function
-  raster, which a per-material compute pass cannot vary, and the comment at
-  main.rs:721-723 notes that *not* writing depth is what lets the eye/brow decals
-  composite at all. The trigger for revisiting is losing CPU-side material sorting,
-  which nothing here is near.
+— so by construction `SV_InstanceID` is `InstanceIndex - BaseInstance`, which
+under that scheme is **identically 0**. It compiles, validates and runs clean
+while painting every batch with material 0. The correct semantic exists
+(`SV_VulkanInstanceID`; `strings` on the pinned `libslang-static.a` confirms it
+alongside `SV_StartInstanceLocation` and `SV_BaseInstanceID`), but the approach
+also needs an extra `nointerpolation uint` interstage varying to reach the
+fragment stage, and it consumes the base-instance channel that
+[render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md):423-425
+explicitly reserves. Push constants are the honest channel: genuinely per-draw,
+readable in both stages with no varying, 128 guaranteed bytes.
 
-  Merging those draws is the follow-on
-  ([render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)),
-  and even that likely stays uniform if the material index comes from `gl_DrawID`.
-  The decoration is only needed if the index varies *within* one draw — packed into
-  vertex or instance data. That's the point at which the `getDescriptorFromHandle`
-  non-goal has to be revisited, together with the
-  `shader_sampled_image_array_non_uniform_indexing` bit Phase 2 omits — the two
-  must land together (the decoration without the feature is a validation error).
-- `just shaders <name>` after each; `just test`; `just sweep`;
-  `just toon_link link-verify-p1`.
+**This is not new design.**
+[render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)
+§4 (:176-240) already specifies the feature as its "Phase B", down to the ≤128 B
+compile-time assert (:348). Phases 7-8 are that work, scoped to what Phase 9
+needs.
 
-## Phase 7 — docs
+**The layout half is already complete** — worth stating, because the `todo!()`
+at reflection/pipeline_layout.rs:342 reads like the opposite.
+`add_push_constatant_range_for_constant_buffer` (pipeline_layout.rs:53; the typo
+is in the source) builds the range, it reaches the JSON, and `ToVk` turns it
+into a `vk::PushConstantRange` at renderer.rs:5254-5267. That `todo!()` is
+unreachable for push constants because :241 early-returns first. The
+`.offset()` bug is fixed too (vulkan_1_3_migration/bda_renderer_plumbing.md:63).
+What is missing is the block's *contents* and anything that writes it.
+
+Declaration form: `[[vk::push_constant]] ConstantBuffer<MyDraw> draw;`
+
+- **Open the gate at reflection/parameters.rs:34-38**, which today hard-bails on
+  *any* non-`ParameterBlock` global — and a push-constant global reflects as
+  `TypeKind::ConstantBuffer`, so it is rejected outright. Add a
+  `GlobalParameter::PushConstant` variant carrying the same
+  `{ parameter_name, element_type }` shape, so it lands in the existing
+  `globalParameters` array rather than a new JSON root key.
+- **Reuse `reflect_struct_fields` unchanged.** Offsets come from slang via
+  `param_binding` (parameters.rs:809-841) and are never computed, so no new
+  layout logic is needed. `param_binding`'s `todo!()` catch-all does need a
+  `ParameterCategory::PushConstantBuffer` arm.
+- **Reject a push block in a compute shader** (the compute twin of the gate, at
+  parameters.rs:736-740) until Phase 8's dispatch-side counterpart exists.
+  Otherwise reflection and codegen would accept one and the dispatch path would
+  silently never push it.
+- **Extend `declares_bindless_handle`** to scan a push block: a
+  `Sampler2D.Handle` there must still set `bindlessHeapSet`.
+- **Reflection and codegen cannot be split into separate phases.** Adding a
+  `GlobalParameter` variant breaks three irrefutable patterns —
+  build_tasks.rs:357, :611, and the `let Self::ParameterBlock(block) = self;` in
+  json/parameters.rs:100. All three are compile errors, which is the point, but
+  it means the two land together.
+- **Codegen emits the struct with `generate_std430_struct_fields`, and asserts
+  the computed size equals the reflected size** — the precedent is the pointer
+  arm at build_tasks.rs:920-926. Vulkan push blocks are std430-shaped, but that
+  is a *guess* about what Slang reports and the assert is what turns a wrong
+  guess into a loud failure instead of a silently misaligned struct. If it fires,
+  the lever is `program_layout.type_layout(ty, LayoutRules::DefaultConstantBuffer)`,
+  the same explicit re-query the std430 pointer path already does at
+  parameters.rs:417-419.
+- Emit the **≤128 B compile-time assert** (05_multi_draw_rendering.md:348).
+- **The push struct does not go through `Resources`.** `Resources` is
+  descriptor-set bindings in set-layout order; a push block is per-draw, not
+  per-pipeline. `required_resource`'s `_ => None` (build_tasks.rs:1092) already
+  handles it with no edit — as it did for handles in Phase 5. Surface the type
+  on the generated `Shader` instead, modelled on
+  `pub const WORKGROUP_SIZE` (shader_compute_entry.rs.askama:94), so Phase 8's
+  API can be typed rather than raw bytes.
+- **The four size/alignment tables need no edits**: they key on emitted Rust
+  type names that already have arms, and both layout generators are
+  field-kind-agnostic. (Phase 5's note about *five* sites is now stale in a
+  second way — `rust_size_of` and `check_field_sizes` were deleted in `2f07b2a`
+  and replaced by `assert_no_uniform_bytes_dropped`, build_tasks.rs:1332.)
+- **Known gap, not worth closing here:** a push struct declared in a *shared*
+  `.slang` module will not hoist. `shared_imports_for_shader`
+  (build_tasks.rs:1692-1731) finds shared types only via field type names of
+  local structs, and a top-level push block is not one. Phase 9 declares its
+  block locally.
+
+**Verify:** a new `crates/cli/fixtures/alignment/push_constants.shader.slang`
+(a block with a scalar, a `float4x4` and a handle, exercising both the ≤128 B
+assert and the handle-in-push-block heap flag) — `alignment_tests` discovers
+fixtures automatically and `cargo check`s the generated layout asserts against
+`fixtures/check_crate`. The pass condition is the Phase 5 **contrast**: new
+snapshots written, and **zero** pre-existing snapshots modified. Plus a
+`spirv-dis` check that emitted member offsets match reflected ones —
+`pointer_pointee_spirv_layout` (build_tasks.rs:2096) is the model. A rejection
+test for the compute case, via the existing `reflect_rejected_shader` helper.
+
+## Phase 8 — push constants: renderer and per-draw API
+
+- **Retain the range.** It is currently dropped after `create_pipeline_layout`;
+  `ShaderPipelineLayout` (renderer.rs:5001-5013) doesn't keep it. Add a field
+  next to `bindless_heap_set` and populate it at the same four
+  `create_from_atlas` sites, where `reflected_layout.push_constant_ranges` is
+  already in scope — so `vk_create`'s return tuple does not change. Assert at
+  most one range: a *global* push block reflects with stage flags `All`, because
+  `current_stage_flags` is `All` when `add_global_scope_parameters` reaches it
+  (pipeline_layout.rs:272), so vertex + fragment produce **one** range, not two.
+- **Payload on `PendingDrawCommand::Draw`, not inside `DrawCallConfig`** — the
+  latter is `Copy`. Store it inline as `[u8; 128]` plus a length rather than a
+  `Vec<u8>`: 128 is the spec floor so it is exactly right-sized, it keeps the
+  type `Copy`, and it costs no allocation per draw per frame.
+- `cmd_push_constants` in the record loop between `cmd_bind_bindless_heap`
+  (renderer.rs:2105) and the `match draw_call` (:2107), mirroring
+  `cmd_bind_bindless_heap`'s shape. Push constants survive descriptor-set binds
+  and are invalidated only by an incompatible pipeline bind, so once per loop
+  iteration is both necessary and sufficient.
+- **New `_with_push_constants` queue methods rather than a fourth parameter on
+  the three existing `queue_draw_*`.** The ~14 existing callers declare no push
+  block, so threading a parameter through all of them buys nothing that the
+  asserts below don't already give. This is a judgement call and the opposite of
+  what the rejected `firstInstance` design needed, where every variant had to
+  carry the value or silently ignore it.
+- **Two record-loop debug asserts, both directions**, which is what makes the
+  above safe: a pipeline whose layout declares a range receives bytes of exactly
+  that size, and a draw carrying bytes targets a pipeline that declares a range.
+  A length mismatch is `VUID-vkCmdPushConstants-offset-01795` and validation
+  would catch it; a *missing* push is undefined data with no diagnostic at all.
+  The picking path records its own hardcoded single draw
+  (renderer.rs:1813-1821) and needs the same assert.
+- **No device-suitability check.** `maxPushConstantsSize`'s 128 B guarantee is
+  the spec floor, so a gate in `undersized_limits` would be dead code — unlike
+  the bindless heap limits in Phase 3, which genuinely vary. Phase 7's
+  compile-time assert is the real check.
+
+Two constraints recorded deliberately, because both are invisible until they
+bite:
+
+- **Compute push blocks stay rejected** (Phase 7's gate). The dispatch path
+  (renderer.rs:1568-1652) has no push call; adding one is symmetric — between
+  :1622 and :1624, plus the same retained field on
+  `ComputeShaderPipelineLayout` (:5082).
+- **A push block cannot carry a BDA address.** `Gpu` — which mints
+  `Addr`/`ImmutableAddr` — is constructed at renderer.rs:2474, *after* every
+  `queue_draw_*` call and after `submit_draws`. So an address minted in the
+  submit closure does not exist at queue time. This directly contradicts
+  05_multi_draw_rendering.md §4's design, which puts an
+  `ImmutableAddr<MaterialData>` in the push block. The fix is small — address
+  minting takes `&self` and `flight_slot` is already correct at queue time, so
+  an `&self` minting API on `FrameRenderer` would return the same values — but
+  it belongs to that doc. Phase 9 sidesteps it: its push block is one `uint`,
+  and the `ImmutableAddr<Material>` stays in the param block where the closure
+  writes it.
+
+**Verify:** `just test` with **no** snapshot churn (this phase touches no
+reflection, codegen or template code), `just lint`, `just sweep`. As in Phases 3
+and 4, a green sweep proves nothing on its own while no example declares a push
+block — force the path with a temporary block on one example and confirm both
+that the value arrives and that deleting the push call trips the new debug
+assert rather than rendering garbage.
+
+## Phase 9 — `toon_link`, the actual payoff
+
+`build_material_pipelines` (examples/toon_link/src/main.rs:780-826)
+~~collapses to one pipeline plus a `Material` buffer behind `ImmutableAddr`.
+Per-material pipelines and per-material uniform buffers both disappear.~~
+**Half right — see below.**
+
+The shape:
+
+```slang
+struct ToonLinkDraw { uint materialIndex; }
+[[vk::push_constant]] ConstantBuffer<ToonLinkDraw> draw;
+
+struct Material {
+    Sampler2D.Handle tex0;          // std430    0
+    Sampler2D.Handle tex1;          //           8
+    TevParams tev;                  //          16
+    GXAlphaCompare alphaCompare;    //        1344  (last, keeps 16-alignment)
+}
+
+struct ToonLinkParams {
+    mltrs::ImmutableAddr<Material> materials;
+    mltrs::MVPMatrices mvp;
+    DebugMode debugMode;
+}
+```
+
+Both entry points read `params.materials[draw.materialIndex]` directly. **That
+is the concrete win over the `firstInstance` alternative Phase 7 rejected: no
+interstage varying, no `FragVertex` change, no vertex-input change.**
+
+Two layout facts worth pinning before writing it:
+
+- `TevParams` is **layout-identical in std140 and std430** — every member is a
+  `uint4`/`float4` or an array of one, so array stride is 16 either way. Moving
+  it into a std430 pointee costs nothing.
+- `GXAlphaCompare` is **not** (std140 pads it to 32; std430 leaves 20/align-4).
+  It must move *entirely* into `Material`. A type appearing in both layouts
+  trips the "shared type has an incompatible layout" panic at
+  build_tasks.rs:1447 — loud, but better avoided by construction.
+
+`tev.slang` needs no signature change: convert at the boundary
+(`Sampler2D tex0 = material.tex0;`) and leave `tevSampleTexmap`/`evalStages`
+taking `Sampler2D`, which keeps `tev.slang` free of bindless concepts. Its
+comment at tev.slang:207-214 ("Dynamic sampler indexing does not exist: tex0/tex1
+are two distinct ParameterBlock fields…") has both premises invalidated and must
+be rewritten — still a branch, still uniform, but now because the index is a
+per-draw push constant.
+
+**This does not need `NonUniformEXT`.** toon_link issues one index-range draw per
+batch (main.rs:1178-1186) and keeps doing so; the material index is uniform within
+each draw. The win here is ~~~24 fewer pipelines and~~ ~24 fewer uniform buffers,
+not fewer draws.
+
+**The pipeline half of that claim is wrong: bindless does not collapse
+toon_link to one pipeline.** A pipeline here is not differentiated only by its
+textures — `raster_state` (main.rs:693) varies cull mode, depth compare, depth
+write, blend mode *and* color write mask per material, the last via
+`decal_role`. None of that is descriptor state, so removing the texture
+descriptors leaves it untouched. Bindless removes the *texture*-driven pipeline
+explosion; the *state*-driven one survives.
+
+**Counted, not estimated: 24 materials → 5 distinct raster states.** Derived by
+grouping `link.manifest.json` and applying `raster_state`/`blend_mode`/
+`decal_role` by hand (`CULL_OVERRIDE` is `None`, so cull comes from the
+manifest):
+
+| derived `RasterState` (cull, depth test, depth write, blend, color write) | materials |
+|---|---|
+| Back, LessEqual, write, Opaque, RGB | 11 |
+| Back, Always, no-write, Blend(DstA, InvDstA), RGB — `Composite` | 4 |
+| Back, LessEqual, no-write, Blend(SrcA, InvSrcA), A — `Mask` | 4 |
+| Back, Always, no-write, Opaque, A — `Erase` | 4 |
+| None, LessEqual, write, Opaque, RGB | 1 |
+
+The one assumption is that the 12 `BlendMode::None_` materials are the opaque
+ones (`decal_role` returns `Ok(None)` for those), which the 4/4/4 eye/brow
+assertion at main.rs:156-158 corroborates: 12 translucent + 12 opaque = 24.
+Worth re-deriving if the manifest changes — the honest headline for this phase is
+**24 pipelines → 5, and 24 uniform buffers → 1**. Dedup with a linear scan:
+`RasterState` is `Eq + Copy` with 24 candidates, and adding `Hash` to a renderer
+type for this would be backwards. Assert the result (`ensure!(pipelines.len() == 5)`)
+so a manifest change that re-explodes the count is loud rather than a silent
+regression.
+
+`alpha_compare` is *not* a sixth dimension: it rides in the uniform data as a
+shader-side discard, not in the pipeline.
+
+**Draw-per-material is load-bearing, not a limitation to design away.** It is
+what makes the material index dynamically uniform for free, which is the
+property the whole uniformity constraint above is about — and a push constant is
+the cleanest possible expression of it, being per-draw constant by definition.
+Visibility-buffer architectures (Nanite-style material binning) exist to *recover* this property
+after GPU-driven culling makes CPU-side material sorting impossible; toon_link
+has not given it up and has nothing to recover. It also could not adopt that
+shape if it wanted to — blending and per-material raster state are fixed-function
+raster, which a per-material compute pass cannot vary, and the comment at
+main.rs:721-723 notes that *not* writing depth is what lets the eye/brow decals
+composite at all. The trigger for revisiting is losing CPU-side material sorting,
+which nothing here is near.
+
+Merging those draws is the follow-on
+([render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)),
+and even that likely stays uniform if the material index comes from `gl_DrawID`.
+The decoration is only needed if the index varies *within* one draw — packed into
+vertex or instance data. That's the point at which the `getDescriptorFromHandle`
+non-goal has to be revisited, together with the
+`shader_sampled_image_array_non_uniform_indexing` bit Phase 2 omits — the two
+must land together (the decoration without the feature is a validation error).
+
+One invariant this phase falsifies: `MaterialSlot`'s doc comment (main.rs:67-74)
+promises "one pipeline is baked per material slot, in slot order". Its
+replacement earns its keep, because slot order becomes the `Material` buffer's
+order and `slot.raw()` becomes the pushed index — so a slot/batch mixup now
+selects the wrong *texture* as well as the wrong TEV state.
+
+**Verify:** `just shaders toon_link`, `just test`, `just sweep`. But a green
+sweep is weak evidence here — a wrong material index produces no validation
+output at all. The real check is a visual A/B against a pre-change build, on
+four things that each isolate a different failure:
+
+- tunic and hat are their own colors, not all `ear`'s → the index really varies
+  per draw (a dead push constant paints everything slot 0);
+- eyes and brows composite *through* the bangs → the 5-pipeline grouping
+  preserved the mask/face-hair/composite/erase draw order;
+- `sleeve` is still double-sided → the 1-material `CullMode::None` state didn't
+  get merged into the 11-material group;
+- debug modes `RawTex0` (6) and `RawTex1` (7) show the right albedo and ramp per
+  batch, and toggling `eflight` / dragging `env_actor_c0` still reaches only the
+  lit materials.
+
+Also `just toon_link link-verify-p1` — but recorded for what it is: it diffs
+`convert-link --info` against the gclib oracle and runs the converter's ignored
+tests, and never builds `toon_link` at all. A free unchanged-converter guard,
+not evidence about this change.
+
+## Phase 10 — docs
 
 - Rewrite the status header on [render-graph/03_bindless.md](render-graph/03_bindless.md);
   it currently says texture binding remains per-pipeline descriptors.
@@ -703,10 +985,22 @@ Phase 4 already swept every example with the heap forcibly bound, but
   when the `getDescriptorFromHandle` override lands together with the
   `shader_sampled_image_array_non_uniform_indexing` feature bit (core 1.2, and
   part of the `descriptorIndexing` bundle Vulkan 1.3 mandates — no extension
-  needed; see Phase 6). If the `mltrs::TexHandle` alias from Phase 6 is added,
-  repeat the rule in a comment there — it's what shader authors actually read.
+  needed; see Phase 9). Phase 6 decided against a `mltrs::TexHandle` alias, so
+  `docs/` is the only place this rule lives — there is no vendored comment for
+  shader authors to read instead, which makes writing it down properly matter
+  more, not less.
+- **Say how the invariant is actually satisfied today**, not just what it
+  forbids: the material index rides in a push constant, and a push constant is
+  per-draw constant by definition. That is the pattern to copy.
+- Update [render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)
+  §4 (:225-237), which states the push-constant path is "completely dead — no
+  `.slang` declares one, there is no `cmd_push_constants` call, and no `Gpu`
+  API". False after Phase 8. Its line references into `renderer.rs` are stale
+  too and can be refreshed in the same pass. Mark §9's "Phase B" partly done,
+  with the address-in-push-block half (blocked on the `Gpu` ordering constraint
+  in Phase 8) explicitly still open.
 
-## Phase 8 — watercolor (follow-up; investigate first)
+## Phase 11 — watercolor (follow-up; investigate first)
 
 Not planned as part of the original work, and **not a prerequisite for anything**.
 Added because measuring toon_link's real payoff (24 → 5, above) prompted checking
@@ -728,10 +1022,10 @@ Two reasons this beats toon_link as a showcase:
   bound — exactly what the heap erases, with no floor underneath.
 - **Uniform by construction, with no index at all.** Parity is CPU state written
   into the param block per frame, so the shader reads *the* handle rather than
-  selecting one. None of the uniformity hazards in Phase 7 apply, and it needs no
+  selecting one. None of the uniformity hazards in Phase 10 apply, and it needs no
   per-draw channel (contrast toon_link, where the index has to come from
-  somewhere). It is therefore the *safest* first non-trivial consumer, not just
-  the most rewarding.
+  somewhere — Phases 7-8 exist to build that channel). It is therefore the
+  *safest* first non-trivial consumer, not just the most rewarding.
 
 Synchronization is not the usual objection here: the renderer has no automatic
 barrier tracking for bindless to break (`PendingComputeCommand::Barrier` is
@@ -818,13 +1112,19 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 3 | ✅ `just sweep` 16 ok / 0 fail with the heap allocated but unbound, plus a temporary `MAX_BINDLESS_TEXTURES = 1` run to prove the write path executes |
 | 4 | ✅ `just sweep` 16 ok / 0 fail, hot reload live-checked both ways, `just test` with only the new JSON key; plus forced `DECLARES_BINDLESS_HANDLE = true` and forced-mismatch runs to prove the path executes |
 | 5 | ✅ `just test` with three new handle fixtures at `bindlessHeapSet: 1` while every pre-existing fixture stayed byte-identical, `just shaders` zero-diff across all 27 example shaders, `spirv-dis` confirming the heap at set 1 / binding 1, `just sweep` 16 ok / 0 fail, hot reload live-checked |
-| 6 | `just shaders`, `just test`, `just sweep`, `just toon_link link-verify-p1` |
-| 8 | `just shaders watercolor`, `just test`, `just sweep` — plus a frame comparison against the pre-migration build, since a wrong ping-pong handle is silent |
+| 6 | `just shaders depth_texture`, `just test`, `just sweep` — plus a **visual** run, since a wrong heap slot renders the wrong texture silently |
+| 7 | `just test` with a new `push_constants` fixture and **zero** pre-existing snapshot changes; `cargo check` of the generated layout asserts; `spirv-dis` confirming emitted member offsets match reflected ones |
+| 8 | `cargo check --workspace --all-targets`, `just lint`, `just test` with no snapshot churn, `just sweep` — plus a forced push-block run, since nothing declares one yet |
+| 9 | `just shaders toon_link`, `just test`, `just sweep`, `just toon_link link-verify-p1` — plus the four-point visual A/B, since a wrong material index is silent |
+| 10 | docs only |
+| 11 | `just shaders watercolor`, `just test`, `just sweep` — plus a frame comparison against the pre-migration build, since a wrong ping-pong handle is silent |
 
 Per [`docs/testing.md`](../docs/testing.md), read before accepting any snapshot or
-adding a validation check. Layout bugs behind device addresses and heap indices
-produce no validation errors, which is why the generated `offset_of!`/`size_of`
-assertions (build_tasks.rs:1189) matter more here than usual.
+adding a validation check. Layout bugs behind device addresses, heap indices and
+push constants produce no validation errors, which is why the generated
+`offset_of!`/`size_of` assertions (build_tasks.rs:1189) matter more here than
+usual — and why Phases 6, 8 and 9 all lean on a run-and-look step that a green
+`just sweep` cannot substitute for.
 
 ## References
 
