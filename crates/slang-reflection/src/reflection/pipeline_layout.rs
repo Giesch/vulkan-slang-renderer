@@ -284,9 +284,20 @@ impl DescriptorSetLayoutBuilder {
         for entry_point in program_layout.entry_points() {
             pipeline_layout_builder.current_stage_flags =
                 ReflectedStageFlags::from_slang(entry_point.stage());
+
+            let ranges_before = self.binding_ranges.len();
+
             self.add_descriptor_ranges_for_parameter_block_element(
                 entry_point.type_layout().unwrap(),
                 pipeline_layout_builder,
+            );
+
+            assert_eq!(
+                self.binding_ranges.len(),
+                ranges_before,
+                "entry point '{}' contributed descriptor bindings; \
+                entry point parameters must be varyings or system values",
+                entry_point.name().unwrap(),
             );
         }
     }

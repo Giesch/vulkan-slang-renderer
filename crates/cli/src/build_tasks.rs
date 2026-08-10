@@ -3091,6 +3091,268 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
         );
     }
 
+    // Slang promotes a `uniform` entry point parameter to a push constant range
+    // (a2-01-spirv-target-specific.md), and it never reaches globalParameters — so
+    // every guard around [[vk::push_constant]] globals is blind to it. Codegen reads
+    // only the *vertex* entry point's parameters, so this range gets no generated
+    // type, no PushConstants alias and no Resources entry, while a real
+    // vk::PushConstantRange still reaches the pipeline layout.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_fragment_entry_point_uniform_is_rejected() {
+        let source = r#"#language slang 2026
+
+module frag_uniform;
+
+struct Tint {
+    float scale;
+}
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(1.0);
+}
+
+[shader("fragment")]
+float4 fragMain(uniform Tint tint) : SV_Target {
+    return float4(tint.scale);
+}
+"#;
+        let message = reflect_rejected_shader("frag_uniform", source);
+        assert!(
+            message.contains("entry point parameter 'tint' on 'fragMain'")
+                && message.contains("implicit push constant range"),
+            "unexpected error message: {message}"
+        );
+        assert!(
+            message.contains("[[vk::push_constant]] ConstantBuffer<T>"),
+            "the message must point at the alternative: {message}"
+        );
+    }
+
+    // Two entry point uniforms reflect as two ranges — {vertex, 0, N} and
+    // {fragment, 0, N} — with no global block involved at all. Phase 8's
+    // "at most one push constant range" assert rests on this being rejected;
+    // the ranges are legal Vulkan (distinct stages may overlap), just invisible.
+    #[cfg(not(windows))]
+    #[test]
+    fn entry_point_uniforms_on_both_stages_are_rejected() {
+        let source = r#"#language slang 2026
+
+module both_stage_uniforms;
+
+struct VertConstants {
+    float scale;
+}
+
+struct FragConstants {
+    float tint;
+}
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID, uniform VertConstants vc) : SV_Position {
+    return float4(vc.scale);
+}
+
+[shader("fragment")]
+float4 fragMain(uniform FragConstants fc) : SV_Target {
+    return float4(fc.tint);
+}
+"#;
+        let message = reflect_rejected_shader("both_stage_uniforms", source);
+        assert!(
+            message.contains("entry point parameter 'vc' on 'vertMain'"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // The invalid case: the global block reflects as one `all`-stage range at
+    // offset 0 and the entry point uniform as a `fragment` range at offset 0.
+    // `all` includes FRAGMENT, so two ranges cover the same stage —
+    // VUID-VkPipelineLayoutCreateInfo-pPushConstantRanges-00292, a
+    // vkCreatePipelineLayout failure with nothing upstream explaining it.
+    #[cfg(not(windows))]
+    #[test]
+    fn an_entry_point_uniform_beside_a_push_block_is_rejected() {
+        let source = r#"#language slang 2026
+
+module block_plus_uniform;
+
+struct DrawConstants {
+    float scale;
+}
+
+struct Tint {
+    float tint;
+}
+
+[[vk::push_constant]] ConstantBuffer<DrawConstants> draw;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(draw.scale);
+}
+
+[shader("fragment")]
+float4 fragMain(uniform Tint t) : SV_Target {
+    return float4(t.tint);
+}
+"#;
+        let message = reflect_rejected_shader("block_plus_uniform", source);
+        assert!(
+            message.contains("entry point parameter 't' on 'fragMain'"),
+            "the entry point guard must fire, not the global one: {message}"
+        );
+    }
+
+    // The pre-existing bug, older than push constants and reachable without them:
+    // collect_graphics_shader_data treats *any* struct parameter on the vertex
+    // entry point as the vertex input type. Every field here has a vk::Format, so
+    // the `todo!()` in that format match does not fire and this would silently
+    // generate an `impl VertexDescription` for a push constant block. The guard
+    // returning an Err — rather than the test panicking — is what proves the
+    // rejection came from the binding category and not from the format match.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_vertex_entry_point_uniform_is_rejected() {
+        let source = r#"#language slang 2026
+
+module vert_uniform;
+
+struct Small {
+    float3 offset;
+    float2 uv_scale;
+    uint flags;
+}
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID, uniform Small s) : SV_Position {
+    return float4(s.offset, 1.0);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        let message = reflect_rejected_shader("vert_uniform", source);
+        assert!(
+            message.contains("entry point parameter 's' on 'vertMain'")
+                && message.contains("implicit push constant range"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // The compute twin. reflect_compute_entry_point discards entry point parameters
+    // entirely — the promotion applies there too, and the dispatch path has no
+    // cmd_push_constants to write the range with.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_compute_entry_point_uniform_is_rejected() {
+        let source = r#"#language slang 2026
+
+module compute_uniform;
+
+struct DrawConstants {
+    uint count;
+}
+
+struct Params {
+    LayoutPtr<DrawConstants, Std430DataLayout> data;
+}
+
+ParameterBlock<Params> params;
+
+[numthreads(64, 1, 1)]
+[shader("compute")]
+void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID, uniform DrawConstants draw) {
+    params.data[dispatchThreadID.x].count = draw.count;
+}
+"#;
+        let message = reflect_rejected_compute_shader("compute_uniform", source);
+        assert!(
+            message.contains("entry point parameter 'draw' on 'computeMain'")
+                && message.contains("implicit push constant range"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // The descriptor half of the same hole, and the reason the guard is an
+    // allow-list: a uniform parameter holding a *resource* carries no uniform
+    // bytes, so no push constant range is created and a check for uniform bytes
+    // does not fire. Slang gives it a descriptor set instead. Measured before the
+    // allow-list landed: this reflected as `{binding 0, texture, compute}` in set
+    // 0, with the ParameterBlock displaced to set 1 — so it corrupts the set
+    // indices codegen does know about, on top of declaring one it cannot fill.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_compute_entry_point_descriptor_is_rejected() {
+        let source = r#"#language slang 2026
+
+module compute_descriptor;
+
+struct Cell {
+    uint value;
+}
+
+struct Params {
+    LayoutPtr<Cell, Std430DataLayout> data;
+}
+
+ParameterBlock<Params> params;
+
+[numthreads(64, 1, 1)]
+[shader("compute")]
+void computeMain(uint3 tid : SV_DispatchThreadID, uniform Texture2D<float4> tex) {
+    params.data[tid.x].value = uint(tex.Load(int3(0, 0, 0)).x);
+}
+"#;
+        let message = reflect_rejected_compute_shader("compute_descriptor", source);
+        assert!(
+            message.contains("entry point parameter 'tex' on 'computeMain'")
+                && message.contains("descriptor that nothing binds"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // A struct wrapping the descriptor is the same hole with a different shape:
+    // its only category is the descriptor's, so nothing about the parameter says
+    // "uniform". On the vertex entry point it is also the vertex-input confusion
+    // again — collect_graphics_shader_data would take a struct parameter here as
+    // the vertex input type.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_vertex_entry_point_descriptor_struct_is_rejected() {
+        let source = r#"#language slang 2026
+
+module vert_descriptor;
+
+struct TexHolder {
+    Texture2D<float4> tex;
+}
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID, uniform TexHolder th) : SV_Position {
+    return th.tex.Load(int3(0, 0, 0));
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        let message = reflect_rejected_shader("vert_descriptor", source);
+        assert!(
+            message.contains("entry point parameter 'th' on 'vertMain'")
+                && message.contains("descriptor that nothing binds"),
+            "unexpected error message: {message}"
+        );
+        assert!(
+            message.contains("ParameterBlock<T> global"),
+            "the message must point at the alternative: {message}"
+        );
+    }
+
     // 128 bytes is the vulkan-guaranteed maxPushConstantsSize. The generated code
     // asserts this too, but a failing const assert reports only "evaluation of
     // constant value failed" — no shader, no block, no size.

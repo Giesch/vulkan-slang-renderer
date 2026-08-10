@@ -37,6 +37,8 @@ pub fn reflect_entry_points(
         for param in entry_point.parameters() {
             let parameter_name = param.name().unwrap().to_string();
 
+            reject_non_varying_entry_point_parameter(param, &parameter_name, &entry_point_name)?;
+
             let type_layout = param.type_layout().unwrap();
 
             let entry_point_param_json = match type_layout.kind() {
@@ -215,6 +217,50 @@ fn reflect_global_parameters(
     }
 
     Ok(global_parameters)
+}
+
+/// An entry point parameter may only be a varying or a system value. Anything
+/// else is a binding that codegen never sees: it reads global parameters for
+/// `Resources`, and the *vertex* entry point's parameters for the vertex input
+/// type. Slang has two routes here, both silent:
+///
+/// - a `uniform` parameter becomes an implicit push constant range
+///   (docs/user-guide/a2-01-spirv-target-specific.md). We require exactly one
+///   push block struct declared as an annotated global parameter.
+/// - a parameter holding a resource becomes a *descriptor*, allocated a set of
+///   its own by `add_entry_point_parameters` — which also displaces the
+///   `ParameterBlock`'s set index, so it corrupts the sets codegen does know
+///   about rather than merely adding one it doesn't.
+fn reject_non_varying_entry_point_parameter(
+    param: &slang::reflection::VariableLayout,
+    parameter_name: &str,
+    entry_point_name: &str,
+) -> anyhow::Result<()> {
+    // a uniform struct with a descriptor reports that descriptor's category
+    // first, so the primary category alone is not enough to classify a parameter
+    for category in param.categories() {
+        match category {
+            slang::ParameterCategory::VaryingInput | slang::ParameterCategory::VaryingOutput => {}
+
+            slang::ParameterCategory::Uniform | slang::ParameterCategory::PushConstantBuffer => {
+                anyhow::bail!(
+                    "entry point parameter '{parameter_name}' on '{entry_point_name}': a uniform \
+                    entry point parameter is promoted to an implicit push constant range that no \
+                    generated code writes; declare a [[vk::push_constant]] ConstantBuffer<T> \
+                    global instead (graphics shaders only)"
+                )
+            }
+
+            other => anyhow::bail!(
+                "entry point parameter '{parameter_name}' on '{entry_point_name}': a parameter \
+                bound as {other:?} is a descriptor that nothing binds, and it takes a descriptor \
+                set of its own — which shifts the set index of every ParameterBlock after it; \
+                declare it in a ParameterBlock<T> global instead"
+            ),
+        }
+    }
+
+    Ok(())
 }
 
 /// A descriptor-backed resource inside a push block is not allowed,
@@ -815,9 +861,16 @@ pub fn reflect_compute_entry_point(
     for entry_point in program_layout.entry_points() {
         let entry_point_name = entry_point.name().unwrap().to_string();
 
-        let params = vec![];
         // Compute entry point parameters are system values (SV_DispatchThreadID, etc.)
-        // and don't need to be reflected for code generation
+        // and don't need to be reflected for code generation — but they still have
+        // to be walked, because a `uniform` parameter here is promoted to a push
+        // constant range just as it is in a graphics entry point, and the dispatch
+        // path never writes one.
+        let params = vec![];
+        for param in entry_point.parameters() {
+            let parameter_name = param.name().unwrap().to_string();
+            reject_non_varying_entry_point_parameter(param, &parameter_name, &entry_point_name)?;
+        }
 
         match entry_point.stage() {
             slang::Stage::Compute => {

@@ -1,7 +1,9 @@
 # Phase 7b — reject implicit push constants from entry point uniforms
 
 Detailed plan for Phase 7b of [../bindless_textures.md](../bindless_textures.md).
-**Status: not started.** Line numbers verified during the Phase 7 session.
+**Status: done.** Line numbers verified during the Phase 7 session; corrections
+from the implementation are annotated in place below rather than deleted. The
+outcome notes live in the parent doc's Phase 7b section.
 
 Phase 7 gated `[[vk::push_constant]]` **globals**, which is the only path
 `reflect_global_parameters` can see. Slang has a second one, and it walks past
@@ -13,6 +15,12 @@ After 7b, `pushConstantRanges` has exactly one source: an annotated global.
 Every other route into that array is a reflection-time error naming the
 offending parameter, and Phase 8's "assert at most one range" becomes enforced
 rather than assumed.
+
+**Widened during implementation.** The goal above is about push constants, but
+the same hole exists one layer over in *descriptors*: an entry point parameter
+holding a resource is accepted, takes a descriptor set of its own, and displaces
+the `ParameterBlock`'s set index. The delivered guard therefore covers both — an
+entry point parameter must be a varying or a system value, full stop.
 
 ## The measurement this rests on
 
@@ -76,11 +84,24 @@ binds `varyingInput`, a promoted uniform binds `uniform`.
    parameter whose binding occupies bytes rather than being a varying. Reuse
    `Binding::occupies_bytes` (json/parameters.rs), which already draws exactly
    this line and is the same predicate the enum/array/handle field guards use.
+   — **Corrected twice in implementation.** First: the guard scans
+   `param.categories()` rather than `occupies_bytes`, which runs on
+   `param_binding`'s output, reads only the *primary* category (Phase 7's own
+   correction) and panics on an empty one — and `SV_DispatchThreadID` measures as
+   empty. Second, and more important: **"occupies bytes" is the wrong line
+   entirely.** It is a deny-list, and it misses the descriptor route — a uniform
+   parameter holding a resource takes no bytes and becomes a descriptor set of
+   its own. The guard is now an allow-list over `VaryingInput`/`VaryingOutput`,
+   with a backstop assert in `add_entry_point_parameters`. See the parent doc's
+   "7b follow-on" section.
 2. Rejection tests via `reflect_rejected_shader` (build_tasks.rs) for all three
    accepted rows, asserting the message names both the parameter and the entry
    point.
 3. The compute twin via `reflect_rejected_compute_shader` on a `.compute.slang`
    fixture — the same promotion applies to `computeMain(uniform T)`.
+   — **Larger than it reads:** `reflect_compute_entry_point` never iterated
+   entry point parameters at all, so this needed a new loop there, not a shared
+   call site.
 4. Rewrite Phase 8's first bullet in the parent doc: the at-most-one-range
    assert stops being conditional once this lands.
 

@@ -957,6 +957,105 @@ assumed, and the sentence justifying it there should be rewritten to say so.
 including the full measurement table and the slang documentation confirming the
 promotion is intended language behaviour rather than a version quirk.
 
+**Verified:** `cargo check --workspace --all-targets`, `just test` (29 test
+binaries, 0 failures), `just lint` and `cargo fmt` all clean. The pass condition
+held exactly as stated: **zero** snapshot churn, not even the one additive
+snapshot Phase 7 produced — rejection tests are inline sources in temp dirs, so
+they add no fixture. `just shaders` regenerated every example with no diff.
+
+**The guard does not use `Binding::occupies_bytes`, which deliverable 1 above
+specified.** It scans `param.categories()` for `Uniform` or `PushConstantBuffer`
+directly. Two reasons, and the second is the one that mattered:
+
+- `param_binding` (parameters.rs:850) reads only `param.category()`, the
+  *primary* category — the exact trap Phase 7 fell into and corrected
+  (see :846-856). A `uniform` struct holding a texture reports the descriptor's
+  category first and would have slipped past an `occupies_bytes` check straight
+  back into the vertex-input confusion.
+- `param_binding` ends in `c => todo!("param category not handled")` and opens
+  with `param.category().unwrap()`. **Measured: `SV_VertexID` and
+  `SV_DispatchThreadID` report an *empty* category list.** The compute path had
+  never called `param_binding` before this phase, and making it start would have
+  turned a clean rejection into a panic on the system-value parameter that every
+  compute entry point has. Scanning `categories()` needs neither.
+
+**Measured, for the record:** a promoted entry point uniform reports exactly
+`[Uniform]` — not `PushConstantBuffer`, which is what the *global* annotated form
+reports. The predicate covers both anyway, since only one of them was measured
+and the two are not documented as distinct here.
+
+**The compute twin needed its own loop, not a shared call site.**
+`reflect_compute_entry_point` (parameters.rs:806) never iterated
+`entry_point.parameters()` at all — `let params = vec![];` with a comment that
+they are all system values. So the guard could not be inherited from
+`reflect_entry_points`; the compute path now walks its parameters purely to
+reject, and still pushes nothing.
+
+**Entry point iteration order is declaration order**, which is what lets the
+both-stages test assert on `vertMain` specifically rather than on either name.
+
+**One dead branch is now unreachable and deliberately left in place:**
+`ScalarEntryPointParameter::Bound` (build_tasks.rs:309, a `todo!()`). A scalar
+entry point parameter with no semantic and a byte binding *is* a uniform, so
+nothing can construct it any more. Removing the variant is json format churn for
+no benefit, and it is not this phase's job.
+
+### 7b follow-on — the descriptor route, and why the guard is an allow-list
+
+**The guard as first written was still a deny-list, and still had a hole.** It
+named `Uniform`/`PushConstantBuffer` as bad and let the other 23
+`ParameterCategory` variants through. Measured: `computeMain(uniform
+Texture2D<float4> tex)` was **accepted**. A uniform parameter holding a
+*resource* carries no uniform bytes, so slang creates no push constant range and
+the byte check never fires — it becomes a **descriptor** instead, via
+`add_entry_point_parameters` (pipeline_layout.rs:279). The reflected layout:
+
+```
+descriptorSetLayouts[0]: { binding 0, texture, stageFlags: compute }    <- the entry point uniform
+descriptorSetLayouts[1]: { binding 0, constantBuffer, stageFlags: all } <- ParameterBlock, displaced
+```
+
+So it is worse than an unused set at the end: it takes **set 0** and renumbers
+the sets codegen does know about. `Resources` has no field for it either, since
+codegen reads only `global_parameters` — the same "binding nothing can write"
+failure as the row-1 push constant case, one layer over.
+
+**The fix is the allow-list**, which is the shape this should have had from the
+start: `VaryingInput`/`VaryingOutput` pass, `Uniform`/`PushConstantBuffer` get
+the push constant message, everything else gets a descriptor message pointing at
+`ParameterBlock<T>`. Two messages because the two remedies differ.
+
+**The corpus is what makes an allow-list safe rather than reckless.**
+Instrumenting the guard and running `just shaders` across all 15 examples plus
+the cli fixture shaders, *every* legitimate entry point parameter reports exactly
+one of two things:
+
+| categories | what it is |
+|---|---|
+| `[]` | a system value — `SV_VertexID`, `SV_DispatchThreadID`; no binding at all |
+| `[VaryingInput]` | vertex and fragment inputs, every stage, every example |
+
+Nothing else appears. Two of 25 variants are legitimate, which is why naming the
+bad ones kept losing.
+
+**Also added: a backstop assert at the site that creates the binding.**
+`add_entry_point_parameters` now asserts its loop contributes zero
+`binding_ranges`, naming the entry point. The allow-list can only reject
+categories it has met; this catches any future route into that array — a new
+slang category, a parameter shape nobody anticipated — at the point of damage
+rather than at a validation error much later. It has never fired on the corpus.
+
+**Rejected on measurement, not principle:** supporting the descriptor form by
+generating a `Resources` field for it. It offers nothing a `ParameterBlock`
+global does not, and the set displacement above means accepting it would make
+set indices depend on entry point signatures.
+
+**Still open, and deliberately so:** `ExistentialTypeParam` /
+`ExistentialObjectParam` — slang generics and interfaces as entry point
+parameters — are now rejected by the allow-list. Nothing here uses them and
+codegen could not handle them, so a clear message beats a silent drop; but this
+is the allow-list making a decision, not a measured judgement about generics.
+
 ## Phase 7c — bounds-checked element addresses, mintable at queue time
 
 **Why this phase exists.** Phase 9 plans to push a bare `uint materialIndex` and
@@ -1044,10 +1143,11 @@ consequences. **7d is only the CPU-uploaded, GPU-read-only half.**
   most one range: a *global* push block reflects with stage flags `All`, because
   `current_stage_flags` is `All` when `add_global_scope_parameters` reaches it
   (pipeline_layout.rs:272), so vertex + fragment produce **one** range, not two.
-  **That holds only once Phase 7b lands** — `uniform` entry point parameters are
-  a second, implicit source of ranges, and two of them produce two ranges with no
-  global block involved. Take 7b first, or this assert fires on a shader that is
-  legal today. **Phase 7c is also a prerequisite**, for a different reason: it
+  **Phase 7b makes this enforced rather than assumed** — it was the `uniform`
+  entry point parameter, a second and implicit source of ranges, that could
+  produce two ranges with no global block involved, and reflection now rejects
+  that outright. An annotated global is the only remaining source.
+  **Phase 7c is a prerequisite**, for a different reason: it
   decides whether the payload below is filled at queue time (7c's answer) or by
   the submit closure (`05` §4's), and those are incompatible designs rather than
   styles.
