@@ -9,6 +9,23 @@ no renderer integration, no shader work.
 Companion document: [`link_rendering.md`](link_rendering.md), whose P0–P3 phases
 built the converter this plan generalizes.
 
+**Status: implemented 2026-08-09.** Both OBJs export and verify — `--info`,
+`--dump-mat3` and `--dump-geometry` all diff identical against the gclib oracles
+for both models, every texture is pixel-identical (6/6 hull, 7/7 head), and
+`fn_head_h`'s `world·invBind = I` holds at 1.97e-2 against `INVBIND_EPS` 0.02,
+which is the acceptance criterion this plan sets for the whole geometry path.
+Link stayed byte-identical throughout (90/90 golden hashes). Five claims below
+turned out to be wrong and are annotated in place rather than deleted: the
+deployed sail's location (§Scope), the `Expectations` FRU snippet and the
+`--model NAME` flag form (§5), the ignored-test count and the fate of the
+`parse_model` wrapper (§4), the missing `pose.rs:458` caller (§6), and the
+oracle needing a second edit (§Verification).
+
+One thing this plan does not mention that cost nothing in the end: `bti.rs`
+hard-errors on `mip_levels() != 1`, and no ship texture has mips (all nine are
+`mips=1`, formats C8/I4/CMPR, all already covered by `gx/texture.rs`). Worth
+checking first for any future model, since it would be unscoped work.
+
 ## Context
 
 `crates/convert-link` already turns `cl.bdl` into PNGs, a manifest, flat binaries,
@@ -51,9 +68,33 @@ they are the only two files in the archive carrying an `RGBA8 CLR0` attribute.
 Excluding them removes all vertex-color work and, with it, every change to
 `shp1.rs`. See "Deferred" below.
 
-Also not in `Ship.arc`: the deployed sail is a separate actor
-(`VsaiL.arc:bdlm/vsail.bdl` + a `btk`), and the salvage rope-end is
+Also not in `Ship.arc`: ~~the deployed sail is a separate actor
+(`VsaiL.arc:bdlm/vsail.bdl` + a `btk`)~~, and the salvage rope-end is
 `Link.arc:ropeend.bdl`.
+
+**The sail claim was wrong, corrected 2026-08-09.** There is no separate sail
+model, and `VsaiL.arc` is not it. `daShip_c::createHeap()` loads five models
+(`fn_body`, `vfncn`, `vfncr`, `Link:ropeend`, `fn_head_h`) and `daShip_c::draw()`
+draws exactly those five; the class has no sail member. `vsail.bdl` is the sail
+**item pickup** — 4 joints (`root_VsaiL`, `VsaiL_body`, `Vupy1_outside`,
+`Vupy2_inside`), materials `SC_lupy_inside`/`SC_lupy_outside` (*upy*/*lupy* =
+rupee) and textures `V_lupy_spc` + `toonMETAL02`, registered in
+`d_item_data.cpp:132-133` alongside its `VsaiM.arc` sibling.
+
+The sail is geometry *inside* `fn_body.bdl`, rigidly bound to `j_fn_sail1` (77
+verts), `j_fn_sail2` (21), `j_fn_sail_e` (54) and `j_fn_mast` (151) — DRW1 slots
+5/6/7 plus the mast — so it is already in this plan's OBJ export. Deployment is
+animation, not a model swap: `Ship.arc:bck/fn_mast_on2.bck` is 11 frames scaling
+`j_fn_mast.X` 0.05→1.12→1.00 and `j_fn_sail2.X` 0.05→0.94→0.81→0.77→0.80→0.88→1.00
+(an unfurl with a billow-and-settle wobble), with `fn_mast_off2.bck` the reverse
+and the actor rotating `j_fn_sail1` by `mSailAngle` each frame
+(`d_a_ship.cpp:116-117`). The bind pose this plan exports sits at scale 1.0, the
+deployed end of that animation.
+
+Two nearby claims that *did* hold: `Ship.arc:tex/new_ho1.bti` really is
+unreferenced (nothing in `d_a_ship.cpp` names it — `ho1` is a generic name used
+by other actors, e.g. `d_a_dr.cpp:129`), and `ropeend` really does come from
+`Link.arc`.
 
 ## Where things live
 
@@ -137,13 +178,27 @@ and the `other =>` catch-all stays as-is now that CLR0 is out of scope.
 
 - Make `Expectations` `pub` + `#[derive(Clone, Copy)]`, export `pub const CL_BDL`.
 - Make `parse_chunk_table_with` `pub`.
-- Add `pub fn parse_model_with(data, expect)` holding today's body; redefine
+- ~~Add `pub fn parse_model_with(data, expect)` holding today's body; redefine
   `parse_model(data)` as `parse_model_with(data, &CL_BDL)`. This keeps the five
-  ignored real-file tests compiling *and still meaning `cl.bdl`* (`pose.rs:386`,
+  ignored real-file tests compiling *and still meaning `cl.bdl`*~~ (`pose.rs:386`,
   `pose.rs:448`, `tev_ir.rs:1058`, `bmd/tex1.rs:146`, `bmd/mat3.rs:760`).
 - `BmdError::BadJointCount` Displays a literal `expected 42` (`mod.rs:148`) —
   change the variant to `{ found: Option<u16>, expected: u16 }` and interpolate.
   Touches only the `bad_joint_count` unit test at `mod.rs:499`.
+
+**Two corrections here, 2026-08-09.** *The test count was wrong*: there are
+**six** ignored real-file tests, not five — this list omits `bmd/mod.rs:535`
+`real_cl_bdl_invariants`, which calls `parse_chunk_table` (not `parse_model`)
+and asserts a hardcoded chunk table including `size=364544`.
+
+*And the `parse_model` wrapper did not survive.* Once `parse_model_with` existed,
+`parse_model` had no production caller, and an unused `pub fn` in a **binary**
+crate is a `dead_code` warning that `just lint` (`-D warnings`) rejects. The
+wrapper is gone and all six tests say `parse_model_with(&data, &CL_BDL)`, which
+is in any case more explicit about meaning Toon Link than the wrapper name was.
+The same fate hit `parse_chunk_table` and the `Naming::LINK` constant §6 implies.
+Anything that "exists only to keep tests compiling" is dead code here — this
+crate has no external consumers to be a public API *for*.
 
 **Do not touch `canonical_table`.** Its format is count/offset-driven and already
 prints the ship files correctly; `--info` for Link must stay byte-identical.
@@ -213,13 +268,42 @@ const MODELS: &[ModelSpec] = &[
 ];
 ```
 
+**The `..bmd::CL_BDL` lines above do not compile, corrected 2026-08-09.**
+Functional-record-update requires *every* field of the struct to be visible at
+the use site, including the ones the update omits — so writing
+`bmd::Expectations { jnt1_count: Some(11), ..bmd::CL_BDL }` in `main.rs` is
+E0451 unless `fourccs` and `block_num` are also `pub`, which would make
+`EXPECTED_FOURCCS`'s shape part of `bmd`'s public API. (FRU *inside* a `const`
+is fine — privacy is the blocker, not const-eval. The `..TEST_EXPECT` use in
+`mod.rs`'s own tests keeps working for exactly that reason.) What landed instead
+keeps the fields private and adds a constructor:
+
+```rust
+impl Expectations {
+    pub const fn bdl(jnt1_count: u16) -> Self {
+        Expectations { fourccs: &EXPECTED_FOURCCS, block_num: 9, jnt1_count: Some(jnt1_count) }
+    }
+}
+pub const CL_BDL: Expectations = Expectations::bdl(42);
+```
+
+so the table reads `expect: bmd::CL_BDL` / `bmd::Expectations::bdl(11)` /
+`bmd::Expectations::bdl(18)`, and 42 still lives next to `CL_BDL`.
+
 New CLI surface, `--model` defaulting to `link`:
 
 ```
-usage: convert_link <raw-dir> <out-dir> [--model NAME]
+usage: convert_link <raw-dir> <out-dir> [--model=NAME]
                     [--info | --dump-mat3 | --dump-geometry] [--obj]
                     [--tev-gate=error|warn|off] [--no-ramps]
 ```
+
+**`--model NAME` (space-separated) was wrong, corrected 2026-08-09** — hence
+`--model=NAME` above. `main.rs`'s hand-rolled loop pushes any non-`-` token into
+`positional`, so `--model ship` would put `"ship"` there and fail the
+`[PathBuf; 2]` destructure with "expected exactly two directory arguments" — a
+confusing error for a correct-looking invocation. The `=` form also matches the
+plan's own `--tev-gate=`.
 
 Keep ramps **on** for the ship: `fn_body`'s TEX1 genuinely carries a `ZBtoonEX`
 placeholder, so the `RAMP_PREFIXES` substitution in `output.rs` is semantically
@@ -236,6 +320,13 @@ manifest JSON*, so the prefix has to reach `build`:
   307 (`mtllib`), 329, 347.
 - Thread `ramps: bool` into `build` → `build_textures` for the `--no-ramps`
   escape hatch.
+
+**This list is missing a caller, noted 2026-08-09:** `pose.rs:458`
+(`real_bake_and_manifest`) also calls `output::build`, so changing that signature
+breaks the build. It is a compile error rather than a silent skip, so it cannot
+be missed — but it is a fourth site, not "three functions". What landed groups
+the three parameters into a `Naming { prefix, display, ramps }` struct rather
+than threading a bare `&str` plus a `bool` through four signatures.
 
 Leave `mat3_dump.txt` (written at `main.rs:96`) unprefixed — separate out-dirs
 make it collision-free, and not touching it is zero-risk for the golden hash.
@@ -341,11 +432,26 @@ and model-agnostic. `link_chunk_table.py`, `link_mat3_table.py` and
 diagnosing whatever the gate rejected. It is also the strongest early signal: it
 exercises the entire MAT3 parser including the `Projmap` texmtx and 3-texgen paths.
 
-**S4 needs one additive edit to `link_geometry_table.py`:** its `evp1_section`
+**S4 needs ~~one~~ two additive edits to `link_geometry_table.py`:** its `evp1_section`
 asserts `inv_count >= joint_count` and reads 12 floats from offset 0, so it
 crashes on a header-only EVP1. Add the branch — if `inv_off == 0`, emit
 `EVP1 envelopes=0 invbinds=0` and skip both loops. Do S4 against `fn_body` first
 (F32 normals, so it isolates the EVP1 change), then `fn_head_h` (S16 normals).
+
+**The second edit, found 2026-08-09:** `vtx1_section` hardcodes
+`count(offsets[1], 12)` for the normal-array stride, so with `fn_head_h`'s S16
+normals it reports `nrm=469` where the converter says `938`. Take the stride from
+the NRM format entry (`{"Float32": 12, "Signed16": 6}`, defaulting to 12 when
+absent, mirroring `vtx1.rs`'s own fallback). Without this, S4 cannot pass for
+`fn_head_h` no matter how correct the Rust side is — which is a good argument for
+the plan's own advice to run `fn_body` first.
+
+Minor: the crash mechanism above is right but the reason is not the assert. With
+`inv_off == 0` the assert at the *end* of `evp1_section` never runs, because the
+invbind loop hits `struct.unpack_from` past the end of the 32-byte chunk first.
+Had the chunk been larger, the assert would have passed and the oracle would have
+emitted `joint_count` lines of float garbage read from the chunk header — a
+silent wrong answer rather than a traceback. Same fix either way.
 
 **S5 is the real FK test.** `fn_body` has no invBind matrices, so its residual
 prints `0.00e0` and tells you nothing. `fn_head_h` is the only model here carrying
