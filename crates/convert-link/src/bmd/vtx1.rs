@@ -108,8 +108,9 @@ pub fn parse(chunk: &[u8]) -> Result<Vtx1, BmdError> {
                 "VTX1 POS must be F32 XYZ",
             )?,
             Attr::Nrm => reject_unless(
-                fmt.comp_type == ComponentType::F32 && fmt.comp_count == 0,
-                "VTX1 NRM must be F32 XYZ",
+                fmt.comp_count == 0
+                    && matches!(fmt.comp_type, ComponentType::F32 | ComponentType::S16),
+                "VTX1 NRM must be F32 or S16 XYZ",
             )?,
             Attr::Tex0 => reject_unless(
                 fmt.comp_type == ComponentType::S16 && fmt.comp_count == 1,
@@ -137,7 +138,21 @@ pub fn parse(chunk: &[u8]) -> Result<Vtx1, BmdError> {
     };
 
     let positions = decode_vec3(&r, array_offsets[POS], boundary(array_offsets[POS]), 12)?;
-    let normals = decode_vec3(&r, array_offsets[NRM], boundary(array_offsets[NRM]), 12)?;
+    // The format table is in file order; POS/NRM/TEX0 index the array-offset
+    // table instead, so look NRM's storage up by attr the way uv_shift does.
+    // The fallback keeps a hypothetical NRM-less file on its pre-existing path.
+    let (nrm_type, nrm_shift) = formats
+        .iter()
+        .find(|f| f.attr == Attr::Nrm)
+        .map(|f| (f.comp_type, f.shift))
+        .unwrap_or((ComponentType::F32, 0));
+    let normals = decode_nrm(
+        &r,
+        array_offsets[NRM],
+        boundary(array_offsets[NRM]),
+        nrm_type,
+        nrm_shift,
+    )?;
     let uv_shift = formats
         .iter()
         .find(|f| f.attr == Attr::Tex0)
@@ -179,6 +194,38 @@ fn decode_vec3(
         out.push([cur.f32()?, cur.f32()?, cur.f32()?]);
     }
     Ok(out)
+}
+
+/// NRM array decode. F32 XYZ delegates to `decode_vec3` so cl.bdl's normals
+/// still come out of exactly the code they did before this split; S16 XYZ is
+/// stride-6 fixed point scaled by 1/2^shift (fn_head_h.bdl: shift 14, ÷16384).
+fn decode_nrm(
+    r: &BeReader,
+    off: usize,
+    end: usize,
+    comp_type: ComponentType,
+    shift: u8,
+) -> Result<Vec<[f32; 3]>, BmdError> {
+    match comp_type {
+        ComponentType::F32 => decode_vec3(r, off, end, 12),
+        ComponentType::S16 => {
+            let scale = 1.0 / (1u32 << shift) as f32;
+            let count = (end - off) / 6;
+            let mut out = Vec::with_capacity(count);
+            let mut cur = r.at(off);
+            for _ in 0..count {
+                out.push([
+                    cur.i16()? as f32 * scale,
+                    cur.i16()? as f32 * scale,
+                    cur.i16()? as f32 * scale,
+                ]);
+            }
+            Ok(out)
+        }
+        other => Err(BmdError::Invariant(format!(
+            "VTX1 NRM component type {other} unsupported (want F32 or S16)"
+        ))),
+    }
 }
 
 fn decode_uv(r: &BeReader, off: usize, end: usize, shift: u8) -> Result<Vec<[f32; 2]>, BmdError> {

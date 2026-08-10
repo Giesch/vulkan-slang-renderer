@@ -25,7 +25,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   snapshot-test fixtures.
 - `crates/gx` — GameCube manifest schema shared by `convert-link` and the
   `toon_link` example.
-- `crates/convert-link` (binary `convert_link`) — Wind Waker asset converter.
+- `crates/convert-link` (binary `convert_link`) — Wind Waker J3D asset
+  converter (Toon Link + the King of Red Lions; pick one with `--model=`).
 - `examples/<name>/` — one crate per example, each with its own
   `shaders/source/`, committed `shaders/compiled/` + `src/generated/`
   bindings, and its own assets. The examples are the first consumers of the
@@ -42,7 +43,8 @@ when running a submodule recipe, so paths in those justfiles and scripts are
 crate-relative, not repo-relative.
 
 `toon_link` also keeps its gitignored, machine-local Wind Waker assets inside
-the crate at `examples/toon_link/assets/link/`.
+the crate at `examples/toon_link/assets/link/` (and `assets/ship/` for the King
+of Red Lions, which is an OBJ-only debug export — nothing renders it).
 
 Keep the root justfile for workspace-wide tasks only (`shaders`, `sweep`,
 `test`, `lint`, `dev`, `pre-commit`).

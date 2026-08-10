@@ -35,6 +35,17 @@ pub fn parse(chunk: &[u8], joint_count: u16) -> Result<Evp1, BmdError> {
     let mix_weight_off = h.u32()? as usize;
     let inv_bind_off = h.u32()? as usize;
 
+    // A model with no skinning has a header-only EVP1: count 0 and all four
+    // offsets 0 (fn_body.bdl's is exactly 32 bytes). Its DRW1 can then only
+    // hold `DrwSlot::Joint`, so nothing downstream looks for an envelope or an
+    // inverse bind. Everything below stays on the path cl.bdl takes.
+    if count == 0 && inv_bind_off == 0 {
+        return Ok(Evp1 {
+            envelopes: Vec::new(),
+            inv_bind: Vec::new(),
+        });
+    }
+
     let mut counts = r.at(mix_count_off);
     let mut idx = r.at(mix_index_off);
     let mut wgt = r.at(mix_weight_off);

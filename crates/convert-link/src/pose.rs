@@ -60,12 +60,17 @@ pub fn bake(model: &Model) -> Result<BakedModel, BmdError> {
     );
 
     // invBind identity: converts a silent FK/transpose bug into a loud failure
-    // across all joints at once.
+    // across all joints at once. An unskinned model (header-only EVP1) carries
+    // no inverse binds, so it has no answer key to check FK against and the
+    // residual is vacuously 0 — for those, the mast standing up in the OBJ is
+    // the only FK evidence available.
     let inv_bind: Vec<Mat4> = model.evp1.inv_bind.iter().map(mat4_from_rows_3x4).collect();
     let mut invbind_max_residual = 0.0f32;
-    for j in 0..world.len() {
-        let residual = world[j] * inv_bind[j] - Mat4::IDENTITY;
-        invbind_max_residual = invbind_max_residual.max(mat4_max_abs(&residual));
+    if !inv_bind.is_empty() {
+        for j in 0..world.len() {
+            let residual = world[j] * inv_bind[j] - Mat4::IDENTITY;
+            invbind_max_residual = invbind_max_residual.max(mat4_max_abs(&residual));
+        }
     }
     if invbind_max_residual > INVBIND_EPS {
         return Err(BmdError::Invariant(format!(
@@ -383,7 +388,7 @@ mod tests {
     #[ignore = "requires extracted assets; run via just toon_link link-verify-p3"]
     fn real_geometry_probed_facts() {
         let Some(data) = load_real() else { return };
-        let model = crate::bmd::parse_model(&data).unwrap();
+        let model = crate::bmd::parse_model_with(&data, &crate::bmd::CL_BDL).unwrap();
 
         // INF1
         assert_eq!(model.inf1.nodes.len(), 241);
@@ -445,7 +450,7 @@ mod tests {
     #[ignore = "requires extracted assets; run via just toon_link link-verify-p3"]
     fn real_bake_and_manifest() {
         let Some(data) = load_real() else { return };
-        let model = crate::bmd::parse_model(&data).unwrap();
+        let model = crate::bmd::parse_model_with(&data, &crate::bmd::CL_BDL).unwrap();
         let baked = bake(&model).unwrap();
 
         let tris: usize = baked.indices_per_shape.iter().map(|s| s.len() / 3).sum();
@@ -455,7 +460,12 @@ mod tests {
         assert_eq!(baked.vertices.len(), baked.skin.len());
 
         // Manifest round-trips through the shared serde types.
-        let converted = crate::output::build(&model, &baked);
+        let naming = crate::output::Naming {
+            prefix: "link",
+            display: "Toon Link",
+            ramps: true,
+        };
+        let converted = crate::output::build(&model, &baked, &naming);
         assert_eq!(converted.indices.len(), tris * 3);
         let json = serde_json::to_string(&converted.manifest).unwrap();
         let back: gx::model_manifest::Manifest = serde_json::from_str(&json).unwrap();

@@ -1,6 +1,7 @@
 //! Manifest + flat-binary emission and the `--obj` debug export. Converts the
 //! parsed `bmd::Model` and baked `pose::BakedModel` into
-//! `gx::model_manifest` types plus `link.{vtx,idx,skin}.bin`.
+//! `gx::model_manifest` types plus `{prefix}.{vtx,idx,skin}.bin`, where the
+//! prefix comes from the `Naming` of the model being converted.
 //!
 //! Enum→value mapping: renderer-facing raster state moves across as the shared
 //! `model_manifest` GX enums (which serialize as the canonical GX names); TEV
@@ -31,8 +32,21 @@ pub struct Converted {
     pub indices: Vec<u32>,
 }
 
-pub fn build(model: &Model, baked: &BakedModel) -> Converted {
-    let textures = build_textures(model);
+/// Per-model output naming. The prefix reaches `build` and not just the writers
+/// because the buffer filenames are recorded *inside* the manifest JSON, so the
+/// two must agree or the renderer looks for files that were never written.
+pub struct Naming<'a> {
+    /// Output basename: `{prefix}.manifest.json`, `.vtx.bin`, `.obj`, …
+    pub prefix: &'a str,
+    /// Human-readable model name, used in the OBJ header comment.
+    pub display: &'a str,
+    /// Apply the `RAMP_PREFIXES` runtime substitution. Off only via
+    /// `--no-ramps`, for inspecting the TEX1 placeholder a ramp slot hides.
+    pub ramps: bool,
+}
+
+pub fn build(model: &Model, baked: &BakedModel, naming: &Naming) -> Converted {
+    let textures = build_textures(model, naming.ramps);
     let materials = build_materials(model);
 
     let mut indices = Vec::new();
@@ -77,9 +91,9 @@ pub fn build(model: &Model, baked: &BakedModel) -> Converted {
     let manifest = mm::Manifest {
         version: 1,
         buffers: mm::Buffers {
-            vertices: "link.vtx.bin".into(),
-            indices: "link.idx.bin".into(),
-            skinning: "link.skin.bin".into(),
+            vertices: format!("{}.vtx.bin", naming.prefix),
+            indices: format!("{}.idx.bin", naming.prefix),
+            skinning: format!("{}.skin.bin", naming.prefix),
             vertex_layout: vec!["position3f".into(), "normal3f".into(), "uv02f".into()],
             vertex_count: baked.vertices.len() as u32,
             index_count: indices.len() as u32,
@@ -93,18 +107,19 @@ pub fn build(model: &Model, baked: &BakedModel) -> Converted {
     Converted { manifest, indices }
 }
 
-fn build_textures(model: &Model) -> Vec<mm::TextureEntry> {
+fn build_textures(model: &Model, ramps: bool) -> Vec<mm::TextureEntry> {
     model
         .tex1
         .entries
         .iter()
         .enumerate()
         .map(|(i, e)| {
-            let h = &e.texture.header;
             // Ramp slots point at the runtime-injected image, not the TEX1
             // placeholder.
+            let h = &e.texture.header;
             let (file, substitution) = RAMP_PREFIXES
                 .iter()
+                .filter(|_| ramps)
                 .find(|(prefix, ..)| e.name.starts_with(prefix))
                 .map(|(_, name, path)| (path.to_string(), Some(name.to_string())))
                 .unwrap_or_else(|| (format!("tex/{i:02}_{}.png", e.name), None));
@@ -255,9 +270,14 @@ fn tev_stage(s: &mat3::TevStage) -> mm::TevStageState {
     }
 }
 
-pub fn write_files(converted: &Converted, baked: &BakedModel, out_dir: &Path) -> Result<()> {
+pub fn write_files(
+    converted: &Converted,
+    baked: &BakedModel,
+    out_dir: &Path,
+    naming: &Naming,
+) -> Result<()> {
     let json = serde_json::to_string_pretty(&converted.manifest).context("serializing manifest")?;
-    let json_path = out_dir.join("link.manifest.json");
+    let json_path = out_dir.join(format!("{}.manifest.json", naming.prefix));
     std::fs::write(&json_path, json).with_context(|| format!("writing {}", json_path.display()))?;
 
     // vtx.bin: interleaved LE f32 pos[3] nrm[3] uv[2].
@@ -267,14 +287,14 @@ pub fn write_files(converted: &Converted, baked: &BakedModel, out_dir: &Path) ->
             vtx.extend_from_slice(&f.to_le_bytes());
         }
     }
-    write_bin(out_dir, "link.vtx.bin", &vtx)?;
+    write_bin(out_dir, &format!("{}.vtx.bin", naming.prefix), &vtx)?;
 
     // idx.bin: LE u32 triangle list.
     let mut idx = Vec::with_capacity(converted.indices.len() * 4);
     for &i in &converted.indices {
         idx.extend_from_slice(&i.to_le_bytes());
     }
-    write_bin(out_dir, "link.idx.bin", &idx)?;
+    write_bin(out_dir, &format!("{}.idx.bin", naming.prefix), &idx)?;
 
     // skin.bin: per vertex 4×(u8 joint + LE f32 weight).
     let mut skin = Vec::with_capacity(baked.skin.len() * 20);
@@ -284,7 +304,7 @@ pub fn write_files(converted: &Converted, baked: &BakedModel, out_dir: &Path) ->
             skin.extend_from_slice(&weight.to_le_bytes());
         }
     }
-    write_bin(out_dir, "link.skin.bin", &skin)?;
+    write_bin(out_dir, &format!("{}.skin.bin", naming.prefix), &skin)?;
 
     Ok(())
 }
@@ -301,10 +321,11 @@ pub fn write_obj(
     baked: &BakedModel,
     converted: &Converted,
     out_dir: &Path,
+    naming: &Naming,
 ) -> Result<()> {
     let mut obj = String::new();
-    writeln!(obj, "# Toon Link bind pose (debug export)").unwrap();
-    writeln!(obj, "mtllib link.mtl").unwrap();
+    writeln!(obj, "# {} bind pose (debug export)", naming.display).unwrap();
+    writeln!(obj, "mtllib {}.mtl", naming.prefix).unwrap();
     for v in &baked.vertices {
         writeln!(obj, "v {} {} {}", v.pos[0], v.pos[1], v.pos[2]).unwrap();
     }
@@ -326,7 +347,7 @@ pub fn write_obj(
             writeln!(obj, "f {a}/{a}/{a} {b}/{b}/{b} {c}/{c}/{c}").unwrap();
         }
     }
-    write_bin(out_dir, "link.obj", obj.as_bytes())?;
+    write_bin(out_dir, &format!("{}.obj", naming.prefix), obj.as_bytes())?;
 
     // MTL: reference each material's slot-0 texture PNG.
     let mut mtl = String::new();
@@ -344,7 +365,7 @@ pub fn write_obj(
         }
         writeln!(mtl).unwrap();
     }
-    write_bin(out_dir, "link.mtl", mtl.as_bytes())?;
+    write_bin(out_dir, &format!("{}.mtl", naming.prefix), mtl.as_bytes())?;
     let _ = model; // reserved for future per-joint debug output
     Ok(())
 }

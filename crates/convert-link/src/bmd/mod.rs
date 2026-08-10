@@ -93,6 +93,7 @@ pub enum BmdError {
     },
     BadJointCount {
         found: Option<u16>,
+        expected: u16,
     },
     /// An enum byte outside its known GX values; context names the chunk,
     /// entry, and field.
@@ -144,10 +145,13 @@ impl fmt::Display for BmdError {
             BmdError::TrailingBytes { covered, file_size } => {
                 write!(f, "blocks cover {covered} bytes of a {file_size}-byte file")
             }
-            BmdError::BadJointCount { found: Some(n) } => {
-                write!(f, "JNT1 reports {n} joints, expected 42")
+            BmdError::BadJointCount {
+                found: Some(n),
+                expected,
+            } => {
+                write!(f, "JNT1 reports {n} joints, expected {expected}")
             }
-            BmdError::BadJointCount { found: None } => write!(f, "no JNT1 chunk found"),
+            BmdError::BadJointCount { found: None, .. } => write!(f, "no JNT1 chunk found"),
             BmdError::Gx { context, source } => write!(f, "{context}: {source}"),
             BmdError::Texture { name, what } => write!(f, "texture {name}: {what}"),
             BmdError::Invariant(what) => f.write_str(what),
@@ -164,25 +168,37 @@ impl From<BeError> for BmdError {
     }
 }
 
-/// What a specific file is expected to contain. The public entry point pins
-/// cl.bdl's exact shape; synthetic unit tests relax it.
-struct Expectations {
+/// What a specific file is expected to contain. Every model this converter
+/// handles is a 9-block `J3D2`/`bdl4` with the same nine fourccs, so the joint
+/// count is the only thing that varies per file — which is what
+/// [`Expectations::bdl`] pins. Synthetic unit tests relax the rest.
+///
+/// Fields stay private deliberately: construct through the constructor rather
+/// than functional-record-update, which would require every field (including
+/// `fourccs`) to be public at the use site and so make `EXPECTED_FOURCCS`'s
+/// shape part of this module's API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Expectations {
     fourccs: &'static [[u8; 4]],
     block_num: u32,
     jnt1_count: Option<u16>,
 }
 
-const CL_BDL: Expectations = Expectations {
-    fourccs: &EXPECTED_FOURCCS,
-    block_num: 9,
-    jnt1_count: Some(42),
-};
-
-pub fn parse_chunk_table(data: &[u8]) -> Result<ChunkTable, BmdError> {
-    parse_chunk_table_with(data, &CL_BDL)
+impl Expectations {
+    /// A standard 9-block bdl4 with a known joint count.
+    pub const fn bdl(jnt1_count: u16) -> Self {
+        Expectations {
+            fourccs: &EXPECTED_FOURCCS,
+            block_num: 9,
+            jnt1_count: Some(jnt1_count),
+        }
+    }
 }
 
-fn parse_chunk_table_with(data: &[u8], expect: &Expectations) -> Result<ChunkTable, BmdError> {
+/// Toon Link's `cl.bdl`.
+pub const CL_BDL: Expectations = Expectations::bdl(42);
+
+pub fn parse_chunk_table_with(data: &[u8], expect: &Expectations) -> Result<ChunkTable, BmdError> {
     let mut r = BeReader::new(data);
 
     let magic = four(&mut r)?;
@@ -250,7 +266,7 @@ fn parse_chunk_table_with(data: &[u8], expect: &Expectations) -> Result<ChunkTab
             .find(|c| &c.fourcc.0 == b"JNT1")
             .and_then(|c| c.count);
         if found != Some(expected) {
-            return Err(BmdError::BadJointCount { found });
+            return Err(BmdError::BadJointCount { found, expected });
         }
     }
 
@@ -281,8 +297,8 @@ pub struct Model<'a> {
 
 /// P2/P3 growth point: each chunk parser lands in `bmd/<chunk>.rs` and gets
 /// a match arm here; nothing else in this module should need to change.
-pub fn parse_model(data: &[u8]) -> Result<Model<'_>, BmdError> {
-    let table = parse_chunk_table(data)?;
+pub fn parse_model_with<'a>(data: &'a [u8], expect: &Expectations) -> Result<Model<'a>, BmdError> {
+    let table = parse_chunk_table_with(data, expect)?;
     let mut slices: std::collections::HashMap<[u8; 4], &[u8]> = std::collections::HashMap::new();
     for chunk in &table.chunks {
         let slice = &data[chunk.offset..chunk.offset + chunk.size];
@@ -291,7 +307,7 @@ pub fn parse_model(data: &[u8]) -> Result<Model<'_>, BmdError> {
             b"INF1" | b"VTX1" | b"EVP1" | b"DRW1" | b"JNT1" | b"SHP1" | b"MAT3" | b"TEX1" => {
                 slices.insert(chunk.fourcc.0, slice);
             }
-            _ => unreachable!("validated by parse_chunk_table"),
+            _ => unreachable!("validated by parse_chunk_table_with"),
         }
     }
     let need = |fourcc: &[u8; 4]| -> Result<&[u8], BmdError> {
@@ -505,13 +521,19 @@ mod tests {
         let data = synth(&[(*b"JNT1", &[0x00, 0x07, 0, 0]), (*b"BBBB", &[0; 4])]);
         assert_eq!(
             parse_chunk_table_with(&data, &strict),
-            Err(BmdError::BadJointCount { found: Some(7) })
+            Err(BmdError::BadJointCount {
+                found: Some(7),
+                expected: 42
+            })
         );
         // no JNT1 at all
         let data = synth(&[(*b"AAAA", &[0; 8]), (*b"BBBB", &[0; 4])]);
         assert_eq!(
             parse_chunk_table_with(&data, &strict),
-            Err(BmdError::BadJointCount { found: None })
+            Err(BmdError::BadJointCount {
+                found: None,
+                expected: 42
+            })
         );
     }
 
@@ -542,7 +564,8 @@ mod tests {
             eprintln!("skipping: {path} not present");
             return;
         };
-        let table = parse_chunk_table(&data).expect("cl.bdl must satisfy all invariants");
+        let table =
+            parse_chunk_table_with(&data, &CL_BDL).expect("cl.bdl must satisfy all invariants");
         // recorded facts: claude_notes/link_rendering/phase_01.md, verified
         // against the gclib oracle via `just toon_link link-verify-p1`
         assert_eq!(

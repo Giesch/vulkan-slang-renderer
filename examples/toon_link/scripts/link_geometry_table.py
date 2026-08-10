@@ -60,6 +60,8 @@ NODE_TYPE = {
 }
 ATTR = {"Position": "POS", "Normal": "NRM", "Tex0": "TEX0"}
 COMP_TYPE = {"Float32": "F32", "Signed16": "S16"}
+# bytes per NRM element, keyed by gclib's component-type name
+NRM_STRIDE = {"Float32": 12, "Signed16": 6}
 # raw GX values → our spellings, for the struct-walked chunks
 SHAPE_MTX = {0: "Single", 1: "Billboard", 2: "BillboardY", 3: "Multi"}
 DL_ATTR = {0x00: "PNMTXIDX", 0x09: "POS", 0x0A: "NRM", 0x0D: "TEX0"}
@@ -97,8 +99,14 @@ def vtx1_section(out, c):
         nxt = min((o for o in present if o > off), default=chunk_len)
         return (nxt - off) // stride
 
+    # The normal stride follows the NRM format entry rather than a constant:
+    # cl.bdl stores F32 XYZ (12 bytes), fn_head_h.bdl S16 XYZ (6). The
+    # default-12 fallback mirrors vtx1.rs's, so the two sides stay diffable
+    # even for a file with no NRM entry.
+    nrm_fmt = next((vf for vf in formats if vf.attribute_type.name == "Normal"), None)
+    nrm_stride = NRM_STRIDE[nrm_fmt.component_type.name] if nrm_fmt else 12
     out.append(
-        f"vtxcount pos={count(offsets[0], 12)} nrm={count(offsets[1], 12)} "
+        f"vtxcount pos={count(offsets[0], 12)} nrm={count(offsets[1], nrm_stride)} "
         f"uv0={count(offsets[5], 4)}"
     )
 
@@ -125,6 +133,13 @@ def evp1_section(out, c, joint_count):
     idx_off = u32(d, 0x10)
     wgt_off = u32(d, 0x14)
     inv_off = u32(d, 0x18)
+    # A model with no skinning has a header-only EVP1: count 0 and all four
+    # offsets 0. There is nothing to walk, and reading 12 floats per joint from
+    # offset 0 would run off the end of the 32-byte chunk. Mirrors evp1.rs's
+    # early return, which yields empty envelope and inverse-bind vecs.
+    if inv_off == 0:
+        out.append("EVP1 envelopes=0 invbinds=0")
+        return
     inv_count = (len(d) - inv_off) // 0x30
     out.append(f"EVP1 envelopes={count} invbinds={joint_count}")
     ii = 0

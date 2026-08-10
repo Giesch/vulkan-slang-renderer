@@ -15,10 +15,29 @@ _default:
 extract-link:
     ./scripts/extract_link.sh
 
+# extract King of Red Lions assets from the tww disc image (needs a tww checkout beside the repo; override with TWW_DIR)
+[unix]
+extract-ship:
+    ./scripts/extract_ship.sh
+
 # parse Link's BDL and emit converted assets (P1: chunk walk only)
 [unix]
 convert-link *args:
     cargo run -p convert-link --bin convert_link -- assets/link/raw assets/link/converted {{args}}
+
+# parse the King of Red Lions' hull BDL and emit an OBJ (llm_notes/ship_extraction.md)
+# NOTE separate out-dirs per model: both write mat3_dump.txt and index-prefixed
+# tex/NN_*.png, so a shared dir would collide on both.
+[unix]
+convert-ship *args:
+    cargo run -p convert-link --bin convert_link -- \
+      assets/ship/raw assets/ship/converted/body --model=ship --obj {{args}}
+
+# parse the King of Red Lions' figurehead BDL and emit an OBJ
+[unix]
+convert-ship-head *args:
+    cargo run -p convert-link --bin convert_link -- \
+      assets/ship/raw assets/ship/converted/head --model=ship-head --obj {{args}}
 
 
 # P1 gate: diff our --info chunk table against the gclib oracle, then run ignored tests

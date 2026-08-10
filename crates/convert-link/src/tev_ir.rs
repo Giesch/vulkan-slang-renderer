@@ -1055,7 +1055,7 @@ mod tests {
             eprintln!("skipping: {path} not present");
             return;
         };
-        let model = crate::bmd::parse_model(&data).unwrap();
+        let model = crate::bmd::parse_model_with(&data, &crate::bmd::CL_BDL).unwrap();
         let descs = describe_all(&model.mat3).expect("all 24 materials must pass the gate");
         assert_eq!(descs.len(), 24);
 
