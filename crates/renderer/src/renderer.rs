@@ -2409,6 +2409,9 @@ impl Renderer {
         pending_compute: Vec<PendingComputeCommand>,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), anyhow::Error> {
+        // The slot the draws were queued against
+        let queue_flight_slot = self.flight_slot;
+
         #[cfg(debug_assertions)]
         {
             let mut graphics_indices: Vec<GraphicsPipelineIndex> = pending_draws
@@ -2475,6 +2478,11 @@ impl Renderer {
 
         // 3. CPU buffer writes, after the wait that proves this slot's last user
         //    has retired
+        debug_assert_eq!(
+            self.flight_slot, queue_flight_slot,
+            "flight slot changed between queueing and Gpu construction; \
+             queue-time minted addresses now point at the wrong frame's buffer"
+        );
         let mut gpu = Gpu {
             flight_slot: self.flight_slot,
             uniform_buffers: &mut self.uniform_buffers,
@@ -2539,6 +2547,9 @@ impl Renderer {
         //    This ensures that if present triggers swapchain recreation (early return),
         //    the next frame won't reuse the same slot whose semaphores
         //    are still signaled from this frame's submit.
+        //
+        //    This must stay after the Gpu construction above.
+        //    This should remain the only write to flight_slot outside Renderer::new.
         self.flight_slot = (self.flight_slot + 1) % MAX_FRAMES_IN_FLIGHT;
 
         let swapchains = [self.swapchain];
@@ -5455,9 +5466,25 @@ impl<'f> Gpu<'f> {
         &self,
         immutable_buffer: &ImmutableBufferHandle<T>,
     ) -> ImmutableAddr<T> {
-        ImmutableAddr::from_raw(
-            self.storage_buffers
-                .get_device_address_for_frame_immutable(immutable_buffer, self.flight_slot),
+        self.storage_buffers
+            .immutable_addr_for_frame(immutable_buffer, self.flight_slot)
+    }
+
+    /// A pointer to one element of the current frame's buffer
+    ///
+    /// # Panics
+    ///
+    /// If `index` is out of bounds, in release builds too — an out-of-range
+    /// buffer device address is UB rather than a clamped read.
+    pub fn current_immutable_addr_at<T>(
+        &self,
+        immutable_buffer: &ImmutableBufferHandle<T>,
+        index: u32,
+    ) -> ImmutableAddr<T> {
+        self.storage_buffers.immutable_element_addr_for_frame(
+            immutable_buffer,
+            self.flight_slot,
+            index,
         )
     }
 }
@@ -5523,6 +5550,40 @@ impl<'f> FrameRenderer<'f> {
     /// Returns the current render scale (0.25 to 1.0)
     pub fn render_scale(&self) -> f32 {
         self.renderer.render_scale
+    }
+
+    /// A pointer to the current frame's buffer, mintable at queue time
+    ///
+    /// The `Gpu` twin of this is only reachable from inside the `submit_draws`
+    /// closure, which runs *after* the queued draws have been consumed — so
+    /// anything that has to travel with a draw (a push constant payload) has to
+    /// be minted here instead.
+    ///
+    /// Both surfaces return the same address: `flight_slot` advances at the end
+    /// of `draw_frame` (see the comment there), so during queueing the renderer
+    /// already holds the value `Gpu` will be built with. `draw_frame`
+    /// debug-asserts that.
+    pub fn current_immutable_addr<T>(
+        &self,
+        immutable_buffer: &ImmutableBufferHandle<T>,
+    ) -> ImmutableAddr<T> {
+        self.renderer
+            .storage_buffers
+            .immutable_addr_for_frame(immutable_buffer, self.renderer.flight_slot)
+    }
+
+    /// A pointer to one element of the current frame's buffer, mintable at
+    /// queue time
+    ///
+    /// See `Gpu::current_immutable_addr_at` for the panic contract.
+    pub fn current_immutable_addr_at<T>(
+        &self,
+        immutable_buffer: &ImmutableBufferHandle<T>,
+        index: u32,
+    ) -> ImmutableAddr<T> {
+        self.renderer
+            .storage_buffers
+            .immutable_element_addr_for_frame(immutable_buffer, self.renderer.flight_slot, index)
     }
 
     /// Queue a compute dispatch, inserting a barrier with a previous one.

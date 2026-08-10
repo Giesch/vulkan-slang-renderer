@@ -1,7 +1,7 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-6 done, Phases 7-10 not started. Phase 11 is an optional
-follow-up, added later and a prerequisite for nothing.** Design note for adopting bindless
+**Status: Phases 0-7c done, Phases 8-10 not started. Phase 7d and Phase 11 are
+optional follow-ups, added later and prerequisites for nothing.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
 **Phases 6-9 were one phase until Phase 6 planning found a prerequisite this
@@ -1056,7 +1056,7 @@ parameters — are now rejected by the allow-list. Nothing here uses them and
 codegen could not handle them, so a clear message beats a silent drop; but this
 is the allow-list making a decision, not a measured judgement about generics.
 
-## Phase 7c — bounds-checked element addresses, mintable at queue time
+## Phase 7c — bounds-checked element addresses, mintable at queue time ✅ done
 
 **Why this phase exists.** Phase 9 plans to push a bare `uint materialIndex` and
 keep the `ImmutableAddr<Material>` in the param block, because the more direct
@@ -1104,6 +1104,34 @@ stride reads valid memory and renders a plausible image with no validation outpu
 
 **Detailed plan: [bindless_textures/phase_07c.md](bindless_textures/phase_07c.md)**
 
+**Verified:** `cargo check --workspace --all-targets`, `just test`, `just lint`
+and `cargo fmt` clean, with zero snapshot churn — the whole phase is two modified
+files, `renderer.rs` and `renderer/storage_buffer.rs`. `just sweep` 16 ok / 0 fail
+with the injected-fault self-test still firing.
+
+Three corrections to the plan above, all recorded in full in the detailed doc:
+
+- **The two-surfaces-agree test cannot be written**, because `renderer.rs`'s test
+  module is pure functions and there is no headless device harness. The claim is
+  pinned in situ instead: `Renderer::draw_frame` captures `flight_slot` at entry
+  and `debug_assert_eq!`s it immediately before constructing `Gpu`. That runs in
+  every debug frame of every example and every sweep — more coverage than the
+  test would have had, and it fails at the site that would break it.
+- **The GPU proof could not push anything** — `cmd_push_constants` is Phase 8. The
+  element address went in the param block instead, which exercises the same
+  arithmetic. It also needed `sprite_batch` frozen and cut to 4 fixed sprites:
+  the committed example re-randomizes 8192 sprites per frame, which is both
+  un-A/B-able and precisely the "plausible image" the warning is about. `K = 1`
+  drops the first sprite and leaves the rest **pixel-identical** (`compare
+  -metric AE` = 0); a deliberately wrong stride renders nothing at all.
+- **The bounds check and stride multiply landed as a free
+  `element_byte_offset(index, len, stride)` helper**, so the `assert!` is
+  unit-testable without a device. It is a release assert, as planned.
+
+**Still unproven, by design:** nothing writes an element address into a *push
+block*, because there is no push channel yet. Phase 8 is what closes that, and
+this phase settles its payload design — queue-time bytes, not a closure fill.
+
 ## Phase 7d — a non-ringed buffer for upload-once static data (follow-up)
 
 **Not a prerequisite for anything** — 7c and Phase 9 both work without it. Recorded
@@ -1147,10 +1175,11 @@ consequences. **7d is only the CPU-uploaded, GPU-read-only half.**
   entry point parameter, a second and implicit source of ranges, that could
   produce two ranges with no global block involved, and reflection now rejects
   that outright. An annotated global is the only remaining source.
-  **Phase 7c is a prerequisite**, for a different reason: it
-  decides whether the payload below is filled at queue time (7c's answer) or by
-  the submit closure (`05` §4's), and those are incompatible designs rather than
-  styles.
+  **Phase 7c was a prerequisite for a different reason, and is now done**: it
+  decided whether the payload below is filled at queue time or by the submit
+  closure (`05` §4's), which are incompatible designs rather than styles.
+  Queue-time minting works — `FrameRenderer::current_immutable_addr_at` — so the
+  payload below stays queue-time bytes.
 - **Payload on `PendingDrawCommand::Draw`, not inside `DrawCallConfig`** — the
   latter is `Copy`. Store it inline as `[u8; 128]` plus a length rather than a
   `Vec<u8>`: 128 is the spec floor so it is exactly right-sized, it keeps the

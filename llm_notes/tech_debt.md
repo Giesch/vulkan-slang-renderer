@@ -31,6 +31,8 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 12. [The sweep's fixed timeout fails the two pipeline-heaviest examples on a GPU-less box](#12-the-sweeps-fixed-timeout-fails-the-two-pipeline-heaviest-examples-on-a-gpu-less-box) — **false red**, and one of its two spellings accuses §1
 13. [The engine cannot screenshot itself, so the gate for validation-invisible bugs is external tooling](#13-the-engine-cannot-screenshot-itself-so-the-gate-for-validation-invisible-bugs-is-external-tooling) — verification depends on the desktop environment, not the repo
 14. [Multiple `ParameterBlock` globals are supported end-to-end but never exercised](#14-multiple-parameterblock-globals-are-supported-end-to-end-but-never-exercised) — untested path, an ordering contract held together by a comment
+15. [`Game::draw` takes `&mut self`, so a frame-scoped GPU address can be stashed across frames](#15-gamedraw-takes-mut-self-so-a-frame-scoped-gpu-address-can-be-stashed-across-frames) — latent **silent-wrong-data** hazard, nothing in the type system prevents it
+16. [Typed device-address minting is split across two layers](#16-typed-device-address-minting-is-split-across-two-layers) — an invariant held by convention that could be held by the compiler
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -1164,3 +1166,176 @@ already works. Not recommended.
 flat vectors and the set layouts disagree. The `Resources` ordering comment in
 `shader_atlas_entry.rs.askama` can then point at the fixture instead of asking
 the reader to take it on faith.
+
+## 15. `Game::draw` takes `&mut self`, so a frame-scoped GPU address can be stashed across frames
+
+**Context.** Raised while landing Phase 7c of
+[`bindless_textures.md`](bindless_textures.md) (2026-08-09), as a question about
+whether a `&self` receiver could have replaced the `flight_slot` assert that
+phase added. It cannot — see "What this is *not*" below — but the underlying
+hazard it points at is real and unowned, so it is recorded here.
+
+**The problem.** `Game::draw` takes `&mut self`
+(`crates/mltrs/src/game/traits.rs:32`):
+
+```rust
+fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
+```
+
+Every device address the engine hands a game is valid for **one frame only**.
+`create_immutable_buffer` (`renderer.rs:1035`) allocates one buffer per flight
+slot, so `Gpu::current_immutable_addr` and its `FrameRenderer`
+twin return a different `u64` depending on `flight_slot`, which cycles with
+`MAX_FRAMES_IN_FLIGHT = 2`. A game that caches one in a field and reuses it next
+frame reads the *other* slot's buffer — stale data, not a crash. Nothing in the
+type system says so: `ImmutableAddr<T>` is an 8-byte `Copy` newtype whose
+`to_raw()` is public, and `&mut self` lets a game write it straight into its own
+state.
+
+The failure mode is the worst kind: the address is a live, mapped, correctly
+aligned allocation of the right type, so there is no validation message, no
+fault, and no crash — just data one frame out of date, alternating every frame.
+
+**Why it's tolerable today.** No example does it. The only address-bearing
+example is `sprite_batch`, which mints inside the `submit_draws` closure and
+writes the result straight into the param struct it is building. And a stale
+address is *self-consistent* in the common case — a buffer the CPU rewrites with
+similar data every frame looks fine when read one slot late, which is precisely
+why this would be found by staring at a diff rather than by a tool.
+
+**What this is *not*.** It is not the invariant the Phase 7c assert
+(`renderer.rs:2481`) protects. That one is entirely renderer-internal: it checks
+that `flight_slot` is unchanged between `FrameRenderer` reading it at queue time
+and `Gpu` being built from it later in the same `Renderer::draw_frame`. The game
+is not a participant, so no receiver on `Game::draw` can detect or prevent it.
+The two entries share a subject (per-frame addresses) and nothing else.
+
+**Fix — and `&self` alone is not it.** Three options, weakest first:
+
+1. **`fn draw(&self, …)`.** Blocks the obvious `self.cached = addr`. It does not
+   block `Cell`/`RefCell`, a `static`, or `addr.to_raw()` into a plain `u64`
+   field. It also **breaks the entire write API**: `write_uniform`,
+   `write_storage` and `write_immutable` all take `&mut` *handles*
+   (`renderer.rs:5399`, `:5420`, and the `get_mapped_mem_for_frame_*` family in
+   `renderer/storage_buffer.rs`), and those
+   handles live on the game struct — `sprite_batch` does
+   `gpu.write_uniform(&mut self.params_buffer, params)` inside its closure. Every
+   example would have to move its handles behind interior mutability, which is
+   the same escape hatch the change was meant to close. Not recommended on its
+   own.
+2. **A lifetime brand: `ImmutableAddr<'f, T>`,** tied to the `Gpu<'f>` /
+   `FrameRenderer<'f>` borrow, so the address cannot outlive the frame. This is
+   the mechanism that actually makes stashing a compile error. The cost is that
+   the generated param structs hold `ImmutableAddr<T>` fields and are `#[repr(C)]`
+   PODs memcpy'd into mapped memory, so the lifetime propagates through
+   `gather_struct_defs` (`crates/cli/src/build_tasks.rs`) into every generated
+   struct and every example that names one. Worth pricing before committing.
+   Note it must *not* forbid the legitimate case — writing the address into a
+   param struct that outlives the closure is the whole point (the same
+   realization that moved `bindless_handle` off `Gpu` in Phase 5 of
+   `bindless_textures.md`: "a handle written into a param struct outlives the
+   draw closure regardless").
+3. **Remove the hazard for the buffers that don't need the ring.**
+   [`bindless_textures/phase_07d.md`](bindless_textures/phase_07d.md) proposes a
+   non-ringed handle for upload-once static data: one allocation, one stable
+   address for the process's life. An address minted from that type is safe to
+   stash by construction, which shrinks this entry to the genuinely per-frame
+   buffers rather than solving it. Cheapest real progress, and already planned.
+
+**Widened by Phase 7c, worth knowing.** Before 7c, addresses could only be minted
+inside the `submit_draws` closure. `FrameRenderer::current_immutable_addr` and
+`::current_immutable_addr_at` now mint at queue time too, where `&mut self` is
+plainly in scope and the natural place to put the result is a local — or a field.
+The surface is wider than when this was last implicitly safe.
+
+**Done means.** Either a game cannot hold a frame-scoped address past the frame
+(option 2), or every address a game *can* hold is one whose validity does not
+expire (option 3 covering the static case, with the per-frame remainder
+documented at the accessors). Failing both, at minimum: `addr.rs` and the four
+`current_*_addr*` accessors say in their doc comments that the value is valid for
+exactly one frame and must not be cached, which today none of them do.
+
+## 16. Typed device-address minting is split across two layers
+
+**Context.** Phase 7c of [`bindless_textures.md`](bindless_textures.md)
+(2026-08-09) needed `ImmutableAddr` minting from *two* surfaces — `Gpu` inside
+the submit closure and `FrameRenderer` at queue time — and de-duplicating them
+pushed the `ImmutableAddr::from_raw` wrap down into `StorageBufferStorage`
+(`immutable_addr_for_frame` / `immutable_element_addr_for_frame`,
+`renderer/storage_buffer.rs:186`). That was the right move for those two, and it
+left the codebase with the wrap applied in two different layers depending on
+which pointer type you ask for.
+
+**The problem.** `u64` → typed wrapper now happens in two places:
+
+| accessor | mints in | via |
+|---|---|---|
+| `Gpu::addr` (`renderer.rs:5435`) | `Gpu` | `Addr::from_raw` |
+| `Gpu::current_addr` (`:5446`) | `Gpu` | `Addr::from_raw` |
+| `Gpu::previous_addr` (`:5457`) | `Gpu` | `ReadAddr::from_raw` |
+| `Gpu::current_immutable_addr{,_at}` | `StorageBufferStorage` | already moved |
+| `FrameRenderer::current_immutable_addr{,_at}` | `StorageBufferStorage` | already moved |
+
+Three raw-mint sites remain, all in `Gpu`, and they are the only callers of
+`get_device_address_for_frame` (`storage_buffer.rs:104`) and
+`get_device_address_for_frame_gpu_only` (`:243`) outside the module.
+
+The cost is not the split itself — it is what the split prevents.
+`Addr::from_raw`, `ReadAddr::from_raw` and `ImmutableAddr::from_raw` are all
+`pub(super)` in `renderer::addr`, i.e. callable from *anywhere* in `renderer` and
+its descendants. `addr.rs:136-138` states the actual rule in a comment:
+
+```rust
+// pub(crate): minting is restricted to Renderer/Gpu accessors that take
+// an ImmutableBufferHandle, which upholds the never-GPU-written invariant
+// Access.Immutable requires.
+```
+
+"Restricted to accessors that take a handle" is exactly the kind of claim a
+visibility modifier can enforce, and today it is enforced by nobody. A future
+accessor that fabricates an address from arithmetic — the thing Phase 7c's
+blocker 2 exists to prevent — compiles fine.
+
+**Why it's tolerable today.** Three call sites, all correct, all in one `impl`
+block, and the immutable family (the one with the strongest invariant, and the
+one Phase 9's push-constant work will lean on) is already consolidated. Nothing
+is wrong; the wrap is just applied inconsistently.
+
+**Fix.** Move the remaining three, then tighten the visibility — the second half
+is the point, and doing only the first half buys tidiness and nothing else.
+
+1. Add `addr_for_frame`, `gpu_only_addr_for_frame` and
+   `gpu_only_read_addr_for_frame` to `StorageBufferStorage`, alongside the two
+   immutable ones. The `Gpu` accessors become single-line forwarders, as
+   `current_immutable_addr` already is.
+2. `previous_addr` is the only one with logic to place: the
+   `(flight_slot + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT` step
+   (`renderer.rs:5458`). Leave it in `Gpu` and pass the resolved frame — the
+   storage layer has no business knowing about ping-pong semantics, which
+   `GpuOnlyBufferHandle`'s own doc comment frames as a property of the *handle
+   kind*, not of the slab.
+3. Then narrow all three `from_raw`s from `pub(super)` to
+   `pub(in crate::renderer::storage_buffer)`, and rewrite the `addr.rs` comment
+   above from a promise into a description of what the compiler now checks. Also
+   consider making the raw `get_device_address_for_frame*` getters private to the
+   module once nothing outside calls them.
+
+**Two things this does not cover**, named so they don't read as oversights:
+
+- `From<Addr<T>> for ReadAddr<T>` and `From<ImmutableAddr<T>> for ReadAddr<T>`
+  (`addr.rs:84`, `:152`) build the struct literally rather than through
+  `from_raw`. They convert an address that was already minted legitimately, so
+  they do not weaken the invariant — but they do mean `addr.rs` keeps a
+  construction path of its own, and "one layer" is precise only about *raw u64*
+  entry.
+- `TextureHandle::bindless_handle` mints a `BindlessHandle` from a heap slot
+  (`renderer/bindless.rs`, `renderer/texture.rs`). Same shape of idea, but the
+  raw is a `u32` slot rather than a device address and the owner is the texture
+  slab, not the buffer slab. If a general "one place mints typed handles" rule is
+  wanted it should follow this entry, not be folded into it.
+
+**Done means.** `Addr`, `ReadAddr` and `ImmutableAddr` can only be constructed
+from a raw `u64` inside `renderer/storage_buffer.rs`, enforced by their
+`from_raw` visibility rather than asserted in a comment; every `Gpu` and
+`FrameRenderer` address accessor is a forwarder with no `from_raw` of its own;
+and `just sweep` still passes, since this is behaviour-preserving throughout.

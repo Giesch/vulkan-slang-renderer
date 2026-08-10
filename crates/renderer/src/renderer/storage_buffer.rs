@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use ash::vk;
 
 use super::MAX_FRAMES_IN_FLIGHT;
+use super::addr::ImmutableAddr;
 
 #[derive(Debug)]
 pub struct StorageBufferHandle<T> {
@@ -151,6 +152,47 @@ impl StorageBufferStorage {
         self.0[handle.index].as_ref().unwrap()[frame].device_address
     }
 
+    /// The address of a single element, for pointing a shader at one struct in
+    /// the buffer rather than at its base.
+    ///
+    /// The stride is `size_of::<T>()`, which is the slang std430 array stride
+    /// by an existing test rather than by assumption: codegen emits
+    /// `assert!(size_of::<T>() == expected_size)` and
+    /// `pointer_pointee_spirv_layout` checks that same number against the
+    /// emitted SPIR-V `ArrayStride`. It is also what
+    /// `create_storage_buffers_per_frame` sizes the allocation with.
+    pub(super) fn get_element_device_address_for_frame_immutable<T>(
+        &self,
+        handle: &ImmutableBufferHandle<T>,
+        frame: usize,
+        index: u32,
+    ) -> vk::DeviceAddress {
+        self.get_device_address_for_frame_immutable(handle, frame)
+            + element_byte_offset(index, handle.len, std::mem::size_of::<T>())
+    }
+
+    pub(super) fn immutable_addr_for_frame<T>(
+        &self,
+        handle: &ImmutableBufferHandle<T>,
+        frame: usize,
+    ) -> ImmutableAddr<T> {
+        let address = self.get_device_address_for_frame_immutable(handle, frame);
+        ImmutableAddr::from_raw(address)
+    }
+
+    /// # Panics
+    ///
+    /// If `index` is out of bounds, see `element_byte_offset`.
+    pub(super) fn immutable_element_addr_for_frame<T>(
+        &self,
+        handle: &ImmutableBufferHandle<T>,
+        frame: usize,
+        index: u32,
+    ) -> ImmutableAddr<T> {
+        let address = self.get_element_device_address_for_frame_immutable(handle, frame, index);
+        ImmutableAddr::from_raw(address)
+    }
+
     pub(super) fn get_mapped_mem_for_frame_immutable<T>(
         &mut self,
         handle: &mut ImmutableBufferHandle<T>,
@@ -215,5 +257,43 @@ impl StorageBufferStorage {
             .iter_mut()
             .filter_map(|option| option.take())
             .collect()
+    }
+}
+
+/// byte offset of element `index` in a buffer of `len` elements of `stride` bytes
+///
+/// `assert!`, not `debug_assert!` — deliberately unlike the neighbouring bounds
+/// check in `queue_draw_index_range`. That one is debug-only because a bad index
+/// range renders garbage silently under `robustBufferAccess`; robust access
+/// covers descriptor-bound buffers and does *not* cover buffer device addresses,
+/// which bypass descriptor bounds checking entirely. An out-of-range element
+/// address is undefined behaviour and a plausible device loss, not a clamped read.
+fn element_byte_offset(index: u32, len: u32, stride: usize) -> u64 {
+    assert!(
+        index < len,
+        "element index {index} out of bounds for buffer of {len} element(s)"
+    );
+
+    index as u64 * stride as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::element_byte_offset;
+
+    #[test]
+    fn element_offsets_are_index_times_stride() {
+        // a non-power-of-two stride, so a shift-vs-multiply mistake would show
+        assert_eq!(element_byte_offset(0, 4, 24), 0);
+        assert_eq!(element_byte_offset(1, 4, 24), 24);
+        assert_eq!(element_byte_offset(3, 4, 24), 72);
+    }
+
+    /// not `#[should_panic]` behind `debug_assertions`: the bound must hold in
+    /// release too, because robustBufferAccess does not cover BDA loads
+    #[test]
+    #[should_panic(expected = "element index 4 out of bounds for buffer of 4 element(s)")]
+    fn one_past_the_end_panics() {
+        element_byte_offset(4, 4, 24);
     }
 }

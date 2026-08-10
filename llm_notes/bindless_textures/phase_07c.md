@@ -1,7 +1,8 @@
 # Phase 7c — bounds-checked element addresses, mintable at queue time
 
 Detailed plan for Phase 7c of [../bindless_textures.md](../bindless_textures.md).
-**Status: not started.** Line numbers verified during the Phase 7 session.
+**Status: ✅ done.** Line numbers verified during the Phase 7 session; the
+Verification section at the bottom records what actually happened.
 
 Renderer-only: no reflection, no codegen, no template changes.
 
@@ -91,6 +92,14 @@ So: put the logic in `StorageBufferStorage` beside `get_device_address_for_frame
 `GpuOnlyBufferHandle` are the same shape and can follow when something wants them.
 Speculative API here triples the surface to test and buys nothing.
 
+**Landed as three methods plus a free helper, not two methods.** The bounds
+check and the stride multiply are a `fn element_byte_offset(index, len, stride)
+-> u64` at the bottom of storage_buffer.rs, because it is the only part of the
+accessor that can be unit-tested without a device (see Verification).
+`Gpu::current_immutable_addr_at`, `FrameRenderer::current_immutable_addr` and
+`FrameRenderer::current_immutable_addr_at` all funnel through the one
+`StorageBufferStorage` method.
+
 ## Why the two surfaces agree — verified, not assumed
 
 `flight_slot` is advanced at renderer.rs:2542, at the *end* of `draw_frame`, before
@@ -104,6 +113,23 @@ a `vk::DeviceAddress` recorded at buffer creation. The timeline wait before
 `gpu_update` exists to make *writing* mapped memory safe, and that stays in the
 closure. Minting at queue time and writing data in the closure are independent
 operations on the same slot, in the correct order.
+
+**This is now pinned in code, not just argued.** The plan asked for a test that
+mints from both surfaces in one frame and compares — which cannot be written,
+because `renderer.rs`'s test module is pure functions and there is no headless
+device harness. The claim is instead asserted where it can actually rot:
+`Renderer::draw_frame` captures `queue_flight_slot` at entry and
+`debug_assert_eq!`s it against `self.flight_slot` immediately before building
+`Gpu`. That runs in every debug frame of every example and every `just sweep`
+run, which is strictly more coverage than one test would have given. The advance
+site at the end of the method carries a matching comment, and `flight_slot` is
+written in exactly two places (`Renderer::new` and that advance) — checked, so
+the pair really is exhaustive.
+
+One case the plan did not mention: `draw_frame` can return before `Gpu` exists at
+all, via the `ERROR_OUT_OF_DATE_KHR` → `recreate_swapchain` early return. The
+queued draws are dropped with it, so addresses minted for that frame are simply
+unused; the assert is not reached and nothing is wrong.
 
 ## `assert!`, not `debug_assert!`
 
@@ -164,3 +190,41 @@ Three targeted checks, in ascending order of what they'd catch:
 
 A green `just sweep` proves nothing on its own here: a wrong stride reads valid
 mapped memory and renders a plausible image with no validation output.
+
+**Verified:** `cargo check --workspace --all-targets`, `just test`, `just lint`
+and `cargo fmt` all clean. **Zero snapshot churn** — `git status` after the whole
+phase lists exactly two modified files, `renderer.rs` and `storage_buffer.rs`.
+`just sweep` 16 ok / 0 fail with the injected-fault self-test still firing, which
+is also what exercises the new `debug_assert_eq!` across all 16 examples.
+
+Check 1 landed as two unit tests on `element_byte_offset`
+(`element_offsets_are_index_times_stride` at a deliberately non-power-of-two
+stride, and `one_past_the_end_panics`). Check 2 became the in-situ assert
+described above.
+
+**Check 3 could not be done as written, and the substitute is stronger.** The
+plan said to "push one sprite's element address per draw" — but
+`cmd_push_constants` does not exist until Phase 8, so there is nothing to push
+into. The param-block route proves the same arithmetic: point
+`SpriteBatchParams.sprites` at element `K` and shorten the draw to `(n - K) * 6`
+vertices, so the shader's `sprites[id / 6]` resolves to buffer element `K + i`.
+
+`sprite_batch` as committed re-randomizes all 8192 sprites *every frame*, so an
+A/B of it is meaningless — and 8192 scattered sprites are exactly the "plausible
+image" the warning above is about. So the scaffolding also cut `SPRITE_COUNT` to
+4 and gave each a fixed position, a distinct atlas tile and a distinct tint.
+Captured under a real GPU (`SDL_VIDEODRIVER=x11`, `import -window` against the
+window id from `xwininfo -root -tree`; the same X11 route Phase 6 fell back to):
+
+- `K = 0` — four sprites at x = 100/250/400/550, one per tile/colour.
+- `K = 1` — the last three, **unmoved**. `compare -metric AE` over the crop
+  containing them reports **0** differing pixels against the `K = 0` capture, so
+  this is pixel equality rather than an eyeball.
+- `K = 3` — the fourth sprite alone, still at x = 550.
+
+**Negative control, in the style of Phases 3-6:** with `element_byte_offset`
+temporarily returning `index * (stride + 4)`, the `K = 1` run renders **nothing
+at all** — the off-by-4 read reinterprets the following sprite's bytes as
+position and scale and throws the quads off screen. So the check discriminates;
+a green capture is not something any stride would have produced. Reverted
+afterwards, as was every line of the sprite_batch scaffolding.
