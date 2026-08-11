@@ -1161,6 +1161,47 @@ consequences. **7d is only the CPU-uploaded, GPU-read-only half.**
 
 **Detailed plan: [bindless_textures/phase_07d.md](bindless_textures/phase_07d.md)**
 
+**Verified:** `cargo check --workspace --all-targets`, `just test`, `just lint` and
+`cargo fmt` clean, with zero snapshot churn — the type is invisible to shaders, so
+nothing in slang, reflection or codegen moved. `just sweep` 16 ok / 0 fail with the
+injected-fault self-test still firing, which is what covers the teardown drain.
+
+Four decisions that differ from the plan above:
+
+- **It is called `SingletonBufferHandle`, not `StaticBufferHandle`**, and it mints
+  the same `ImmutableAddr<T>` the ringed type does. Keeping the shader-visible
+  type identical is what buys the zero snapshot churn: no new `Access` qualifier,
+  no `PointerAccess` variant, no `check_crate` fixture edit.
+- **The constructor takes the data, not a length.** `create_singleton_buffer(&[T])`
+  copies into the mapped allocation before the handle exists, so there is no
+  `write_singleton` at all — not even the setup-time one the plan proposed. That
+  is strictly stronger: no window exists in which a live singleton is writable.
+- **Singletons live in their own `SingletonBufferStorage`, not a second vec on
+  `StorageBufferStorage`.** The two index spaces can then not be confused, and —
+  the reason it is worth a separate type — `Gpu` holds it as `&SingletonBufferStorage`
+  rather than `&mut`. Every accessor on it is `&self`, so read-only-after-creation
+  is enforced by the borrow checker rather than resting on nobody adding a write
+  method later.
+- **`ray_marching` is the migrated consumer, not `toon_link`.** The plan assumed no
+  proof was possible before Phase 9, but `ray_marching`'s `spheres` was already an
+  upload-once buffer being rewritten every frame for nothing — `update` only
+  touches `boxes[0].transform`. `From<ImmutableAddr<T>> for ReadAddr<T>` made the
+  call site a one-word change with no shader edit. `boxes_buffer` stays ringed;
+  `sprite_batch` still does not migrate.
+- **The stability test was dropped rather than written.** "Mint across two frames
+  and assert equality" is vacuous here: the singleton path takes no frame index,
+  so it reduces to `x == x`, and there is still no headless device harness (the
+  wall 7c hit). The guard is structural — `singleton_addr` has no `frame`
+  parameter — and is stated in the handle's doc comment instead. Bounds coverage
+  is real and free, since `singleton_element_addr` reuses `element_byte_offset`.
+
+The GPU proof is a frozen-time A/B of `ray_marching`: with `elapsed` pinned to 0,
+before and after are pixel-identical (`compare -metric AE` = 0), and shrinking the
+sphere's radius in the singleton data does change the image — so the shader is
+demonstrably reading the new allocation rather than something that happens to look
+right. `05` §13.1's stale "3x memory" line is fixed, and that section now records
+that the GPU-written `Persistent` half is still owed.
+
 ## Phase 8 — push constants: renderer and per-draw API
 
 - **Retain the range.** It is currently dropped after `create_pipeline_layout`;

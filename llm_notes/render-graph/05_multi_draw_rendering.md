@@ -477,8 +477,10 @@ on the app-declared `graph::Write::{Storage, Current, Previous}` enum over the e
   so the graph will certify a dependency that does not exist. That is strictly worse than
   today, where the app at least knows it is hand-rolling.
 - No `Persistent` variant. In-place GPU-owned state — accumulators, atomic counters,
-  append/free lists, spatial hashes — stays unexpressible, as does 05 §4's "static material
-  data" (which pays 3x memory and a per-frame address mint for data that never changes).
+  append/free lists, spatial hashes — stays unexpressible. 05 §4's "static material
+  data" used to be listed here too, paying 2x memory (not the 3x this line claimed —
+  stale from before the ring shrank to 2, as noted a few bullets up) and a per-frame
+  address mint for data that never changes. **Phase 7d landed that half**; see below.
 
 **Owed:** a non-ringed, GPU-owned buffer resource — one allocation, stable address, seeded at
 setup. This needs *no new synchronization*: consecutive frames' compute is ordered by the
@@ -486,6 +488,13 @@ barrier at the top of each command buffer (was `compute_timeline` before 2026-07
 a stronger guarantee, so the conclusion is unchanged), so the ring is the only thing
 preventing it. Alternatively extend rotation to
 buffers so the graph owns it. Either way, hazard-table identity must become per-slot.
+
+**Half done as of Phase 7d (2026-08-10).** `SingletonBufferHandle` is the CPU-uploaded,
+GPU-read-only case: one allocation, stable address, seeded at creation, minting the same
+`ImmutableAddr<T>` shaders already see. It sidesteps the hazard-identity problem entirely
+rather than solving it — nothing on the GPU writes it, so it has no last-writer entry to
+key. **The `Persistent` variant above — GPU-*written* in place — is still owed**, and it is
+the half that forces hazard-table identity to become per-slot.
 
 ### 13.2 `ExtraSlot` sizing is wrong past one advance per frame
 

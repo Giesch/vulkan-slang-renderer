@@ -1,9 +1,13 @@
 # Phase 7d — a non-ringed buffer for upload-once static data
 
 Detailed plan for Phase 7d of [../bindless_textures.md](../bindless_textures.md).
-**Status: not started. Follow-up, not a prerequisite for anything** — Phase 7c and
-Phase 9 both work without it. Written down because 7c's design is what made the
+**Status: done, 2026-08-10.** Follow-up, not a prerequisite for anything — Phase 7c
+and Phase 9 both work without it. Written down because 7c's design is what made the
 waste visible.
+
+The plan below is the pre-work snapshot; four things landed differently, and each
+is annotated in place. The summary of the outcome is in
+[../bindless_textures.md](../bindless_textures.md) §7d.
 
 ## Correction to the framing, first
 
@@ -16,7 +20,7 @@ data that never changes". That was true before the ring shrank from 3 to 2, and 
 now stale *within its own paragraph* — the same section notes the shrink a few
 lines earlier ("the ring shrank from 3 to 2, so the staleness is nearer but no less
 wrong") without updating the multiplier below it. Fix that line when this phase
-lands.
+lands. **Done.**
 
 So the memory argument is 2×, and it is the **weaker** half of the case. The
 motivation is address stability, not bytes.
@@ -59,6 +63,14 @@ always.
 A **distinct handle type** — `StaticBufferHandle<T>` or similar — with one
 allocation, a stable address, and **no `Gpu` write accessor at all**: a single
 setup-time `write_static`, replacing the `_all_frames` loop.
+
+> **Landed as `SingletonBufferHandle<T>`, and with no write method at all.**
+> `Renderer::create_singleton_buffer(&[T])` takes the *data* rather than a length
+> and copies it into the mapped allocation before the handle exists, so the
+> setup-time `write_static` above turned out to be unnecessary — and dropping it
+> is strictly stronger, since no window exists in which a live singleton buffer is
+> writable. It mints the same `ImmutableAddr<T>` the ringed type does, which is
+> what kept the whole phase invisible to slang, reflection and codegen.
 
 The type distinction is the safety mechanism, not decoration. If
 `Gpu::write_immutable` (:5406) were reachable for the new type, the single
@@ -118,12 +130,36 @@ new handle type.
 `just sweep`.
 
 - **Zero snapshot churn**: renderer-only, no codegen or reflection changes.
+  *Held.*
 - A test that the address is genuinely stable — mint across two consecutive
   frames and assert equality. That is the whole point of the type, and it is
   what a future refactor reintroducing the ring would break.
+
+  > **Dropped, because it is vacuous.** The singleton path takes no frame index
+  > anywhere, so "mint twice and compare" reduces to `x == x`; and there is still
+  > no headless device harness to mint from, the same wall Phase 7c hit. The
+  > guard that actually holds is structural — `singleton_addr` has no `frame`
+  > parameter, so reintroducing a ring would have to change its signature — and
+  > that is stated in `SingletonBufferHandle`'s doc comment rather than faked as
+  > a test. Bounds coverage is real and came free: `singleton_element_addr`
+  > reuses `element_byte_offset`, whose two unit tests already cover it.
+
 - A migration of one real consumer is what proves it end to end. `toon_link`
   cannot be it until Phase 9 lands, so the honest options are (a) land 7d after
   Phase 9 and migrate `toon_link`'s materials as the proof, or (b) land it
   earlier with only unit coverage and accept that no example exercises it.
   Prefer (a): an untested allocation path is exactly what tech-debt §14 warns
   about for multiple `ParameterBlock`s.
+
+  > **The dilemma was false — a third option existed.** `ray_marching`'s
+  > `spheres_buffer` was already upload-once data in a *ringed* buffer, rewritten
+  > every frame for nothing: `update` only touches `boxes[0].transform`. It
+  > migrated as the proof without waiting for Phase 9, and because
+  > `From<ImmutableAddr<T>> for ReadAddr<T>` already exists the call site was a
+  > one-word change with no shader edit. `boxes_buffer` correctly stays ringed,
+  > so the example now demonstrates both types side by side.
+  >
+  > The proof is a frozen-time A/B: with `elapsed` pinned to 0, before and after
+  > are pixel-identical (`compare -metric AE` = 0). A negative control —
+  > shrinking the sphere's radius in the singleton data — moves 140k pixels, so
+  > the comparison is not passing by being insensitive.

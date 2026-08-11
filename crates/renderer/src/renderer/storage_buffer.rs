@@ -37,9 +37,36 @@ impl<T> ImmutableBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
+
+    pub(super) fn element_byte_offset(&self, index: u32) -> u64 {
+        element_byte_offset(index, self.len, std::mem::size_of::<T>())
+    }
 }
 
-/// A storage buffer the CPU writes only at setup, never from `gpu_update`
+/// A storage buffer uploaded once at creation and never written again
+///
+/// The difference between this and `ImmutableBufferHandle` is that a singleton
+/// buffer is also immutable on the Rust side. This allows us to avoid making
+/// a copy for each frame in flight, when data is not written to after GPU upload.
+#[derive(Debug)]
+pub struct SingletonBufferHandle<T> {
+    index: usize,
+    len: u32,
+    _phantom_data: PhantomData<T>,
+}
+
+#[expect(clippy::len_without_is_empty)] // vulkan does not allow allocating an empty buffer
+impl<T> SingletonBufferHandle<T> {
+    pub fn len(&self) -> u32 {
+        self.len
+    }
+
+    pub(super) fn element_byte_offset(&self, index: u32) -> u64 {
+        element_byte_offset(index, self.len, std::mem::size_of::<T>())
+    }
+}
+
+/// A read-write storage buffer the CPU writes only at setup, never from `gpu_update`
 ///
 /// During the frame loop only the GPU touches it, reading and writing via
 /// `Addr`/`ReadAddr`. That is what lets it mint a `Gpu::previous_addr` history
@@ -76,7 +103,7 @@ pub(super) struct RawStorageBuffer {
     pub(super) device_address: vk::DeviceAddress,
 }
 
-// NOTE renderer has to enforce type safety
+// NOTE renderer has to enforce type safety for the stored generic T
 // ordered first by handle index, then by frame
 pub(super) struct StorageBufferStorage(Vec<Option<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]>>);
 
@@ -125,9 +152,6 @@ impl StorageBufferStorage {
         self.0[handle.index].take().unwrap()
     }
 
-    // Immutable buffers share this storage; the distinct handle type (with no
-    // Addr accessors) is what keeps them un-writable on the GPU.
-
     pub fn add_immutable<T>(
         &mut self,
         buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
@@ -168,7 +192,7 @@ impl StorageBufferStorage {
         index: u32,
     ) -> vk::DeviceAddress {
         self.get_device_address_for_frame_immutable(handle, frame)
-            + element_byte_offset(index, handle.len, std::mem::size_of::<T>())
+            + handle.element_byte_offset(index)
     }
 
     pub(super) fn immutable_addr_for_frame<T>(
@@ -180,9 +204,6 @@ impl StorageBufferStorage {
         ImmutableAddr::from_raw(address)
     }
 
-    /// # Panics
-    ///
-    /// If `index` is out of bounds, see `element_byte_offset`.
     pub(super) fn immutable_element_addr_for_frame<T>(
         &self,
         handle: &ImmutableBufferHandle<T>,
@@ -260,6 +281,60 @@ impl StorageBufferStorage {
     }
 }
 
+// Singleton buffers are intended for data that doesn't change after upload,
+// and immutable for both the CPU and GPU
+// NOTE renderer has to enforce type safety for the stored generic T
+// ordered by handle index, with no per-frame dimension
+pub(super) struct SingletonBufferStorage(Vec<Option<RawStorageBuffer>>);
+
+impl SingletonBufferStorage {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
+    // this should not be callable after setup
+    pub fn add<T>(&mut self, buffer: RawStorageBuffer, len: u32) -> SingletonBufferHandle<T> {
+        let handle = SingletonBufferHandle {
+            index: self.0.len(),
+            len,
+            _phantom_data: PhantomData::<T>,
+        };
+
+        self.0.push(Some(buffer));
+
+        handle
+    }
+
+    fn get_device_address<T>(&self, handle: &SingletonBufferHandle<T>) -> vk::DeviceAddress {
+        self.0[handle.index].as_ref().unwrap().device_address
+    }
+
+    pub(super) fn addr<T>(&self, handle: &SingletonBufferHandle<T>) -> ImmutableAddr<T> {
+        let address = self.get_device_address(handle);
+        ImmutableAddr::from_raw(address)
+    }
+
+    pub(super) fn element_addr<T>(
+        &self,
+        handle: &SingletonBufferHandle<T>,
+        index: u32,
+    ) -> ImmutableAddr<T> {
+        let address = self.get_device_address(handle) + handle.element_byte_offset(index);
+        ImmutableAddr::from_raw(address)
+    }
+
+    pub fn take<T>(&mut self, handle: SingletonBufferHandle<T>) -> RawStorageBuffer {
+        self.0[handle.index].take().unwrap()
+    }
+
+    pub fn take_all(&mut self) -> Vec<RawStorageBuffer> {
+        self.0
+            .iter_mut()
+            .filter_map(|option| option.take())
+            .collect()
+    }
+}
+
 /// byte offset of element `index` in a buffer of `len` elements of `stride` bytes
 ///
 /// `assert!`, not `debug_assert!` — deliberately unlike the neighbouring bounds
@@ -279,7 +354,45 @@ fn element_byte_offset(index: u32, len: u32, stride: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::element_byte_offset;
+    use std::marker::PhantomData;
+
+    use super::{ImmutableBufferHandle, SingletonBufferHandle, element_byte_offset};
+
+    /// a non-power-of-two size, so a shift-vs-multiply mistake would show
+    type Elem24 = [u8; 24];
+    const _: () = assert!(std::mem::size_of::<Elem24>() == 24);
+
+    #[test]
+    fn handle_offsets_use_the_pointee_size_as_stride() {
+        let singleton = SingletonBufferHandle::<Elem24> {
+            index: 0,
+            len: 4,
+            _phantom_data: PhantomData,
+        };
+        let immutable = ImmutableBufferHandle::<Elem24> {
+            index: 0,
+            len: 4,
+            _phantom_data: PhantomData,
+        };
+
+        for index in 0..4 {
+            let expected = index as u64 * 24;
+            assert_eq!(singleton.element_byte_offset(index), expected);
+            assert_eq!(immutable.element_byte_offset(index), expected);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "element index 4 out of bounds for buffer of 4 element(s)")]
+    fn handle_bound_comes_from_its_own_len() {
+        let handle = SingletonBufferHandle::<Elem24> {
+            index: 0,
+            len: 4,
+            _phantom_data: PhantomData,
+        };
+
+        handle.element_byte_offset(4);
+    }
 
     #[test]
     fn element_offsets_are_index_times_stride() {

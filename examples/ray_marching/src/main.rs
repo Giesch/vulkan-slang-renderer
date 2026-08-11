@@ -8,8 +8,8 @@ use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Quat, Vec3};
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, StorageBufferHandle,
-    UniformBufferHandle,
+    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, SingletonBufferHandle,
+    StorageBufferHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -28,7 +28,7 @@ struct RayMarching {
     start_time: Instant,
     params_buffer: UniformBufferHandle<RayMarchingParams>,
     sun_position: Vec3,
-    spheres_buffer: StorageBufferHandle<Sphere>,
+    spheres_buffer: SingletonBufferHandle<Sphere>,
     boxes_buffer: StorageBufferHandle<BoxRect>,
     spheres: Vec<Sphere>,
     boxes: Vec<BoxRect>,
@@ -51,8 +51,15 @@ impl Game for RayMarching {
     {
         let start_time = Instant::now();
 
+        let spheres = vec![Sphere {
+            center: Vec3::ZERO,
+            radius: 1.0,
+            color: Vec3::new(0.2, 0.2, 0.6),
+            _padding_0: Default::default(),
+        }];
+
         let params_buffer = renderer.create_uniform_buffer::<RayMarchingParams>()?;
-        let spheres_buffer = renderer.create_storage_buffer::<Sphere>(SHAPE_BUFFER_SIZE)?;
+        let spheres_buffer = renderer.create_singleton_buffer(&spheres)?;
         let boxes_buffer = renderer.create_storage_buffer::<BoxRect>(SHAPE_BUFFER_SIZE)?;
         let resources = Resources {
             params_buffer: &params_buffer,
@@ -60,13 +67,6 @@ impl Game for RayMarching {
 
         let pipeline_config = shaders.ray_marching.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
-
-        let spheres = vec![Sphere {
-            center: Vec3::ZERO,
-            radius: 1.0,
-            color: Vec3::new(0.2, 0.2, 0.6),
-            _padding_0: Default::default(),
-        }];
 
         let boxes = vec![BoxRect {
             radii: Vec3::splat(0.2),
@@ -164,12 +164,11 @@ impl Game for RayMarching {
                 box_count: self.boxes.len() as u32,
                 _padding_0: Default::default(),
                 resolution,
-                spheres: gpu.addr(&self.spheres_buffer).into(),
+                spheres: gpu.singleton_addr(&self.spheres_buffer).into(),
                 boxes: gpu.addr(&self.boxes_buffer).into(),
             };
 
             gpu.write_uniform(&mut self.params_buffer, params);
-            gpu.write_storage(&mut self.spheres_buffer, &self.spheres);
             gpu.write_storage(&mut self.boxes_buffer, &self.boxes);
         })
     }

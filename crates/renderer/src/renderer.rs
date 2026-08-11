@@ -195,6 +195,7 @@ pub struct Renderer {
     storage_textures: StorageTextureStorage,
     uniform_buffers: UniformBufferStorage,
     storage_buffers: StorageBufferStorage,
+    singleton_buffers: SingletonBufferStorage,
 
     egui: Option<EguiIntegration>,
     text_input_active: bool,
@@ -420,6 +421,7 @@ impl Renderer {
         let textures = TextureStorage::new();
         let uniform_buffers = UniformBufferStorage::new();
         let storage_buffers = StorageBufferStorage::new();
+        let singleton_buffers = SingletonBufferStorage::new();
 
         Ok(Self {
             env,
@@ -480,6 +482,7 @@ impl Renderer {
             storage_textures: StorageTextureStorage::new(),
             uniform_buffers,
             storage_buffers,
+            singleton_buffers,
             egui,
             picking: None,
             last_picked_object_id: 0,
@@ -1048,40 +1051,83 @@ impl Renderer {
         Ok(self.storage_buffers.add_gpu_only(buffers_per_frame, len))
     }
 
+    pub fn create_singleton_buffer<T: GPUWrite>(
+        &mut self,
+        data: &[T],
+    ) -> anyhow::Result<SingletonBufferHandle<T>> {
+        let len = u32::try_from(data.len())?;
+        anyhow::ensure!(
+            len > 0,
+            "a singleton buffer needs at least one element; vulkan cannot allocate an empty buffer"
+        );
+
+        let raw_storage_buffer = self.create_raw_storage_buffer::<T>(len)?;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                raw_storage_buffer.mapped_mem as *mut T,
+                data.len(),
+            );
+        }
+
+        Ok(self.singleton_buffers.add(raw_storage_buffer, len))
+    }
+
     fn create_storage_buffers_per_frame<T: GPUWrite>(
         &mut self,
         len: u32,
     ) -> anyhow::Result<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> {
-        let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
-
         let mut buffers_per_frame: [Option<RawStorageBuffer>; MAX_FRAMES_IN_FLIGHT] =
             [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
         for i in 0..MAX_FRAMES_IN_FLIGHT {
-            let (buffer, allocation) = create_memory_buffer(
-                &self.allocator,
-                buffer_size,
-                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-                BufferMemory::PersistentlyMapped,
-            )?;
-
-            let mapped_mem = self.allocator.get_allocation_info(&allocation).mapped_data;
-
-            let device_address = unsafe {
-                self.device.get_buffer_device_address(
-                    &vk::BufferDeviceAddressInfo::default().buffer(buffer),
-                )
-            };
-            debug_assert_ne!(device_address, 0);
-
-            buffers_per_frame[i] = Some(RawStorageBuffer {
-                buffer,
-                allocation,
-                mapped_mem,
-                device_address,
-            });
+            buffers_per_frame[i] = Some(self.create_raw_storage_buffer::<T>(len)?);
         }
         Ok(buffers_per_frame.map(Option::unwrap))
+    }
+
+    fn create_raw_storage_buffer<T: GPUWrite>(
+        &mut self,
+        len: u32,
+    ) -> anyhow::Result<RawStorageBuffer> {
+        let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
+
+        let (buffer, allocation) = create_memory_buffer(
+            &self.allocator,
+            buffer_size,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+            BufferMemory::PersistentlyMapped,
+        )?;
+
+        let mapped_mem = self.allocator.get_allocation_info(&allocation).mapped_data;
+
+        let device_address = unsafe {
+            self.device
+                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
+        };
+        debug_assert_ne!(device_address, 0);
+
+        Ok(RawStorageBuffer {
+            buffer,
+            allocation,
+            mapped_mem,
+            device_address,
+        })
+    }
+
+    pub fn singleton_addr<T>(
+        &self,
+        singleton_buffer: &SingletonBufferHandle<T>,
+    ) -> ImmutableAddr<T> {
+        self.singleton_buffers.addr(singleton_buffer)
+    }
+
+    pub fn singleton_addr_at<T>(
+        &self,
+        singleton_buffer: &SingletonBufferHandle<T>,
+        index: u32,
+    ) -> ImmutableAddr<T> {
+        self.singleton_buffers.element_addr(singleton_buffer, index)
     }
 
     pub fn write_storage_all_frames<T>(&mut self, buf: &mut StorageBufferHandle<T>, data: &[T]) {
@@ -1139,6 +1185,11 @@ impl Renderer {
         for raw_storage_buffer in buffers_per_frame {
             self.destroy_storage_buffer(raw_storage_buffer);
         }
+    }
+
+    pub fn drop_singleton_buffer<T>(&mut self, singleton_buffer: SingletonBufferHandle<T>) {
+        let raw_storage_buffer = self.singleton_buffers.take(singleton_buffer);
+        self.destroy_storage_buffer(raw_storage_buffer);
     }
 
     pub fn drop_gpu_only_buffer<T>(&mut self, gpu_only_buffer: GpuOnlyBufferHandle<T>) {
@@ -2487,6 +2538,7 @@ impl Renderer {
             flight_slot: self.flight_slot,
             uniform_buffers: &mut self.uniform_buffers,
             storage_buffers: &mut self.storage_buffers,
+            singleton_buffers: &self.singleton_buffers,
         };
         gpu_update(&mut gpu);
 
@@ -2999,6 +3051,9 @@ impl Drop for Renderer {
                 for storage_buffer in buffers_per_frame {
                     self.destroy_storage_buffer(storage_buffer);
                 }
+            }
+            for storage_buffer in self.singleton_buffers.take_all() {
+                self.destroy_storage_buffer(storage_buffer);
             }
 
             // Drop egui before device destruction so it can clean up its Vulkan resources
@@ -5390,6 +5445,7 @@ pub struct Gpu<'f> {
     flight_slot: usize,
     uniform_buffers: &'f mut UniformBufferStorage,
     storage_buffers: &'f mut StorageBufferStorage,
+    singleton_buffers: &'f SingletonBufferStorage,
 }
 
 impl<'f> Gpu<'f> {
@@ -5470,12 +5526,6 @@ impl<'f> Gpu<'f> {
             .immutable_addr_for_frame(immutable_buffer, self.flight_slot)
     }
 
-    /// A pointer to one element of the current frame's buffer
-    ///
-    /// # Panics
-    ///
-    /// If `index` is out of bounds, in release builds too — an out-of-range
-    /// buffer device address is UB rather than a clamped read.
     pub fn current_immutable_addr_at<T>(
         &self,
         immutable_buffer: &ImmutableBufferHandle<T>,
@@ -5486,6 +5536,21 @@ impl<'f> Gpu<'f> {
             self.flight_slot,
             index,
         )
+    }
+
+    pub fn singleton_addr<T>(
+        &self,
+        singleton_buffer: &SingletonBufferHandle<T>,
+    ) -> ImmutableAddr<T> {
+        self.singleton_buffers.addr(singleton_buffer)
+    }
+
+    pub fn singleton_addr_at<T>(
+        &self,
+        singleton_buffer: &SingletonBufferHandle<T>,
+        index: u32,
+    ) -> ImmutableAddr<T> {
+        self.singleton_buffers.element_addr(singleton_buffer, index)
     }
 }
 
@@ -5552,17 +5617,6 @@ impl<'f> FrameRenderer<'f> {
         self.renderer.render_scale
     }
 
-    /// A pointer to the current frame's buffer, mintable at queue time
-    ///
-    /// The `Gpu` twin of this is only reachable from inside the `submit_draws`
-    /// closure, which runs *after* the queued draws have been consumed — so
-    /// anything that has to travel with a draw (a push constant payload) has to
-    /// be minted here instead.
-    ///
-    /// Both surfaces return the same address: `flight_slot` advances at the end
-    /// of `draw_frame` (see the comment there), so during queueing the renderer
-    /// already holds the value `Gpu` will be built with. `draw_frame`
-    /// debug-asserts that.
     pub fn current_immutable_addr<T>(
         &self,
         immutable_buffer: &ImmutableBufferHandle<T>,
@@ -5572,10 +5626,6 @@ impl<'f> FrameRenderer<'f> {
             .immutable_addr_for_frame(immutable_buffer, self.renderer.flight_slot)
     }
 
-    /// A pointer to one element of the current frame's buffer, mintable at
-    /// queue time
-    ///
-    /// See `Gpu::current_immutable_addr_at` for the panic contract.
     pub fn current_immutable_addr_at<T>(
         &self,
         immutable_buffer: &ImmutableBufferHandle<T>,
@@ -5584,6 +5634,23 @@ impl<'f> FrameRenderer<'f> {
         self.renderer
             .storage_buffers
             .immutable_element_addr_for_frame(immutable_buffer, self.renderer.flight_slot, index)
+    }
+
+    pub fn singleton_addr<T>(
+        &self,
+        singleton_buffer: &SingletonBufferHandle<T>,
+    ) -> ImmutableAddr<T> {
+        self.renderer.singleton_buffers.addr(singleton_buffer)
+    }
+
+    pub fn singleton_addr_at<T>(
+        &self,
+        singleton_buffer: &SingletonBufferHandle<T>,
+        index: u32,
+    ) -> ImmutableAddr<T> {
+        self.renderer
+            .singleton_buffers
+            .element_addr(singleton_buffer, index)
     }
 
     /// Queue a compute dispatch, inserting a barrier with a previous one.
@@ -5612,19 +5679,6 @@ impl<'f> FrameRenderer<'f> {
     }
 
     /// the index count of the pipeline's whole vertex/index source
-    /// (its own buffers or its shared mesh)
-    ///
-    /// # Panics
-    ///
-    /// Requires the pipeline's `VertexPipelineConfig` to be an indexed variant
-    /// (`VertexAndIndexBuffers` or `SharedMesh`); panics if given a `VertexCount`
-    /// (non-indexed) pipeline. `PipelineHandle<DrawIndexed>` upholds this at the
-    /// config layer: `DrawIndexed` is only reachable through
-    /// `IndexedPipelineConfig::with_vertices`/`with_shared_mesh`, and
-    /// `build_vertex_count` only ever yields `DrawVertexCount` (see pipeline.rs).
-    /// `PipelineStorage` is still type-erased, though, so a handle minted with
-    /// the wrong marker would slip through — callers must only reach this with a
-    /// genuinely indexed pipeline.
     fn whole_index_count(&self, pipeline_handle: &PipelineHandle<DrawIndexed>) -> u32 {
         match &self
             .renderer
@@ -5636,7 +5690,7 @@ impl<'f> FrameRenderer<'f> {
                 self.renderer.meshes[mesh_index.raw()].index_count
             }
             VertexPipelineConfig::VertexCount => {
-                panic!("unexpected indexed draw call for non-index pipeline")
+                unreachable!("unexpected indexed draw call for non-index pipeline")
             }
         }
     }
