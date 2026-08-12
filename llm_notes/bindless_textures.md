@@ -793,10 +793,23 @@ Declaration form: `[[vk::push_constant]] ConstantBuffer<MyDraw> draw;`
 - **The push struct does not go through `Resources`.** `Resources` is
   descriptor-set bindings in set-layout order; a push block is per-draw, not
   per-pipeline. `required_resource`'s `_ => None` (build_tasks.rs:1092) already
-  handles it with no edit — as it did for handles in Phase 5. Surface the type
+  handles it with no edit — as it did for handles in Phase 5. ~~Surface the type
   on the generated `Shader` instead, modelled on
   `pub const WORKGROUP_SIZE` (shader_compute_entry.rs.askama:94), so Phase 8's
-  API can be typed rather than raw bytes.
+  API can be typed rather than raw bytes.~~ **This last part did not ship.** The
+  `push_constants` fixture snapshot emits the block struct indistinguishably from
+  any other GPU-layout struct — same derives, same `repr`, same `impl GPUWrite` —
+  plus the ≤128 B assert; there is no `pub const`/`pub type` on `Shader` modelled
+  on `WORKGROUP_SIZE`. **Phase 8 delivered the intent by a different mechanism**:
+  a `PushConstantBlock: GPUWrite` marker, emitted fully qualified beside the
+  assert, which is the bound on the new `queue_draw_*_with_push_constants`
+  methods. That refuses a vertex struct, a `u32` or a uniform element struct at
+  the call site, but — unlike the `WORKGROUP_SIZE`-style version planned here —
+  it cannot tie the pushed type to *this pipeline's own* block, because
+  `PipelineHandle<T>` is parameterized on the draw-call marker rather than on the
+  shader. See phase_08.md §4 — and **Phase 8b, which delivers the rest of what
+  this bullet originally intended** by threading the block type through
+  `PipelineHandle`, retiring Phase 8's runtime asserts entirely.
 - **The four size/alignment tables need no edits**: they key on emitted Rust
   type names that already have arms, and both layout generators are
   field-kind-agnostic. (Phase 5's note about *five* sites is now stale in a
@@ -1237,13 +1250,28 @@ that the GPU-written `Persistent` half is still owed.
   asserts below don't already give. This is a judgement call and the opposite of
   what the rejected `firstInstance` design needed, where every variant had to
   carry the value or silently ignore it.
-- **Two record-loop debug asserts, both directions**, which is what makes the
-  above safe: a pipeline whose layout declares a range receives bytes of exactly
-  that size, and a draw carrying bytes targets a pipeline that declares a range.
-  A length mismatch is `VUID-vkCmdPushConstants-offset-01795` and validation
-  would catch it; a *missing* push is undefined data with no diagnostic at all.
-  The picking path records its own hardcoded single draw
-  (renderer.rs:1813-1821) and needs the same assert.
+- **Two record-loop ~~debug~~ hard asserts, both directions**, which is what
+  makes the above safe: a pipeline whose layout declares a range receives bytes
+  of exactly that size, and a draw carrying bytes targets a pipeline that
+  declares a range. A length mismatch is `VUID-vkCmdPushConstants-offset-01795`
+  and validation would catch it; a *missing* push is undefined data with no
+  diagnostic at all. **Phase 8 made both hard rather than debug**: validation
+  runs only in debug builds, so in release both are otherwise completely silent,
+  and the missing-push case has no other symptom in any build. The cost is an
+  `Option` + `u32` compare per draw-loop iteration.
+  ~~The picking path records its own hardcoded single draw
+  (renderer.rs:1813-1821) and needs the same assert.~~ **Picking moved to a
+  creation-time check instead**: an `anyhow::ensure!` in `create_picking_pipeline`
+  that the layout declares no range. The picking layout is built from a
+  *user-supplied* atlas entry, and a picking shader declaring a push block passes
+  reflection and codegen without complaint, so it deserves an `Err` once at
+  introduction time rather than a per-frame assert late in the record loop; and
+  since nothing there could ever supply a payload, "no range" is the only correct
+  state, which makes the check simpler than the two-direction form. **Lifting
+  that restriction is Phase 13** — small in the renderer, awkward in the public
+  API, and worth doing only once picking joins the multi-draw queue. **Phase 8b
+  removes this `ensure!` outright** by making the same case a compile error;
+  Phase 13 then only has to decide the two-payload API shape.
 - **No device-suitability check.** `maxPushConstantsSize`'s 128 B guarantee is
   the spec floor, so a gate in `undersized_limits` would be dead code — unlike
   the bindless heap limits in Phase 3, which genuinely vary. Phase 7's
@@ -1275,16 +1303,130 @@ bite:
   in the param block also works — but that is now a choice rather than a
   constraint.
 
-**Verify:** `just test` with **no** snapshot churn (this phase touches no
-reflection, codegen or template code), `just lint`, `just sweep`. As in Phases 3
-and 4, a green sweep proves nothing on its own while no example declares a push
-block — force the path with a temporary block on one example and confirm both
-that the value arrives and that deleting the push call trips the new debug
-assert rather than rendering garbage. `multi_mesh` is the example to force it
-with: its `DRAWS` already queues `P_CUBE` twice, so push constants are the only
-thing that can make the two halves differ.
+**Verify:** `just test` with ~~**no** snapshot churn (this phase touches no
+reflection, codegen or template code)~~ **exactly one snapshot changed** — the
+marker impl above is one codegen line, so `push_constants.rs.snap` gains one
+line and every other generated snapshot stays byte-identical; that asymmetry is
+now the leak detector, since `push_constants` is the only fixture with a push
+block. Plus `just lint`, `just sweep`. As in Phases 3 and 4, a green sweep proves
+nothing on its own while no example declares a push block — force the path with a
+temporary block on one example and confirm both that the value arrives and that
+~~deleting the push call~~ **queuing the draw through the plain
+`queue_draw_index_range`** trips the new assert rather than rendering garbage.
+(Deleting the call is self-defeating: the asserts live *inside* the helper, so
+deleting it removes the check along with the push.) `multi_mesh` is the example
+to force it with: its `DRAWS` already queues `P_CUBE` twice, so push constants
+are the only thing that can make the two halves differ.
 
 **Detailed plan: [bindless_textures/phase_08.md](bindless_textures/phase_08.md)**
+
+## Phase 8b — tie the push block to its pipeline in the type system
+
+Phase 8 ships four runtime `assert!`s and a `panic!` in `cmd_push_constants`
+(renderer.rs:2474) plus an `anyhow::ensure!` in `create_picking_pipeline`
+(:1289). **All of them exist for one reason**: `PipelineHandle<T>`
+(pipeline.rs:88) is parameterized on the *draw-call marker* — `DrawIndexed`,
+`DrawVertexCount` — not on the shader, so nothing in the type system knows which
+push block a handle refers to, or whether it has one at all. Phase 8 §4 recorded
+this as the known limitation; **this is the phase that closes it.**
+
+This is also what §7 of this doc planned and did not deliver ("surface the type
+on the generated `Shader` … so Phase 8's API can be typed rather than raw
+bytes"). Phase 8's `PushConstantBlock` marker got the cheap half — a `u32`, a
+vertex struct or a uniform element struct no longer compiles at the call site —
+but it cannot tie `P` to *this pipeline's own* block, so two different blocks of
+the same size still both pass and the size assert is the entire runtime check.
+
+**Do this before Phase 9.** `toon_link` is the first real consumer; written
+against the untyped API it would then have to be migrated. That ordering is the
+main argument for scheduling it now rather than as a follow-up.
+
+### The encoding, and why it takes two markers
+
+The non-obvious constraint: the *plain* `queue_draw_*` must reject a
+push-declaring pipeline, and Rust has no negative bounds — there is no way to say
+"`P` is not a `PushConstantBlock`". So the parameter cannot be the block type
+itself; it has to be a two-variant marker, which makes both signatures concrete
+shape matches and needs no negative reasoning:
+
+```rust
+pub struct NoPush;
+pub struct Block<P: PushConstantBlock>(PhantomData<P>);
+
+fn queue_draw_indexed(&mut self, p: &PipelineHandle<DrawIndexed, NoPush>);
+fn queue_draw_indexed_with_push_constants<P: PushConstantBlock>(
+    &mut self, p: &PipelineHandle<DrawIndexed, Block<P>>, push: &P,
+);
+```
+
+Attempting it with a bare `P` and a `PushConstantBlock` bound will *look* like it
+works and will not reject the missing-push case. Start from the two markers.
+
+### What this deletes
+
+| Phase 8 check | after 8b |
+|---|---|
+| payload size ≠ `range.size` | impossible — `P` *is* the pipeline's block |
+| range, no payload | plain method won't take a `Block<P>` handle |
+| payload, no range | push method won't take a `NoPush` handle |
+| neither | the only remaining branch, and not an error |
+| picking `ensure!` (:1289) | a **compile** error at the call site |
+| `debug_assert_eq!(range.offset, 0)` | **stays** — a reflection invariant, not a caller state |
+
+**The size check becomes redundant legitimately, not by assumption.** Codegen
+already emits `const _: () = assert!(size_of::<DrawConstants>() == 96)` derived
+from the same reflection that produced `range.size`, and hot reload is covered by
+`assert_shader_interface_unchanged` (renderer.rs:5050). There is no residual
+runtime gap to backfill — verify that claim rather than inheriting it.
+
+### The work
+
+- **Thread `P` through four types**, all in pipeline.rs: `PipelineConfigBuilder`
+  (:376), `IndexedPipelineConfig` (:319), `PipelineConfig` (:288),
+  `PipelineHandle` (:88). Plus `PipelineStorage::add` (:117), the two terminal
+  builder calls `build_indexed` (:388) / `build_vertex_count` (:405), and
+  `Renderer::create_pipeline` (renderer.rs:1209). `P` is erased at the storage
+  boundary — `GraphicsPipelineIndex` stays untyped and only the *handle* carries
+  the parameter.
+- **Codegen emits the parameter** from the generated `pipeline_config()`:
+  `Block<TheBlock>` when `push_constant_type_name` is `Some`, `NoPush`
+  otherwise. `GeneratedShaderImpl::config_return_type` (build_tasks.rs:538)
+  builds this string by hand and is the place it lands. **Check this first** —
+  it picks `IndexedPipelineConfig` vs `PipelineConfig` by string, and it is the
+  one spot where the inference could get awkward enough to change the design.
+- **Delete** the four `assert!`/`panic!` arms in `cmd_push_constants` and the
+  picking `ensure!`, leaving the `(None, None)` early return and the offset
+  debug assert.
+
+### Migration cost is much lower than Phase 8 §4 assumed
+
+Phase 8 called this "a much larger refactor than this phase". That estimate
+missed a **default type parameter**:
+
+```rust
+pub struct PipelineHandle<T, P = NoPush> { … }
+```
+
+`PipelineHandle<DrawIndexed>` then still resolves to
+`PipelineHandle<DrawIndexed, NoPush>`, so every existing example — all ~14 queue
+call sites and every stored handle field — **compiles untouched**. The churn
+collapses to the renderer's own generics plus the templates. Apply the same
+default to `PipelineConfig` and `IndexedPipelineConfig`.
+
+That default is also what makes the picking win free: `create_picking_pipeline`
+takes a `PipelineConfig<V, DrawVertexCount>`, which defaults to `NoPush`, so a
+picking shader declaring a block fails to type-check at the call site with no
+extra code. **This makes most of Phase 13 unnecessary** — what would remain there
+is only the API shape for supplying *two* payloads once picking joins the
+multi-draw queue.
+
+**Verify:** `cargo check --workspace --all-targets` is the real test here — a
+type-level change that compiles across every example is most of the claim. Plus
+`just test`, `just lint`, `just sweep`. Expect snapshot churn this time, in every
+generated `pipeline_config()` return type, and read it rather than accepting it.
+The negative half — that the wrong pairing no longer compiles — is worth proving
+with the same `multi_mesh` scaffolding Phase 8 used: re-run its four control
+cases and confirm each is now a **compile** error rather than a panic.
 
 ## Phase 9 — `toon_link`, the actual payoff
 
@@ -1577,7 +1719,8 @@ The work, all of it mirroring Phase 8 one-for-one:
   (renderer.rs:5082), add a payload to `PendingComputeCommand::Dispatch`
   (:5465) — same inline `[u8; 128]` + length as Phase 8, for the same reasons —
   and call `cmd_push_constants` in `record_compute_commands` between
-  `cmd_bind_bindless_heap` (:1618-1623) and `cmd_dispatch` (:1626). `dispatch`
+  `cmd_bind_texture_heap` (:1618-1623, named `cmd_bind_bindless_heap` when the
+  earlier phases here were written) and `cmd_dispatch` (:1626). `dispatch`
   (:5529) gains a `_with_push_constants` sibling rather than a fifth parameter,
   matching Phase 8's judgement call.
 - **The same two debug asserts, both directions.** A compute pipeline whose
@@ -1605,6 +1748,69 @@ against 9 distinct shaders — but its duplicates are parity variants that a
 is precisely what makes it the safest first consumer. So the honest trigger for
 this phase is a compute shader that genuinely needs data varying *between
 dispatches of the same pipeline*, and none exists.
+
+## Phase 13 — push constants in the picking path (follow-up; blocked on demand, not on difficulty)
+
+Not a prerequisite for anything. Added for the same reason as Phase 12: Phase 8
+*rejects* picking push blocks (`create_picking_pipeline`, renderer.rs:1289), and
+that rejection reads like a limitation when it is really a deferral. This section
+is where the record of why lives.
+
+**There is no technical obstacle, and the renderer half is three edits.** The
+channel already exists — `PickingDrawConfig` (renderer.rs:6065) is the picking
+path's one piece of per-frame state, and it is constructed at exactly one site
+(`draw_vertex_count_with_picking`, :6020).
+
+- `PickingDrawConfig` gains `push_constants: Option<PushConstantBytes>`.
+- The record loop calls the **existing** `cmd_push_constants` helper (:2474) at
+  :1885, between the heap bind (:1878-1883) and the hardcoded
+  `cmd_draw(3, 1, 0, 0)` (:1886). Nothing new is needed there — the helper
+  already covers all four states.
+- The creation-time `ensure!` (:1289) is deleted. It exists *only* because
+  nothing could ever supply a payload; once something can, the helper's
+  two-direction check subsumes it and is strictly stronger (it also catches a
+  size mismatch, which the `ensure!` cannot).
+
+**The friction is the public API, not the renderer, and it is the whole reason
+this is its own phase.** The picking pipeline is a *different shader* from the
+main one — `gpu_picking` and `gpu_picking_id` in the example are two separate
+`pipeline_config()`s — so **the two shaders can declare two different blocks**,
+and one payload will not do. Threading both through the existing entry point
+gives:
+
+```rust
+fn draw_vertex_count_with_picking_and_push_constants<M: PushConstantBlock, P: PushConstantBlock>(
+    self, main_pipeline, vertex_count, main_push: &M,
+    picking_pipeline, mouse_position, picking_push: &P, gpu_update,
+)
+```
+
+Seven parameters and two generic parameters, on a method that is already the
+widest in the API. Phase 8's "new method rather than a fourth parameter"
+judgement does not scale to this one; a config struct is the likelier answer, and
+picking that shape is the real work here.
+
+**One ordering hazard, sibling to Phase 12's.** Push constant state is a single
+block per command buffer, not partitioned by pass. The picking pass
+(:1840-:1887) is recorded **before** the main pass (:2076) in the *same* command
+buffer, so bytes pushed for picking can survive into the main pass whenever the
+two layouts happen to be push-compatible. The draw loop pushes on every iteration
+that has a range, so it is already covered — but this is the same class of bug as
+Phase 12's draw/dispatch interleaving, and it should be verified deliberately
+rather than assumed, since here the two passes are already adjacent today.
+
+**Why it is not scheduled.** Picking is still a single hardcoded fullscreen
+triangle, so there is nothing for a *per-draw* channel to vary over — anything the
+picking shader needs fits in its uniform buffer, which is exactly what
+`gpu_picking` does with `GpuPickingIdParams`. The honest trigger is **picking
+joining the multi-draw queue** (`link_rendering` §4.5, "Also deferred from P4:
+picking + multi-draw"): once each object is picked by its own draw, each needs its
+own id, and that is a per-draw selector — precisely what Phase 8 built. At that
+point the payload should ride the queue entry alongside the main draws rather
+than a widened `draw_vertex_count_with_picking`, and the two-payload awkwardness
+above dissolves, because each queued draw carries its own. **Doing this phase
+before that one would build the API that the multi-draw integration then
+replaces.**
 
 ---
 

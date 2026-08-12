@@ -43,6 +43,15 @@ pub struct ReflectedPushConstantRange {
     pub size: u32,
 }
 
+/// The vulkan-guaranteed push constant budget: `maxPushConstantsSize` is at least
+/// 128 bytes on every conformant implementation, so a block within it is portable
+/// without querying the device.
+///
+/// Lives here rather than in either consumer because there are three places the
+/// number has to agree: codegen's own budget check, the `<= N` assert codegen emits,
+/// and the renderer's inline payload buffer.
+pub const MAX_PUSH_CONSTANT_BYTES: usize = 128;
+
 // a slang BindingType or vulkan DescriptorType
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

@@ -35,11 +35,6 @@ pub struct Config {
 const SHADER_FILE_SUFFIX: &str = ".shader.slang";
 const COMPUTE_SHADER_FILE_SUFFIX: &str = ".compute.slang";
 
-/// The vulkan-guaranteed push constant budget: `maxPushConstantsSize` is at least
-/// 128 bytes on every conformant implementation, so a block within it is portable
-/// without querying the device.
-const MAX_PUSH_CONSTANTS_SIZE: usize = 128;
-
 /// Collect the names of the `.slang` files in `dir` whose name ends with `suffix`.
 ///
 /// The result is sorted: `read_dir` yields entries in filesystem order, which
@@ -445,6 +440,7 @@ fn render_graphics_shader_file(
         struct_defs: local.struct_defs,
         vertex_impl_blocks: data.vertex_impl_blocks.clone(),
         shader_impl: data.shader_impl.clone(),
+        push_constant_budget: MAX_PUSH_CONSTANT_BYTES,
     }
     .render()
     .unwrap();
@@ -480,6 +476,7 @@ struct ShaderAtlasEntryModule {
     struct_defs: Vec<GeneratedStructDefinition>,
     vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
+    push_constant_budget: usize,
 }
 
 #[derive(Template)]
@@ -1049,8 +1046,8 @@ fn collect_push_constant_block(
 
     let type_name = push_constant.element_type.type_name.clone();
 
-    // this failing would indicate a user annotating a struct field with [[vk::offset]],
-    // or a bug in slang,
+    // if this assert fails, it indicates either a user annotating a struct
+    // field with [[vk::offset]], or a bug in slang
     assert_eq!(
         expected_size, push_constant.element_size,
         "computed std430 size of push constant block '{type_name}' \
@@ -1073,9 +1070,9 @@ fn collect_push_constant_block(
 /// "evaluation of constant value failed", so we also check here
 fn assert_push_constant_size(type_name: &str, size: usize, source_file_name: &str) {
     assert!(
-        size <= MAX_PUSH_CONSTANTS_SIZE,
+        size <= MAX_PUSH_CONSTANT_BYTES,
         "push constant block '{type_name}' ({source_file_name}) is {size} bytes, over the \
-        {MAX_PUSH_CONSTANTS_SIZE}-byte guaranteed budget; move a field behind a BDA pointer \
+        {MAX_PUSH_CONSTANT_BYTES}-byte guaranteed budget; move a field behind a BDA pointer \
         (mltrs::Addr<T>) or into the ParameterBlock",
     );
 }
@@ -3364,7 +3361,7 @@ float4 fragMain() : SV_Target {
 
     #[test]
     fn a_push_constant_block_at_the_budget_is_accepted() {
-        assert_push_constant_size("Exact", MAX_PUSH_CONSTANTS_SIZE, "exact.shader.slang");
+        assert_push_constant_size("Exact", MAX_PUSH_CONSTANT_BYTES, "exact.shader.slang");
     }
 
     // heck folds SCREAMING_CASE and UpperCamel onto the same variant name;

@@ -33,6 +33,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 14. [Multiple `ParameterBlock` globals are supported end-to-end but never exercised](#14-multiple-parameterblock-globals-are-supported-end-to-end-but-never-exercised) — untested path, an ordering contract held together by a comment
 15. [`Game::draw` takes `&mut self`, so a frame-scoped GPU address can be stashed across frames](#15-gamedraw-takes-mut-self-so-a-frame-scoped-gpu-address-can-be-stashed-across-frames) — latent **silent-wrong-data** hazard, nothing in the type system prevents it
 16. [Typed device-address minting is split across two layers](#16-typed-device-address-minting-is-split-across-two-layers) — an invariant held by convention that could be held by the compiler
+17. [Picking is a second rendering path rather than a pass, so every new capability must be re-implemented or refused](#17-picking-is-a-second-rendering-path-rather-than-a-pass-so-every-new-capability-must-be-re-implemented-or-refused) — recurring per-feature carve-outs; the cost lands on whoever adds the *next* feature
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -1339,3 +1340,79 @@ from a raw `u64` inside `renderer/storage_buffer.rs`, enforced by their
 `from_raw` visibility rather than asserted in a comment; every `Gpu` and
 `FrameRenderer` address accessor is a forwarder with no `from_raw` of its own;
 and `just sweep` still passes, since this is behaviour-preserving throughout.
+
+## 17. Picking is a second rendering path rather than a pass, so every new capability must be re-implemented or refused
+
+**Context.** Phase 8 of [`bindless_textures.md`](bindless_textures.md)
+(2026-08-11) added per-draw push constants, and could not give them to picking.
+The result is an `anyhow::ensure!` in `create_picking_pipeline`
+(`renderer.rs:1283`) rejecting any picking shader that declares a push block.
+That check is correct and cheap — but it is the *third* time a feature has had to
+carve picking out, and the carve-outs are the symptom rather than the problem.
+
+**The problem.** Picking is not a pass in the rendering system; it is a parallel
+copy of one. Grep `picking` in `renderer.rs` and the pattern is unmistakable —
+almost every core concept has a picking-shaped twin:
+
+| the main path | picking's twin |
+|---|---|
+| `PipelineHandle<T>` (`pipeline.rs:88`) | `PickingPipelineHandle` (`:104`) |
+| `PipelineStorage::add` (`:117`) | `add_picking` (`:128`), `get_picking` (`:142`) |
+| `create_pipeline` (`renderer.rs:1209`) | `create_picking_pipeline` (`:1262`) |
+| `descriptor_sets_for_frame` (`:2419`) | `picking_descriptor_sets_for_frame` (`:2517`) |
+| the `pending_draws` queue | `PickingDrawConfig` (`:6037`), threaded as an `Option` through `draw_frame` and `record_command_buffer` |
+| `DrawCallConfig` | a hardcoded `cmd_draw(3, 1, 0, 0)` (`:1880`) |
+| `submit_draws` | `draw_vertex_count_with_picking` (`:5972`) |
+
+The two descriptor-set accessors are **byte-identical** apart from how they
+resolve the pipeline — a duplication `original_compute_shaders_plan.md:431`
+already flagged when compute threatened to add a third copy. And both handle
+kinds index the *same* `PipelineStorage`; the split is purely at the API surface,
+not in the storage.
+
+The compounding cost is what the parallel path forces on each new feature:
+
+- **Multi-draw:** picking and the draw queue are mutually exclusive, enforced by
+  `debug_assert!(self.pending_draws.is_empty())` (`:5983`). Deferred in
+  [`link_rendering.md`](link_rendering.md) §4.5.
+- **Push constants:** refused outright, the `ensure!` above. Reopening it is
+  Phase 13 of `bindless_textures.md`, and the reason it is not trivial is that
+  the main and picking pipelines are different shaders, so the entry point would
+  need *two* independent payloads.
+- **Next feature:** whatever it is, it inherits the same decision.
+
+None of these is expensive alone. The pattern is what costs — each one is
+individually cheap enough to defer, so the asymmetry never gets paid down, and
+the bill lands on whoever adds the feature after next.
+
+**Why it's tolerable today.** Everything about picking *works*, and one example
+uses it (`gpu_picking`). The bespoke path is small, self-contained, and its
+limitations are all guarded rather than silent: the mutual exclusion is a
+`debug_assert!`, the push refusal is an `Err` at pipeline creation. Nothing is
+wrong; it is just built beside the system instead of inside it.
+
+**Fix — deliberately deferred to a declarative/graph API.** Do not restructure
+picking on its own. Every twin above exists because the current API has exactly
+one shape for "render the frame", and picking does not fit it; a piecemeal fix
+would invent a second abstraction to sit beside the first, which is the thing
+that already went wrong. The right moment is whenever the render-graph work in
+[`render-graph/`](render-graph/) lands, where picking is naturally just another
+node: its own color target and format, one draw, a readback edge.
+`original_compute_shaders_plan.md:170` already assumes this — it calls picking's
+migration into a unified `PipelineKind::Graphics` "a trivial migration", which is
+true of the *pipeline* and not of the six other twins above.
+
+**One thing that happens sooner, and is not this entry's win.** Phase 8b of
+`bindless_textures.md` threads the push block type through `PipelineHandle`,
+which turns the `ensure!` at `:1283` into a compile error at the call site and
+deletes the runtime check. That is a real improvement, but it removes a
+*diagnostic*, not the asymmetry — picking still has no push-constant channel.
+Do not read 8b landing as this entry being addressed.
+
+**Done means.** Picking is expressed with the same vocabulary as any other pass:
+no `PickingPipelineHandle` distinct from `PipelineHandle`, no second
+`create_*_pipeline`, no duplicated descriptor-set accessor, no `Option<PickingDrawConfig>`
+threaded through the record path, and no mutual exclusion with the draw queue.
+The `debug_assert!` at `:5983` and the `ensure!` at `:1283` both delete
+themselves rather than being relocated. `gpu_picking` still picks, and
+`just sweep` still passes.

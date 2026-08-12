@@ -27,7 +27,7 @@ pub mod debug;
 mod platform;
 
 pub mod gpu_write;
-use gpu_write::{GPUWrite, write_to_gpu_buffer};
+use gpu_write::{GPUWrite, PushConstantBlock, write_to_gpu_buffer};
 
 pub mod vertex_description;
 use vertex_description::VertexDescription;
@@ -1279,6 +1279,14 @@ impl Renderer {
             #[cfg(debug_assertions)]
             self.shaders_source_dir,
         )?;
+
+        anyhow::ensure!(
+            picking_pipeline_layout.push_constant_range.is_none(),
+            "picking shader '{}' declares a push constant block, but the picking \
+             path has no push-constant channel",
+            picking_config.shader.source_file_name(),
+        );
+
         // picking renders ids into a uint target with no depth attachment, so
         // blending is meaningless and the depth-stencil state is ignored
         // entirely (depth_write is set false as the honest value)
@@ -1666,7 +1674,7 @@ impl Renderer {
                         );
                     }
 
-                    self.cmd_bind_bindless_heap(
+                    self.cmd_bind_texture_heap(
                         command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                         compute_pipeline.layout.pipeline_layout,
@@ -1861,7 +1869,7 @@ impl Renderer {
                 );
             }
 
-            self.cmd_bind_bindless_heap(
+            self.cmd_bind_texture_heap(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 picking_pipeline.layout.pipeline_layout,
@@ -2086,6 +2094,7 @@ impl Renderer {
             let PendingDrawCommand::Draw {
                 pipeline_index,
                 draw_call,
+                push_constants,
             } = pending_draw;
             let pipeline = self.pipelines.get_by_index(*pipeline_index);
 
@@ -2148,11 +2157,18 @@ impl Renderer {
                 );
             }
 
-            self.cmd_bind_bindless_heap(
+            self.cmd_bind_texture_heap(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline.layout.pipeline_layout,
                 pipeline.layout.bindless_heap_set,
+            );
+
+            self.cmd_push_constants(
+                command_buffer,
+                &pipeline.layout,
+                push_constants.as_ref(),
+                shader_name,
             );
 
             match draw_call {
@@ -2321,7 +2337,7 @@ impl Renderer {
         //
         // NOTE egui_ash_renderer records its own pipeline and descriptor binds
         // into our command buffer, which clobbers the bindless heap binding
-        // (see cmd_bind_bindless_heap). That's only harmless because egui is
+        // (see cmd_bind_texture_heap). That's only harmless because egui is
         // recorded last — a pass added after this one has to rebind.
         if let Some(egui) = &mut self.egui {
             let label = vk::DebugUtilsLabelEXT::default()
@@ -2415,7 +2431,7 @@ impl Renderer {
     }
 
     /// Binds the bindless texture heap for a pipeline that declares a handle.
-    fn cmd_bind_bindless_heap(
+    fn cmd_bind_texture_heap(
         &self,
         command_buffer: vk::CommandBuffer,
         bind_point: vk::PipelineBindPoint,
@@ -2437,6 +2453,57 @@ impl Renderer {
                 &sets,
                 &[],
             );
+        }
+    }
+
+    /// Writes a draw's push constant payload, checking it against what the
+    /// pipeline layout declares.
+    fn cmd_push_constants(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        layout: &ShaderPipelineLayout,
+        payload: Option<&PushConstantBytes>,
+        shader_name: &str,
+    ) {
+        match (layout.push_constant_range, payload) {
+            (None, None) => {}
+
+            (Some(range), Some(payload)) => {
+                assert_eq!(
+                    payload.len, range.size,
+                    "push constant payload for '{shader_name}' is {} bytes, but its \
+                     block declares {}",
+                    payload.len, range.size,
+                );
+
+                // debug-only becuase it's an internal reflection invariant
+                debug_assert_eq!(
+                    range.offset, 0,
+                    "push constant range for '{shader_name}' starts at a nonzero offset",
+                );
+
+                unsafe {
+                    self.device.cmd_push_constants(
+                        command_buffer,
+                        layout.pipeline_layout,
+                        range.stage_flags,
+                        0,
+                        payload.as_slice(),
+                    );
+                }
+            }
+
+            (Some(range), None) => panic!(
+                "'{shader_name}' declares a {}-byte push constant block, but this draw \
+                 was queued without one; the shader would read undefined data. Queue it \
+                 with a `queue_draw_*_with_push_constants` method.",
+                range.size,
+            ),
+
+            (None, Some(_)) => panic!(
+                "this draw carries push constant bytes, but '{shader_name}' declares no \
+                 push constant block; the bytes would go nowhere",
+            ),
         }
     }
 
@@ -5076,6 +5143,9 @@ struct ShaderPipelineLayout {
     /// Where the bindless texture heap sits in `pipeline_layout`
     /// needs to be rebound after every `cmd_bind_pipeline`.
     bindless_heap_set: Option<u32>,
+
+    /// The single `All`-stage range this pipeline's push block declares, if any.
+    push_constant_range: Option<vk::PushConstantRange>,
 }
 
 impl ShaderPipelineLayout {
@@ -5120,6 +5190,9 @@ impl ShaderPipelineLayout {
             pipeline_layout,
             descriptor_set_layouts,
             bindless_heap_set: reflection_json.pipeline_layout.bindless_heap_set,
+            push_constant_range: single_push_constant_range(
+                &reflection_json.pipeline_layout.push_constant_ranges,
+            ),
         })
     }
 
@@ -5141,6 +5214,7 @@ impl ShaderPipelineLayout {
             pipeline_layout,
             descriptor_set_layouts,
             bindless_heap_set: reflected_layout.bindless_heap_set,
+            push_constant_range: single_push_constant_range(&reflected_layout.push_constant_ranges),
         })
     }
 }
@@ -5415,6 +5489,18 @@ impl DescriptorCounts {
     }
 }
 
+fn single_push_constant_range(
+    ranges: &[shaders::json::ReflectedPushConstantRange],
+) -> Option<vk::PushConstantRange> {
+    assert!(
+        ranges.len() <= 1,
+        "expected at most one push constant range, got {}",
+        ranges.len()
+    );
+
+    ranges.first().map(|range| range.to_vk())
+}
+
 impl ToVk for shaders::json::ReflectedPushConstantRange {
     type Vk = vk::PushConstantRange;
 
@@ -5571,7 +5657,45 @@ enum PendingDrawCommand {
     Draw {
         pipeline_index: GraphicsPipelineIndex,
         draw_call: DrawCallConfig,
+        /// `None` means "this pipeline does not declare a push block"
+        push_constants: Option<PushConstantBytes>,
     },
+}
+
+/// A push constant payload captured at queue time.
+#[derive(Clone, Copy)]
+struct PushConstantBytes {
+    bytes: [u8; shaders::json::MAX_PUSH_CONSTANT_BYTES],
+    len: u32,
+}
+
+impl PushConstantBytes {
+    fn from_value<P: PushConstantBlock>(value: &P) -> Self {
+        const {
+            assert!(
+                size_of::<P>() <= shaders::json::MAX_PUSH_CONSTANT_BYTES,
+                "push constant block exceeds the 128-byte guaranteed budget"
+            )
+        };
+
+        let mut bytes = [0u8; shaders::json::MAX_PUSH_CONSTANT_BYTES];
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (value as *const P).cast::<u8>(),
+                bytes.as_mut_ptr(),
+                size_of::<P>(),
+            );
+        }
+
+        Self {
+            bytes,
+            len: size_of::<P>() as u32,
+        }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
 }
 
 /// A reference to the renderer for use in a game's draw callback
@@ -5697,10 +5821,28 @@ impl<'f> FrameRenderer<'f> {
 
     /// queue a draw of the pipeline's whole vertex/index source
     pub fn queue_draw_indexed(&mut self, pipeline: &PipelineHandle<DrawIndexed>) {
+        self.push_indexed_draw(pipeline, None);
+    }
+
+    /// [`Self::queue_draw_indexed`], with a per-draw push constant block
+    pub fn queue_draw_indexed_with_push_constants<P: PushConstantBlock>(
+        &mut self,
+        pipeline: &PipelineHandle<DrawIndexed>,
+        push: &P,
+    ) {
+        self.push_indexed_draw(pipeline, Some(PushConstantBytes::from_value(push)));
+    }
+
+    fn push_indexed_draw(
+        &mut self,
+        pipeline: &PipelineHandle<DrawIndexed>,
+        push_constants: Option<PushConstantBytes>,
+    ) {
         let index_count = self.whole_index_count(pipeline);
         self.pending_draws.push(PendingDrawCommand::Draw {
             pipeline_index: pipeline.index(),
             draw_call: DrawCallConfig::IndexCount(index_count),
+            push_constants,
         });
     }
 
@@ -5710,6 +5852,32 @@ impl<'f> FrameRenderer<'f> {
         pipeline: &PipelineHandle<DrawIndexed>,
         first_index: u32,
         index_count: u32,
+    ) {
+        self.push_index_range_draw(pipeline, first_index, index_count, None);
+    }
+
+    /// [`Self::queue_draw_index_range`], with a per-draw push constant block
+    pub fn queue_draw_index_range_with_push_constants<P: PushConstantBlock>(
+        &mut self,
+        pipeline: &PipelineHandle<DrawIndexed>,
+        first_index: u32,
+        index_count: u32,
+        push: &P,
+    ) {
+        self.push_index_range_draw(
+            pipeline,
+            first_index,
+            index_count,
+            Some(PushConstantBytes::from_value(push)),
+        );
+    }
+
+    fn push_index_range_draw(
+        &mut self,
+        pipeline: &PipelineHandle<DrawIndexed>,
+        first_index: u32,
+        index_count: u32,
+        push_constants: Option<PushConstantBytes>,
     ) {
         // debug-only: a release-build out-of-range draw renders garbage
         // silently under robustBufferAccess
@@ -5730,6 +5898,7 @@ impl<'f> FrameRenderer<'f> {
                 first_index,
                 index_count,
             },
+            push_constants,
         });
     }
 
@@ -5739,9 +5908,33 @@ impl<'f> FrameRenderer<'f> {
         pipeline: &PipelineHandle<DrawVertexCount>,
         vertex_count: u32,
     ) {
+        self.push_vertex_count_draw(pipeline, vertex_count, None);
+    }
+
+    /// [`Self::queue_draw_vertex_count`], with a per-draw push constant block
+    pub fn queue_draw_vertex_count_with_push_constants<P: PushConstantBlock>(
+        &mut self,
+        pipeline: &PipelineHandle<DrawVertexCount>,
+        vertex_count: u32,
+        push: &P,
+    ) {
+        self.push_vertex_count_draw(
+            pipeline,
+            vertex_count,
+            Some(PushConstantBytes::from_value(push)),
+        );
+    }
+
+    fn push_vertex_count_draw(
+        &mut self,
+        pipeline: &PipelineHandle<DrawVertexCount>,
+        vertex_count: u32,
+        push_constants: Option<PushConstantBytes>,
+    ) {
         self.pending_draws.push(PendingDrawCommand::Draw {
             pipeline_index: pipeline.index(),
             draw_call: DrawCallConfig::VertexCount(vertex_count),
+            push_constants,
         });
     }
 
@@ -5844,8 +6037,9 @@ mod tests {
     use ash::vk;
 
     use super::{
-        BlendMode, CullMode, DepthCompare, RasterState, index_range_in_bounds, vk_blend_state,
-        vk_color_write_mask, vk_cull_mode, vk_depth_compare,
+        BlendMode, CullMode, DepthCompare, GPUWrite, PushConstantBlock, PushConstantBytes,
+        RasterState, index_range_in_bounds, vk_blend_state, vk_color_write_mask, vk_cull_mode,
+        vk_depth_compare,
     };
 
     #[test]
@@ -5932,5 +6126,46 @@ mod tests {
         assert!(!index_range_in_bounds(2, u32::MAX, 108));
         // empty range at the end is in bounds
         assert!(index_range_in_bounds(108, 0, 108));
+    }
+
+    /// Stands in for a generated push block.
+    #[repr(C, align(16))]
+    struct TestPushBlock {
+        scale: f32,
+        flags: u32,
+        offset: [f32; 2],
+    }
+
+    impl GPUWrite for TestPushBlock {}
+    impl PushConstantBlock for TestPushBlock {}
+
+    #[test]
+    fn push_constant_bytes_round_trip() {
+        const _: () = assert!(size_of::<TestPushBlock>() == 16);
+
+        let block = TestPushBlock {
+            scale: 2.5,
+            flags: 0xDEAD_BEEF,
+            offset: [1.0, -1.0],
+        };
+        let payload = PushConstantBytes::from_value(&block);
+
+        assert_eq!(payload.len as usize, size_of::<TestPushBlock>());
+
+        let expected: Vec<u8> = [
+            2.5f32.to_le_bytes(),
+            0xDEAD_BEEFu32.to_le_bytes(),
+            1.0f32.to_le_bytes(),
+            (-1.0f32).to_le_bytes(),
+        ]
+        .concat();
+        assert_eq!(payload.as_slice(), expected.as_slice());
+
+        // the rest of the inline buffer stays untouched
+        assert!(
+            payload.bytes[payload.len as usize..]
+                .iter()
+                .all(|b| *b == 0)
+        );
     }
 }

@@ -95,8 +95,9 @@ const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 {% endfor %}
 {%- match shader_impl.push_constant_type_name -%}
 {%- when Some with (push_constant_type_name) +%}
-// 128 bytes is the vulkan-guaranteed maxPushConstantsSize
-const _: () = assert!(std::mem::size_of::<{{ push_constant_type_name }}>() <= 128);
+impl {{ import_root }}::renderer::gpu_write::PushConstantBlock for {{ push_constant_type_name }} {}
+// {{ push_constant_budget }} bytes is the vulkan-guaranteed maxPushConstantsSize
+const _: () = assert!(std::mem::size_of::<{{ push_constant_type_name }}>() <= {{ push_constant_budget }});
 {% when None -%}
 {%- endmatch %}
 {% for block in vertex_impl_blocks -%}

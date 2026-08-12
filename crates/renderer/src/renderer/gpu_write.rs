@@ -8,6 +8,11 @@ pub enum NoVertex {}
 /// and have its fields in descending size/alignment order
 pub trait GPUWrite {}
 
+/// A generated `[[vk::push_constant]]` block
+///
+/// A shader's generated instance of this will be 128 initialized std430 bytes.
+pub trait PushConstantBlock: GPUWrite {}
+
 impl GPUWrite for u8 {} // image bytes
 impl GPUWrite for f32 {} // storage texture data
 impl GPUWrite for u32 {} // index buffer

@@ -1,9 +1,10 @@
 # Phase 8 — push constants: renderer and per-draw API
 
 Detailed plan for Phase 8 of [../bindless_textures.md](../bindless_textures.md).
-**Status: not started**, written 2026-08-11. Line numbers verified against
-`6a73e29` (the commit that landed 7d); re-check them before editing, since
-`renderer.rs` is 5936 lines and every phase so far has moved them.
+**Status: done**, landed 2026-08-11. Written against `6a73e29` (the commit that
+landed 7d); the line numbers below are that snapshot and have already moved.
+See [§8 Outcome](#8-outcome) at the end for what actually shipped and what the
+plan got wrong.
 
 Almost renderer-only: no reflection change and no JSON change, but §2.2 adds
 **one** codegen line (the `PushConstantBlock` marker impl) plus its fixture stub.
@@ -279,8 +280,17 @@ on the shader. So two different push blocks of the same size still both pass, an
 the size assert in §5 is still the entire runtime check. Closing that means an
 associated type on the generated `Shader` — which is what
 ../bindless_textures.md:796-799 intended and did not deliver (§7) — plus threading
-the shader type through `PipelineHandle`, a much larger refactor than this phase
-and one that deserves its own decision.
+the shader type through `PipelineHandle`, ~~a much larger refactor than this phase
+and one that deserves its own decision~~ **which is now Phase 8b**.
+
+> **Correction, made while writing 8b.** "A much larger refactor" overestimated
+> it, by missing a **default type parameter**: with
+> `PipelineHandle<T, P = NoPush>`, every existing example compiles untouched and
+> the churn collapses to the renderer's own generics plus the templates. The
+> other thing this paragraph gets slightly wrong is the *shape*: the parameter
+> cannot be the block type `P` directly, because rejecting a push-declaring
+> pipeline from the plain `queue_draw_*` needs a negative bound Rust does not
+> have. It takes a two-variant marker (`NoPush` / `Block<P>`). See Phase 8b.
 
 ## 5. Asserts
 
@@ -468,6 +478,70 @@ stability test that reduced to `x == x`, and dropping it was the right call.
   bought (tying `P` to the pipeline's own block). Worth annotating in place rather
   than leaving §7 reading as done.
 
+## 8. Outcome
+
+Everything above shipped as planned. The plan held unusually well — no design
+decision was reversed — so what follows is the parts worth recording rather than
+a list of corrections.
+
+**The constant move worked as the pure relocation it claimed to be.**
+`MAX_PUSH_CONSTANT_BYTES` lives in `crates/slang-reflection/src/json/pipeline_builders.rs`
+beside `ReflectedPushConstantRange`, and reaches both consumers through globs
+they already had (`use mltrs_slang_reflection::json::*` in cli,
+`pub use mltrs_slang_reflection::*` in `shaders.rs`) — no import list changed in
+either crate. Threading it into the atlas-entry template context also covered the
+comment above the assert, not just the assert itself, so the rendered output is
+still byte-for-byte `128`.
+
+**The snapshot tripwire came out exactly as predicted, which is the point.**
+`cargo insta test --workspace` reported *one* snapshot to review, and its diff was
+one line:
+`impl crate::renderer::gpu_write::PushConstantBlock for DrawConstants {}`.
+No derive, no `repr`, no `offset_of!` assert moved, and no other generated
+snapshot changed at all. `just shaders` across every example changed nothing.
+
+**`const { assert!(size_of::<P>() <= …) }` compiled with the generic parameter
+in scope** on stable 1.97.1, so the fallback to a release `assert!` was not
+needed and the budget check is genuinely compile-time.
+
+### The GPU proof, and the one check `multi_mesh` could not carry
+
+With a temporary `MultiMeshDraw { float4 tint }` push block and the two P_CUBE
+draws tinted differently, the frame differs in **exactly one 199×84 region** — the
+cube's top face — measured by `compare -metric AE` plus a difference bounding box
+against the equal-tint capture. Every other pixel in the frame is identical.
+Same pipeline, same descriptor set, same params uniform buffer, two index ranges:
+push constants are the only thing that could have done it.
+
+All four rows of §5's table were then forced on a real GPU, not just reasoned
+about:
+
+| row | how it was forced | result |
+|---|---|---|
+| range + payload, sizes match | the tint scaffolding above | renders |
+| range + payload, sizes differ | pushed a 32-byte struct into the 16-byte block | assert fires, naming the shader — before the VUID |
+| range, no payload | routed one P_CUBE draw through plain `queue_draw_index_range` | assert fires before anything renders |
+| payload, no range | `basic_triangle` (declares no block) queued with a local `impl PushConstantBlock` struct | assert fires |
+| neither | `just sweep`, 16 ok / 0 fail | early return, unchanged |
+
+**Row four needed a second example.** The plan's check list assumed `multi_mesh`
+could also cover "un-pushed pipelines in the same frame still render", but every
+one of its 17 pipelines is built from the *same* shader, so once the block is
+declared they all declare it — there is no un-pushed pipeline in that frame to
+observe. `basic_triangle` is where that row was actually forced. Worth recording
+because the same assumption would misfire on any future single-shader example.
+
+**Rows two and three were re-run against `--release` builds and still fired.**
+That is the concrete payoff of §5's "hard rather than debug" argument rather than
+an inference from it: in release, validation is compiled out, so the VUID would
+never have printed for row two and row three has no diagnostic in any build.
+
+Finally, reverting every scaffolding line and re-running `just shaders multi_mesh`
+brought the committed artifacts back byte-identical — including the marker impl
+disappearing from `examples/multi_mesh/src/generated/shader_atlas/multi_mesh.rs`,
+which is the only end-to-end check that §2.2's emit really is gated on
+`push_constant_type_name`.
+
 ## Out of scope
 
 - **Compute push constants — Phase 12**, including the hazard this phase cannot
@@ -475,7 +549,12 @@ stability test that reduced to `x == x`, and dropping it was the right call.
   point, so interleaved draws and dispatches clobber each other — but only once
   *both* sides push, which is why it is invisible until Phase 12 lands.
 - **Picking integration with the multi-draw queue** (`link_rendering` §4.5).
-  Phase 8 only asserts that the picking pipeline declares no block.
+  Phase 8 only asserts that the picking pipeline declares no block. Lifting that
+  is **Phase 13** (../bindless_textures.md) — the renderer half is three edits
+  reusing this phase's `cmd_push_constants` unchanged, but the main and picking
+  pipelines are different shaders and so may declare *different* blocks, which
+  makes the public API the hard part. It should follow the multi-draw
+  integration, not precede it.
 - **`toon_link` — Phase 9.** 7c also freed that phase to adopt the
   `ImmutableAddr<Material>`-in-push-block shape `05` §4 specifies, instead of the
   bare `uint materialIndex` it currently plans. That is Phase 9's call, not this
