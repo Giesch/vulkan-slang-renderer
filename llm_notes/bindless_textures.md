@@ -1206,9 +1206,10 @@ that the GPU-written `Persistent` half is still owed.
 
 - **Retain the range.** It is currently dropped after `create_pipeline_layout`;
   `ShaderPipelineLayout` (renderer.rs:5001-5013) doesn't keep it. Add a field
-  next to `bindless_heap_set` and populate it at the same four
+  next to `bindless_heap_set` and populate it at the ~~same four~~ **two**
   `create_from_atlas` sites, where `reflected_layout.push_constant_ranges` is
-  already in scope — so `vk_create`'s return tuple does not change. Assert at
+  already in scope — so `vk_create`'s return tuple does not change. (The other
+  two of the four are `ComputeShaderPipelineLayout`, which is Phase 12.) Assert at
   most one range: a *global* push block reflects with stage flags `All`, because
   `current_stage_flags` is `All` when `add_global_scope_parameters` reaches it
   (pipeline_layout.rs:272), so vertex + fragment produce **one** range, not two.
@@ -1258,7 +1259,7 @@ bite:
   records the hazard this phase cannot see: push constant state is one block per
   command buffer, not one per bind point, so interleaved draws and dispatches
   clobber each other only once *both* sides push.
-- **A push block cannot carry a BDA address.** `Gpu` — which mints
+- ~~**A push block cannot carry a BDA address.** `Gpu` — which mints
   `Addr`/`ImmutableAddr` — is constructed at renderer.rs:2474, *after* every
   `queue_draw_*` call and after `submit_draws`. So an address minted in the
   submit closure does not exist at queue time. This directly contradicts
@@ -1266,16 +1267,24 @@ bite:
   `ImmutableAddr<MaterialData>` in the push block. The fix is small — address
   minting takes `&self` and `flight_slot` is already correct at queue time, so
   an `&self` minting API on `FrameRenderer` would return the same values — but
-  it belongs to that doc. Phase 9 sidesteps it: its push block is one `uint`,
-  and the `ImmutableAddr<Material>` stays in the param block where the closure
-  writes it.
+  it belongs to that doc.~~ **No longer true — 7c is that fix.** It shipped the
+  `&self` minting API this bullet describes: `FrameRenderer::current_immutable_addr_at`
+  (renderer.rs:5629) and `singleton_addr_at` (:5646). A push block *can* carry a
+  BDA address, and `05` §4's design is writable as specified. Phase 9 may still
+  sidestep it — a bare `uint` push block with the `ImmutableAddr<Material>` left
+  in the param block also works — but that is now a choice rather than a
+  constraint.
 
 **Verify:** `just test` with **no** snapshot churn (this phase touches no
 reflection, codegen or template code), `just lint`, `just sweep`. As in Phases 3
 and 4, a green sweep proves nothing on its own while no example declares a push
 block — force the path with a temporary block on one example and confirm both
 that the value arrives and that deleting the push call trips the new debug
-assert rather than rendering garbage.
+assert rather than rendering garbage. `multi_mesh` is the example to force it
+with: its `DRAWS` already queues `P_CUBE` twice, so push constants are the only
+thing that can make the two halves differ.
+
+**Detailed plan: [bindless_textures/phase_08.md](bindless_textures/phase_08.md)**
 
 ## Phase 9 — `toon_link`, the actual payoff
 
