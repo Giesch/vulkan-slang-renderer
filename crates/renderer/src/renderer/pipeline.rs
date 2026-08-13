@@ -4,6 +4,7 @@ use ash::vk;
 
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, ShaderAtlasEntry};
 
+use super::gpu_write::PushConstantBlock;
 use super::vertex_description::{NoVertex, VertexDescription};
 use super::{
     ComputeShaderPipelineLayout, RawUniformBufferHandle, ShaderPipelineLayout,
@@ -89,13 +90,33 @@ impl DrawCall for Compute {
     type Index = ComputePipelineIndex;
 }
 
+/// A pipeline whose shader declares no `[[vk::push_constant]]` block.
+/// This is the default.
 #[derive(Debug)]
-pub struct PipelineHandle<T> {
+pub struct NoPush;
+
+/// A pipeline whose shader declares `P` as its push constant block.
+#[derive(Debug)]
+pub struct PushBlock<P: PushConstantBlock>(PhantomData<P>);
+
+/// `P` is the *push slot* — [`NoPush`] or [`PushBlock<B>`] — not the block type
+/// itself. It is erased at the storage boundary: `GraphicsPipelineIndex` stays
+/// untyped and only the handle carries it.
+pub struct PipelineHandle<T, P = NoPush> {
     index: usize,
-    _phantom_data: PhantomData<T>,
+    _phantom_data: PhantomData<(T, P)>,
 }
 
-impl<T: DrawCall> PipelineHandle<T> {
+// not derived so we don't require `P: Debug`
+impl<T, P> std::fmt::Debug for PipelineHandle<T, P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PipelineHandle")
+            .field("index", &self.index)
+            .finish()
+    }
+}
+
+impl<T: DrawCall, P> PipelineHandle<T, P> {
     pub(crate) fn index(&self) -> T::Index {
         T::Index::from_raw(self.index)
     }
@@ -114,7 +135,7 @@ impl PipelineStorage {
         Self(Default::default())
     }
 
-    pub fn add<T: DrawCall>(&mut self, pipeline: RendererPipeline) -> PipelineHandle<T> {
+    pub fn add<T: DrawCall, P>(&mut self, pipeline: RendererPipeline) -> PipelineHandle<T, P> {
         let handle = PipelineHandle {
             index: self.0.len(),
             _phantom_data: PhantomData,
@@ -135,7 +156,7 @@ impl PipelineStorage {
         handle
     }
 
-    pub fn get<T>(&self, handle: &PipelineHandle<T>) -> &RendererPipeline {
+    pub fn get<T, P>(&self, handle: &PipelineHandle<T, P>) -> &RendererPipeline {
         self.0[handle.index].as_ref().unwrap()
     }
 
@@ -153,7 +174,7 @@ impl PipelineStorage {
     }
 
     #[expect(unused)]
-    pub fn take<T>(&mut self, handle: PipelineHandle<T>) -> RendererPipeline {
+    pub fn take<T, P>(&mut self, handle: PipelineHandle<T, P>) -> RendererPipeline {
         self.0[handle.index].take().unwrap()
     }
 
@@ -284,11 +305,11 @@ pub(super) struct VertexAndIndexBuffers {
     pub(super) index_count: u32,
 }
 
-/// the generic arguments for creating a pipeline
-pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall> {
+pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall, P = NoPush> {
     pub(super) shader: Box<dyn ShaderAtlasEntry>,
     pub(super) vertex_config: VertexConfig<V>,
     _draw_call: PhantomData<D>,
+    _push: PhantomData<P>,
     pub(super) texture_handles: Vec<&'t TextureHandle>,
     pub(super) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub(super) storage_texture_handles: Vec<&'t StorageTextureHandle>,
@@ -316,27 +337,28 @@ pub(super) enum VertexConfig<V> {
 /// are the only ways to reach a `PipelineConfig`, and
 /// `Renderer::create_pipeline` accepts nothing else. That makes "indexed
 /// pipeline with no vertex data" unrepresentable instead of a runtime error.
-pub struct IndexedPipelineConfig<'t, V: VertexDescription> {
+pub struct IndexedPipelineConfig<'t, V: VertexDescription, P = NoPush> {
     shader: Box<dyn ShaderAtlasEntry>,
     texture_handles: Vec<&'t TextureHandle>,
     uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     storage_texture_handles: Vec<&'t StorageTextureHandle>,
     raster_state: RasterState,
     _vertex: PhantomData<V>,
+    _push: PhantomData<P>,
 }
 
-impl<'t, V: VertexDescription> IndexedPipelineConfig<'t, V> {
+impl<'t, V: VertexDescription, P> IndexedPipelineConfig<'t, V, P> {
     /// Draw from vertex and index buffers owned by this pipeline.
     pub fn with_vertices(
         self,
         vertices: Vec<V>,
         indices: Vec<u32>,
-    ) -> PipelineConfig<'t, V, DrawIndexed> {
+    ) -> PipelineConfig<'t, V, DrawIndexed, P> {
         self.into_config(VertexConfig::VertexAndIndexBuffers(vertices, indices))
     }
 
     /// Draw from a shared mesh instead of per-pipeline vertex/index buffers.
-    pub fn with_shared_mesh(self, mesh: &MeshHandle<V>) -> PipelineConfig<'t, V, DrawIndexed> {
+    pub fn with_shared_mesh(self, mesh: &MeshHandle<V>) -> PipelineConfig<'t, V, DrawIndexed, P> {
         self.into_config(VertexConfig::SharedMesh(mesh.index))
     }
 
@@ -347,11 +369,12 @@ impl<'t, V: VertexDescription> IndexedPipelineConfig<'t, V> {
         self
     }
 
-    fn into_config(self, vertex_config: VertexConfig<V>) -> PipelineConfig<'t, V, DrawIndexed> {
+    fn into_config(self, vertex_config: VertexConfig<V>) -> PipelineConfig<'t, V, DrawIndexed, P> {
         PipelineConfig {
             shader: self.shader,
             vertex_config,
             _draw_call: PhantomData,
+            _push: PhantomData,
             texture_handles: self.texture_handles,
             uniform_buffer_handles: self.uniform_buffer_handles,
             storage_texture_handles: self.storage_texture_handles,
@@ -360,7 +383,7 @@ impl<'t, V: VertexDescription> IndexedPipelineConfig<'t, V> {
     }
 }
 
-impl<'t, V: VertexDescription, D: DrawCall> PipelineConfig<'t, V, D> {
+impl<'t, V: VertexDescription, D: DrawCall, P> PipelineConfig<'t, V, D, P> {
     /// Bake this pipeline with explicit fixed-function raster state instead of
     /// [`RasterState::default()`] (which reproduces the renderer's original
     /// hardcoded pipeline).
@@ -381,32 +404,27 @@ pub struct PipelineConfigBuilder<'t> {
 }
 
 impl<'t> PipelineConfigBuilder<'t> {
-    /// Terminal call for a shader whose vertex entry point takes a vertex
-    /// struct. The caller must still choose a vertex source before this can
-    /// become a `PipelineConfig`. `V` is inferred from the generated
-    /// `pipeline_config()`'s declared return type.
-    pub fn build_indexed<V: VertexDescription>(self) -> IndexedPipelineConfig<'t, V> {
+    pub fn build_indexed<V: VertexDescription, P>(self) -> IndexedPipelineConfig<'t, V, P> {
         IndexedPipelineConfig {
             shader: self.shader,
             texture_handles: self.texture_handles,
             uniform_buffer_handles: self.uniform_buffer_handles,
             storage_texture_handles: self.storage_texture_handles,
-            // generated `pipeline_config()` builds this struct as a complete
-            // literal, so raster state is defaulted here and overridden with
-            // with_raster_state rather than being a field
             raster_state: RasterState::default(),
             _vertex: PhantomData,
+            _push: PhantomData,
         }
     }
 
-    /// Terminal call for a shader with no vertex input. Fully concrete: the
+    /// Terminal call for a shader with no vertex input. The
     /// vertex-type/draw-call pairing is a signature guarantee here rather than
     /// a codegen convention.
-    pub fn build_vertex_count(self) -> PipelineConfig<'t, NoVertex, DrawVertexCount> {
+    pub fn build_vertex_count<P>(self) -> PipelineConfig<'t, NoVertex, DrawVertexCount, P> {
         PipelineConfig {
             shader: self.shader,
             vertex_config: VertexConfig::VertexCount,
             _draw_call: PhantomData,
+            _push: PhantomData,
             texture_handles: self.texture_handles,
             uniform_buffer_handles: self.uniform_buffer_handles,
             storage_texture_handles: self.storage_texture_handles,

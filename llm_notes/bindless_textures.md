@@ -1359,6 +1359,10 @@ fn queue_draw_indexed_with_push_constants<P: PushConstantBlock>(
 );
 ```
 
+**Shipped as `PushBlock<P>`, not `Block<P>`.** Every generated shader file
+glob-imports `renderer::*`, and a bare `Block` is too generic a name for that
+namespace. Nothing else about the encoding changed.
+
 Attempting it with a bare `P` and a `PushConstantBlock` bound will *look* like it
 works and will not reject the missing-push case. Start from the two markers.
 
@@ -1422,11 +1426,21 @@ multi-draw queue.
 
 **Verify:** `cargo check --workspace --all-targets` is the real test here — a
 type-level change that compiles across every example is most of the claim. Plus
-`just test`, `just lint`, `just sweep`. Expect snapshot churn this time, in every
-generated `pipeline_config()` return type, and read it rather than accepting it.
+`just test`, `just lint`, `just sweep`. **Expect snapshot churn this time, in every
+generated `pipeline_config()` return type** — though it arrived in two steps, and
+the split was the useful part: 8b itself emitted *nothing* for a no-push shader,
+leaning on the type parameter's default, so exactly one snapshot moved and Phase
+8's one-named-snapshot tripwire held while the phase was under review. A
+follow-up commit then wrote the slot out in both cases (phase_08b.md §7), which
+is where the other 43 files moved. Read it rather than accepting it.
 The negative half — that the wrong pairing no longer compiles — is worth proving
 with the same `multi_mesh` scaffolding Phase 8 used: re-run its four control
 cases and confirm each is now a **compile** error rather than a panic.
+
+**Detailed plan: [bindless_textures/phase_08b.md](bindless_textures/phase_08b.md)**
+— **status: done**, landed 2026-08-12, with the four controls forced plus a
+fifth Phase 8 could not express at all (a *same-size* imposter block, which every
+Phase 8 check passed).
 
 ## Phase 9 — `toon_link`, the actual payoff
 
@@ -1755,6 +1769,11 @@ Not a prerequisite for anything. Added for the same reason as Phase 12: Phase 8
 *rejects* picking push blocks (`create_picking_pipeline`, renderer.rs:1289), and
 that rejection reads like a limitation when it is really a deferral. This section
 is where the record of why lives.
+
+> **Phase 8b did the renderer half.** The `ensure!` this section plans to delete
+> is already gone, replaced by the push slot's `NoPush` default — a picking
+> shader declaring a block is now a type error at the call site. What is left of
+> this phase is **only** the two-payload API shape below.
 
 **There is no technical obstacle, and the renderer half is three edits.** The
 channel already exists — `PickingDrawConfig` (renderer.rs:6065) is the picking

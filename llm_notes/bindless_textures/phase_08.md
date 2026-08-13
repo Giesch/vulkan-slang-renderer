@@ -291,8 +291,20 @@ and one that deserves its own decision~~ **which is now Phase 8b**.
 > cannot be the block type `P` directly, because rejecting a push-declaring
 > pipeline from the plain `queue_draw_*` needs a negative bound Rust does not
 > have. It takes a two-variant marker (`NoPush` / `Block<P>`). See Phase 8b.
+>
+> **Closed by [phase_08b.md](phase_08b.md)**, landed 2026-08-12, as
+> `NoPush` / `PushBlock<P>`. The estimate above held: zero example files
+> changed, and no template change was needed either — the parameter is emitted
+> from `config_return_type` alone. §5's size assert and the two mixed-state
+> panics are gone with it.
 
 ## 5. Asserts
+
+> **Superseded by [phase_08b.md](phase_08b.md).** Rows two through four are now
+> unrepresentable — the handle's push slot (`NoPush` / `PushBlock<P>`) decides
+> which queue method accepts it, and `P` *is* the pipeline's own block. The
+> reasoning below is still why row three mattered, and 8b's §2 verifies the
+> redundancy claim rather than assuming it.
 
 Hard `assert!`s in `cmd_push_constants` — not `debug_assert!`s — covering both
 directions:
@@ -334,6 +346,9 @@ also works in release; ~~a `debug_assert!` beside `cmd_bind_bindless_heap` at
 debug. Either way the check is stronger and simpler than the two-direction
 form — nothing there could ever supply a payload, so the only correct state is
 "no range".
+**Deleted by [phase_08b.md](phase_08b.md)**: `create_picking_pipeline` takes a
+`PipelineConfig<V, DrawVertexCount>`, whose push slot defaults to `NoPush`, so
+the same case is a compile error at the call site with no code at all.
 
 **egui.** Checked: `renderer/egui.rs` declares no push constants. Nothing to do.
 
@@ -554,7 +569,8 @@ which is the only end-to-end check that §2.2's emit really is gated on
   reusing this phase's `cmd_push_constants` unchanged, but the main and picking
   pipelines are different shaders and so may declare *different* blocks, which
   makes the public API the hard part. It should follow the multi-draw
-  integration, not precede it.
+  integration, not precede it. **8b shrank it further**: the creation-time check
+  is already gone, so only the two-payload API shape remains.
 - **`toon_link` — Phase 9.** 7c also freed that phase to adopt the
   `ImmutableAddr<Material>`-in-push-block shape `05` §4 specifies, instead of the
   bare `uint materialIndex` it currently plans. That is Phase 9's call, not this

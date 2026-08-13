@@ -490,7 +490,7 @@ impl Renderer {
         })
     }
 
-    fn renderer_pipeline<D>(&self, handle: &PipelineHandle<D>) -> &RendererPipeline {
+    fn renderer_pipeline<D, P>(&self, handle: &PipelineHandle<D, P>) -> &RendererPipeline {
         self.pipelines.get(handle)
     }
 
@@ -1206,10 +1206,10 @@ impl Renderer {
         }
     }
 
-    pub fn create_pipeline<V: VertexDescription, D: DrawCall>(
+    pub fn create_pipeline<V: VertexDescription, D: DrawCall, P>(
         &mut self,
-        config: PipelineConfig<V, D>,
-    ) -> anyhow::Result<PipelineHandle<D>> {
+        config: PipelineConfig<V, D, P>,
+    ) -> anyhow::Result<PipelineHandle<D, P>> {
         let pipeline = self.init_pipeline(config)?;
         let handle = self.pipelines.add(pipeline);
 
@@ -1261,7 +1261,7 @@ impl Renderer {
 
     pub fn create_picking_pipeline<V: VertexDescription>(
         &mut self,
-        picking_config: PipelineConfig<V, DrawVertexCount>,
+        picking_config: PipelineConfig<V, DrawVertexCount, NoPush>,
     ) -> anyhow::Result<PickingPipelineHandle> {
         // Lazily initialize picking resources on first use
         if self.picking.is_none() {
@@ -1279,13 +1279,6 @@ impl Renderer {
             #[cfg(debug_assertions)]
             self.shaders_source_dir,
         )?;
-
-        anyhow::ensure!(
-            picking_pipeline_layout.push_constant_range.is_none(),
-            "picking shader '{}' declares a push constant block, but the picking \
-             path has no push-constant channel",
-            picking_config.shader.source_file_name(),
-        );
 
         // picking renders ids into a uint target with no depth attachment, so
         // blending is meaningless and the depth-stencil state is ignored
@@ -1497,9 +1490,9 @@ impl Renderer {
         }
     }
 
-    fn init_pipeline<V: VertexDescription, D: DrawCall>(
+    fn init_pipeline<V: VertexDescription, D: DrawCall, P>(
         &mut self,
-        config: PipelineConfig<V, D>,
+        config: PipelineConfig<V, D, P>,
     ) -> anyhow::Result<RendererPipeline> {
         // checked up front so the bail happens before create_graphics_pipeline
         // below allocates a vk::Pipeline we would then have to leak
@@ -2456,8 +2449,7 @@ impl Renderer {
         }
     }
 
-    /// Writes a draw's push constant payload, checking it against what the
-    /// pipeline layout declares.
+    /// Writes a draw's push constant payload.
     fn cmd_push_constants(
         &self,
         command_buffer: vk::CommandBuffer,
@@ -2468,41 +2460,19 @@ impl Renderer {
         match (layout.push_constant_range, payload) {
             (None, None) => {}
 
-            (Some(range), Some(payload)) => {
-                assert_eq!(
-                    payload.len, range.size,
-                    "push constant payload for '{shader_name}' is {} bytes, but its \
-                     block declares {}",
-                    payload.len, range.size,
+            (Some(range), Some(payload)) => unsafe {
+                self.device.cmd_push_constants(
+                    command_buffer,
+                    layout.pipeline_layout,
+                    range.stage_flags,
+                    range.offset,
+                    payload.as_slice(),
                 );
+            },
 
-                // debug-only becuase it's an internal reflection invariant
-                debug_assert_eq!(
-                    range.offset, 0,
-                    "push constant range for '{shader_name}' starts at a nonzero offset",
-                );
-
-                unsafe {
-                    self.device.cmd_push_constants(
-                        command_buffer,
-                        layout.pipeline_layout,
-                        range.stage_flags,
-                        0,
-                        payload.as_slice(),
-                    );
-                }
-            }
-
-            (Some(range), None) => panic!(
-                "'{shader_name}' declares a {}-byte push constant block, but this draw \
-                 was queued without one; the shader would read undefined data. Queue it \
-                 with a `queue_draw_*_with_push_constants` method.",
-                range.size,
-            ),
-
-            (None, Some(_)) => panic!(
-                "this draw carries push constant bytes, but '{shader_name}' declares no \
-                 push constant block; the bytes would go nowhere",
+            (Some(_), None) | (None, Some(_)) => unreachable!(
+                "push constant range and payload disagree for '{shader_name}', which \
+                 PipelineHandle's push slot is supposed to make impossible",
             ),
         }
     }
@@ -5803,7 +5773,7 @@ impl<'f> FrameRenderer<'f> {
     }
 
     /// the index count of the pipeline's whole vertex/index source
-    fn whole_index_count(&self, pipeline_handle: &PipelineHandle<DrawIndexed>) -> u32 {
+    fn whole_index_count<P>(&self, pipeline_handle: &PipelineHandle<DrawIndexed, P>) -> u32 {
         match &self
             .renderer
             .renderer_pipeline(pipeline_handle)
@@ -5820,22 +5790,22 @@ impl<'f> FrameRenderer<'f> {
     }
 
     /// queue a draw of the pipeline's whole vertex/index source
-    pub fn queue_draw_indexed(&mut self, pipeline: &PipelineHandle<DrawIndexed>) {
+    pub fn queue_draw_indexed(&mut self, pipeline: &PipelineHandle<DrawIndexed, NoPush>) {
         self.push_indexed_draw(pipeline, None);
     }
 
     /// [`Self::queue_draw_indexed`], with a per-draw push constant block
     pub fn queue_draw_indexed_with_push_constants<P: PushConstantBlock>(
         &mut self,
-        pipeline: &PipelineHandle<DrawIndexed>,
+        pipeline: &PipelineHandle<DrawIndexed, PushBlock<P>>,
         push: &P,
     ) {
         self.push_indexed_draw(pipeline, Some(PushConstantBytes::from_value(push)));
     }
 
-    fn push_indexed_draw(
+    fn push_indexed_draw<S>(
         &mut self,
-        pipeline: &PipelineHandle<DrawIndexed>,
+        pipeline: &PipelineHandle<DrawIndexed, S>,
         push_constants: Option<PushConstantBytes>,
     ) {
         let index_count = self.whole_index_count(pipeline);
@@ -5859,7 +5829,7 @@ impl<'f> FrameRenderer<'f> {
     /// [`Self::queue_draw_index_range`], with a per-draw push constant block
     pub fn queue_draw_index_range_with_push_constants<P: PushConstantBlock>(
         &mut self,
-        pipeline: &PipelineHandle<DrawIndexed>,
+        pipeline: &PipelineHandle<DrawIndexed, PushBlock<P>>,
         first_index: u32,
         index_count: u32,
         push: &P,
@@ -5872,9 +5842,9 @@ impl<'f> FrameRenderer<'f> {
         );
     }
 
-    fn push_index_range_draw(
+    fn push_index_range_draw<P>(
         &mut self,
-        pipeline: &PipelineHandle<DrawIndexed>,
+        pipeline: &PipelineHandle<DrawIndexed, P>,
         first_index: u32,
         index_count: u32,
         push_constants: Option<PushConstantBytes>,
@@ -5914,7 +5884,7 @@ impl<'f> FrameRenderer<'f> {
     /// [`Self::queue_draw_vertex_count`], with a per-draw push constant block
     pub fn queue_draw_vertex_count_with_push_constants<P: PushConstantBlock>(
         &mut self,
-        pipeline: &PipelineHandle<DrawVertexCount>,
+        pipeline: &PipelineHandle<DrawVertexCount, PushBlock<P>>,
         vertex_count: u32,
         push: &P,
     ) {
@@ -5925,9 +5895,9 @@ impl<'f> FrameRenderer<'f> {
         );
     }
 
-    fn push_vertex_count_draw(
+    fn push_vertex_count_draw<P>(
         &mut self,
-        pipeline: &PipelineHandle<DrawVertexCount>,
+        pipeline: &PipelineHandle<DrawVertexCount, P>,
         vertex_count: u32,
         push_constants: Option<PushConstantBytes>,
     ) {

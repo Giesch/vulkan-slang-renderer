@@ -95,7 +95,7 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> PipelineConfig<'a, NoVertex, DrawVertexCount> {
+    ) -> PipelineConfig<'a, NoVertex, DrawVertexCount, NoPush> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]

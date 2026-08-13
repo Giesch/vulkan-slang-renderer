@@ -21,7 +21,10 @@ impl RawUniformBufferHandle {
     }
 }
 
-pub struct PipelineConfig<'a, V, D>(PhantomData<(&'a (), V, D)>);
+pub struct NoPush;
+pub struct PushBlock<P: PushConstantBlock>(PhantomData<P>);
+
+pub struct PipelineConfig<'a, V, D, P = NoPush>(PhantomData<(&'a (), V, D, P)>);
 
 pub trait DrawCall {}
 pub struct DrawIndexed;
@@ -31,7 +34,7 @@ impl DrawCall for DrawVertexCount {}
 
 pub struct LayoutDescription;
 
-pub struct IndexedPipelineConfig<'a, V>(PhantomData<(&'a (), V)>);
+pub struct IndexedPipelineConfig<'a, V, P = NoPush>(PhantomData<(&'a (), V, P)>);
 
 pub struct PipelineConfigBuilder<'a> {
     pub shader: Box<dyn crate::shaders::atlas::ShaderAtlasEntry>,
@@ -48,11 +51,11 @@ pub struct ComputePipelineConfig<'a> {
 }
 
 impl<'a> PipelineConfigBuilder<'a> {
-    pub fn build_indexed<V>(self) -> IndexedPipelineConfig<'a, V> {
+    pub fn build_indexed<V, P>(self) -> IndexedPipelineConfig<'a, V, P> {
         IndexedPipelineConfig(PhantomData)
     }
 
-    pub fn build_vertex_count(self) -> PipelineConfig<'a, NoVertex, DrawVertexCount> {
+    pub fn build_vertex_count<P>(self) -> PipelineConfig<'a, NoVertex, DrawVertexCount, P> {
         PipelineConfig(PhantomData)
     }
 }

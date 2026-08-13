@@ -536,9 +536,16 @@ impl GeneratedShaderImpl {
     /// has to pick a vertex source first. A shader with no vertex input is
     /// already complete.
     fn config_return_type(&self) -> String {
+        let push_slot = match &self.push_constant_type_name {
+            Some(block) => format!("PushBlock<{block}>"),
+            None => "NoPush".to_string(),
+        };
+
         match &self.vertex_type_name {
-            Some(vertex_type_name) => format!("IndexedPipelineConfig<'a, {vertex_type_name}>"),
-            None => "PipelineConfig<'a, NoVertex, DrawVertexCount>".to_string(),
+            Some(vertex_type_name) => {
+                format!("IndexedPipelineConfig<'a, {vertex_type_name}, {push_slot}>")
+            }
+            None => format!("PipelineConfig<'a, NoVertex, DrawVertexCount, {push_slot}>"),
         }
     }
 
