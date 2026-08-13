@@ -1375,13 +1375,19 @@ works and will not reject the missing-push case. Start from the two markers.
 | payload, no range | push method won't take a `NoPush` handle |
 | neither | the only remaining branch, and not an error |
 | picking `ensure!` (:1289) | a **compile** error at the call site |
-| `debug_assert_eq!(range.offset, 0)` | **stays** — a reflection invariant, not a caller state |
+| `debug_assert_eq!(range.offset, 0)` | ~~**stays** — a reflection invariant, not a caller state~~ **also gone**: `cmd_push_constants` now *passes* `range.offset` instead of a hardcoded `0`, removing the coupling rather than asserting it |
 
 **The size check becomes redundant legitimately, not by assumption.** Codegen
 already emits `const _: () = assert!(size_of::<DrawConstants>() == 96)` derived
 from the same reflection that produced `range.size`, and hot reload is covered by
 `assert_shader_interface_unchanged` (renderer.rs:5050). There is no residual
 runtime gap to backfill — verify that claim rather than inheriting it.
+**Verified, and it held** (phase_08b.md §2 records the chain). The one thing this
+paragraph misses is the residual *bypass*: `PipelineConfigBuilder`'s fields are
+`pub` and `build_indexed`/`build_vertex_count` take a free `P`, so hand-written
+code can turbofish a slot disagreeing with the atlas entry it holds. A size
+assert would only have caught the subset of that which also changes the size,
+which is why it was not kept either.
 
 ### The work
 
@@ -1431,16 +1437,20 @@ generated `pipeline_config()` return type** — though it arrived in two steps, 
 the split was the useful part: 8b itself emitted *nothing* for a no-push shader,
 leaning on the type parameter's default, so exactly one snapshot moved and Phase
 8's one-named-snapshot tripwire held while the phase was under review. A
-follow-up commit then wrote the slot out in both cases (phase_08b.md §7), which
-is where the other 43 files moved. Read it rather than accepting it.
+follow-up change then wrote the slot out in both cases (phase_08b.md §7), which
+is where the other 43 files moved — **carried by the same commit**, so the
+tripwire is not separately visible in the history. Read it rather than
+accepting it.
 The negative half — that the wrong pairing no longer compiles — is worth proving
 with the same `multi_mesh` scaffolding Phase 8 used: re-run its four control
 cases and confirm each is now a **compile** error rather than a panic.
 
 **Detailed plan: [bindless_textures/phase_08b.md](bindless_textures/phase_08b.md)**
-— **status: done**, landed 2026-08-12, with the four controls forced plus a
-fifth Phase 8 could not express at all (a *same-size* imposter block, which every
-Phase 8 check passed).
+— **status: done**, `6dd3262`, with the four controls forced plus a fifth Phase 8
+could not express at all (a *same-size* imposter block, which every Phase 8 check
+would have passed). `cmd_push_constants` ends up with **no** runtime checks: the
+size assert was verified redundant, and the offset one was replaced by passing
+`range.offset` rather than asserting it is zero.
 
 ## Phase 9 — `toon_link`, the actual payoff
 

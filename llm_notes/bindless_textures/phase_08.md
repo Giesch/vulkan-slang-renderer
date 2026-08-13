@@ -249,6 +249,10 @@ single-range guards in §1 make anything else all but impossible, but the
 invariant should be stated where it is relied on. Unlike §5's asserts this one
 is an *internal* reflection invariant, not a caller-reachable state, which is
 why it stays debug-only.
+**Gone in [phase_08b.md](phase_08b.md)**, and not by deletion: the helper now
+*passes* `range.offset` instead of a hardcoded `0`, so the coupling this assert
+stated is removed rather than checked. `cmd_push_constants` ends up with no
+runtime checks at all.
 
 ## 4. Queue API
 

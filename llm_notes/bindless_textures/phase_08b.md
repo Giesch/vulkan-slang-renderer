@@ -1,8 +1,9 @@
 # Phase 8b — tie the push block to its pipeline in the type system
 
 Detailed plan for Phase 8b of [../bindless_textures.md](../bindless_textures.md).
-**Status: done**, landed 2026-08-12. Written against `0662b19` (the commit that
-landed Phase 8); the line numbers below are that snapshot.
+**Status: done** — written 2026-08-12, committed 2026-08-13 as `6dd3262`.
+Planned against `0662b19` (the commit that landed Phase 8); the line numbers
+below are that snapshot.
 See [§6 Outcome](#6-outcome) for what shipped and what the plan got wrong.
 
 ## Why this phase exists
@@ -69,7 +70,7 @@ also what makes the picking win free (§3).
 | payload, no range | push method won't take a `NoPush` handle |
 | neither | the only remaining branch, and not an error |
 | picking `ensure!` (:1283) | a **compile** error at the call site |
-| `debug_assert_eq!(range.offset, 0)` | **stays** — a reflection invariant, not a caller state |
+| `debug_assert_eq!(range.offset, 0)` | ~~**stays** — a reflection invariant, not a caller state~~ **also gone**; the offset is *passed* now rather than asserted (§6) |
 
 **The size check becomes redundant legitimately, and the chain was verified
 rather than inherited.** `range.size` is
@@ -77,7 +78,7 @@ rather than inherited.** `range.size` is
 (slang-reflection/src/reflection/pipeline_layout.rs:58,71). Codegen reads the
 *same* expression into `PushConstantGlobalParameter::element_size`
 (reflection/parameters.rs:206), asserts its own computed std430 size equals it
-(build_tasks.rs:1050-1054), and emits
+(build_tasks.rs:1051-1055), and emits
 `const _: () = assert!(size_of::<DrawConstants>() == 96)`. So
 `size_of::<P>() == range.size` is already a compile-time fact. Hot reload cannot
 drift them apart either: `assert_shader_interface_unchanged` (renderer.rs:5116)
@@ -100,7 +101,7 @@ panics loudly rather than silently re-ranging a live pipeline.
   has `push_constant_type_name` on the same struct. No template change.
 - **Delete** the three `assert!`/`panic!` arms in `cmd_push_constants` and the
   picking `ensure!`, leaving the `(None, None)` early return and the offset
-  debug assert.
+  debug assert. **The offset assert went too**, before the commit — §6.
 - **The stub crate is the easiest thing here to miss** — the same trap Phase 8
   hit with `gpu_write.rs`. `crates/cli/fixtures/check_crate/src/renderer/mod.rs`
   is hand-maintained and must gain `NoPush`, `PushBlock<P>`, the defaulted
@@ -132,9 +133,12 @@ the claim. Plus `just test`, `just lint`, `cargo fmt`, `just sweep`.
 **Exactly one snapshot moves** *if* codegen emits nothing for the no-push case:
 `…alignment_tests@src__generated__shader_atlas__push_constants.rs.snap`'s
 `pipeline_config()` return type gains `, PushBlock<DrawConstants>`. Review it
-(`just insta`), do not blind-accept — *which* snapshot moved is the claim. That
-is how this phase was reviewed; §7 then traded the tripwire away on purpose, in
-a separate commit, so this check still applies to the 8b diff itself.
+(`just insta`), do not blind-accept — *which* snapshot moved is the claim.
+
+That is how this phase was reviewed, and it held. **But §7 traded the tripwire
+away in the *same* commit**, so the one-snapshot property is not visible in the
+history: `6dd3262`'s diff is 51 files. Re-deriving it means reverting §7's
+one-line change and re-running `cargo insta test`.
 
 **The negative half is the point**, and needs the same `multi_mesh` scaffolding
 Phase 8 used (phase_08.md §6): a temporary `MultiMeshDraw { float4 tint }` block
@@ -145,21 +149,26 @@ cases and confirm each is now a **compile** error rather than a panic.
 
 - **Compute — Phase 12.** `PipelineHandle<Compute>` defaults to `NoPush`, which
   is exactly right while reflection rejects compute push blocks. Phase 12 gets
-  the encoding for free and only has to add the dispatch-path push call.
+  the *encoding* for free — a `dispatch_with_push_constants` taking
+  `PushBlock<P>` needs no new machinery. It still owes the rest of Phase 8's
+  compute half: `ComputeShaderPipelineLayout` has no `push_constant_range` field
+  at all, the dispatch path has no push call, and reflection's compute rejection
+  has to be lifted before any of it is reachable.
 - **Phase 13 shrinks to the API shape.** Its "delete the creation-time
   `ensure!`" bullet is done here, and by a stronger mechanism. What remains is
   only how to supply *two* payloads once picking joins the multi-draw queue.
 
 ## 6. Outcome
 
-Everything above shipped as planned; no design decision was reversed. What
-follows is the parts worth recording.
+The encoding shipped exactly as planned and was never reversed. Two *other*
+decisions were revisited before the commit, both toward less machinery — the
+codegen emit (§7) and the two asserts §2's table expected to survive (below).
 
 **The `P = NoPush` estimate held exactly.** Not one example file was edited —
 `cargo check --workspace --all-targets` passed clean on the first run after the
-renderer and codegen changes, with no warnings. The whole diff is five files:
+renderer and codegen changes, with no warnings. 8b proper is five files:
 `pipeline.rs`, `renderer.rs`, `build_tasks.rs`, the check_crate stub, and the one
-snapshot.
+snapshot. (The commit carrying it, `6dd3262`, is 51 — it also carries §7.)
 
 **The snapshot tripwire came out as predicted.** `cargo insta test --workspace`
 reported *one* snapshot to review and its diff was one line:
@@ -193,15 +202,21 @@ anyone "simplifies" that fixture set.
 |---|---|---|
 | push-declaring pipeline through plain `queue_draw_index_range` | assert fires at record time | `expected &PipelineHandle<_, NoPush>`, found `PushBlock<MultiMeshDraw>` |
 | wrong-size payload | assert fires (size mismatch) | `expected &MultiMeshDraw`, found `&ImposterBlock` |
-| **same-size** payload of a different block | **rendered — nothing caught it** | same type error as above |
+| **same-size** payload of a different block | **would have rendered — size was the only check** | same type error as above |
 | `basic_triangle` (no block) queued with a payload | assert fires | `expected &PipelineHandle<_, PushBlock<NoBlockHere>>`, found `NoPush` |
 | picking shader declaring a block | `ensure!` → `Err` at creation | type error at `create_picking_pipeline` |
 
 **Row three is the one Phase 8 could not do at all** and is worth forcing
 explicitly: a local `#[repr(C, align(16))] struct ImposterBlock { tint: Vec4 }`
 with hand-written `GPUWrite` + `PushConstantBlock` impls is byte-identical to
-`MultiMeshDraw`, so every Phase 8 check passed it and it rendered. It is now a
+`MultiMeshDraw`, so every Phase 8 check would have passed it. Under 8b it is a
 type error naming both structs.
+
+**That row is reasoned, not observed** — unlike the other four, which were
+forced on a real GPU. The imposter was only ever compiled against 8b; nobody
+ran it against Phase 8 to watch it render. The inference is safe (size was the
+only check, and the sizes match by construction) but it is an inference, and
+the table would otherwise read as if it had been measured.
 
 ### The positive control still holds
 
@@ -217,25 +232,52 @@ Reverting every scaffolding line and re-running `just shaders multi_mesh` brough
 the committed artifacts back byte-identical, including both the marker impl and
 the push slot disappearing from the generated return type.
 
-### One deviation from the plan above
+### Deviations from the plan above
 
 `cmd_push_constants`'s mixed arms could not simply be *deleted* — the match still
 has to be exhaustive. They collapse to a single `unreachable!` arm whose message
 names the invariant (`PipelineHandle`'s push slot) that makes them unreachable,
 which is the honest encoding of §2's table rather than a surviving check.
 
-The size check also came back as a `debug_assert_eq!` rather than vanishing. §2's
-chain shows it is redundant, but it is now the same *kind* of thing as the
-surviving offset assert — an internal reflection invariant, free in release —
-and it is the tripwire if the codegen chain it depends on ever changes.
+**Both asserts §2's table expected to survive are gone**, removed one at a time
+before the commit once the phase was otherwise complete. `cmd_push_constants`
+now has no asserts at all — three arms: the empty case, the push, the
+`unreachable!`.
+
+The **size** check was reinstated as a `debug_assert_eq!` first, on the grounds
+that it was free in release and matched the offset assert in kind. That did not
+survive scrutiny. Every failure mode it could catch is covered upstream and
+harder: the codegen chain breaking fires as a *hard* `assert_eq!` in
+`collect_push_constant_block` during `just shaders`, with a better message; hot
+reload is closed by `assert_shader_interface_unchanged`; the normal case is
+§2's compile-time fact. What was left was the one residual hole — the `pub`
+`PipelineConfigBuilder` fields and free `P` on `build_indexed`/`build_vertex_count`
+let hand-written code turbofish a slot that disagrees with the atlas entry it
+holds — and **the assert only caught the subset of that bypass which also
+changes the size.** A same-size bypass fired nothing. A partial guard against a
+state the table calls impossible mostly invites the reader to wonder which case
+it catches.
+
+The **offset** check went one better than deletion. It was a genuine coupling
+(reflection hardcodes `let offset = 0;`, the record loop pushed at a hardcoded
+`0`), which is why it initially looked worth keeping where the size one wasn't —
+coupling guards age better than derivation guards. But asserting a coupling is
+weaker than removing it: `cmd_push_constants` now passes `range.offset`
+(renderer.rs:2468), which is correct for any offset since `payload.as_slice()`
+is the whole block and covers exactly `[offset, offset + len)`. The two sites
+can no longer disagree, so there is nothing left to assert. It also would never
+have protected a release build — it was debug-only, and so is the
+`VUID-vkCmdPushConstants-offset-01795` that would have caught the same thing.
 
 ## 7. Follow-up: the push slot is written out even when it is `NoPush`
 
-Landed immediately after 8b, as its own commit. `config_return_type` originally
-emitted *nothing* for a shader with no block, leaning on `P = NoPush` — which is
-what held §4's one-named-snapshot tripwire while the phase was reviewed. Once
-that review was done, the tripwire had served its purpose and the trade came out
-the other way:
+Decided after 8b was otherwise complete, but **carried by the same commit**
+(`6dd3262`) rather than a separate one — which is why §4's tripwire is not
+independently visible in the history. `config_return_type` originally emitted
+*nothing* for a shader with no block, leaning on `P = NoPush`, and that is what
+held §4's one-named-snapshot tripwire while the phase was reviewed. Once that
+review was done the tripwire had served its purpose, and the trade came out the
+other way:
 
 ```rust
 None => "NoPush".to_string(),   // was: String::new()
@@ -243,8 +285,8 @@ None => "NoPush".to_string(),   // was: String::new()
 
 **Why.** Generated code should state what reflection found rather than leave it
 to be inferred — the same standard that already produces explicit `_padding_N`
-fields, explicit size/offset asserts and explicit `impl GPUWrite` rather than
-relying on anything implicit. It also decouples codegen from the default's
+fields, explicit `size_of`/`offset_of!` asserts in the generated file, and an
+explicit `impl GPUWrite` rather than relying on anything implicit. It also decouples codegen from the default's
 existence, and it puts `NoPush` in front of a reader who hits
 `expected PushBlock<_>, found NoPush` and opens the generated file looking for
 where that came from. **The default's remaining job is hand-written code** —
