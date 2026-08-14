@@ -33,11 +33,14 @@ const TEXMTX_BASE: u8 = 30;
 /// GX ids use 0xFF for "none" across texcoord, texmap and channel.
 const GX_NULL_ID: u32 = 0xFF;
 
-/// Builds one material's TEV uniform block.
+/// Builds one material's static TEV state.
 ///
-/// `light_dir` / `light_color` are left zeroed: the manifest has no light data
-/// (`light_colors` is null on every material — the game writes it per frame from
-/// `dKy_tevstr_c`), so the caller fills them in each frame.
+/// Everything here comes from the manifest and never changes afterwards, which
+/// is what lets the material buffer be a singleton. The lights are deliberately
+/// *not* here — the manifest has no light data (`light_colors` is null on every
+/// material, because the game writes it per frame from `dKy_tevstr_c`), so they
+/// live in `GXLights` on the frame's param block instead. Same for the
+/// `dKy_tevstr_c` register override, which is `GXTevColorOverride`.
 pub fn pack(material: &mm::MaterialEntry) -> Result<TevParams> {
     pack_inner(material).with_context(|| format!("packing TEV for material {:?}", material.name))
 }
@@ -111,9 +114,6 @@ fn pack_inner(material: &mm::MaterialEntry) -> Result<TevParams> {
         // loads it, so 0 is the only reproducible choice. reg[1..=3] are filled
         // from reg_colors[0..=2] below.
         reg: [Vec4::ZERO; 4],
-        // filled per frame by the caller
-        light_dir: [Vec4::ZERO; 2],
-        light_color: [Vec4::ZERO; 2],
         chan_control: [UVec4::ZERO; 2],
         chan_mat_color: Vec4::ONE,
         chan_amb_color: Vec4::ZERO,
@@ -410,116 +410,6 @@ fn pack_channel(material: &mm::MaterialEntry, slot: usize) -> Result<UVec4> {
 }
 
 // --- equation rendering ------------------------------------------------------
-
-/// The material's per-stage equations in `mat3_dump.txt`'s exact notation, one
-/// line per half: `"stage0 C: PREV = clamp(ZERO + mix(C0, KONST, TEXC))"`.
-///
-/// Re-implemented rather than shared with the converter's
-/// `bmd::mat3_dump::equation`: that lives inside the `convert_link` *binary*, so
-/// neither the library nor an example can import it, and `mat3_dump.txt` is
-/// covered by `scripts/link_converted.sha256` so the original must not move. The
-/// tests below pin the literal strings against the real dump, which is what
-/// keeps the two from drifting.
-///
-/// The one thing this adds over the dump: the *resolved* konst selector. The
-/// dump prints a bare `KONST` for every konst input, so it cannot by itself tell
-/// you whether a stage took K0 or K3_A.
-pub fn stage_equations(material: &mm::MaterialEntry) -> Result<Vec<String>> {
-    let n_stages = material.num_tev_stages as usize;
-    ensure!(
-        material.tev.stages.len() == n_stages,
-        "{} compacted stages for num_tev_stages {n_stages}",
-        material.tev.stages.len()
-    );
-
-    let mut out = Vec::with_capacity(n_stages * 2);
-    for (i, s) in material.tev.stages.iter().enumerate() {
-        let color_names = names(s.color_in, |v| gx::<CombineColor>(v, "color_in"))?;
-        let alpha_names = names(s.alpha_in, |v| gx::<CombineAlpha>(v, "alpha_in"))?;
-        out.push(format!(
-            "stage{i} C: {}",
-            equation(
-                &color_names,
-                gx::<TevOp>(s.color_op, "color_op")?,
-                gx::<TevBias>(s.color_bias, "color_bias")?,
-                gx::<TevScale>(s.color_scale, "color_scale")?,
-                s.color_clamp,
-                gx::<Register>(s.color_reg, "color_reg")?,
-            )
-        ));
-        out.push(format!(
-            "stage{i} A: {}",
-            equation(
-                &alpha_names,
-                gx::<TevOp>(s.alpha_op, "alpha_op")?,
-                gx::<TevBias>(s.alpha_bias, "alpha_bias")?,
-                gx::<TevScale>(s.alpha_scale, "alpha_scale")?,
-                s.alpha_clamp,
-                gx::<Register>(s.alpha_reg, "alpha_reg")?,
-            )
-        ));
-    }
-    Ok(out)
-}
-
-/// `reg = clamp?(((d ± mix(a, b, c)) + bias) · scale)` — byte-for-byte the form
-/// `bmd::mat3_dump::equation` renders.
-fn equation(
-    inputs: &[String; 4],
-    op: TevOp,
-    bias: TevBias,
-    scale: TevScale,
-    clamp: bool,
-    reg: Register,
-) -> String {
-    let [a, b, c, d] = inputs;
-    let core = match op {
-        TevOp::Add => format!("{d} + mix({a}, {b}, {c})"),
-        TevOp::Sub => format!("{d} - mix({a}, {b}, {c})"),
-        _ => format!("compare({op}: {a}, {b} ? {c} : 0) + {d}"),
-    };
-    let biased = match bias {
-        TevBias::Zero => core,
-        TevBias::AddHalf => format!("{core} + 0.5"),
-        TevBias::SubHalf => format!("{core} - 0.5"),
-        TevBias::HwbCompare => format!("{core} [compare-mode bias]"),
-    };
-    let scaled = match scale {
-        TevScale::Scale1 => biased,
-        TevScale::Scale2 => format!("({biased}) * 2"),
-        TevScale::Scale4 => format!("({biased}) * 4"),
-        TevScale::Divide2 => format!("({biased}) / 2"),
-    };
-    let clamped = if clamp {
-        format!("clamp({scaled})")
-    } else {
-        scaled
-    };
-    format!("{reg} = {clamped}")
-}
-
-/// The konst selectors a stage resolves to, for the isolation printout — the
-/// piece `mat3_dump.txt` does not carry.
-pub fn stage_konst_selects(material: &mm::MaterialEntry, stage: usize) -> Result<(String, String)> {
-    let kcsel = gx::<KonstColorSel>(
-        *material
-            .tev
-            .kcsels
-            .get(stage)
-            .context("no konst color select")?,
-        "kcsel",
-    )?;
-    let kasel = gx::<KonstAlphaSel>(
-        *material
-            .tev
-            .kasels
-            .get(stage)
-            .context("no konst alpha select")?,
-        "kasel",
-    )?;
-    Ok((kcsel.to_string(), kasel.to_string()))
-}
-
 // --- small helpers -----------------------------------------------------------
 
 /// Parse-don't-validate on a raw manifest byte.
@@ -531,18 +421,6 @@ where
         Ok(v) => Ok(v),
         Err(e) => bail!("{field}: {e}"),
     }
-}
-
-fn names<T: std::fmt::Display>(
-    raw: [u8; 4],
-    parse: impl Fn(u8) -> Result<T>,
-) -> Result<[String; 4]> {
-    Ok([
-        parse(raw[0])?.to_string(),
-        parse(raw[1])?.to_string(),
-        parse(raw[2])?.to_string(),
-        parse(raw[3])?.to_string(),
-    ])
 }
 
 /// The manifest's colors are `Vec<Option<_>>`; a present slot in range or None.
@@ -1090,32 +968,6 @@ mod tests {
         assert_eq!(p.chan_control[0], UVec4::new(1, 2, 1, 3));
         // texgen 1 is SRTG from COLOR0 with no matrix
         assert_eq!(p.texgen[1], UVec4::new(10, 19, 60, 0));
-    }
-
-    #[test]
-    fn ear_equations_match_the_dump() {
-        // Byte-for-byte from assets/link/converted/mat3_dump.txt, minus its
-        // two-space indent. If mat3_dump's renderer ever changes, this fails.
-        assert_eq!(
-            stage_equations(&ear()).unwrap(),
-            [
-                "stage0 C: PREV = clamp(ZERO + mix(C0, KONST, TEXC))",
-                "stage0 A: PREV = clamp(ZERO + mix(ZERO, ZERO, ZERO))",
-                "stage1 C: PREV = clamp(ZERO + mix(ZERO, TEXC, CPREV))",
-                "stage1 A: PREV = clamp(ZERO + mix(ZERO, KONST, TEXA))",
-                "stage2 C: PREV = clamp(CPREV + mix(ZERO, KONST, TEXC))",
-                "stage2 A: PREV = clamp(ZERO + mix(APREV, ZERO, ZERO))",
-            ]
-        );
-        // The konst selectors are what the dump's bare "KONST" hides.
-        assert_eq!(
-            stage_konst_selects(&ear(), 1).unwrap(),
-            ("K0".to_string(), "K3_A".to_string())
-        );
-        assert_eq!(
-            stage_konst_selects(&ear(), 2).unwrap(),
-            ("K1".to_string(), "K0_A".to_string())
-        );
     }
 
     #[test]

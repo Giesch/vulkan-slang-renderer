@@ -98,18 +98,17 @@ impl TryFrom<u32> for GXAlphaOp {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
-#[repr(C, align(16))]
+#[repr(C, align(4))]
 pub struct GXAlphaCompare {
     pub comp0: GXCompare,
     pub ref0: u32,
     pub comp1: GXCompare,
     pub ref1: u32,
     pub op: GXAlphaOp,
-    pub _padding_0: [u8; 12],
 }
 
 impl GPUWrite for GXAlphaCompare {}
-const _: () = assert!(std::mem::size_of::<GXAlphaCompare>() == 32);
+const _: () = assert!(std::mem::size_of::<GXAlphaCompare>() == 20);
 const _: () = assert!(std::mem::offset_of!(GXAlphaCompare, comp0) == 0);
 const _: () = assert!(std::mem::size_of::<GXCompare>() == 4);
 const _: () = assert!(std::mem::offset_of!(GXAlphaCompare, ref0) == 4);
@@ -136,8 +135,6 @@ pub struct TevParams {
     pub texgen_mtx: [glam::Vec4; 4],
     pub konst: [glam::Vec4; 4],
     pub reg: [glam::Vec4; 4],
-    pub light_dir: [glam::Vec4; 2],
-    pub light_color: [glam::Vec4; 2],
     pub chan_control: [glam::UVec4; 2],
     pub chan_mat_color: glam::Vec4,
     pub chan_amb_color: glam::Vec4,
@@ -145,7 +142,7 @@ pub struct TevParams {
 }
 
 impl GPUWrite for TevParams {}
-const _: () = assert!(std::mem::size_of::<TevParams>() == 1328);
+const _: () = assert!(std::mem::size_of::<TevParams>() == 1264);
 const _: () = assert!(std::mem::offset_of!(TevParams, stage_color_in) == 0);
 const _: () = assert!(std::mem::size_of::<[glam::UVec4; 8]>() == 128);
 const _: () = assert!(std::mem::offset_of!(TevParams, stage_color_op) == 128);
@@ -170,15 +167,46 @@ const _: () = assert!(std::mem::offset_of!(TevParams, konst) == 1056);
 const _: () = assert!(std::mem::size_of::<[glam::Vec4; 4]>() == 64);
 const _: () = assert!(std::mem::offset_of!(TevParams, reg) == 1120);
 const _: () = assert!(std::mem::size_of::<[glam::Vec4; 4]>() == 64);
-const _: () = assert!(std::mem::offset_of!(TevParams, light_dir) == 1184);
-const _: () = assert!(std::mem::size_of::<[glam::Vec4; 2]>() == 32);
-const _: () = assert!(std::mem::offset_of!(TevParams, light_color) == 1216);
-const _: () = assert!(std::mem::size_of::<[glam::Vec4; 2]>() == 32);
-const _: () = assert!(std::mem::offset_of!(TevParams, chan_control) == 1248);
+const _: () = assert!(std::mem::offset_of!(TevParams, chan_control) == 1184);
 const _: () = assert!(std::mem::size_of::<[glam::UVec4; 2]>() == 32);
-const _: () = assert!(std::mem::offset_of!(TevParams, chan_mat_color) == 1280);
+const _: () = assert!(std::mem::offset_of!(TevParams, chan_mat_color) == 1216);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
-const _: () = assert!(std::mem::offset_of!(TevParams, chan_amb_color) == 1296);
+const _: () = assert!(std::mem::offset_of!(TevParams, chan_amb_color) == 1232);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
-const _: () = assert!(std::mem::offset_of!(TevParams, control) == 1312);
+const _: () = assert!(std::mem::offset_of!(TevParams, control) == 1248);
 const _: () = assert!(std::mem::size_of::<glam::UVec4>() == 16);
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(16))]
+pub struct GXTevColorOverride {
+    pub actor_c0: glam::Vec4,
+    pub actor_k0: glam::Vec4,
+    pub eflight_konst: glam::Vec4,
+    pub eflight: u32,
+    pub _padding_0: [u8; 12],
+}
+
+impl GPUWrite for GXTevColorOverride {}
+const _: () = assert!(std::mem::size_of::<GXTevColorOverride>() == 64);
+const _: () = assert!(std::mem::offset_of!(GXTevColorOverride, actor_c0) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(GXTevColorOverride, actor_k0) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(GXTevColorOverride, eflight_konst) == 32);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(GXTevColorOverride, eflight) == 48);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(16))]
+pub struct GXLights {
+    pub dir: [glam::Vec4; 2],
+    pub color: [glam::Vec4; 2],
+}
+
+impl GPUWrite for GXLights {}
+const _: () = assert!(std::mem::size_of::<GXLights>() == 64);
+const _: () = assert!(std::mem::offset_of!(GXLights, dir) == 0);
+const _: () = assert!(std::mem::size_of::<[glam::Vec4; 2]>() == 32);
+const _: () = assert!(std::mem::offset_of!(GXLights, color) == 32);
+const _: () = assert!(std::mem::size_of::<[glam::Vec4; 2]>() == 32);

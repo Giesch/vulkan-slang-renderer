@@ -1,22 +1,33 @@
 #language slang 2026
 
-// The GX TEV pipeline as a data-driven interpreter: one `TevParams` uniform per
-// material, built by `src/tev_pack.rs` from the manifest's raw GX bytes. Nothing
-// here is specialized to Link — the converter's `tev_ir.rs` gate is what
-// guarantees the incoming configuration stays inside what this file implements.
+// This module interprets the GX TEV pipeline from data. Each material has one
+// `TevParams` record, which the packer builds from the manifest's raw GX bytes.
+// The consumer decides where that record lives — `toon_link` embeds it in a
+// `Material` reached by a per-draw pointer, not in a descriptor-bound uniform.
+// No code here is specific to Link.
 //
-// Evaluation order matches the hardware: the XF unit computes the color channel
-// and the texture coordinates per *vertex*, then the TEV unit runs the stage
-// chain per *fragment*. That split is deliberate (phase_08 decision 4) — running
-// the channel per-fragment gives rounder, smoother toon bands than GX produces,
-// so `toon_link`'s debug mode 8 exists to A/B it.
+// Terms used throughout:
+//   the manifest    link.manifest.json, the converter's output.
+//   MAT3            the material block of the source .bdl, and the manifest's
+//                   field names for what it held.
+//   the packer      src/tev_pack.rs, which fills a `TevParams` from a manifest
+//                   material.
+//   the gate        the converter's tev_ir.rs, which rejects any configuration
+//                   this file does not implement. "Gate-rejected" therefore
+//                   means the case cannot reach this shader at all, so the code
+//                   below only has to degrade predictably, not handle it.
 //
-// Every public struct and enum name declared here has to be unique across all
-// of shaders/source/, because `reflect_shared_module_types` (src/shaders.rs)
-// keys a *global* type-name map with silent last-write-wins. Helpers are
-// functions returning builtins, which cannot collide.
+// The evaluation order matches the hardware: the XF unit computes the color
+// channel and the texture coordinates per *vertex*, then the TEV unit runs the
+// stage chain per *fragment*. That split is deliberate: running the channel
+// per-fragment gives rounder, smoother toon bands than GX produces, so
+// `toon_link`'s debug mode 8 exists to A/B it.
 //
-// Plan: llm_notes/link_rendering/phase_08.md Step 2.
+// Every public struct and enum name declared here must be unique across all of
+// shaders/source/, because `reflect_shared_module_types`
+// (crates/slang-reflection/src/lib.rs) keys a *global* type-name map and a
+// repeated name silently replaces the first. The helpers return builtins, which
+// cannot collide.
 
 module tev;
 
@@ -26,7 +37,7 @@ module tev;
 static const uint GX_NULL_ID = 0xFF;
 
 // GXTexMtx: TEXMTXn = 30 + 3n, GX_IDENTITY = 60. The packer keeps the raw code
-// so the value is readable in a debugger and against mat3_dump.txt; only the
+// so the value stays readable in a debugger and against mat3_dump.txt. Only the
 // identity test needs the number.
 static const uint GX_IDENTITY_MTX = 60;
 
@@ -35,14 +46,13 @@ static const uint GX_TG_MTX2x4 = 1;
 static const uint GX_TG_SRTG = 10;
 
 // TEV intermediates live in signed 10-bit registers. GXSetTevColorOp's clamp
-// flag chooses between clamping to [0,1] and clamping to that register range --
-// clearing the bit does NOT mean "no clamp", which is the easy mistake here.
+// flag selects [0,1] or that register range — a clear bit does NOT mean "no
+// clamp", which is the easy mistake here.
 //
-// UNMEASURED (master plan risk #6): this range is reasoned from the GX docs and
-// matches noclip, but P8 deliberately skipped the software-renderer capture that
-// would confirm the exact edge behavior. Practical exposure is tiny: the only
-// unclamped stages in cl.bdl are eyeL/eyeR stage 1, whose values stay in [0,1]
-// anyway.
+// UNMEASURED. This range is reasoned from the GX docs and agrees with noclip.
+// No software-renderer capture confirms the exact edge behavior. Exposure is
+// small: the only unclamped stages in cl.bdl are eyeL/eyeR stage 1, whose values
+// stay in [0,1] anyway.
 static const float TEV_S10_MIN = -1024.0 / 255.0;
 static const float TEV_S10_MAX = 1023.0 / 255.0;
 
@@ -64,8 +74,8 @@ float tevClamp1(float v, bool clampBit) {
     return clamp(v, TEV_S10_MIN, TEV_S10_MAX);
 }
 
-// GXTevColorChan: R 0, G 1, B 2, A 3. Masked so a junk selector cannot index
-// out of bounds.
+// GXTevColorChan: R 0, G 1, B 2, A 3. Masked so a malformed selector cannot
+// index out of bounds.
 [ForceInline]
 float tevChannelOf(float4 c, uint chan) {
     float ch[4] = { c.r, c.g, c.b, c.a };
@@ -73,13 +83,13 @@ float tevChannelOf(float4 c, uint chan) {
 }
 
 // GXTevBias: ZERO 0, ADDHALF 1, SUBHALF 2. The 0x3 "compare mode" marker is
-// gate-rejected, so it falls through to no bias rather than inventing behavior.
+// gate-rejected, so it degrades to no bias here rather than inventing behavior.
 [ForceInline]
 float tevBiasValue(uint bias) {
     switch (bias) {
-    case 1: return 0.5;
-    case 2: return -0.5;
-    default: return 0.0;
+        case 1: return 0.5;
+        case 2: return -0.5;
+        default: return 0.0;
     }
 }
 
@@ -87,10 +97,10 @@ float tevBiasValue(uint bias) {
 [ForceInline]
 float tevScaleValue(uint scale) {
     switch (scale) {
-    case 1: return 2.0;
-    case 2: return 4.0;
-    case 3: return 0.5;
-    default: return 1.0;
+        case 1: return 2.0;
+        case 2: return 4.0;
+        case 3: return 0.5;
+        default: return 1.0;
     }
 }
 
@@ -107,16 +117,17 @@ float4 tevSwap(float4 c, uint4 table) {
 [ForceInline]
 float tevDiffuse(uint fn, float3 n, float3 l) {
     switch (fn) {
-    case 1: return dot(n, l);
-    case 2: return max(dot(n, l), 0.0);
-    default: return 1.0;
+        case 1: return dot(n, l);
+        case 2: return max(dot(n, l), 0.0);
+        default: return 1.0;
     }
 }
 
 // The combiner, for color and for alpha:
 //     out = clamp?( ((d +/- lerp(a, b, c)) + bias) * scale )
+//
 // `op` is (op, bias, scale, clamp). GXTevOp >= 8 are the comparison modes, which
-// reinterpret a/b/c/d entirely; tev_ir.rs rejects them, so they degrade to ADD
+// reinterpret a/b/c/d entirely. They are gate-rejected, so they degrade to ADD
 // here rather than being silently half-implemented.
 [ForceInline]
 float3 tevCombine3(float3 a, float3 b, float3 c, float3 d, uint4 op) {
@@ -140,7 +151,8 @@ float tevCombine1(float a, float b, float c, float d, uint4 op) {
 //   0x0C .. 0x0F    K0..K3 rgb
 //   >= 0x10         a single-channel splat of K{sel & 3}, channel (sel-0x10)>>2
 //                   (R at 0x10, G at 0x14, B at 0x18, A at 0x1C)
-// 0x08..0x0B is a hole in the GX enum, so KonstColorSel::try_from already
+//
+// 0x08..0x0B is a hole in the GX enum, so `KonstColorSel::try_from` already
 // rejects it at MAT3 parse time and that branch is unreachable.
 [ForceInline]
 float3 tevKonstColor(uint sel, float4 konst[4]) {
@@ -156,16 +168,18 @@ float3 tevKonstColor(uint sel, float4 konst[4]) {
     return float3(tevChannelOf(konst[sel & 3], (sel - 0x10) >> 2));
 }
 
-// GXTevKAlphaSel: same fractions, same splats, but no flat K0..K3 form -- an
+// GXTevKAlphaSel: same fractions, same splats, but no flat K0..K3 form — an
 // alpha cannot take three channels.
 [ForceInline]
 float tevKonstAlpha(uint sel, float4 konst[4]) {
     if (sel < 0x08) {
         return float(8 - sel) * 0.125;
     }
+
     if (sel < 0x10) {
         return 0.0;
     }
+
     return tevChannelOf(konst[sel & 3], (sel - 0x10) >> 2);
 }
 
@@ -178,15 +192,16 @@ float3 tevColorArg(uint sel, float4 regs[4], float4 texel, float4 ras, float3 ko
         float4 r = regs[sel >> 1];
         return ((sel & 1) == 0) ? r.rgb : float3(r.a);
     }
+
     switch (sel) {
-    case 0x8: return texel.rgb;       // TEXC
-    case 0x9: return float3(texel.a); // TEXA
-    case 0xA: return ras.rgb;         // RASC
-    case 0xB: return float3(ras.a);   // RASA
-    case 0xC: return float3(1.0);     // ONE
-    case 0xD: return float3(0.5);     // HALF
-    case 0xE: return konstColor;      // KONST
-    default: return float3(0.0);      // ZERO (0xF)
+        case 0x8: return texel.rgb;       // TEXC
+        case 0x9: return float3(texel.a); // TEXA
+        case 0xA: return ras.rgb;         // RASC
+        case 0xB: return float3(ras.a);   // RASA
+        case 0xC: return float3(1.0);     // ONE
+        case 0xD: return float3(0.5);     // HALF
+        case 0xE: return konstColor;      // KONST
+        default: return float3(0.0);      // ZERO (0xF)
     }
 }
 
@@ -196,51 +211,61 @@ float tevAlphaArg(uint sel, float4 regs[4], float texelA, float rasA, float kons
     if (sel < 4) {
         return regs[sel].a;
     }
+
     switch (sel) {
-    case 4: return texelA;     // TEXA
-    case 5: return rasA;       // RASA
-    case 6: return konstAlpha; // KONST
-    default: return 0.0;       // ZERO (7)
+        case 4: return texelA;     // TEXA
+        case 5: return rasA;       // RASA
+        case 6: return konstAlpha; // KONST
+        default: return 0.0;       // ZERO (7)
     }
 }
 
-// Dynamic sampler indexing does not exist: tex0/tex1 are two distinct
-// ParameterBlock fields, so the selector has to be a branch. It branches on a
-// *uniform* value, which keeps the implicit-LOD `Sample` well defined because
-// every fragment in the quad takes the same path.
-//
-// A null texmap yields GX's "no texture" identity rather than reading out of
-// bounds. Any stage that actually selects TEXC/TEXA with a null texmap is
-// gate-rejected, so this only guards stages that never look.
 [ForceInline]
 public float4 tevSampleTexmap(uint texmap, float2 uv, Sampler2D tex0, Sampler2D tex1) {
+    // These branches are uniform, and everything below traces back to the same
+    // root: the material arrives as a per-draw push constant.
+    //
+    //   `texmap` is `stageOrder[i].y` — a uniform address (the material) read at
+    //   a uniform index (the caller's loop counter).
+    //   `tex0` / `tex1` come from the same material, so the heap access they were
+    //   converted from is uniform too.
+    //
+    // The caller's loop bound is material-derived as well, so every lane runs
+    // every iteration. That is what the implicit-LOD `Sample` below needs — a
+    // partially-masked quad has no derivatives, even if `texmap` never diverged.
+    // A `break` on any fragment-varying value would break this.
+
     if (texmap == 0) {
         return tex0.Sample(uv);
     }
+
     if (texmap == 1) {
         return tex1.Sample(uv);
     }
+
     return float4(1.0);
 }
 
 // GXChannelID -> the rasterized color. Only channel pair 0 exists (the gate
 // enforces num_color_chans == 1), so COLOR0 / ALPHA0 / COLOR0A0 all resolve to
-// the one interpolant. COLOR_ZERO and COLOR_NULL are GX zero; the COLOR1 forms
-// are gate-rejected.
+// the one interpolant. COLOR_ZERO and COLOR_NULL are GX zero, and the COLOR1
+// forms are gate-rejected.
 [ForceInline]
 public float4 tevRasColor(uint chanId, float4 color0) {
     switch (chanId) {
-    case 0:            // COLOR0
-    case 2:            // ALPHA0
-    case 4: return color0; // COLOR0A0
-    default: return float4(0.0);
+        case 0: // COLOR0
+        case 2: // ALPHA0
+        case 4: // COLOR0A0
+            return color0;
+        default:
+            return float4(0.0);
     }
 }
 
 // --- the GX alpha test ------------------------------------------------------
 
-// GXCompare (GXEnum.h:466–473): the alpha test's compare functions, as raw
-// MAT3 codes.
+// GXCompare (tww/include/dolphin/gx/GXEnum.h:466-473): the alpha test's compare
+// functions, as raw MAT3 codes.
 public enum GXCompare : uint {
     Never = 0,
     Less = 1,
@@ -252,8 +277,8 @@ public enum GXCompare : uint {
     Always = 7,
 }
 
-// GXAlphaOp (GXEnum.h:477–480): how the alpha test's two compare results
-// combine.
+// GXAlphaOp (tww/include/dolphin/gx/GXEnum.h:477-480): how the alpha test's two
+// compare results combine.
 public enum GXAlphaOp : uint {
     And = 0,
     Or = 1,
@@ -270,27 +295,27 @@ public struct GXAlphaCompare {
     uint ref1;
     GXAlphaOp op;
 
-    // The GX alpha test, on the TEV output alpha quantized to the 8-bit value the
-    // hardware compares.
+    // The GX alpha test, on the TEV output alpha quantized to the 8-bit value
+    // the hardware compares.
     public bool test(float alpha) {
         let alpha8 = uint(round(saturate(alpha) * 255.0));
         return this.op(this.comp0(alpha8, this.ref0), this.comp1(alpha8, this.ref1));
     }
 }
 
-// A compare function is callable on its operands: comp(alpha, reference), on
-// the 8-bit values the hardware compares.
+// A compare function is callable on its operands: comp(alpha, reference), on the
+// 8-bit values the hardware compares.
 extension GXCompare {
     bool operator()(uint alpha, uint reference) {
         switch (this) {
-        case GXCompare.Never: return false;
-        case GXCompare.Less: return alpha < reference;
-        case GXCompare.Equal: return alpha == reference;
-        case GXCompare.LessEqual: return alpha <= reference;
-        case GXCompare.Greater: return alpha > reference;
-        case GXCompare.NotEqual: return alpha != reference;
-        case GXCompare.GreaterEqual: return alpha >= reference;
-        default: return true; // Always
+            case GXCompare.Never: return false;
+            case GXCompare.Less: return alpha < reference;
+            case GXCompare.Equal: return alpha == reference;
+            case GXCompare.LessEqual: return alpha <= reference;
+            case GXCompare.Greater: return alpha > reference;
+            case GXCompare.NotEqual: return alpha != reference;
+            case GXCompare.GreaterEqual: return alpha >= reference;
+            default: return true; // Always
         }
     }
 }
@@ -299,20 +324,57 @@ extension GXCompare {
 extension GXAlphaOp {
     bool operator()(bool r0, bool r1) {
         switch (this) {
-        case GXAlphaOp.And: return r0 && r1;
-        case GXAlphaOp.Or: return r0 || r1;
-        case GXAlphaOp.Xor: return r0 != r1;
-        default: return r0 == r1; // Xnor
+            case GXAlphaOp.And: return r0 && r1;
+            case GXAlphaOp.Or: return r0 || r1;
+            case GXAlphaOp.Xor: return r0 != r1;
+            default: return r0 == r1; // Xnor
         }
     }
 }
 
-// --- the uniform block ------------------------------------------------------
+// --- per-frame state --------------------------------------------------------
 
-// One GX value per vector component, no bit-packing anywhere (phase_08
-// decision 3): the whole risk of this phase is misencoding an interpreter's
-// configuration, and a packed field is unreadable both in a debugger and against
-// mat3_dump.txt. ~1.3 KB against a 16 KB guaranteed maxUniformBufferRange.
+// The two GX lights. Per *frame*, not per material: a channel's litMask picks
+// which of them it uses, but their direction and color belong to the scene.
+//
+// The manifest carries neither — `light_colors` is null on every material,
+// because the game writes them each frame from `dKy_tevstr_c` — so both come
+// from the example. Two lights because litMask is 3, and widening that means
+// resizing these arrays and relaxing the gate.
+//
+// The colors are single-channel by design, not by simplification: the game's
+// light 0 is red-only and its light 1 green-only, which is what lets the
+// separable ZBtoonEX ramp read two independent terms off one channel color.
+// See LIGHT0_COLOR in src/main.rs.
+public struct GXLights {
+    // unit vectors pointing FROM the surface TOWARD each light, world space
+    public float4 dir[2];
+    public float4 color[2];
+}
+
+// The per-frame rewrite of stage 0's two lerp endpoints, mirroring
+// `setLightTevColorType_sub` (tww/src/d/d_kankyo.cpp:1817-1829): the game
+// rebuilds them from `dKy_tevstr_c` every frame, so the manifest's
+// `reg_colors[0]` / `konst_colors[0]` are only the defaults J3D loaded.
+//
+// Applied in `evalStages`, gated on the material's own color channel being lit —
+// see the two invariants documented there.
+public struct GXTevColorOverride {
+    public float4 actorC0;
+    public float4 actorK0;
+    public float4 eflightKonst;
+    // 0 disables the eflight highlight, leaving K1 at its MAT3 value
+    public uint eflight;
+}
+
+// --- the per-material block --------------------------------------------------
+
+// One GX value per vector component, no bit-packing anywhere: the main risk in
+// this record is misencoding an interpreter's configuration, and a packed field
+// is unreadable both in a debugger and against mat3_dump.txt.
+//
+// ~1.3 KB per material, reached by a per-draw pointer, so the cost is bandwidth
+// per draw.
 public struct TevParams {
     // Per-stage combiner configuration, indexed 0..control.x.
     uint4 stageColorIn[8];  // a, b, c, d           GXTevColorArg
@@ -330,38 +392,25 @@ public struct TevParams {
     // Per-texgen: type, source, raw GX matrix code (60 = GX_IDENTITY), 0.
     uint4 texgen[2];
     // Two composed MTX2x4 rows per texgen, laid out for
-    // dot(row, float4(uv, 1, 1)) so the translation sits in .z. Stored per
+    // dot(row, float4(uv, 1, 1)) so the translation sits in .z. Indexed per
     // *texgen* rather than per texmatrix slot: slots run TEXMTX0..TEXMTX9, so a
     // slot-indexed array would need ten entries to address two.
     float4 texgenMtx[4];
 
     float4 konst[4]; // K0..K3, /255
-    // PREV, REG0, REG1, REG2 -- in *register* order, which is NOT the manifest's
-    // order. reg_colors[i] loads register i+1 (J3DMatBlock.cpp's loadTevColor),
+    // PREV, REG0, REG1, REG2 — in *register* order, which is NOT the manifest's
+    // order. `reg_colors[i]` loads register i+1 (J3DMatBlock.cpp's loadTevColor),
     // so reg[1..=3] come from reg_colors[0..=2] and reg[0] (PREV) gets no MAT3
     // value. Reading it unshifted makes stage 0 of every toon material a no-op
     // and the bands vanish with no other symptom.
     float4 reg[4];
-
-    // Unit vectors pointing FROM the surface TOWARD each light, world space, and
-    // their colors. The manifest's light_colors is null on every material (the
-    // game writes them per frame from dKy_tevstr_c), so both come from the
-    // example. Two lights because lit_mask is 3; widening means resizing these
-    // and relaxing the gate.
-    //
-    // The colors are single-channel by design, not by simplification: the game's
-    // light 0 is red-only and its light 1 green-only, which is what lets the
-    // separable ZBtoonEX ramp read two independent terms off one channel color.
-    // See examples/toon_link.rs's LIGHT0_COLOR.
-    float4 lightDir[2];
-    float4 lightColor[2];
 
     // [0] = GX_COLOR0, [1] = GX_ALPHA0: (lightingEnabled, diffuseFn, attnFn,
     // litMask). MAT3's four color_channels slots are pairs, which is why one
     // channel pair means two live controls.
     uint4 chanControl[2];
     // One RGBA register per channel *pair*, matching
-    // GXSetChanMatColor(GX_COLOR0A0, …): the color channel takes .rgb and the
+    // GXSetChanMatColor(GX_COLOR0A0, ...): the color channel takes .rgb and the
     // alpha channel takes .a.
     float4 chanMatColor;
     float4 chanAmbColor;
@@ -372,14 +421,14 @@ public struct TevParams {
     // wants .rgb from slot 0 and .a from slot 1, because both halves run the same
     // math on the same registers.
     //
-    // Attenuation is forced to 1.0 for Spot and Specular alike. That started as
-    // a deliberate approximation -- our light is a directional with no position,
-    // so there is nothing to attenuate from -- but it turns out to be exact:
-    // the game sets every actor light's coefficients to the identity,
+    // Attenuation is forced to 1.0 for Spot and Specular alike. That started as a
+    // deliberate approximation — our light is a directional with no position, so
+    // there is nothing to attenuate from — but it turns out to be exact: the game
+    // sets every actor light's coefficients to the identity,
     // mCosAtten = (1,0,0) and mDistAtten = (1,0,0)
-    // (../tww/src/d/d_kankyo.cpp:1548-1553 and :3413-3418), which makes GX's
+    // (tww/src/d/d_kankyo.cpp:1548-1553 and :3413-3418), which makes GX's
     // attenuation term 1 regardless of geometry.
-    public func evalChannel(uint slot, float3 normal) -> float4 {
+    public func evalChannel(uint slot, float3 normal, GXLights lights) -> float4 {
         let chan = this.chanControl[slot];
         let matColor = this.chanMatColor;
         if (chan.x == 0) {
@@ -394,18 +443,18 @@ public struct TevParams {
             if ((chan.w & (1u << l)) == 0) {
                 continue;
             }
-            let d = tevDiffuse(chan.y, n, normalize(this.lightDir[l].xyz));
-            illumRgb += d * this.lightColor[l].rgb;
-            illumA += d * this.lightColor[l].a;
+            let d = tevDiffuse(chan.y, n, normalize(lights.dir[l].xyz));
+            illumRgb += d * lights.color[l].rgb;
+            illumA += d * lights.color[l].a;
         }
         return float4(matColor.rgb * saturate(illumRgb), matColor.a * saturate(illumA));
     }
 
     // The rasterized color TEV sees as RASC/RASA: COLOR0's rgb paired with
     // ALPHA0's alpha.
-    public func evalRasterColor(float3 normal) -> float4 {
-        let color0 = this.evalChannel(0, normal);
-        let alpha0 = this.evalChannel(1, normal);
+    public func evalRasterColor(float3 normal, GXLights lights) -> float4 {
+        let color0 = this.evalChannel(0, normal, lights);
+        let alpha0 = this.evalChannel(1, normal, lights);
         return float4(color0.rgb, alpha0.a);
     }
 
@@ -419,13 +468,16 @@ public struct TevParams {
         for (uint i = 0; i < count; i++) {
             let g = this.texgen[i];
             if (g.x == GX_TG_SRTG) {
-                // The texcoord *is* the rasterized channel color's (r, g). This
-                // is how the ZBtoonEX ramp gets indexed, and the ramp happens to
-                // be separable -- its R varies only with u and its G only with
-                // v, both stepping sharply at ~0.49 -- so stage 0's RRR swizzle
-                // reads f(color.r) and stage 2's GGG swizzle reads g(color.g)
-                // independently. Sampler wrap is ClampToEdge, so a channel value
-                // outside [0,1] is harmless.
+                // The texcoord *is* the rasterized channel color's (r, g), which
+                // is how the ZBtoonEX ramp gets indexed.
+                //
+                // The ramp happens to be separable — its R varies only with u
+                // and its G only with v, both stepping sharply at ~0.49 — so
+                // stage 0's RRR swizzle reads f(color.r) and stage 2's GGG
+                // swizzle reads g(color.g) independently.
+                //
+                // Sampler wrap is ClampToEdge, so a channel value outside [0,1]
+                // is harmless.
                 uv[i] = chanColor.rg;
             } else {
                 // GX_TG_MTX2x4 from TEX0.
@@ -441,7 +493,7 @@ public struct TevParams {
         return float4(uv[0], uv[1]);
     }
 
-    // A texcoord by GX id; null (or past numTexgens) samples at the origin.
+    // A texcoord by GX id. Null, or past numTexgens, samples at the origin.
     [ForceInline]
     public func texcoordFor(uint coordId, float4 texcoord01) -> float2 {
         if (coordId == 0) {
@@ -454,12 +506,36 @@ public struct TevParams {
     }
 
     // The stage chain. Returns GX_TEVPREV, which is the pixel.
-    public func evalStages(float4 color0, float4 texcoord01, Sampler2D tex0, Sampler2D tex1)
+    public func evalStages(float4 color0, float4 texcoord01, Sampler2D tex0, Sampler2D tex1,
+                           GXTevColorOverride env)
         -> float4 {
         // reg[0] is PREV. GX leaves it undefined across materials and MAT3 never
-        // loads it, so the packer parks it at 0 -- the only reproducible choice,
+        // loads it, so the packer parks it at 0 — the only reproducible choice,
         // and the one noclip makes.
         float4 regs[4] = { this.reg[0], this.reg[1], this.reg[2], this.reg[3] };
+        // Local copy so the override below can patch K0/K1 without touching the
+        // material record, which is immutable and shared by every draw using it.
+        float4 konst[4] = { this.konst[0], this.konst[1], this.konst[2], this.konst[3] };
+
+        // The environment override. Two invariants, both load-bearing, and both
+        // enforced only here now that the CPU-side `set_rgb` helper is gone:
+        //
+        // 1. Gated on the color channel being lit, as the game gates on
+        //    `mLightMode != 0`. The eye and brow decals are unlit and must keep
+        //    their MAT3 values, or they silently restyle.
+        //
+        // 2. RGB only, never alpha. The game copies the existing alpha back
+        //    before writing (tww/src/d/d_kankyo.cpp:1820, :1826), and `sleeve`
+        //    stage 1's alpha reads K0's — clobbering it would change that
+        //    cutout.
+        if (this.chanControl[0].x != 0) {
+            regs[1].rgb = env.actorC0.rgb;
+            konst[0].rgb = env.actorK0.rgb;
+            if (env.eflight != 0) {
+                konst[1].rgb = env.eflightKonst.rgb;
+            }
+        }
+
         let count = min(this.control.x, 8);
 
         for (uint i = 0; i < count; i++) {
@@ -472,8 +548,8 @@ public struct TevParams {
                                 this.swapTable[swap.y & 3]);
             let ras = tevSwap(tevRasColor(order.z, color0), this.swapTable[swap.x & 3]);
 
-            let konstColor = tevKonstColor(dest.z, this.konst);
-            let konstAlpha = tevKonstAlpha(dest.w, this.konst);
+            let konstColor = tevKonstColor(dest.z, konst);
+            let konstAlpha = tevKonstAlpha(dest.w, konst);
 
             let ci = this.stageColorIn[i];
             let ai = this.stageAlphaIn[i];
@@ -481,7 +557,7 @@ public struct TevParams {
             // BOTH halves are computed from the pre-write register file: GX reads
             // every input at stage start, so writing the color before computing
             // the alpha would corrupt a stage whose alpha reads the register its
-            // color just overwrote.
+            // own color just overwrote.
             let outColor = tevCombine3(
                 tevColorArg(ci.x, regs, texel, ras, konstColor),
                 tevColorArg(ci.y, regs, texel, ras, konstColor),
@@ -496,8 +572,8 @@ public struct TevParams {
                 this.stageAlphaOp[i]);
 
             // Color and alpha go to independent GX registers. Written through
-            // full-vector stores rather than swizzle assignment so a dynamic
-            // index needs no lvalue-swizzle support; the alpha store reads back
+            // full-vector stores rather than swizzle assignment, so a dynamic
+            // index needs no lvalue-swizzle support. The alpha store reads back
             // the color store, which is correct when both name the same register.
             let colorReg = dest.x & 3;
             regs[colorReg] = float4(outColor, regs[colorReg].a);

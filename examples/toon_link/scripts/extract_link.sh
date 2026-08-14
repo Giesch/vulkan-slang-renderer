@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Extract Toon Link assets from the Wind Waker disc image in the repo's sibling
-# ../tww checkout.
+# tww checkout. TWW_DIR below sets the default location.
 # Plan and verification checklist: llm_notes/link_rendering/phase_00.md
 set -euo pipefail
 # examples/toon_link -- every path below is relative to this example's crate dir

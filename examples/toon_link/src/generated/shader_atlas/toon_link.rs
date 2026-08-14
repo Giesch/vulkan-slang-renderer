@@ -11,7 +11,7 @@ use facet::Facet;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
-pub use super::tev::{GXAlphaCompare, TevParams};
+pub use super::tev::{GXAlphaCompare, GXLights, GXTevColorOverride, TevParams};
 use mltrs::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -74,24 +74,56 @@ impl TryFrom<u32> for DebugMode {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(8))]
+pub struct ToonLinkDraw {
+    pub material: ImmutableAddr<Material>,
+}
+
+impl GPUWrite for ToonLinkDraw {}
+const _: () = assert!(std::mem::size_of::<ToonLinkDraw>() == 8);
+const _: () = assert!(std::mem::offset_of!(ToonLinkDraw, material) == 0);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<Material>>() == 8);
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(16))]
+pub struct Material {
+    pub tex0: BindlessHandle<Sampler2D>,
+    pub tex1: BindlessHandle<Sampler2D>,
+    pub tev: TevParams,
+    pub alpha_compare: GXAlphaCompare,
+    pub _padding_0: [u8; 12],
+}
+
+impl GPUWrite for Material {}
+const _: () = assert!(std::mem::size_of::<Material>() == 1312);
+const _: () = assert!(std::mem::offset_of!(Material, tex0) == 0);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Material, tex1) == 8);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Material, tev) == 16);
+const _: () = assert!(std::mem::size_of::<TevParams>() == 1264);
+const _: () = assert!(std::mem::offset_of!(Material, alpha_compare) == 1280);
+const _: () = assert!(std::mem::size_of::<GXAlphaCompare>() == 20);
+
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct ToonLinkParams {
     pub mvp: MVPMatrices,
-    pub tev: TevParams,
-    pub alpha_compare: GXAlphaCompare,
+    pub lights: GXLights,
+    pub env: GXTevColorOverride,
     pub debug_mode: DebugMode,
     pub _padding_0: [u8; 12],
 }
 
 impl GPUWrite for ToonLinkParams {}
-const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 1568);
+const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 336);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
-const _: () = assert!(std::mem::offset_of!(ToonLinkParams, tev) == 192);
-const _: () = assert!(std::mem::size_of::<TevParams>() == 1328);
-const _: () = assert!(std::mem::offset_of!(ToonLinkParams, alpha_compare) == 1520);
-const _: () = assert!(std::mem::size_of::<GXAlphaCompare>() == 32);
-const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 1552);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, lights) == 192);
+const _: () = assert!(std::mem::size_of::<GXLights>() == 64);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, env) == 256);
+const _: () = assert!(std::mem::size_of::<GXTevColorOverride>() == 64);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 320);
 const _: () = assert!(std::mem::size_of::<DebugMode>() == 4);
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -105,10 +137,12 @@ pub struct Vertex {
 impl GPUWrite for Vertex {}
 
 pub struct Resources<'a> {
-    pub tex0: &'a TextureHandle,
-    pub tex1: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<ToonLinkParams>,
 }
+
+impl mltrs::renderer::gpu_write::PushConstantBlock for ToonLinkDraw {}
+// 128 bytes is the vulkan-guaranteed maxPushConstantsSize
+const _: () = assert!(std::mem::size_of::<ToonLinkDraw>() <= 128);
 
 impl VertexDescription for Vertex {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
@@ -161,13 +195,11 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> IndexedPipelineConfig<'a, Vertex, NoPush> {
+    ) -> IndexedPipelineConfig<'a, Vertex, PushBlock<ToonLinkDraw>> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.tex0,
-            resources.tex1,
         ];
 
         #[rustfmt::skip]

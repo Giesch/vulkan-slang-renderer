@@ -147,6 +147,13 @@ post-BDA-migration — descriptor-based storage buffers no longer exist):
   textures — no dynamic offsets needed. Corollary proven by multi_mesh:
   **uniforms are per-pipeline, not per-draw**, so every draw sharing a pipeline
   shares its uniform values (fine for Link — one transform, N materials).
+  **Superseded 2026-08-13 by bindless textures (phase 9).** Both halves are now
+  false for toon_link: the textures are heap handles carried as *data* in a
+  `Material` struct, and each draw's push constant is an `ImmutableAddr<Material>`
+  pointing straight at that draw's element. What survives is the raster state — 24 materials
+  still need **5** pipelines, because blend / cull / depth / color-write mask are
+  not descriptor state and bindless cannot touch them. See
+  `llm_notes/bindless_textures/phase_09.md`.
 - Hot reload (`check_for_shader_recompile`, 2530; index-based since P4, so it
   recreates every queued graphics pipeline, not just one):
   `assert_shader_interface_unchanged` (added `6a8552f`) panics if a reloaded

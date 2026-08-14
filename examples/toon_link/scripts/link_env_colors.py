@@ -13,23 +13,24 @@
 #     stage 0:  PREV = mix(REG0, K0, ZBtoonEX.r)
 #
 # and the game overwrites both every frame in `setLightTevColorType_sub`
-# (../tww/src/d/d_kankyo.cpp:1817-1829) from `dKy_tevstr_c`:
+# (tww/src/d/d_kankyo.cpp:1817-1829) from `dKy_tevstr_c`:
 #
 #     setTevColor(0)  -> GX_TEVREG0 <- mColorC0 <- Pale.mActor_C0   (shadow end)
 #     setTevKColor(0) -> K0         <- mColorK0 <- Pale.mActor_K0   (lit end)
 #
-# NOTE the sibling branch at d_kankyo.cpp:1797-1816 swaps the two, but it is
-# gated on `toon_proc_check()`, which unconditionally returns false in the
-# retail build (d_kankyo.cpp:89-99). The mapping above is the live one.
+# NOTE the sibling branch at tww/src/d/d_kankyo.cpp:1797-1816 swaps the two,
+# but it is gated on `toon_proc_check()`, which unconditionally returns false
+# in the retail build (tww/src/d/d_kankyo.cpp:89-99). The mapping above is the
+# live one.
 #
-# `setLight_actor` (d_kankyo.cpp:1328-1353) is what copies Pale -> tevstr,
-# blending two palettes by time of day and two more by weather. This script
-# reports one palette slot unblended, which is exact inside a schedule band
-# whose two endpoints name the same slot -- the default daytime band does
+# `setLight_actor` (tww/src/d/d_kankyo.cpp:1328-1353) is what copies Pale ->
+# tevstr, blending two palettes by time of day and two more by weather. This
+# script reports one palette slot unblended, which is exact inside a schedule
+# band whose two endpoints name the same slot -- the default daytime band does
 # (see --time below).
 #
 # Chunk layout is a plain struct walk; the structs are
-# ../tww/include/d/d_stage.h:103-133 and :162-164.
+# tww/include/d/d_stage.h:103-133 and :162-164.
 #
 # Usage:
 #     scripts/link_env_colors.py assets/link/raw/sea_stage.dzs
@@ -39,16 +40,16 @@ import argparse
 import struct
 import sys
 
-# stage_palet_info_class (d_stage.h:118-133), "Pale"
+# stage_palet_info_class (tww/include/d/d_stage.h:118-133), "Pale"
 PALE_SIZE = 0x2C
 PALE_ACTOR_C0 = 0x00
 PALE_ACTOR_K0 = 0x03
-# stage_pselect_info_class (d_stage.h:103-106), "Colo"
+# stage_pselect_info_class (tww/include/d/d_stage.h:103-106), "Colo"
 COLO_SIZE = 0x0C
-# stage_envr_info_class (d_stage.h:162-164), "EnvR"
+# stage_envr_info_class (tww/include/d/d_stage.h:162-164), "EnvR"
 ENVR_SIZE = 0x08
 
-# The default schedule, l_time_attribute[] in ../tww/src/d/d_kankyo_data.cpp:10-13,
+# The default schedule, l_time_attribute[] in tww/src/d/d_kankyo_data.cpp:10-13,
 # as (begin, end, palIdx0, palIdx1) over a 360-unit day. A band whose two indices
 # agree is a plateau -- no blend, so a single slot is the exact answer there.
 SCHEDULE = [

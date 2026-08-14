@@ -8,42 +8,6 @@
         "typeName": "ToonLinkParams",
         "fields": [
           {
-            "kind": "resource",
-            "fieldName": "tex0",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
-            },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
-          },
-          {
-            "kind": "resource",
-            "fieldName": "tex1",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
-            },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
-          },
-          {
             "kind": "struct",
             "fieldName": "mvp",
             "binding": {
@@ -104,165 +68,21 @@
           },
           {
             "kind": "struct",
-            "fieldName": "tev",
+            "fieldName": "lights",
             "binding": {
               "kind": "uniform",
               "offset": 192,
-              "size": 1328
+              "size": 64
             },
             "structType": {
-              "typeName": "TevParams",
+              "typeName": "GXLights",
               "fields": [
                 {
                   "kind": "array",
-                  "fieldName": "stageColorIn",
+                  "fieldName": "dir",
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
-                    "size": 128
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 8,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "stageColorOp",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 128,
-                    "size": 128
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 8,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "stageAlphaIn",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 256,
-                    "size": 128
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 8,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "stageAlphaOp",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 384,
-                    "size": 128
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 8,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "stageDest",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 512,
-                    "size": 128
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 8,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "stageOrder",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 640,
-                    "size": 128
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 8,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "stageSwap",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 768,
-                    "size": 128
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 8,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "swapTable",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 896,
-                    "size": 64
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 4,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "texgen",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 960,
-                    "size": 32
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 2,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "texgenMtx",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 992,
-                    "size": 64
-                  },
-                  "elementScalarType": "float32",
-                  "elementCount": 4,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "konst",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 1056,
-                    "size": 64
-                  },
-                  "elementScalarType": "float32",
-                  "elementCount": 4,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "reg",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 1120,
-                    "size": 64
-                  },
-                  "elementScalarType": "float32",
-                  "elementCount": 4,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "lightDir",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 1184,
                     "size": 32
                   },
                   "elementScalarType": "float32",
@@ -271,228 +91,81 @@
                 },
                 {
                   "kind": "array",
-                  "fieldName": "lightColor",
+                  "fieldName": "color",
                   "binding": {
                     "kind": "uniform",
-                    "offset": 1216,
+                    "offset": 32,
                     "size": 32
                   },
                   "elementScalarType": "float32",
                   "elementCount": 2,
                   "elementStride": 16
-                },
-                {
-                  "kind": "array",
-                  "fieldName": "chanControl",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 1248,
-                    "size": 32
-                  },
-                  "elementScalarType": "uint32",
-                  "elementCount": 2,
-                  "elementStride": 16
-                },
-                {
-                  "kind": "vector",
-                  "fieldName": "chanMatColor",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 1280,
-                    "size": 16
-                  },
-                  "elementCount": 4,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                },
-                {
-                  "kind": "vector",
-                  "fieldName": "chanAmbColor",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 1296,
-                    "size": 16
-                  },
-                  "elementCount": 4,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                },
-                {
-                  "kind": "vector",
-                  "fieldName": "control",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 1312,
-                    "size": 16
-                  },
-                  "elementCount": 4,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "uint32"
-                  }
                 }
               ]
             }
           },
           {
             "kind": "struct",
-            "fieldName": "alphaCompare",
+            "fieldName": "env",
             "binding": {
               "kind": "uniform",
-              "offset": 1520,
-              "size": 32
+              "offset": 256,
+              "size": 64
             },
             "structType": {
-              "typeName": "GXAlphaCompare",
+              "typeName": "GXTevColorOverride",
               "fields": [
                 {
-                  "kind": "enum",
-                  "fieldName": "comp0",
+                  "kind": "vector",
+                  "fieldName": "actorC0",
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
-                    "size": 4
+                    "size": 16
                   },
-                  "enumType": {
-                    "typeName": "GXCompare",
-                    "tagType": "uint32",
-                    "cases": [
-                      {
-                        "name": "Never",
-                        "value": 0
-                      },
-                      {
-                        "name": "Less",
-                        "value": 1
-                      },
-                      {
-                        "name": "Equal",
-                        "value": 2
-                      },
-                      {
-                        "name": "LessEqual",
-                        "value": 3
-                      },
-                      {
-                        "name": "Greater",
-                        "value": 4
-                      },
-                      {
-                        "name": "NotEqual",
-                        "value": 5
-                      },
-                      {
-                        "name": "GreaterEqual",
-                        "value": 6
-                      },
-                      {
-                        "name": "Always",
-                        "value": 7
-                      }
-                    ]
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
                   }
                 },
                 {
-                  "kind": "scalar",
-                  "fieldName": "ref0",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 4,
-                    "size": 4
-                  },
-                  "scalarType": "uint32"
-                },
-                {
-                  "kind": "enum",
-                  "fieldName": "comp1",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 8,
-                    "size": 4
-                  },
-                  "enumType": {
-                    "typeName": "GXCompare",
-                    "tagType": "uint32",
-                    "cases": [
-                      {
-                        "name": "Never",
-                        "value": 0
-                      },
-                      {
-                        "name": "Less",
-                        "value": 1
-                      },
-                      {
-                        "name": "Equal",
-                        "value": 2
-                      },
-                      {
-                        "name": "LessEqual",
-                        "value": 3
-                      },
-                      {
-                        "name": "Greater",
-                        "value": 4
-                      },
-                      {
-                        "name": "NotEqual",
-                        "value": 5
-                      },
-                      {
-                        "name": "GreaterEqual",
-                        "value": 6
-                      },
-                      {
-                        "name": "Always",
-                        "value": 7
-                      }
-                    ]
-                  }
-                },
-                {
-                  "kind": "scalar",
-                  "fieldName": "ref1",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 12,
-                    "size": 4
-                  },
-                  "scalarType": "uint32"
-                },
-                {
-                  "kind": "enum",
-                  "fieldName": "op",
+                  "kind": "vector",
+                  "fieldName": "actorK0",
                   "binding": {
                     "kind": "uniform",
                     "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "eflightKonst",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 32,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "eflight",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 48,
                     "size": 4
                   },
-                  "enumType": {
-                    "typeName": "GXAlphaOp",
-                    "tagType": "uint32",
-                    "cases": [
-                      {
-                        "name": "And",
-                        "value": 0
-                      },
-                      {
-                        "name": "Or",
-                        "value": 1
-                      },
-                      {
-                        "name": "Xor",
-                        "value": 2
-                      },
-                      {
-                        "name": "Xnor",
-                        "value": 3
-                      }
-                    ]
-                  }
+                  "scalarType": "uint32"
                 }
               ]
             }
@@ -502,7 +175,7 @@
             "fieldName": "debugMode",
             "binding": {
               "kind": "uniform",
-              "offset": 1552,
+              "offset": 320,
               "size": 4
             },
             "enumType": {
@@ -554,6 +227,423 @@
           }
         ]
       }
+    },
+    {
+      "kind": "pushConstant",
+      "parameterName": "draw",
+      "elementType": {
+        "typeName": "ToonLinkDraw",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "material",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "Material",
+              "fields": [
+                {
+                  "kind": "descriptorHandle",
+                  "fieldName": "tex0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "shape": "sampler2D"
+                },
+                {
+                  "kind": "descriptorHandle",
+                  "fieldName": "tex1",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 8
+                  },
+                  "shape": "sampler2D"
+                },
+                {
+                  "kind": "struct",
+                  "fieldName": "tev",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 1264
+                  },
+                  "structType": {
+                    "typeName": "TevParams",
+                    "fields": [
+                      {
+                        "kind": "array",
+                        "fieldName": "stageColorIn",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 128
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 8,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "stageColorOp",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 128,
+                          "size": 128
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 8,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "stageAlphaIn",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 256,
+                          "size": 128
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 8,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "stageAlphaOp",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 384,
+                          "size": 128
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 8,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "stageDest",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 512,
+                          "size": 128
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 8,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "stageOrder",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 640,
+                          "size": 128
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 8,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "stageSwap",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 768,
+                          "size": 128
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 8,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "swapTable",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 896,
+                          "size": 64
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 4,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "texgen",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 960,
+                          "size": 32
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 2,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "texgenMtx",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 992,
+                          "size": 64
+                        },
+                        "elementScalarType": "float32",
+                        "elementCount": 4,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "konst",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 1056,
+                          "size": 64
+                        },
+                        "elementScalarType": "float32",
+                        "elementCount": 4,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "reg",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 1120,
+                          "size": 64
+                        },
+                        "elementScalarType": "float32",
+                        "elementCount": 4,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "array",
+                        "fieldName": "chanControl",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 1184,
+                          "size": 32
+                        },
+                        "elementScalarType": "uint32",
+                        "elementCount": 2,
+                        "elementStride": 16
+                      },
+                      {
+                        "kind": "vector",
+                        "fieldName": "chanMatColor",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 1216,
+                          "size": 16
+                        },
+                        "elementCount": 4,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      },
+                      {
+                        "kind": "vector",
+                        "fieldName": "chanAmbColor",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 1232,
+                          "size": 16
+                        },
+                        "elementCount": 4,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      },
+                      {
+                        "kind": "vector",
+                        "fieldName": "control",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 1248,
+                          "size": 16
+                        },
+                        "elementCount": 4,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "uint32"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "struct",
+                  "fieldName": "alphaCompare",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 1280,
+                    "size": 20
+                  },
+                  "structType": {
+                    "typeName": "GXAlphaCompare",
+                    "fields": [
+                      {
+                        "kind": "enum",
+                        "fieldName": "comp0",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 4
+                        },
+                        "enumType": {
+                          "typeName": "GXCompare",
+                          "tagType": "uint32",
+                          "cases": [
+                            {
+                              "name": "Never",
+                              "value": 0
+                            },
+                            {
+                              "name": "Less",
+                              "value": 1
+                            },
+                            {
+                              "name": "Equal",
+                              "value": 2
+                            },
+                            {
+                              "name": "LessEqual",
+                              "value": 3
+                            },
+                            {
+                              "name": "Greater",
+                              "value": 4
+                            },
+                            {
+                              "name": "NotEqual",
+                              "value": 5
+                            },
+                            {
+                              "name": "GreaterEqual",
+                              "value": 6
+                            },
+                            {
+                              "name": "Always",
+                              "value": 7
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "fieldName": "ref0",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 4,
+                          "size": 4
+                        },
+                        "scalarType": "uint32"
+                      },
+                      {
+                        "kind": "enum",
+                        "fieldName": "comp1",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 8,
+                          "size": 4
+                        },
+                        "enumType": {
+                          "typeName": "GXCompare",
+                          "tagType": "uint32",
+                          "cases": [
+                            {
+                              "name": "Never",
+                              "value": 0
+                            },
+                            {
+                              "name": "Less",
+                              "value": 1
+                            },
+                            {
+                              "name": "Equal",
+                              "value": 2
+                            },
+                            {
+                              "name": "LessEqual",
+                              "value": 3
+                            },
+                            {
+                              "name": "Greater",
+                              "value": 4
+                            },
+                            {
+                              "name": "NotEqual",
+                              "value": 5
+                            },
+                            {
+                              "name": "GreaterEqual",
+                              "value": 6
+                            },
+                            {
+                              "name": "Always",
+                              "value": 7
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "fieldName": "ref1",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 12,
+                          "size": 4
+                        },
+                        "scalarType": "uint32"
+                      },
+                      {
+                        "kind": "enum",
+                        "fieldName": "op",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 16,
+                          "size": 4
+                        },
+                        "enumType": {
+                          "typeName": "GXAlphaOp",
+                          "tagType": "uint32",
+                          "cases": [
+                            {
+                              "name": "And",
+                              "value": 0
+                            },
+                            {
+                              "name": "Or",
+                              "value": 1
+                            },
+                            {
+                              "name": "Xor",
+                              "value": 2
+                            },
+                            {
+                              "name": "Xnor",
+                              "value": 3
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 1312,
+            "access": "immutable"
+          }
+        ]
+      },
+      "elementSize": 8
     }
   ],
   "vertexEntryPoint": {
@@ -709,26 +799,18 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 1568
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 1568
-          },
-          {
-            "binding": 2,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 1568
+            "size": 336
           }
         ]
       }
     ],
-    "pushConstantRanges": [],
-    "bindlessHeapSet": null
+    "pushConstantRanges": [
+      {
+        "stageFlags": "all",
+        "offset": 0,
+        "size": 8
+      }
+    ],
+    "bindlessHeapSet": 1
   }
 }

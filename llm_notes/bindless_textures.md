@@ -1454,6 +1454,27 @@ size assert was verified redundant, and the offset one was replaced by passing
 
 ## Phase 9 — `toon_link`, the actual payoff
 
+**Detailed record: [bindless_textures/phase_09.md](bindless_textures/phase_09.md)**
+— **status: done.** 24 pipelines → 5 and 24 uniform buffers → 1, exactly as
+counted below. Every layout prediction in this section held first try, including
+the one open risk it does not name: a push block's `repr(align)` follows its own
+std430 alignment rather than a blanket 16, so the pushed byte count matches the
+reflected `range.size`.
+
+**One deviation from what this section specifies:** the push block carries
+`mltrs::ImmutableAddr<Material> material` — a pointer at the element — **not**
+the `uint materialIndex` written below, and `ToonLinkParams` therefore holds no
+`materials` field. That is the shape
+[render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)
+§4 specifies and Phase 7c exists to enable; Phase 8 (:1301-1304) and
+[phase_08.md](bindless_textures/phase_08.md) §578-581 both left the call to this
+phase. Reasoning in phase_09.md §1 — including the forward-compatibility
+argument *for* the index, which was checked and turned out to rest on a false
+premise about `05` being an indirect multi-draw. It is not; it is an ordered
+draw list where each node keeps its own push block.
+
+The visual A/B at the end of this section is the part that has **not** been run.
+
 `build_material_pipelines` (examples/toon_link/src/main.rs:780-826)
 ~~collapses to one pipeline plus a `Material` buffer behind `ImmutableAddr`.
 Per-material pipelines and per-material uniform buffers both disappear.~~
