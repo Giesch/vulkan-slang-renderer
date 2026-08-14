@@ -57,7 +57,7 @@ cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection
 ### After changes
 - Always run `just shaders EXAMPLE` after modifying an example's `.slang`
   files (`just shaders` regenerates all of them).
-- Always run `just textures EXAMPLE` after adding or replacing an example's
+- Always run `just EXAMPLE textures` after adding or replacing an example's
   source image, and commit the regenerated `.ktx2` alongside it. See
   [`docs/textures.md`](docs/textures.md).
 - Always use `cargo check --workspace --all-targets` when changing rust files
