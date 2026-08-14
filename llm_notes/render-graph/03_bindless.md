@@ -1,9 +1,25 @@
 # Bindless Rendering: Vulkan and Metal
 
-> **STATUS: BACKGROUND — orthogonal to the render graph; not planned.** The
-> renderer went a different direction for buffers (BDA pointers in a param block
-> rather than descriptor arrays). Texture binding remains per-pipeline descriptors.
-> Kept as reference material.
+> **STATUS: BACKGROUND — reference material, not a description of the renderer.**
+>
+> **Buffers: still not bindless.** The renderer went a different direction for
+> buffers — BDA pointers in a param block rather than descriptor arrays. That
+> half of the original status line holds.
+>
+> **Textures: bindless as of 2026-08.** The original status line said texture
+> binding remains per-pipeline descriptors. That is false. A texture reaches a
+> shader as a `BindlessHandle<Sampler2D>` — an 8 B typed slot into a
+> renderer-owned heap. See [../bindless_textures.md](../bindless_textures.md)
+> for the implementation record.
+>
+> **The shipped mechanism is not the one sketched below.** This document
+> describes a hand-written `sampler2D textures[]` array that the application
+> declares and indexes. The renderer uses Slang's `DescriptorHeap` instead:
+> Slang reserves the descriptor set, reflection reports it as `bindlessHeapSet`,
+> and the renderer creates one 4096-slot `COMBINED_IMAGE_SAMPLER` binding at
+> binding 1 (`crates/renderer/src/renderer/descriptor_heap.rs:18,21`). The
+> Vulkan feature, flag and update-after-bind material below is accurate, and is
+> what that heap is built from. The GLSL and the API sketches are not.
 
 ## Overview
 

@@ -1611,8 +1611,12 @@ not evidence about this change.
 
 ## Phase 10 — docs
 
-- Rewrite the status header on [render-graph/03_bindless.md](render-graph/03_bindless.md);
-  it currently says texture binding remains per-pipeline descriptors.
+- ~~Rewrite the status header on [render-graph/03_bindless.md](render-graph/03_bindless.md);
+  it currently says texture binding remains per-pipeline descriptors.~~ **Done.**
+  The buffer half of that header holds and stayed; the texture half was replaced.
+  The header also now says what the rest of the file does *not* describe: the
+  doc sketches an app-authored `sampler2D textures[]`, and the renderer uses
+  Slang's `DescriptorHeap`.
 - Update `docs/` for the shader-authoring workflow (handles are data, not
   `Resources` entries).
 - **State the uniformity invariant as a hard rule in `docs/`**, not just here:
@@ -1636,13 +1640,24 @@ not evidence about this change.
 - **Say how the invariant is actually satisfied today**, not just what it
   forbids: the material index rides in a push constant, and a push constant is
   per-draw constant by definition. That is the pattern to copy.
-- Update [render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)
+- ~~Update [render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)
   §4 (:225-237), which states the push-constant path is "completely dead — no
   `.slang` declares one, there is no `cmd_push_constants` call, and no `Gpu`
   API". False after Phase 8. Its line references into `renderer.rs` are stale
   too and can be refreshed in the same pass. Mark §9's "Phase B" partly done,
   with the address-in-push-block half (blocked on the `Gpu` ordering constraint
-  in Phase 8) explicitly still open.
+  in Phase 8) explicitly still open.~~ **Done**, along with
+  [render-graph/03_bindless.md](render-graph/03_bindless.md) above. Two
+  instructions here were themselves wrong: **Phase B is done, not partly done** —
+  Phase 9's `ToonLinkDraw` *is* the address-in-push-block half, and the `Gpu`
+  ordering constraint it was said to be blocked on was removed by 7c's `&self`
+  minting ([phase_08.md](bindless_textures/phase_08.md):483). The same pass
+  corrected §5 (device features enabled, uniformity invariant, the omitted
+  `shaderSampledImageArrayNonUniformIndexing`), §7 (24 → 5, not "the distinct
+  `RasterState`s among the 11"), §8, §11, §13.7 and §13.8, and refreshed ~14
+  stale `renderer.rs` line references. **A descriptor handle is 8 B, not 4** —
+  every push-block size worked through in `05` §4 was off, so the 88 B worst
+  case is really 104 B.
 
 ## Phase 11 — watercolor (follow-up; investigate first)
 

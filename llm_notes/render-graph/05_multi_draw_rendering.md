@@ -17,8 +17,16 @@
 > compute/simulation half of 04 is untouched.
 >
 > **Depends on:** 04 Phase 2 (core graph) for the `.rendering()` builder substrate; a
-> descriptor-indexing device-feature enable (§6); and real push-constant support (§5) —
-> both new renderer work, deliberately accepted for a nicer API.
+> descriptor-indexing device-feature enable (§5, not §6 as this line first said); and real
+> push-constant support (§4, not §5) — both new renderer work, deliberately accepted for a
+> nicer API.
+>
+> **Amended 2026-08-14** against the bindless work recorded in
+> [../bindless_textures.md](../bindless_textures.md). Both stated dependencies shipped:
+> push constants are live end-to-end (§4) and textures are bindless (§5). They shipped at
+> the **renderer** level, outside this document's graph — §9 Phases B and C are done and
+> the graph itself is still unbuilt. Sections carrying corrections: §4, §5, §7, §8, §9,
+> §11, §13.7, §13.8.
 >
 > **§§1–12 are not settled.** A 2026-07 design review found eight synchronization holes
 > across 04 and this doc — a wrong slot-count formula, a runtime-variable quantity that
@@ -40,8 +48,8 @@ neither the graph nor the low-level queue offers anything better. Three coupled 
 paid today as application bookkeeping:
 
 1. **Draws referenced by `usize`.** `PipelineHandle` is not `Clone`/`Copy` and its `index()`
-   is `pub(crate)` (`src/renderer/pipeline.rs:92-99`), so an app *cannot* get an id from a
-   handle. It keeps `P_* : usize` consts and parallel `Vec`s
+   is `pub(crate)` (`crates/renderer/src/renderer/pipeline.rs:105-122`; both still hold), so
+   an app *cannot* get an id from a handle. It keeps `P_* : usize` consts and parallel `Vec`s
    (`examples/multi_mesh.rs:71-88`, `DRAWS` at `285-308`); `toon_link` §5 will store
    `Vec<(PipelineHandle, UniformBufferHandle, Params)>` + a batch list and loop the same
    way. Draw order is load-bearing (translucency, depth-write) but enforced only by comment
@@ -183,8 +191,8 @@ to this block:
 struct MaterialDraw {
     float4x4                     model;      // 64 B — one inline matrix is the budget's big item
     ImmutableAddr<MaterialData>  material;   //  8 B — points at the bulk TEV/material blob
-    Texture2D.Handle             albedo;     //  4 B — bindless (§6)
-    Texture2D.Handle             ramp;       //  4 B
+    Sampler2D.Handle             albedo;     //  8 B — bindless (§5)
+    Sampler2D.Handle             ramp;       //  8 B
     // … ≤128 B total; anything larger goes behind another BDA …
 };
 [vk::push_constant] MaterialDraw draw;
@@ -194,8 +202,17 @@ Read directly, in any stage:
 
 ```slang
 MaterialData m = draw.material.load();          // fragment reads it — no VS→FS plumbing
-float4 base   = draw.albedo.Sample(uv);         // bindless
+Sampler2D albedo = draw.albedo;                 // bindless; assign to convert the handle
+float4 base   = albedo.Sample(uv);
 ```
+
+**Corrected 2026-08-14.** A Slang descriptor handle is **8 B, not the 4 B this
+block first said**, and the heap's one binding is a *combined* image sampler, so
+the type is `Sampler2D.Handle` rather than `Texture2D.Handle`
+(`assert!(size_of::<BindlessHandle<Sampler2D>>() == 8)`,
+`examples/toon_link/src/generated/shader_atlas/toon_link.rs:100`). The
+assignment on the second line is how the shipped shader converts a handle to a
+sampler (`examples/toon_link/shaders/source/toon_link.shader.slang:111-112`).
 
 ### Discipline, not limit
 
@@ -205,9 +222,15 @@ put the second behind a BDA, or a per-object transform buffer. Codegen enforces 
 worst-case block size at generation time and fails loudly if a shader's push struct exceeds
 the floor.
 
-Worked worst case (`toon_link`): `ImmutableAddr<MaterialData>` (8) + 4 `Texture2D.Handle`
-(16) + one inline `float4x4` model (64) = **88 B**. Comfortable. Link is one rigid model,
-so the transform could instead be frame-global (a single BDA), dropping the block to ~28 B.
+Worked worst case (`toon_link`): `ImmutableAddr<MaterialData>` (8) + 4 `Sampler2D.Handle`
+(32, at 8 B each — this line first budgeted 16) + one inline `float4x4` model (64) =
+**104 B**, not the 88 B first written. Still inside the 128 B floor. Link is one rigid
+model, so the transform could instead be frame-global (a single BDA), dropping the block
+to ~40 B.
+
+**What `toon_link` actually pushes is 8 B**: one `ImmutableAddr<Material>` and nothing
+else. The handles went *behind* that pointer into the std430 `Material`, and the transform
+stayed frame-global in the param block, so this worst case never materialised. See §7.
 
 ### What stays elsewhere
 
@@ -216,25 +239,48 @@ so the transform could instead be frame-global (a single BDA), dropping the bloc
   fine; a frame-global BDA is the cleaner end state (pipelines then bind nothing but the
   bindless set).
 - **Bulk per-material data** (TEV stages, konst/register colors, texgens) lives behind the
-  block's `Addr`. Static → `ImmutableAddr`, written once at setup via `write_immutable`
-  (`sprite_batch.rs:144` is the existing pattern); dynamic → `Addr`/`ReadAddr` minted per
-  frame in the submit closure.
+  block's `Addr`. Static → `ImmutableAddr`; dynamic → `Addr`/`ReadAddr` minted per frame in
+  the submit closure.
+
+  **Corrected 2026-08-14.** The static case cited `write_immutable` with
+  `sprite_batch.rs:144` as "written once at setup". That is the wrong pointer twice over:
+  `sprite_batch` writes **every frame** (`examples/sprite_batch/src/main.rs:150`, and §13.8
+  flags the same mistake), and `create_immutable_buffer` allocates per flight slot, so the
+  address moves each frame. Write-once with a stable address is
+  `Renderer::create_singleton_buffer` (`renderer.rs:1054`) plus `Gpu::singleton_addr`
+  (`:5597`), which Phase 7d added for exactly this and which `toon_link` uses for its
+  material table.
 
 ### Renderer additions
 
-The push-constant path is reflected and plumbed into the pipeline layout already
-(`src/shaders/json/pipeline_builders.rs:12,36`; `pipeline_layout.rs:44-66`;
-`renderer.rs:5330-5337`), but is **completely dead** — no `.slang` declares one, there is no
-`cmd_push_constants` call, and no `Gpu` API. This design makes it live:
+**Done 2026-08 (Phases 7–9 of `../bindless_textures.md`).** This section first said the
+push-constant path was reflected and plumbed into the pipeline layout but "**completely
+dead** — no `.slang` declares one, there is no `cmd_push_constants` call, and no `Gpu`
+API". All three are false. The path is live end-to-end and all three bullets below landed
+as written:
 
-- **Record loop** (`renderer.rs:1800-1892`): emit `cmd_push_constants` for each
-  `PendingDrawCommand` before its `cmd_draw_indexed`, from bytes the queue carried.
-- **Queue + `Gpu` API**: `queue_draw_index_range` (or the graph's draw-node execution)
-  carries the per-draw block bytes; the submit closure fills them and mints any referenced
-  addresses (`Gpu::addr` / `current_addr` / `current_immutable_addr`,
-  `renderer.rs:5398-5436`) in the pre-wait window.
-- **Codegen** (§9): emit the `#[repr(C)]` push-block struct alongside `Params`, with the
-  same std430 layout asserts the BDA fields already use.
+- **Record loop** (the `for pending_draw` loop, `renderer.rs:2086`):
+  `cmd_push_constants` (`:2453`) is called at `:2160` for each
+  `PendingDrawCommand::Draw`, from bytes the queue carried, between the heap bind (`:2153`)
+  and the `cmd_draw*` match (`:2167`) — the position this bullet asks for.
+- **Queue + `Gpu` API**: `queue_draw_index_range_with_push_constants` (`:5830`) and its
+  siblings carry the per-draw block; `PendingDrawCommand::Draw` holds a `push_constants`
+  payload. Addresses are minted through `Gpu::addr` / `current_addr` /
+  `current_immutable_addr` / `singleton_addr` (`renderer.rs:5547-5604`).
+- **Codegen** (§9): the `#[repr(C)]` push-block struct emits alongside `Params`, with the
+  same std430 `size_of`/`offset_of` asserts the BDA fields use, plus a ≤128 B assert.
+  `examples/toon_link/src/generated/shader_atlas/toon_link.rs:76-85` is the worked output.
+
+Reflection lives at `crates/slang-reflection/src/json/pipeline_builders.rs:12,40`; the
+`VkPipelineLayout` is built at `renderer.rs:5364-5377`. The `pipeline_layout.rs` this
+section cited does not exist.
+
+**One thing this design did not anticipate.** The payload type is tied to its own pipeline
+in the type system: a `PipelineHandle` carries a push slot (`PushBlock<P>` or `NoPush`,
+`crates/renderer/src/renderer/pipeline.rs:105`) that codegen fills from reflection. A draw
+that supplies the wrong block, or supplies one to a pipeline that declares none, is a
+**compile** error at the call site rather than a runtime check. `cmd_push_constants`
+therefore validates nothing.
 
 ### Why not base-instance or dynamic UBO
 
@@ -242,8 +288,9 @@ The push-constant path is reflected and plumbed into the pipeline layout already
   `firstInstance`, re-uploads every frame. See §1's note.
 - **`UNIFORM_BUFFER_DYNAMIC`** (per-draw dynamic offset): all-stage and large-payload
   capable, but reintroduces a per-draw *descriptor rebind* and cuts against this renderer's
-  deliberate all-BDA, shrink-the-descriptor-set direction (storage buffers were removed from
-  descriptors entirely, `pipeline_layout.rs:329-332`). Set aside.
+  deliberate all-BDA, shrink-the-descriptor-set direction. Storage buffers are excluded from
+  descriptors entirely — no `vk::DescriptorType::STORAGE_BUFFER` appears anywhere in the
+  renderer (the `pipeline_layout.rs:329-332` this line cited does not exist). Set aside.
 
 ---
 
@@ -257,7 +304,7 @@ pipeline variants.
 - **One global bindless descriptor set**: a large `COMBINED_IMAGE_SAMPLER textures[]` array,
   `PARTIALLY_BOUND` + `UPDATE_AFTER_BIND`, owned by the renderer (or the graph on its
   behalf). Combined image-samplers are the least-invasive retrofit — each `Texture` already
-  carries its own sampler (`src/renderer/texture.rs:55-65`).
+  carries its own sampler (`crates/renderer/src/renderer/texture.rs:65-71`).
 - **`create_texture*` yields a stable bindless slot** (a `u32`) in addition to the existing
   `TextureHandle`. The slot goes into the push block; the descriptor array is written
   (update-after-bind) as textures are created.
@@ -265,15 +312,46 @@ pipeline variants.
   `DescriptorHandle<Texture2D>`), a 4 B index Slang resolves against the global array. The
   shader samples `draw.albedo.Sample(uv)` with no per-pipeline `Sampler2D` binding.
 
+**Done 2026-08, with three differences from the above.**
+
+- **The set is Slang's, not the renderer's to number.** `DescriptorHeap`
+  (`crates/renderer/src/renderer/descriptor_heap.rs`) creates one 4096-slot
+  `COMBINED_IMAGE_SAMPLER` binding at **binding 1** — a number Slang defines, not one this
+  code picks (`:18,21,48-70`). The *set* index is likewise Slang's; reflection reports it
+  per shader as `bindlessHeapSet` and `None` means the shader declares no handle. The
+  binding flags are as written, plus `UPDATE_UNUSED_WHILE_PENDING`.
+- **The handle is 8 B and typed**, not a raw 4 B `u32`. Apps and generated structs see
+  `BindlessHandle<Sampler2D>`. `register_texture` (`renderer.rs:577`) claims the slot and
+  stores it beside the texture, so a `TextureHandle` and its slot are minted together.
+- **"The slot goes into the push block" is one option, not a rule.** A handle is ordinary
+  struct data and lives wherever a std140/std430 layout can hold it. `toon_link` puts two
+  handles in a std430 `Material` reached through the push block's `ImmutableAddr`;
+  `depth_texture` puts one directly in the param uniform block. Neither puts a handle in a
+  push block itself.
+
 ### Prerequisite: device features
 
-Descriptor indexing is **not enabled today** (no `descriptor_indexing`,
-`runtimeDescriptorArray`, or `VK_EXT_descriptor_indexing` anywhere). Add the Vulkan 1.2 core
-bits to the existing `vulkan_12_features` builder (`renderer.rs:3373`):
-`descriptorIndexing`, `runtimeDescriptorArray`, `shaderSampledImageArrayNonUniformIndexing`,
-plus the `DescriptorBindingFlags` `UPDATE_AFTER_BIND_BIT` / `PARTIALLY_BOUND_BIT` on the
-global array binding. This is the renderer's first `descriptor_count > 1` binding
-(`pipeline_layout.rs` emits count 1 everywhere today).
+**Enabled 2026-08.** This section said descriptor indexing was "not enabled today". The
+`vulkan_12_features` builder (`renderer.rs:3780-3783`) now requests four bits:
+`descriptorIndexing`, `runtimeDescriptorArray`, `descriptorBindingPartiallyBound` and
+`descriptorBindingSampledImageUpdateAfterBind`. Device suitability also rejects any device
+whose update-after-bind limits cannot hold 4096 descriptors (`undersized_limits`,
+`:3543-3579`), and the binding flags are set on the heap binding as described. The heap is
+the renderer's first `descriptor_count > 1` binding, and it is created outside the
+per-pipeline layout path rather than by it.
+
+**`shaderSampledImageArrayNonUniformIndexing` is deliberately *not* requested**, against
+this section's list. That omission is the uniformity constraint the whole texture path
+rests on: **a handle — and any index used to select the struct that carries it — must be
+dynamically uniform within a draw.** Do not source a handle or its selecting index from
+vertex or instance data, and do not pick between two handles per-invocation. Nothing
+enforces this. Slang compiles divergent indexing without `NonUniformEXT` and without
+complaint, validation cannot see it (it is data-dependent), and reflection sees
+declarations rather than indexing expressions. The failure is wrong-texture rendering on
+wave-scalarizing hardware while staying green everywhere else. Divergent indexing becomes
+legal only when the feature bit and the `getDescriptorFromHandle` override land **together**
+— the decoration without the feature is a validation error. §4's push block is how the
+constraint is satisfied today: a push constant is per-draw constant by definition.
 
 ### Codegen
 
@@ -281,6 +359,11 @@ Reflection-based: a texture field in a shader's parameter block becomes a **hand
 in the push block (a `u32` bindless slot), not a per-pipeline `Sampler2D` descriptor. This
 is the open todo "support bindless textures using slang handles" (`todo.org:59`) — see the
 spike in §12.
+
+**Done 2026-08, and the rule is broader than "in the push block".** Any `Sampler2D.Handle`
+field in any GPU-layout struct generates a `BindlessHandle<Sampler2D>` — param block, push
+block or std430 pointee alike. The todo and the §11 spike both closed; the spike's answers
+are in [../bindless_textures/phase_0_spike.md](../bindless_textures/phase_0_spike.md).
 
 ---
 
@@ -324,6 +407,10 @@ asserts (`link_rendering/phase_05.md` Recorded facts). Under this design:
 
 ### `toon_link` (real scene)
 
+**Landed 2026-08 — measured 24 pipelines → 5 and 24 uniform buffers → 1.** Detail in
+[../bindless_textures/phase_09.md](../bindless_textures/phase_09.md). Three corrections to
+what this subsection predicted, below the original text.
+
 24 batches → 11 material configs. The materials run one data-driven TEV-interpreter shader
 (`tev.slang`), differing only in *data*, so:
 
@@ -336,6 +423,20 @@ asserts (`link_rendering/phase_05.md` Recorded facts). Under this design:
   **textures** are bindless. Per draw, the push block is the material pointer + up to 4
   texture handles (`"texmaps": [.., .., null, null]`, ≤4 used) + the shared transform — the
   88 B worst case of §4.
+
+Corrections:
+
+- **24 materials → 5 raster states, not "the distinct `RasterState`s among the 11".** The
+  count of *materials* is 24, and 11 is a count of texture-and-TEV configurations, which is
+  the axis bindless removes. The 5 survivors are cull / depth-compare / depth-write / blend
+  / color-write-mask groups, and none of those is descriptor state. Bindless removes the
+  texture-driven pipeline explosion; the state-driven one survives.
+- **`alpha-compare` is not a `RasterState` component.** It rides in the material data as a
+  shader-side discard, so it adds no pipeline axis.
+- **The push block is 8 B, not 88 B.** It holds one `ImmutableAddr<Material>`. The two
+  handles sit in the std430 `Material` behind that pointer, and the transform stayed
+  frame-global in the param block. The material table lives in a `SingletonBufferHandle`
+  (§13.1), so its address is stable and needs no per-frame mint.
 
 ---
 
@@ -354,11 +455,39 @@ asserts (`link_rendering/phase_05.md` Recorded facts). Under this design:
 Snapshot churn is expected across `src/generated/shader_atlas/` and the `generated_files`
 insta snapshots; gate with `just shaders` + `just test`.
 
+**Done 2026-08, with the second bullet qualified.** The push-block struct, its std430
+asserts and the ≤128 B assert all emit. A shader that uses handles emits no texture
+descriptors — but `PipelineConfig.texture_handles` still exists
+(`crates/renderer/src/renderer/pipeline.rs:313`) and still serves shaders that bind
+textures the old way. The removal is per-shader, not structural.
+
 ---
 
 ## 9. Implementation phases
 
 Each independently landable, mirroring 04 §11.
+
+> **Status 2026-08-14. Phases B and C are done; A, D and E are not.**
+>
+> They were delivered by [../bindless_textures.md](../bindless_textures.md) at the
+> **renderer** level, outside this document's graph. Nothing here built a graph, a draw
+> node or a mesh section. Read the phase list below as a list of renderer capabilities,
+> which is what it turned out to describe.
+>
+> - **A — not started.** `examples/multi_mesh/src/main.rs:72-74` still keeps its `P_*`
+>   consts.
+> - **B — done.** Every listed item shipped: `cmd_push_constants`, the queue and `Gpu`
+>   API, the `[vk::push_constant]` codegen, and "move `Addr` fields from `Params` into the
+>   push block" — which is exactly `ToonLinkDraw`. The blocker recorded at
+>   `../bindless_textures/phase_08.md:483` — `Gpu` is constructed after `queue_draw_*`, so
+>   an address minted in the submit closure does not exist at queue time — was removed by
+>   Phase 7c's `&self` minting on `FrameRenderer`.
+> - **C — done.** Device features, the heap and Slang handles all landed.
+> - **D — partly done.** `toon_link`'s texture-driven pipeline collapse landed (§7), by
+>   hand in the example rather than through a graph. Pipelines are still
+>   shader + vertex layout + raster state **+ uniform buffer**; the frame-global-BDA option
+>   was not taken, so pipelines still bind a param UBO alongside the heap.
+> - **E — not started.**
 
 - **Phase A — ordered draw nodes + mesh sections**, over the *existing* per-pipeline model.
   Deletes the `usize` draw table and moves range/coverage bookkeeping into `MeshSection`. No
@@ -407,6 +536,11 @@ Phases B–D are independent of 04's compute work and can proceed in parallel.
   `textures[handle]` from a global array, the handle passed in a push constant, verified
   end-to-end (compile → reflect → render). Everything downstream (codegen, `toon_link`'s
   material path) assumes this works.
+  **Resolved.** The spike ran and the assumption held; answers in
+  [../bindless_textures/phase_0_spike.md](../bindless_textures/phase_0_spike.md). It also
+  settled the idiom: a `Sampler2D.Handle` lights up heap binding 1 alone, while the
+  separate texture-plus-sampler form lights up 0 and 2 — which is why §5's model is
+  combined image samplers.
 - **Push-constant size is a discipline.** It holds only because you push references. Codegen
   must fail loudly when a shader's push block exceeds 128 B, and the API should make "push a
   BDA" the easy path for anything large.
@@ -419,6 +553,12 @@ Phases B–D are independent of 04's compute work and can proceed in parallel.
   (update-after-bind allows this) and without freeing slots still referenced by an in-flight
   push block. Slot lifetime is renderer-owned, freed at teardown like `TextureStorage`
   today.
+  **Settled by construction: slots are never released.** `insert_texture` is a bump
+  allocator over `next_slot`, and its full-heap error says so
+  (`descriptor_heap.rs:111-112`). Nothing recycles a slot, so nothing can recycle one out
+  from under an in-flight command buffer. See §13.7. The residual risk is the opposite of
+  the one written here: a hard 4096-slot ceiling with no free path, which a
+  texture-streaming workload would exhaust.
 - **Base-instance conflict avoided.** Because per-draw data rides push constants,
   `firstInstance` is free — if real instancing with per-instance data is wanted later,
   `gl_InstanceIndex` behaves normally. Note this so no one re-introduces the base-instance
@@ -434,9 +574,12 @@ Phases B–D are independent of 04's compute work and can proceed in parallel.
 - **`04_design.md`** — this extends its rendering section and reuses its node model, handle
   declarations (§5), and cross-frame modes (§8). It relaxes 04 §2's single-terminal-draw v1
   constraint.
-- **`03_bindless.md`** — background on Vulkan descriptor indexing; that doc marked bindless
-  "not planned" for *buffers* (the renderer chose BDA). This design adopts bindless for
-  *textures* specifically, which BDA does not cover.
+- **`03_bindless.md`** — background on Vulkan descriptor indexing. Its buffer half holds:
+  the renderer chose BDA, and buffers are not bindless. Its texture half is superseded —
+  this design's bindless textures shipped, so that doc's status header points here and at
+  `../bindless_textures.md` rather than describing per-pipeline texture descriptors. Its
+  Vulkan feature and update-after-bind material stays accurate; its GLSL and API sketches
+  do not match the shipped `DescriptorHeap`.
 - **`frame_inputs_api.md`** — §2 above shows ordered multi-draw preserves its load-bearing
   single-terminal-submit property; the eventual `FrameInputs` migration and this design are
   compatible (both keep one `submit`-shaped terminal).
@@ -464,11 +607,11 @@ on the app-declared `graph::Write::{Storage, Current, Previous}` enum over the e
 3-slot handles, minting "via the existing `Gpu` methods". Three consequences:
 
 - `StorageBufferHandle` still mints `Addr<T>` — GPU-**writable** — over an allocation that
-  rotates every frame (`Gpu::addr`, `src/renderer.rs:5401`; `create_storage_buffers_per_frame`,
-  `:882-916`). A compute shader that writes through it cannot see those writes next frame:
+  rotates every frame (`Gpu::addr`, `renderer.rs:5547`; `create_storage_buffers_per_frame`,
+  `:1076`). A compute shader that writes through it cannot see those writes next frame:
   frame N+1 binds a physically different `VkBuffer` holding whatever was there
   `MAX_FRAMES_IN_FLIGHT` executes ago (`PRE_WAIT_RING_LEN` before 2026-07-28 — the
-  ring shrank from 3 to 2, so the staleness is nearer but no less wrong). Only `GpuOnlyBufferHandle` + `previous_addr` (`:5423`) escapes this, and only
+  ring shrank from 3 to 2, so the staleness is nearer but no less wrong). Only `GpuOnlyBufferHandle` + `previous_addr` (`:5569`) escapes this, and only
   for strict full-rewrite ping-pong.
 - **Hazard-identity mismatch (the dangerous one).** 04 §6 keys the last-writer table on the
   *handle*; the actual memory identity is `(handle, flight_slot)` (`ring_slot` before
@@ -629,14 +772,35 @@ references it samples the wrong image.
 `pending_free_textures` pattern is the model — or state that bindless slots are never
 recycled and keep egui textures off the global array.
 
+**Closed 2026-08-14 — the second option, and both premises of the hazard are gone.**
+
+- **No `drop_texture`.** There is no texture-drop API on `Renderer` at all. Textures are
+  destroyed at teardown, which is what §11 claimed and this entry disputed.
+- **egui never enters the heap.** `insert_texture` has one caller, `register_texture`
+  (`renderer.rs:577`), on the `create_texture*` path. egui runs `egui_ash_renderer` with
+  its own descriptors, so its per-frame texture churn never touches a heap slot. The live
+  egui interaction is the reverse one: it clobbers the heap *binding* while recording, and
+  is harmless only because it records last (`renderer.rs:2330-2334`).
+- **Slots are never released.** `insert_texture` bumps `next_slot` and never reclaims
+  (`descriptor_heap.rs:109-116`).
+
+**What replaces it:** the heap holds 4096 slots and has no free path, so the failure mode
+is exhaustion rather than aliasing. `insert_texture` returns an error at the ceiling and
+`register_texture` destroys the texture rather than leaking it. Any future
+texture-streaming workload re-opens this entry, and the deferred-recycle design above is
+the answer it should reach for.
+
 ### 13.8 Smaller items
 
-- **§4's "static data uploads once"** cites `sprite_batch.rs:144`, which in fact writes
-  **every frame**. Uploading once requires `Renderer::write_immutable_all_frames`
-  (`renderer.rs:930`) *and* still minting `current_immutable_addr` per ring slot each frame.
-  A naive setup-time `write_immutable` seeds 1 of 3 slots — two bad frames at startup, then
-  correct forever, which is exactly the failure mode nobody catches. Subsumed if 13.1's
-  non-ringed buffer lands.
+- **§4's "static data uploads once"** cites `sprite_batch.rs:144`
+  (`examples/sprite_batch/src/main.rs:150`), which in fact writes **every frame**. Uploading
+  once requires `Renderer::write_immutable_all_frames` (`renderer.rs:1144`) *and* still
+  minting `current_immutable_addr` per ring slot each frame. A naive setup-time
+  `write_immutable` seeds 1 of 2 slots — **one** bad frame at startup, not the two this line
+  said, since the ring is `MAX_FRAMES_IN_FLIGHT = 2` and not 3 — then correct forever, which
+  is exactly the failure mode nobody catches. Subsumed if 13.1's non-ringed buffer lands.
+  **It landed** (`create_singleton_buffer`, Phase 7d), so the whole item is moot for data
+  that never changes after setup; §4 is corrected to point at it.
 - **§6's "draws need no barriers between them"** holds for attachments, but not if a fragment
   shader writes a BDA that a later draw in the same list reads — and that dependency cannot be
   barriered inside a render pass. Owed: a build-time rule forbidding a rendering-section node
