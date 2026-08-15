@@ -1,7 +1,7 @@
 ## What the host reads before it opens the window.
 ##
-## Internal to the platform. An app returns an `InitConfig.Init` from `init!`,
-## and `main.roc` wraps it here.
+## Internal to the platform. An app returns a `Game.Init` from `init!`, and
+## `main.roc` wraps it here.
 InitConfig := { window_title : Str }.{
 
 	## What an app's `init!` returns.

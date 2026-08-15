@@ -1,8 +1,10 @@
 platform ""
 	requires {
-		init! : {} => InitConfig.Init
+		game : {
+			init! : {} => Game.Init,
+		}
 	}
-	exposes [Stdout, Stderr, Stdin]
+	exposes [Stdout, Stderr, Stdin, Game]
 	packages {}
 	provides { "roc_init": init_for_host! }
 	hosted {
@@ -20,9 +22,10 @@ import Stderr
 import Stdin
 import Host
 import InitConfig
+import Game
 
 ## The return type is nominal so the generated glue names it. An anonymous
 ## record reaches Rust as a structural hash, and every field added to it
 ## renames the Rust type.
 init_for_host! : {} => InitConfig
-init_for_host! = |{}| InitConfig.new(init!({}))
+init_for_host! = |{}| InitConfig.new((game.init!)({}))
