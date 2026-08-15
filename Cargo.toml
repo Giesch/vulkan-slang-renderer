@@ -1,7 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "examples/*"]
-exclude = ["crates/cli/fixtures/check_crate"]
+# The roc host is its own workspace: it needs `panic = "abort"` and a
+# `staticlib` release profile, and profiles only apply at a workspace root.
+exclude = ["crates/cli/fixtures/check_crate", "roc-platform"]
 
 [workspace.package]
 version = "0.1.0"

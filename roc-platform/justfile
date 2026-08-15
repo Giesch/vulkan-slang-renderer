@@ -1,0 +1,27 @@
+# build the host archive and link the system libraries roc needs
+build:
+    bash build.sh
+
+# run the basic_triangle example through the interpreter
+run example="basic_triangle": build
+    roc examples/{{example}}.roc
+
+# build a standalone executable for an example
+exe example="basic_triangle": build
+    roc build examples/{{example}}.roc
+
+# build the platform and run every example headlessly
+test:
+    bash ci/all_tests.sh
+
+# regenerate src/roc_platform_abi.rs from platform/main.roc
+glue:
+    roc glue rust_glue ./src/ platform/main.roc
+
+# regenerate the shader bindings this crate compiles against
+shaders:
+    cargo run -p mltrs-cli --manifest-path ../Cargo.toml -- shaders compile --crate-dir .
+
+# record the roc version the platform was last built with
+record-roc-version:
+    roc version > built_with_roc_version.txt
