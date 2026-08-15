@@ -1,8 +1,8 @@
 platform ""
 	requires {
-		init! : {} => InitConfig
+		init! : {} => { window_title : Str }
 	}
-	exposes [Stdout, Stderr, Stdin, InitConfig]
+	exposes [Stdout, Stderr, Stdin]
 	packages {}
 	provides { "roc_init": init_for_host! }
 	hosted {
@@ -21,5 +21,8 @@ import Stdin
 import Host
 import InitConfig
 
+## The return type is nominal so the generated glue names it. An anonymous
+## record reaches Rust as a structural hash, and every field added to it
+## renames the Rust type.
 init_for_host! : {} => InitConfig
-init_for_host! = |{}| init!({})
+init_for_host! = |{}| InitConfig.new(init!({}))

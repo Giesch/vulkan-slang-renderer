@@ -905,6 +905,31 @@ impl<T: core::fmt::Debug, const ELEMENTS_REFCOUNTED: bool> core::fmt::Debug for 
     }
 }
 
+/// Element type for __AnonStruct_2fe7803feeace153
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStruct2fe7803feeace153 {
+    pub window_title: RocStr,
+}
+
+/// Element type for __AnonStruct_2fe7803feeace153
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnonStruct2fe7803feeace153 {
+    pub window_title: RocStr,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<AnonStruct2fe7803feeace153>() == 24, "AnonStruct2fe7803feeace153 size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<AnonStruct2fe7803feeace153>() == 8, "AnonStruct2fe7803feeace153 alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<AnonStruct2fe7803feeace153>() == 12, "AnonStruct2fe7803feeace153 size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<AnonStruct2fe7803feeace153>() == 4, "AnonStruct2fe7803feeace153 alignment mismatch");
+
 /// Element type for InitConfig
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
@@ -1367,6 +1392,27 @@ impl HostStdoutLineResult {
             },
             HostStdoutLineResultTag::Ok => {},
         }
+    }
+}
+
+impl AnonStruct2fe7803feeace153 {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.window_title.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.window_title.incref(amount); }
     }
 }
 
