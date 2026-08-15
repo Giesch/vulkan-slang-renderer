@@ -2,6 +2,6 @@
 InitConfig := { window_title : Str }.{
 
 	## Build the value an app's `init!` must return.
-	new : Str -> InitConfig
-	new = |window_title| InitConfig.{ window_title }
+	new : { window_title : Str } -> InitConfig
+	new = |{ window_title }| InitConfig.{ window_title }
 }

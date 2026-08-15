@@ -29,7 +29,7 @@ app [init!] { pf: platform "../platform/main.roc" }
 import pf.InitConfig exposing [InitConfig]
 
 init! : {} => InitConfig
-init! = |{}| InitConfig.new("Basic Triangle from Roc")
+init! = |{}| InitConfig.new({ window_title: "Basic Triangle from Roc" })
 ```
 
 The host calls `init!` once, before it creates the window. `Stdout`, `Stderr`,
