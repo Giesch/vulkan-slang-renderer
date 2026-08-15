@@ -26,19 +26,18 @@ An app provides `init!` and gets a window:
 ```roc
 app [init!] { pf: platform "../platform/main.roc" }
 
-import pf.InitConfig exposing [InitConfig]
-
-init! : {} => InitConfig
-init! = |{}| InitConfig.new({ window_title: "Basic Triangle from Roc" })
+init! : {} => { window_title : Str }
+init! = |{}| { window_title: "Basic Triangle from Roc" }
 ```
 
 The host calls `init!` once, before it creates the window. `Stdout`, `Stderr`,
 and `Stdin` are also exposed.
 
-`InitConfig` is a nominal type rather than a bare record so the generated glue
-names it. An anonymous record reaches Rust as a structural hash
-(`AnonStruct2fe7803feeace153`), and every field added to it renames the Rust
-type. Add fields through `InitConfig.new` instead.
+`init_for_host!` wraps that record in the nominal `InitConfig` before the host
+reads it, so the generated glue names the Rust type. An anonymous record
+reaches Rust as a structural hash (`AnonStruct2fe7803feeace153`), and every
+field added to it renames the Rust type. `platform/InitConfig.roc` is internal:
+it stays out of `exposes`, and an app never names it.
 
 What the window draws is fixed: `src/game.rs` holds the basic triangle, ported
 from `examples/basic_triangle`. Roc controls the title and nothing else.
@@ -58,8 +57,8 @@ just roc-platform shaders  # regenerate src/generated/ from shaders/source/
 
 - `platform/main.roc` — the platform header: `requires`, `hosted`, and the
   link inputs for each target.
-- `platform/InitConfig.roc` — the type `init!` returns.
 - `platform/{Stdout,Stderr,Stdin}.roc` — app-facing effect modules.
+- `platform/InitConfig.roc` — internal: the nominal type the host reads.
 - `platform/Host.roc` — the hosted-effect boundary the modules above wrap.
 - `src/lib.rs` — allocators, hosted-effect implementations, and `rust_main`.
 - `src/game.rs` — the `Game` impl the host runs.
