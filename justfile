@@ -16,6 +16,11 @@ mod toon_link 'examples/toon_link'
 mod viking_room 'examples/viking_room'
 mod watercolor 'examples/watercolor'
 
+# The roc platform is its own cargo workspace and needs roc on PATH, so it
+# stays out of the workspace-wide recipes below. Reach it as
+# `just roc-platform <recipe>`, e.g. `just roc-platform run`.
+mod roc-platform 'roc-platform'
+
 
 # list all available just recipes, including the per-example modules
 _default:
