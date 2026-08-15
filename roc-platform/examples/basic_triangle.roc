@@ -1,4 +1,10 @@
-app [init!] { pf: platform "../platform/main.roc" }
+app [game] { pf: platform "../platform/main.roc" }
 
-init! : {} => { window_title : Str }
-init! = |{}| { window_title: "Basic Triangle from Roc" }
+import pf.Game
+
+game = {
+	init!,
+}
+
+init! : {} => Game.Init
+init! = |_| { window_title: "Basic Triangle from Roc!" }
