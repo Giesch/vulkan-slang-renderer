@@ -1,6 +1,6 @@
 platform ""
 	requires {
-		init! : {} => { window_title : Str }
+		init! : {} => InitConfig.Init
 	}
 	exposes [Stdout, Stderr, Stdin]
 	packages {}

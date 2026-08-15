@@ -33,11 +33,21 @@ init! = |{}| { window_title: "Basic Triangle from Roc" }
 The host calls `init!` once, before it creates the window. `Stdout`, `Stderr`,
 and `Stdin` are also exposed.
 
-`init_for_host!` wraps that record in the nominal `InitConfig` before the host
-reads it, so the generated glue names the Rust type. An anonymous record
-reaches Rust as a structural hash (`AnonStruct2fe7803feeace153`), and every
-field added to it renames the Rust type. `platform/InitConfig.roc` is internal:
-it stays out of `exposes`, and an app never names it.
+`platform/InitConfig.roc` names both halves of that boundary:
+
+- `InitConfig.Init` — the alias for the record an app returns. `requires` uses
+  it, so the shape has one definition. Aliases are structural, so an app
+  writes the record literally and never imports anything.
+- `InitConfig` — the nominal type `init_for_host!` wraps that record in before
+  the host reads it, so the generated glue names the Rust type. An anonymous
+  record reaches Rust as a structural hash (`AnonStruct2fe7803feeace153`), and
+  every field added to it renames the Rust type.
+
+The module stays out of `exposes`. An app never names it.
+
+Roc requires a module's top-level to be a nominal type, so `Init` is an
+associated alias of `InitConfig` rather than its own module, and it is spelled
+`InitConfig.Init` at every use.
 
 What the window draws is fixed: `src/game.rs` holds the basic triangle, ported
 from `examples/basic_triangle`. Roc controls the title and nothing else.
@@ -58,7 +68,8 @@ just roc-platform shaders  # regenerate src/generated/ from shaders/source/
 - `platform/main.roc` — the platform header: `requires`, `hosted`, and the
   link inputs for each target.
 - `platform/{Stdout,Stderr,Stdin}.roc` — app-facing effect modules.
-- `platform/InitConfig.roc` — internal: the nominal type the host reads.
+- `platform/InitConfig.roc` — internal: the `Init` alias an app returns and the
+  nominal type the host reads.
 - `platform/Host.roc` — the hosted-effect boundary the modules above wrap.
 - `src/lib.rs` — allocators, hosted-effect implementations, and `rust_main`.
 - `src/game.rs` — the `Game` impl the host runs.
