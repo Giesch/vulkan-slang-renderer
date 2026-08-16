@@ -12,7 +12,6 @@ platform/targets/*/libc.so
 platform/targets/*/libc_nonshared.a
 platform/targets/*/libgcc_s.so
 platform/targets/*/libm.so
-platform/targets/*/libstdc++.so
 platform/targets/*/libvulkan.so
 
 # Executables built by `roc build examples/<name>.roc`

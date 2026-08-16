@@ -85,12 +85,19 @@ exist here.
 
 `roc` resolves every name in a target's `inputs` list against
 `platform/targets/x64glibc/`, including the glibc startup objects and the
-system shared libraries. `build.sh` links them into place with
-`gcc -print-file-name`, and `.gitignore` excludes them: they point at whatever
-this machine provides. `cargo rustc -- --print native-static-libs` reports the
+system shared libraries. `build.sh` puts them into place with
+`gcc -print-file-name`. `cargo rustc -- --print native-static-libs` reports the
 set the host archive leaves undefined.
 
-Because those links are machine-local, this platform cannot be bundled and
+The directory mixes two kinds of file:
+
+- `libstdc++.a` is a committed copy. The host links the C++ runtime
+  statically, so `ldd` on a built example lists no `libstdc++.so.6`.
+  `built_with_toolchain.txt` records the GCC and glibc versions it came from.
+- Everything else is a symlink into this machine's toolchain, and
+  `.gitignore` excludes it.
+
+Because those symlinks are machine-local, this platform cannot be bundled and
 published with `roc bundle`.
 
 ## Cargo
