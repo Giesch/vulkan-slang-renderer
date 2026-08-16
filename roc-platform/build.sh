@@ -8,8 +8,11 @@ set -eo pipefail
 #
 # roc resolves every name in a target's `inputs` list against
 # platform/targets/<target>/, including the glibc startup objects and the
-# system shared libraries. This script links them into place. The linked files
-# are gitignored: they point at whatever this machine provides.
+# system shared libraries. This script puts them into place. The symlinked
+# files are gitignored: they point at whatever this machine provides.
+#
+# libstdc++.a is the exception. It is committed, so this script copies it
+# rather than symlinking it.
 
 TARGET_NAME=x64glibc
 RUST_TRIPLE=x86_64-unknown-linux-gnu
@@ -29,9 +32,8 @@ fi
 
 # `gcc -print-file-name=X` echoes X unchanged when it cannot find the file, so
 # an absolute path is the success test.
-link_system_file() {
-    local link_name=$1
-    local file_name=$2
+find_system_file() {
+    local file_name=$1
     local source_path
 
     source_path=$(gcc -print-file-name="$file_name")
@@ -40,20 +42,41 @@ link_system_file() {
         exit 1
     fi
 
+    echo "$source_path"
+}
+
+link_system_file() {
+    local link_name=$1
+    local file_name=$2
+    local source_path
+
+    source_path=$(find_system_file "$file_name") || exit 1
+
     ln -sf "$source_path" "$TARGET_DIR/$link_name"
     echo "  $link_name -> $source_path"
 }
 
+copy_system_file() {
+    local copy_name=$1
+    local file_name=$2
+    local source_path
+
+    source_path=$(find_system_file "$file_name") || exit 1
+
+    cp "$source_path" "$TARGET_DIR/$copy_name"
+    echo "  $copy_name <- $source_path"
+}
+
 mkdir -p "$TARGET_DIR"
 
-echo "Linking system files into $TARGET_DIR..."
+echo "Placing system files into $TARGET_DIR..."
 # glibc startup objects, in the order the inputs list uses them.
 link_system_file Scrt1.o Scrt1.o
 link_system_file crti.o crti.o
 link_system_file crtn.o crtn.o
 # `cargo rustc -- --print native-static-libs` reports what libhost.a leaves
 # undefined. Everything it lists that is not folded into libc.so.6 appears here.
-link_system_file libstdc++.so libstdc++.so.6
+copy_system_file libstdc++.a libstdc++.a
 link_system_file libvulkan.so libvulkan.so.1
 link_system_file libm.so libm.so.6
 link_system_file libc.so libc.so.6
