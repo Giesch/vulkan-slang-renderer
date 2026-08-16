@@ -10,7 +10,6 @@ info:
 use facet::Facet;
 use serde::Serialize;
 
-
 #[allow(unused_imports)]
 use crate::renderer::gpu_write::GPUWrite;
 

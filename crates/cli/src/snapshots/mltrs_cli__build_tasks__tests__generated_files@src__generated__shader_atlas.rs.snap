@@ -3,16 +3,15 @@ source: crates/cli/src/build_tasks.rs
 info:
   relative_path: src/generated/shader_atlas.rs
 ---
+pub mod basic_triangle;
+pub mod gpu_picking;
 pub mod gpu_picking_common;
 pub mod mltrs;
 pub mod particle;
-pub mod ray_march_camera;
-pub mod basic_triangle;
-pub mod gpu_picking;
 pub mod particle_render;
-pub mod sdf_2d;
 pub mod particles_compute;
-
+pub mod ray_march_camera;
+pub mod sdf_2d;
 
 use crate::shaders::atlas::ShaderAtlasRoot;
 
@@ -25,8 +24,7 @@ pub struct ShaderAtlas {
 }
 
 impl ShaderAtlasRoot for ShaderAtlas {
-    const SHADERS_SOURCE_DIR: &'static str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source");
+    const SHADERS_SOURCE_DIR: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source");
 
     fn init() -> Self {
         Self {

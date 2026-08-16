@@ -3,13 +3,14 @@ source: crates/cli/src/build_tasks.rs
 info:
   relative_path: src/generated/shader_atlas.rs
 ---
-pub mod shared_enum;
 pub mod handle_mixed;
 pub mod handle_params;
 pub mod handle_pointee;
 pub mod pointer_dual_context;
+pub mod pointer_params_compute;
 pub mod pointer_pointee_layout;
 pub mod push_constants;
+pub mod shared_enum;
 pub mod std140_arrays;
 pub mod std140_enums;
 pub mod std140_matrices;
@@ -27,8 +28,6 @@ pub mod std430_nested_structs;
 pub mod std430_scalars;
 pub mod std430_vec3_padding;
 pub mod std430_vectors;
-pub mod pointer_params_compute;
-
 
 use crate::shaders::atlas::ShaderAtlasRoot;
 
@@ -60,8 +59,7 @@ pub struct ShaderAtlas {
 }
 
 impl ShaderAtlasRoot for ShaderAtlas {
-    const SHADERS_SOURCE_DIR: &'static str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source");
+    const SHADERS_SOURCE_DIR: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source");
 
     fn init() -> Self {
         Self {

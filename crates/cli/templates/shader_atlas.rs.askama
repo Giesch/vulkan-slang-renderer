@@ -1,36 +1,29 @@
-{%- for module_name in shared_module_names -%}
-pub mod {{ module_name }};
-{%~ endfor -%}
 {%- for module_name in module_names -%}
 pub mod {{ module_name }};
-{%~ endfor -%}
-{%- for module_name in compute_module_names -%}
-pub mod {{ module_name }};
 {%~ endfor +%}
-
 use {{ engine_root }}::shaders::atlas::ShaderAtlasRoot;
 
 pub struct ShaderAtlas {
-{%- for (field_name, type_prefix) in entries +%}
-    pub {{ field_name }}: {{type_prefix}}Shader,
+{%- for entry in entries +%}
+    pub {{ entry.field_name }}: {{ entry.type_prefix }}Shader,
 {%- endfor -%}
-{%- for (field_name, type_prefix) in compute_entries +%}
-    pub {{ field_name }}: {{type_prefix}}Shader,
+{%- for entry in compute_entries +%}
+    pub {{ entry.field_name }}: {{ entry.type_prefix }}Shader,
 {%- endfor +%}
 }
 
 impl ShaderAtlasRoot for ShaderAtlas {
-    const SHADERS_SOURCE_DIR: &'static str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source");
+    const SHADERS_SOURCE_DIR: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source");
 
     fn init() -> Self {
         Self {
-{%- for (field_name, type_prefix) in entries +%}
-            {{ field_name }}: {{ type_prefix }}Shader::init(),
+{%- for entry in entries +%}
+{{ entry.init_line() }}
 {%- endfor -%}
-{%- for (field_name, type_prefix) in compute_entries +%}
-            {{ field_name }}: {{ type_prefix }}Shader::init(),
+{%- for entry in compute_entries +%}
+{{ entry.init_line() }}
 {%- endfor +%}
         }
     }
 }
+

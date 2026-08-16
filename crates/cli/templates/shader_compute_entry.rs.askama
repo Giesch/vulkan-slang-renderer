@@ -13,13 +13,14 @@ use facet::Facet;
 {% endif -%}
 use serde::Serialize;
 
+{% for import in shared_module_imports -%}
+pub use {{ import.use_path() }};
+{% endfor -%}
 use {{ import_root }}::renderer::gpu_write::GPUWrite;
 use {{ import_root }}::renderer::*;
 use {{ import_root }}::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use {{ import_root }}::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
-{% for import in shared_module_imports -%}
-pub use super::{{ import.module_name }}::{ {{- import.type_names|join(", ") -}} };
-{% endfor %}
+
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 {% for def in enum_defs %}
@@ -90,7 +91,6 @@ const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 {{ assert_line }}
 {%- endfor %}
 {% endfor %}
-
 pub const WORKGROUP_SIZE: [u32; 3] = [{{ shader_impl.workgroup_size[0] }}, {{ shader_impl.workgroup_size[1] }}, {{ shader_impl.workgroup_size[2] }}];
 
 #[derive(Clone)]
@@ -110,10 +110,7 @@ impl {{ shader_impl.shader_type_name }} {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config<'a>(
-        &self,
-        resources: Resources<'a>,
-    ) -> ComputePipelineConfig<'a> {
+    pub fn pipeline_config<'a>(&self, resources: Resources<'a>) -> ComputePipelineConfig<'a> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -193,3 +190,4 @@ impl ComputeShaderAtlasEntry for {{ shader_impl.shader_type_name }} {
         &self.reflection_json
     }
 }
+

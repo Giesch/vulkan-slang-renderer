@@ -224,12 +224,11 @@ fn add_top_level_rust_modules(
         .iter()
         .map(|file_name| file_name.replace(SHADER_FILE_SUFFIX, ""))
         .collect();
-    let entries: Vec<(String, String)> = module_names
+    let entries: Vec<ShaderAtlasField> = module_names
         .iter()
-        .map(|module_name| {
-            let field_name = module_name.clone();
-            let type_prefix = format!("{module_name}::");
-            (field_name, type_prefix)
+        .map(|module_name| ShaderAtlasField {
+            field_name: module_name.clone(),
+            type_prefix: format!("{module_name}::"),
         })
         .collect();
 
@@ -237,12 +236,11 @@ fn add_top_level_rust_modules(
         .iter()
         .map(|file_name| file_name.replace(COMPUTE_SHADER_FILE_SUFFIX, "_compute"))
         .collect();
-    let compute_entries: Vec<(String, String)> = compute_module_names
+    let compute_entries: Vec<ShaderAtlasField> = compute_module_names
         .iter()
-        .map(|module_name| {
-            let field_name = module_name.clone();
-            let type_prefix = format!("{module_name}::");
-            (field_name, type_prefix)
+        .map(|module_name| ShaderAtlasField {
+            field_name: module_name.clone(),
+            type_prefix: format!("{module_name}::"),
         })
         .collect();
 
@@ -253,12 +251,18 @@ fn add_top_level_rust_modules(
         external_crate => format!("::{external_crate}"),
     };
 
+    let mut all_module_names: Vec<String> = shared_module_names
+        .iter()
+        .chain(&module_names)
+        .chain(&compute_module_names)
+        .cloned()
+        .collect();
+    all_module_names.sort();
+
     let shader_atlas_module = ShaderAtlasModule {
         engine_root,
-        shared_module_names: shared_module_names.to_vec(),
-        module_names,
+        module_names: all_module_names,
         entries,
-        compute_module_names,
         compute_entries,
     };
 
@@ -270,7 +274,7 @@ fn add_top_level_rust_modules(
 
     let top_generated_module = GeneratedFile {
         relative_path: relative_path(["generated.rs"]),
-        content: "#[allow(dead_code)]\npub mod shader_atlas;".to_string(),
+        content: "#[allow(dead_code)]\npub mod shader_atlas;\n".to_string(),
     };
     generated_source_files.push(top_generated_module);
 }
@@ -457,14 +461,39 @@ fn render_graphics_shader_file(
 struct ShaderAtlasModule {
     /// `import_root`, made absolute so a shared slang module cannot shadow it
     engine_root: String,
-    shared_module_names: Vec<String>,
+    /// every submodule, sorted — rustfmt sorts a `mod` list alphabetically
     module_names: Vec<String>,
-    /// field name and type name prefix
-    entries: Vec<(String, String)>,
-    compute_module_names: Vec<String>,
-    /// field name and type name prefix for compute shaders
-    compute_entries: Vec<(String, String)>,
+    entries: Vec<ShaderAtlasField>,
+    compute_entries: Vec<ShaderAtlasField>,
 }
+
+/// One `ShaderAtlas` field: its name and the module path its `Shader` lives in.
+struct ShaderAtlasField {
+    field_name: String,
+    type_prefix: String,
+}
+
+impl ShaderAtlasField {
+    /// The whole line, indented. rustfmt breaks a struct-literal field after the
+    /// colon when the value does not fit, and the field name comes from the
+    /// shader file name, so the width is only known here.
+    fn init_line(&self) -> String {
+        let Self {
+            field_name,
+            type_prefix,
+        } = self;
+
+        let one_line = format!("            {field_name}: {type_prefix}Shader::init(),");
+        if one_line.len() <= RUSTFMT_MAX_WIDTH {
+            one_line
+        } else {
+            format!("            {field_name}:\n                {type_prefix}Shader::init(),")
+        }
+    }
+}
+
+/// rustfmt's default `max_width`; the repo's rustfmt.toml sets only the edition
+const RUSTFMT_MAX_WIDTH: usize = 100;
 
 #[derive(Template)]
 #[template(path = "shader_atlas_entry.rs.askama", escape = "none")]
@@ -1662,6 +1691,17 @@ struct SharedModuleImport {
     type_names: Vec<String>,
 }
 
+impl SharedModuleImport {
+    /// rustfmt strips the braces around a single-name import list
+    fn use_path(&self) -> String {
+        let module_name = &self.module_name;
+        match self.type_names.as_slice() {
+            [type_name] => format!("super::{module_name}::{type_name}"),
+            type_names => format!("super::{module_name}::{{{}}}", type_names.join(", ")),
+        }
+    }
+}
+
 /// Collect shared type definitions from all shaders into per-module groups.
 /// Returns (module_name → definitions) for types declared in a shared slang module.
 fn collect_shared_modules(
@@ -1887,6 +1927,93 @@ mod tests {
                 insta::assert_snapshot!(content);
             });
         });
+    }
+
+    /// No fixture has a shader name long enough to reach the wrapped branch, so
+    /// the width rule is pinned here instead.
+    #[test]
+    fn atlas_init_line_wraps_only_past_the_rustfmt_width() {
+        let short = ShaderAtlasField {
+            field_name: "sdf_2d".to_string(),
+            type_prefix: "sdf_2d::".to_string(),
+        };
+        assert_eq!(
+            short.init_line(),
+            "            sdf_2d: sdf_2d::Shader::init(),",
+        );
+
+        let name = "wc_advect_and_transfer_pigment_compute";
+        let long = ShaderAtlasField {
+            field_name: name.to_string(),
+            type_prefix: format!("{name}::"),
+        };
+        assert_eq!(
+            long.init_line(),
+            format!("            {name}:\n                {name}::Shader::init(),"),
+        );
+
+        for line in long.init_line().lines() {
+            assert!(line.len() <= RUSTFMT_MAX_WIDTH, "too wide: {line}");
+        }
+    }
+
+    /// The templates must emit rustfmt-clean rust. The snapshots record template
+    /// output verbatim, so any drift here makes them disagree with the formatted
+    /// files an example crate commits.
+    #[cfg(not(windows))]
+    #[test]
+    fn generated_rust_source_is_rustfmt_clean() {
+        // rustfmt walks into each `mod` declaration on its own, so passing the
+        // crate roots covers every generated file exactly once
+        fn collect_module_roots(dir: &Path) -> Vec<PathBuf> {
+            let mut roots: Vec<PathBuf> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension() == Some(std::ffi::OsStr::new("rs")))
+                .collect();
+            roots.sort();
+            roots
+        }
+
+        for fixture in ["shaders", "alignment"] {
+            let tmp_dir_path =
+                std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+
+            let config = Config {
+                generate_rust_source: true,
+                rust_source_dir: tmp_dir_path.join("src"),
+                shaders_source_dir: manifest_path(["fixtures", fixture]),
+                compiled_shaders_dir: tmp_dir_path.join(relative_path(["shaders", "compiled"])),
+                import_root: "crate".to_string(),
+                optimization: OptimizationLevel::High,
+            };
+
+            write_precompiled_shaders(config).unwrap();
+
+            let rust_files = collect_module_roots(&tmp_dir_path.join("src"));
+            assert!(
+                !rust_files.is_empty(),
+                "fixtures/{fixture} generated no rust — the check below would pass \
+                 vacuously",
+            );
+
+            // The temp dir is outside the repo, so rustfmt does not find the root
+            // rustfmt.toml. That file sets the edition and nothing else.
+            let output = std::process::Command::new("rustfmt")
+                .args(["--check", "--edition", "2024"])
+                .args(&rust_files)
+                .output()
+                .expect("failed to run rustfmt");
+
+            std::fs::remove_dir_all(&tmp_dir_path).unwrap();
+
+            assert!(
+                output.status.success(),
+                "fixtures/{fixture} generated rust that rustfmt would reformat:\n{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
     }
 
     #[cfg(not(windows))]

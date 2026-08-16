@@ -149,7 +149,16 @@ way to review that particular change.
 
 ---
 
-## 2. Snapshots capture unformatted output, so they can never match the files
+## 2. ~~Snapshots capture unformatted output, so they can never match the files~~ — DONE
+
+*(update 2026-08: fixed, but not by the "format at generation time" route
+proposed below. The templates themselves were changed to emit rustfmt-clean
+rust, so the cli still shells out to nothing. `mod` lists and `use` groups are
+sorted in `build_tasks.rs`, single-name import lists lose their braces, and
+line-width decisions live in `ShaderAtlasField::init_line`. The gate is the
+`generated_rust_source_is_rustfmt_clean` test, which runs
+`rustfmt --check --edition 2024` over the generated code for both fixture sets.
+`cargo fmt` stays in `just shaders` as belt-and-braces, and is a no-op there.)*
 
 **Still open after `e080d72`** — re-verified against `main` @ `a1d22e1`, output
 below is unchanged: diffing a committed `.snap` against its generated file still

@@ -79,8 +79,6 @@ impl crate::renderer::gpu_write::PushConstantBlock for DrawConstants {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<DrawConstants>() <= 128);
 
-
-
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

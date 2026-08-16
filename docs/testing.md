@@ -28,10 +28,20 @@ Run `just test` after changing `crates/cli/src/build_tasks.rs` or
 Use `cargo insta test --workspace --accept`. It re-runs the tests and writes the
 snapshots in one step. Read the diffs `just test` prints before you accept.
 
-The snapshots capture template output before rustfmt.
-`just shaders` runs `cargo fmt` after codegen. The differences are limited to
-import placement and signature wrapping.
-See `llm_notes/build_reproducibility.md` §2.
+The templates emit rustfmt-clean rust, so a snapshot is byte-identical to the
+file an example commits. `generated_rust_source_is_rustfmt_clean` enforces this:
+it runs `rustfmt --check --edition 2024` over the generated code. Keep the
+templates matching rustfmt rather than relying on a later `cargo fmt`.
+
+Two rules the templates carry, because rustfmt applies them and a template
+cannot:
+
+- A `mod` list and a `use` group are sorted. `super::` sorts before `crate::`.
+- A single-name import list loses its braces.
+
+Line width is decided in rust, not in the template. See
+`ShaderAtlasField::init_line` and `RUSTFMT_MAX_WIDTH` in
+`crates/cli/src/build_tasks.rs`.
 
 ## Validation sweep
 

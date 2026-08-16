@@ -61,7 +61,6 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
-
 pub const WORKGROUP_SIZE: [u32; 3] = [64, 1, 1];
 
 #[derive(Clone)]
@@ -81,10 +80,7 @@ impl Shader {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config<'a>(
-        &self,
-        resources: Resources<'a>,
-    ) -> ComputePipelineConfig<'a> {
+    pub fn pipeline_config<'a>(&self, resources: Resources<'a>) -> ComputePipelineConfig<'a> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]

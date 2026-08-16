@@ -14,15 +14,16 @@ use facet::Facet;
 {% endif -%}
 use serde::Serialize;
 
+{% for import in shared_module_imports -%}
+pub use {{ import.use_path() }};
+{% endfor -%}
 use {{ import_root }}::renderer::gpu_write::GPUWrite;
 #[allow(unused)]
 use {{ import_root }}::renderer::vertex_description::{NoVertex, VertexDescription};
 use {{ import_root }}::renderer::*;
 use {{ import_root }}::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use {{ import_root }}::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
-{% for import in shared_module_imports -%}
-pub use super::{{ import.module_name }}::{ {{- import.type_names|join(", ") -}} };
-{% endfor %}
+
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 {% for def in enum_defs %}
@@ -99,8 +100,8 @@ impl {{ import_root }}::renderer::gpu_write::PushConstantBlock for {{ push_const
 // {{ push_constant_budget }} bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<{{ push_constant_type_name }}>() <= {{ push_constant_budget }});
 {% when None -%}
-{%- endmatch %}
-{% for block in vertex_impl_blocks -%}
+{%- endmatch -%}
+{% for block in vertex_impl_blocks +%}
 impl VertexDescription for {{ block.type_name }} {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
         let binding_description = ash::vk::VertexInputBindingDescription::default()
@@ -123,8 +124,7 @@ impl VertexDescription for {{ block.type_name }} {
         ]
     }
 }
-{%- endfor %}
-
+{% endfor +%}
 #[derive(Clone)]
 pub struct {{ shader_impl.shader_type_name }} {
     pub reflection_json: ReflectionJson,
@@ -266,3 +266,4 @@ impl ShaderAtlasEntry for {{ shader_impl.shader_type_name }} {
         &self.reflection_json
     }
 }
+
