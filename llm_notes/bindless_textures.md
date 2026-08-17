@@ -1,7 +1,9 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-7c done, Phases 8-10 not started. Phase 7d and Phase 11 are
-optional follow-ups, added later and prerequisites for nothing.** Design note for adopting bindless
+**Status: Phases 0-9 done (including 7b, 7c, 7d and 8b), except that Phase 9's
+four-point visual A/B has not been run. Phase 10 is half done: the llm_notes
+updates landed, the `docs/` deliverables have not. Phases 11-13 are optional
+follow-ups, prerequisites for nothing.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
 **Phases 6-9 were one phase until Phase 6 planning found a prerequisite this
@@ -895,7 +897,7 @@ is true only in isolation.** Slang has a *second*, implicit path into
 `pushConstantRanges` that no guard here can see — `uniform` entry point
 parameters. Measured after the fact; see **Phase 7b**, which closes it.
 
-## Phase 7b — reject implicit push constants from entry point uniforms
+## Phase 7b — reject implicit push constants from entry point uniforms ✅ done
 
 Phase 7 gates `[[vk::push_constant]]` **globals**, which is the only path
 `reflect_global_parameters` can see. Slang has a second one: a `uniform`
@@ -1145,7 +1147,7 @@ Three corrections to the plan above, all recorded in full in the detailed doc:
 block*, because there is no push channel yet. Phase 8 is what closes that, and
 this phase settles its payload design — queue-time bytes, not a closure fill.
 
-## Phase 7d — a non-ringed buffer for upload-once static data (follow-up)
+## Phase 7d — a non-ringed buffer for upload-once static data (follow-up) ✅ done
 
 **Not a prerequisite for anything** — 7c and Phase 9 both work without it. Recorded
 because 7c's design is what made the waste visible.
@@ -1215,7 +1217,7 @@ demonstrably reading the new allocation rather than something that happens to lo
 right. `05` §13.1's stale "3x memory" line is fixed, and that section now records
 that the GPU-written `Persistent` half is still owed.
 
-## Phase 8 — push constants: renderer and per-draw API
+## Phase 8 — push constants: renderer and per-draw API ✅ done
 
 - **Retain the range.** It is currently dropped after `create_pipeline_layout`;
   `ShaderPipelineLayout` (renderer.rs:5001-5013) doesn't keep it. Add a field
@@ -1320,7 +1322,7 @@ are the only thing that can make the two halves differ.
 
 **Detailed plan: [bindless_textures/phase_08.md](bindless_textures/phase_08.md)**
 
-## Phase 8b — tie the push block to its pipeline in the type system
+## Phase 8b — tie the push block to its pipeline in the type system ✅ done
 
 Phase 8 ships four runtime `assert!`s and a `panic!` in `cmd_push_constants`
 (renderer.rs:2474) plus an `anyhow::ensure!` in `create_picking_pipeline`
@@ -1452,7 +1454,7 @@ would have passed). `cmd_push_constants` ends up with **no** runtime checks: the
 size assert was verified redundant, and the offset one was replaced by passing
 `range.offset` rather than asserting it is zero.
 
-## Phase 9 — `toon_link`, the actual payoff
+## Phase 9 — `toon_link`, the actual payoff ✅ done (visual A/B not run)
 
 **Detailed record: [bindless_textures/phase_09.md](bindless_textures/phase_09.md)**
 — **status: done.** 24 pipelines → 5 and 24 uniform buffers → 1, exactly as
@@ -1609,7 +1611,7 @@ Also `just toon_link link-verify-p1` — but recorded for what it is: it diffs
 tests, and never builds `toon_link` at all. A free unchanged-converter guard,
 not evidence about this change.
 
-## Phase 10 — docs
+## Phase 10 — docs (half done: llm_notes updated, `docs/` deliverables open)
 
 - ~~Rewrite the status header on [render-graph/03_bindless.md](render-graph/03_bindless.md);
   it currently says texture binding remains per-pipeline descriptors.~~ **Done.**
@@ -1915,14 +1917,15 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 3 | ✅ `just sweep` 16 ok / 0 fail with the heap allocated but unbound, plus a temporary `MAX_BINDLESS_TEXTURES = 1` run to prove the write path executes |
 | 4 | ✅ `just sweep` 16 ok / 0 fail, hot reload live-checked both ways, `just test` with only the new JSON key; plus forced `DECLARES_BINDLESS_HANDLE = true` and forced-mismatch runs to prove the path executes |
 | 5 | ✅ `just test` with three new handle fixtures at `bindlessHeapSet: 1` while every pre-existing fixture stayed byte-identical, `just shaders` zero-diff across all 27 example shaders, `spirv-dis` confirming the heap at set 1 / binding 1, `just sweep` 16 ok / 0 fail, hot reload live-checked |
-| 6 | `just shaders depth_texture`, `just test`, `just sweep` — plus a **visual** run, since a wrong heap slot renders the wrong texture silently |
-| 7 | `just test` with a new `push_constants` fixture and **zero** pre-existing snapshot changes; `cargo check` of the generated layout asserts; `spirv-dis` confirming emitted member offsets match reflected ones |
-| 7b | `just test` with **zero** accepted snapshots — nothing declares an entry point uniform, so no churn is the evidence the guard is tight rather than merely loud ([detail](bindless_textures/phase_07b.md)) |
-| 7c | zero snapshot churn (renderer-only); `#[should_panic]` at `index == len()`; both surfaces mint identical addresses in one frame; a temporary `sprite_batch` element-address conversion on a real GPU ([detail](bindless_textures/phase_07c.md)) |
-| 7d | zero snapshot churn; address stable across two consecutive frames; migrate `toon_link`'s materials as the end-to-end proof, which means landing after Phase 9 ([detail](bindless_textures/phase_07d.md)) |
-| 8 | `cargo check --workspace --all-targets`, `just lint`, `just test` with no snapshot churn, `just sweep` — plus a forced push-block run, since nothing declares one yet |
-| 9 | `just shaders toon_link`, `just test`, `just sweep`, `just toon_link link-verify-p1` — plus the four-point visual A/B, since a wrong material index is silent |
-| 10 | docs only |
+| 6 | ✅ `just shaders depth_texture`, `just test`, `just sweep` — plus a **visual** run, since a wrong heap slot renders the wrong texture silently |
+| 7 | ✅ `just test` with a new `push_constants` fixture and **zero** pre-existing snapshot changes; `cargo check` of the generated layout asserts; `spirv-dis` confirming emitted member offsets match reflected ones |
+| 7b | ✅ `just test` with **zero** accepted snapshots — nothing declares an entry point uniform, so no churn is the evidence the guard is tight rather than merely loud ([detail](bindless_textures/phase_07b.md)) |
+| 7c | ✅ zero snapshot churn (renderer-only); `#[should_panic]` at `index == len()`; ~~both surfaces mint identical addresses in one frame~~ unwritable without a headless device harness — pinned by a `debug_assert_eq!` on `flight_slot` in every debug frame instead; a temporary `sprite_batch` element-address conversion on a real GPU ([detail](bindless_textures/phase_07c.md)) |
+| 7d | ✅ zero snapshot churn; ~~address stable across two consecutive frames~~ dropped as vacuous — the singleton path takes no frame index; ~~migrate `toon_link`'s materials as the end-to-end proof, which means landing after Phase 9~~ `ray_marching` was the migrated consumer, before Phase 9 — a frozen-time pixel-identical A/B ([detail](bindless_textures/phase_07d.md)) |
+| 8 | ✅ `cargo check --workspace --all-targets`, `just lint`, `just test` with no snapshot churn, `just sweep` — plus a forced push-block run, since nothing declares one yet ([detail](bindless_textures/phase_08.md)) |
+| 8b | ✅ `cargo check --workspace --all-targets` across every example, `just test`, `just lint`, `just sweep` — plus the four `multi_mesh` controls re-run as compile errors, and a fifth (same-size imposter block) Phase 8 could not express ([detail](bindless_textures/phase_08b.md)) |
+| 9 | `just shaders toon_link`, `just test` and `just sweep` ✅; `just toon_link link-verify-p1` not recorded as run — the four-point visual A/B (a wrong material index is silent) has **not** been run ([detail](bindless_textures/phase_09.md)) |
+| 10 | docs only — llm_notes updates ✅, `docs/` deliverables open |
 | 11 | `just shaders watercolor`, `just test`, `just sweep` — plus a frame comparison against the pre-migration build, since a wrong ping-pong handle is silent |
 
 Per [`docs/testing.md`](../docs/testing.md), read before accepting any snapshot or
