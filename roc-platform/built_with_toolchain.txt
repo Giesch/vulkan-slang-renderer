@@ -1,3 +1,7 @@
+floor: ubuntu 24.04
+glibc: ldd (Ubuntu GLIBC 2.39-0ubuntu8.8) 2.39
 gcc: gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
-glibc: ldd (Ubuntu GLIBC 2.39-0ubuntu8.7) 2.39
+binutils: GNU ld (GNU Binutils for Ubuntu) 2.42
+rustc: rustc 1.97.1 (8bab26f4f 2026-07-14)
 libstdc++.a: /usr/lib/gcc/x86_64-linux-gnu/13/libstdc++.a
+generated-by: stubs/generate.sh

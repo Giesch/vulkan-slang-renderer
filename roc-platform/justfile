@@ -14,6 +14,10 @@ exe example="basic_triangle": build
 test:
     bash ci/all_tests.sh
 
+# regenerate the committed link inputs; asserts the glibc floor, needs gcc and binutils
+stubs:
+    bash stubs/generate.sh
+
 # regenerate src/roc_platform_abi.rs from platform/main.roc
 glue:
     roc glue rust_glue ./src/ platform/main.roc
