@@ -5,17 +5,11 @@ generated-docs/
 # The host archive, rebuilt by build.sh
 platform/targets/*/libhost.a
 
-# Startup objects and system libraries that build.sh links into the target dir.
-# They point at whatever this machine provides, so they are never committed.
-platform/targets/*/*.o
-platform/targets/*/libc.so
-platform/targets/*/libc_nonshared.a
-platform/targets/*/libgcc_s.so
-platform/targets/*/libm.so
-platform/targets/*/libvulkan.so
-
 # Executables built by `roc build examples/<name>.roc`
 /basic_triangle
+
+# The floor-assertion probe ci/all_tests.sh writes beside generate.sh
+stubs/floor_probe.*
 
 # Roc build artifacts
 *.rh

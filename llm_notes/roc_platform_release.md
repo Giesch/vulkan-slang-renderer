@@ -456,6 +456,15 @@ Phases 2 to 4 each get a sub-plan in `llm_notes/roc_platform_release/`.
    `atexit` forwarding archive. Generate the committed artifacts inside
    the `ubuntu:22.04` floor image (§7): the recorded glibc version is then
    the floor's, and phase 4 does not regenerate them.
+
+   > **Done 2026-08-17, but not as written here or in the sub-plan.** The floor
+   > is Ubuntu 24.04 / glibc 2.39 and there is no container; `stubs/generate.sh`
+   > runs locally and asserts its own glibc. Five specific claims in the
+   > sub-plan's algorithm were wrong. Read the banner at the top of
+   > `02_stub_generator.md` before touching any of this, and
+   > [`tech_debt.md`](tech_debt.md) §18 for the reach the floor trades away.
+   > §2's own "Measured symbol set" table below predicts 400 stub symbols; the
+   > real figure at this floor is 475.
 3. **Bundle + container proof.** Sub-plan:
    `llm_notes/roc_platform_release/03_bundle.md`. Add `bundle.sh`. Serve
    the `.tar.zst` locally, point an example at the URL, and run it in an

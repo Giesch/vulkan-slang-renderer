@@ -44,6 +44,29 @@ bash build.sh || exit 1
 
 failed=0
 
+# The glibc floor assertion in stubs/generate.sh is the only thing holding the
+# floor, so it needs its own test. The probe stops in step 1, ahead of cargo.
+# `mktemp -p stubs`: generate.sh derives its working directory from $0, so a
+# probe in /tmp would cd to / and fail for another reason. The message grep is
+# load-bearing for the same reason: any failure gives a non-zero exit.
+echo ""
+echo "--- floor assertion ---"
+probe=$(mktemp -p stubs floor_probe.XXXXXX.sh)
+sed 's/^REQUIRED_GLIBC=.*/REQUIRED_GLIBC=0.0/' stubs/generate.sh > "$probe"
+probe_out=$(bash "$probe" 2>&1)
+probe_code=$?
+rm -f "$probe"
+if [ $probe_code -eq 0 ]; then
+    echo "FAIL(floor): generate.sh accepted a mismatched glibc floor"
+    failed=1
+elif ! echo "$probe_out" | grep -q "does not match the floor"; then
+    echo "FAIL(floor): generate.sh failed for another reason:"
+    echo "$probe_out" | sed 's/^/    /'
+    failed=1
+else
+    echo "PASS: generate.sh refuses a mismatched glibc floor"
+fi
+
 for roc_file in examples/*.roc; do
     name=$(basename "$roc_file" .roc)
     echo ""

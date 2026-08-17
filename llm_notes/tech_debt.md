@@ -34,6 +34,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 15. [`Game::draw` takes `&mut self`, so a frame-scoped GPU address can be stashed across frames](#15-gamedraw-takes-mut-self-so-a-frame-scoped-gpu-address-can-be-stashed-across-frames) — latent **silent-wrong-data** hazard, nothing in the type system prevents it
 16. [Typed device-address minting is split across two layers](#16-typed-device-address-minting-is-split-across-two-layers) — an invariant held by convention that could be held by the compiler
 17. [Picking is a second rendering path rather than a pass, so every new capability must be re-implemented or refused](#17-picking-is-a-second-rendering-path-rather-than-a-pass-so-every-new-capability-must-be-re-implemented-or-refused) — recurring per-feature carve-outs; the cost lands on whoever adds the *next* feature
+18. [The roc platform's glibc 2.39 floor excludes SteamOS, Debian stable and Ubuntu 22.04 LTS](#18-the-roc-platforms-glibc-239-floor-excludes-steamos-debian-stable-and-ubuntu-2204-lts) — **shipped-artifact reach**, and the Steam Deck number is unmeasured
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -1416,3 +1417,87 @@ threaded through the record path, and no mutual exclusion with the draw queue.
 The `debug_assert!` at `:5983` and the `ensure!` at `:1283` both delete
 themselves rather than being relocated. `gpu_picking` still picks, and
 `just sweep` still passes.
+
+## 18. The roc platform's glibc 2.39 floor excludes SteamOS, Debian stable and Ubuntu 22.04 LTS
+
+**Context.** Recorded when `roc-platform/stubs/generate.sh` landed. This is the
+one deliberate trade that phase made, and it is a property of the *shipped*
+artifact rather than of the repo, so it needs a home outside the phase plan.
+
+**The problem.** `stubs/generate.sh` derives the committed `libc.so` and
+`libm.so` stubs from the build machine's own libraries, and asserts that machine
+is glibc 2.39. Both the symbol set and the data-object sizes come from there. So
+every executable a Roc app author builds against the published platform requires
+glibc ≥ 2.39 at run time.
+
+The floor is not forced. Three things pin a hard lower bound at **2.34**: the
+libpthread/libdl merge into `libc.so.6`, the `stat` family becoming dynamic
+exports, and `Scrt1.o` relying on 2.34's `__libc_start_main` to run the
+executable's init array. 2.39 sits five releases above that bound.
+
+What the extra distance buys is real but small: no build container, no SDL3 apt
+dependency list, and no allowlist for symbols the build machine references and
+an older libc lacks. What it costs:
+
+| distro | glibc | in? |
+|---|---|---|
+| Ubuntu 24.04+, Debian 13, Fedora 40+, RHEL 10, Arch | ≥ 2.39 | yes |
+| Ubuntu 22.04 LTS — supported to 2027, ESM to 2032 | 2.35 | no |
+| Debian 12 bookworm — current stable | 2.36 | no |
+| RHEL / Rocky / Alma 9 | 2.34 | no |
+| Linux Mint 21.x | 2.35 | no |
+| SteamOS 3.x | unmeasured | probably not |
+
+**SteamOS is the one that matters, and its number is unmeasured.** The audience
+for this platform is PC games, which makes the Steam Deck the most likely target
+and so the most likely failure. SteamOS 3 shipped glibc 2.33 in the 2022 3.3
+era; 3.7 moved to a newer Arch base, and Valve's release notes do not state the
+version. Measure it before treating the floor as settled — in desktop mode,
+`ldd --version`. Below 2.39, a Deck build fails at startup with a
+`GLIBC_2.39 not found` error from the loader: loud and attributable, but only on
+the player's machine.
+
+**Why the exact number is 2.39 and not, say, 2.36.** Thirteen symbols in the
+host archive come from newer glibc headers than 2.35: eight `__isoc23_*`
+redirects plus `strlcpy`, `strlcat`, `wcslcpy`, `wcslcat` (all glibc 2.38, from
+SDL3's `SDL_string.c`, `SDL_cpuinfo.c` and `SDL_hidapi.c`), and `arc4random`
+(2.36, from gcc 13's `libstdc++.a`). No LTS base image sits at 2.38, so the
+choice is effectively binary: 24.04 and none of them, or 22.04 and all thirteen
+need an allowlist plus a container to build in.
+
+**Why it's tolerable today.** Nothing ships from this repo yet, and the current
+goal is a roc platform that builds and releases at all. Lowering the floor later
+is mechanical — regenerate the stubs against an older glibc — not a redesign.
+
+`roc-platform/ci/all_tests.sh` tests that the generator refuses a mismatched
+glibc. Phase 4's regen-diff runs on an `ubuntu-24.04` runner, so it covers the
+happy path only.
+
+**Fix — three routes, cheapest first.**
+
+1. **Regenerate in an `ubuntu:22.04` container.**
+   [`roc_platform_release/02_stub_generator.md`](roc_platform_release/02_stub_generator.md)
+   specifies this in full: `ci/floor.Dockerfile`, a
+   `stubs/generate_in_container.sh` wrapper, and a `stubs/above_floor.txt`
+   allowlist carrying the thirteen symbols so local development still links.
+   The allowlist needs two assertions to be safe — each entry absent from the
+   floor `libc.so.6`, *and* absent from the container-measured symbol set —
+   or it becomes a way to silence a genuine floor violation. Costs a rust
+   toolchain and the SDL3 build dependencies inside the image, plus a docker
+   round-trip per regeneration.
+2. **Build the host against a floor sysroot, with no container.**
+   `cargo-zigbuild --target x86_64-unknown-linux-gnu.2.35` pins the glibc
+   version directly, which would make the local and released archives
+   identical and retire the allowlist along with the container. The unknown is
+   SDL3: its C sources go through cmake and cc-rs rather than the rust linker,
+   so the override has to reach `CC`/`CXX` for SDL's feature detection to see
+   2.35 headers. Worth a spike before being ruled in or out.
+3. **Ship a second target.** roc's `inputs` list is per-target, so a low-floor
+   target could carry its own stub set beside `x64glibc`. Most machinery, best
+   reach.
+
+**Done means.** The floor is chosen against measured data rather than
+convenience: SteamOS, Debian stable and Ubuntu 22.04 LTS each have a recorded
+glibc version and an explicit in-or-out decision. If any of them is in,
+`REQUIRED_GLIBC` in `stubs/generate.sh` names that lower floor, the stubs are
+regenerated against it, and `roc-platform/README.md` states the new number.
