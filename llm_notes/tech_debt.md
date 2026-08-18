@@ -1501,3 +1501,66 @@ convenience: SteamOS, Debian stable and Ubuntu 22.04 LTS each have a recorded
 glibc version and an explicit in-or-out decision. If any of them is in,
 `REQUIRED_GLIBC` in `stubs/generate.sh` names that lower floor, the stubs are
 regenerated against it, and `roc-platform/README.md` states the new number.
+
+## 19. An app that names the roc platform by URL needs `--max-transitive-mb=0`
+
+**Context.** Recorded when `roc-platform/bundle.sh` landed. It is a property of
+the shipped artifact, so it lives outside the phase plan.
+
+**The problem.** roc applies two size limits to a downloaded dependency, and
+they treat platforms differently:
+
+| limit | flag | default | platform exempt? |
+| --- | --- | --- | --- |
+| per-package expanded size | `--max-package-mb` | 10 MB | yes |
+| per-direct-dependency transitive size | `--max-transitive-mb` | 100 MB | **no** |
+
+The exemption is one boolean, `platform_exempt`. It is set from
+`dep.is_platform` in `../roc/src/compile/package_resolution.zig:696`, and read
+in exactly one place, `:854`, which is the per-package check.
+`checkTransitiveLimits` (`:918`, called at `:479`) never consults it, and
+`groupKeyForDep` (`:1004`) never branches on `is_platform`. A platform named by
+URL therefore joins the transitive tally like any package.
+
+The platform expands to 161,198,326 bytes against a 104,857,600-byte default.
+`ci/bundle_test.sh` measures this on every run. The observed diagnostic:
+
+```
+DEPENDENCY TREE TOO LARGE
+has pulled more than 104857600 bytes of packages into the build (161198326
+bytes so far).
+```
+
+So every app author who names the platform by URL passes one flag that carries
+no useful meaning to them:
+
+```bash
+roc --max-transitive-mb=0 main.roc
+```
+
+A local path dependency never trips this. The tally counts URL-fetched nodes
+only, which is why `just roc-platform run` passes and the problem stays
+invisible until the platform ships.
+
+Two further notes. roc's own diagnostic names a `--max-transitive-bytes` flag
+that the CLI does not accept; the accepted spelling is `--max-transitive-mb`.
+roc has no test covering a platform against the transitive limit, so the
+behaviour is unspecified by its suite rather than deliberate.
+
+**Fix routes, cheapest first.**
+
+1. **Exempt platforms from the transitive limit in roc.** One condition, at
+   `package_resolution.zig:918`, symmetric with the per-package exemption that
+   already exists. This is the same shape of upstream fix as
+   [`roc_interp_fix.md`](roc_interp_fix.md), and it removes the flag for every
+   roc platform, not only this one.
+2. **Raise roc's default.** Weaker: it moves the number rather than fixing the
+   asymmetry, and any platform above the new number hits it again.
+3. **Shrink `libhost.a` below 100 MB.** slang dominates the 155 MB, and
+   `strip = "debuginfo"` cannot shrink a staticlib. This is real size work with
+   its own scope, and it fixes only this platform.
+
+**Done means.** An app author names the platform by URL and runs it with no
+size flag. `ci/bundle_test.sh` prints `MEASURED: an app needs neither
+--max-package-mb nor --max-transitive-mb.`, and the "Shipping" section of
+`roc-platform/README.md` drops the flag.

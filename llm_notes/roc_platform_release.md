@@ -337,6 +337,16 @@ platform edge. An app author needs no flag. Phase 3 confirms this
 empirically with a plain `roc run` against the served bundle. `roc bundle`
 itself accepts no size flag.
 
+> **Incomplete, and phase 3 measured the gap.** The per-package exemption is
+> real, but it is not the only limit. `--max-transitive-mb` (default 100 MB)
+> also applies, and `checkTransitiveLimits`
+> (`../roc/src/compile/package_resolution.zig:918`) never consults
+> `platform_exempt`. The platform expands to 161,198,326 bytes, so a URL-sourced
+> build stops with `DEPENDENCY TREE TOO LARGE`. **An app author does need one
+> flag: `--max-transitive-mb=0`.** The last sentence above is also wrong for a
+> second reason: `roc bundle` accepts no size flag, but `roc build` and
+> `roc run` both do. See [`tech_debt.md`](tech_debt.md) §19.
+
 The release profile keeps `strip = "debuginfo"`. `-C strip` applies to
 linked artifacts, not a staticlib, so no strip setting shrinks
 `libhost.a`. Leave size work — splitting out `egui`/`epaint`, trimming the
@@ -475,6 +485,17 @@ Phases 2 to 4 each get a sub-plan in `llm_notes/roc_platform_release/`.
    allowlist). This phase owns the `PT_INTERP` decision from §2: a
    `patchelf --set-interpreter` step, an upstream roc fix, or a documented
    limitation.
+
+   > **Done 2026-08-17.** The container image is `ubuntu:24.04`, not
+   > `ubuntu:22.04`, because phase 2 moved the floor to glibc 2.39. The
+   > `PT_INTERP` decision is the documented limitation: the fix belongs in roc
+   > and has its own plan, [`roc_interp_fix.md`](roc_interp_fix.md), so no
+   > `patchelf` step shipped. One finding this section does not anticipate: roc
+   > applies a second size limit, `--max-transitive-mb`, that platforms are
+   > **not** exempt from, so an app that names the platform by URL needs
+   > `--max-transitive-mb=0`. §4 below covers the per-package exemption only.
+   > See [`tech_debt.md`](tech_debt.md) §19 and the banner at the top of
+   > `03_bundle.md`.
 4. **Release CI (§7).** Sub-plan:
    `llm_notes/roc_platform_release/04_release_ci.md`. Depends only on
    phases 1 to 3. It runs before the game API work, so `run-bump-check`
@@ -520,3 +541,32 @@ slice of this list as its done-criteria.
   `--max-package-mb` flag, in an `ubuntu:22.04` container with no rust, no
   cmake, no SDL3, no Vulkan headers and no `libvulkan-dev`. lavapipe links
   `libstdc++.so.6`, so the container test covers the two-runtime case.
+
+> **Phase 3 corrections, 2026-08-17.** `just roc-platform bundle-test` performs
+> every item above that names the container. Five read differently after
+> implementation.
+>
+> - **`ubuntu:22.04` reads `ubuntu:24.04`** in both items. Phase 2 moved the
+>   floor to glibc 2.39, and a 22.04 container lacks thirteen symbols the host
+>   references.
+> - **The `readelf -l` item is waived**, not met. The executable names
+>   `/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2`, the Debian-family multiarch
+>   path. roc records the build machine's path. The fix belongs in roc:
+>   [`roc_interp_fix.md`](roc_interp_fix.md). The container test records the
+>   observed path and does not assert it. Reinstate this item when that fix
+>   lands.
+> - **The last item needs one flag.** `--max-package-mb` is indeed unnecessary,
+>   but `--max-transitive-mb=0` is required. See §4 and
+>   [`tech_debt.md`](tech_debt.md) §19.
+> - **The `R_X86_64_COPY` item is vacuous.** The executable has zero copy
+>   relocations, as phase 2 also measured. The check stays because it fires the
+>   moment a `ret`-stubbed data symbol appears.
+> - **The thrown-and-caught C++ exception item is deferred, not waived.**
+>   Nothing in the triangle host exercises the unwinder on demand. Runtime slang
+>   compilation (§5) will. The `LD_BIND_NOW` run and the lavapipe coverage stand
+>   in until then.
+>
+> Measured in the container: `DT_NEEDED` is exactly the four expected
+> libraries, no versioned glibc requirement, 378 undefined symbols all
+> resolved, no `_Z`-prefixed export, and the plain and `LD_BIND_NOW` runs both
+> exit 0.
