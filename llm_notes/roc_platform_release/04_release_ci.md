@@ -198,6 +198,9 @@ Runs only on `workflow_dispatch`. Needs `build-and-test`. Permissions:
    - the glibc ≥ 2.39 floor ([`tech_debt.md`](../tech_debt.md) §18).
    - the Debian-family `PT_INTERP` limitation
      ([`roc_interp_fix.md`](../roc_interp_fix.md)).
+
+     > **Removed 2026-08-18.** The roc fix is merged, so the limitation no
+     > longer exists and the notes template no longer carries it.
 5. `gh release create roc-platform-<version> <bundle> --title roc-platform-<version> --notes-file <file> --target "$GITHUB_SHA"`.
 
 ## Compression
@@ -227,6 +230,9 @@ path is open question 3; the fallback is `NOTICE.txt`.
   is the tested `.tar.zst` and whose notes contain the platform URL, the
   `--max-transitive-mb=0` requirement, the floor, and the `PT_INTERP`
   limitation.
+
+  > **Amended 2026-08-18.** The `PT_INTERP` limitation is fixed in roc and
+  > dropped from the notes template; the other three items stand.
 - The CI-built `roc version` matches `ci/roc_commit.txt`.
 - Regen-diff: a change to any `stubs/*.s` fails the job;
   `built_with_toolchain.txt` drift only warns.

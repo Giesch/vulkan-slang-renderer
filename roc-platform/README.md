@@ -119,24 +119,10 @@ regenerates `LICENSES/` from the toolchain and from `cargo metadata`, and
 loopback and runs the example in an `ubuntu:24.04` container. That container
 holds the Vulkan loader and the lavapipe software driver. It has no rust, no
 cargo, no cmake, no gcc, no SDL3, no Vulkan headers and no `libvulkan-dev`.
-The test then examines the executable: the library list, the symbol versions,
-the undefined symbols, the copy relocations and the exported symbols. A green
-run shows that the executable needs a Vulkan loader and glibc 2.39, and
-nothing else.
-
-### Debian-family limitation
-
-An executable from `roc build` on a Debian-family machine runs on
-Debian-family Linux only. roc writes the dynamic-linker path of the build
-machine into the executable. A Debian-family machine keeps that file at a
-multiarch path, and no other distribution has that path. The executable
-therefore stops with `ENOENT` on Fedora, Arch and SteamOS.
-
-The correction belongs in roc.
-[`../llm_notes/roc_interp_fix.md`](../llm_notes/roc_interp_fix.md) holds the
-plan. Until it lands, link release executables on Fedora or Arch. Those
-machines record the standard path `/lib64/ld-linux-x86-64.so.2`, which works
-on every glibc distribution, Debian-family included.
+The test then examines the executable: the interpreter path, the library
+list, the symbol versions, the undefined symbols, the copy relocations and
+the exported symbols. A green run shows that the executable needs a Vulkan
+loader and glibc 2.39, and nothing else.
 
 ## Releasing
 

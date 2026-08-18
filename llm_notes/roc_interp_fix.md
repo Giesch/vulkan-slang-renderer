@@ -1,5 +1,19 @@
 # roc `PT_INTERP` fix — plan
 
+> **Done 2026-08-18.** Merged upstream as roc-lang/roc PR #10838
+> (issue #10835, merge `a4a3c344`). The landed change is the
+> `RocTarget` variant this plan prefers, not the minimal per-architecture
+> constants: `src/target/mod.zig` gains `glibcProgramInterpreter`, the
+> native `.gnu` branch of `linker.zig` emits it, and
+> `src/cli/libc_finder.zig` is deleted. `local-install` is rebased onto
+> the merge and the installed roc (`release-fast-62a50c46`) carries it.
+> Every done criterion is met: `readelf -l` on a `basic_triangle` linked
+> on this Debian-family machine names `/lib64/ld-linux-x86-64.so.2`, the
+> executable runs to a clean exit 0 in a `fedora:latest` container with
+> lavapipe, roc's test suite passed on the PR, and the `readelf -l` item
+> in [`roc_platform_release.md`](roc_platform_release.md) §Verification
+> is reinstated — `ci/bundle_test.sh` now asserts the path.
+
 Make roc write the ABI-constant dynamic-linker path into every native glibc
 executable. The work happens in the `../roc` checkout and lands as an
 upstream PR to `roc-lang/roc`. Line references are against commit

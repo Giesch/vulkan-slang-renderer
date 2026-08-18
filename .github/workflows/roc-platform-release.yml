@@ -490,17 +490,6 @@ jobs:
           `libgcc_s.so.1`, `libm.so.6` and `libc.so.6`, and nothing else. SDL3, the
           C++ runtime and the Slang compiler are all linked statically.
 
-          ## Known limitation
-
-          **Link on a Debian-family machine only, for now.** Roc writes the build
-          machine's dynamic-linker path into the executable's `PT_INTERP` header. A
-          Debian-family machine keeps that file at a multiarch path that no other
-          distribution has, so an executable linked on Debian or Ubuntu stops with
-          `ENOENT` on Fedora, Arch and SteamOS. The failure is one-way: an
-          executable linked on Fedora or Arch records
-          `/lib64/ld-linux-x86-64.so.2` and runs on every glibc distribution. The
-          correction belongs in Roc.
-
           ## Provenance
 
           - Source commit: @COMMIT@

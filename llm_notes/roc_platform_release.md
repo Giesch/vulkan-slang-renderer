@@ -588,6 +588,10 @@ slice of this list as its done-criteria.
 >   [`roc_interp_fix.md`](roc_interp_fix.md). The container test records the
 >   observed path and does not assert it. Reinstate this item when that fix
 >   lands.
+>
+>   > **Reinstated 2026-08-18.** The roc fix is merged (see the banner in
+>   > [`roc_interp_fix.md`](roc_interp_fix.md)) and `ci/bundle_test.sh`
+>   > asserts the path.
 > - **The last item needs one flag.** `--max-package-mb` is indeed unnecessary,
 >   but `--max-transitive-mb=0` is required. See §4 and
 >   [`tech_debt.md`](tech_debt.md) §19.
