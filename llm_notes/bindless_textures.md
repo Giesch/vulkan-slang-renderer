@@ -1,9 +1,8 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-9 done (including 7b, 7c, 7d and 8b), except that Phase 9's
-four-point visual A/B has not been run. Phase 10 is half done: the llm_notes
-updates landed, the `docs/` deliverables have not. Phases 11-13 are optional
-follow-ups, prerequisites for nothing.** Design note for adopting bindless
+**Status: Phases 0-10 done (including 7b, 7c, 7d and 8b), except that Phase 9's
+four-point visual A/B has not been run. Phases 11-13 are optional follow-ups,
+prerequisites for nothing.** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
 **Phases 6-9 were one phase until Phase 6 planning found a prerequisite this
@@ -1611,7 +1610,7 @@ Also `just toon_link link-verify-p1` — but recorded for what it is: it diffs
 tests, and never builds `toon_link` at all. A free unchanged-converter guard,
 not evidence about this change.
 
-## Phase 10 — docs (half done: llm_notes updated, `docs/` deliverables open)
+## Phase 10 — docs ✅ done
 
 - ~~Rewrite the status header on [render-graph/03_bindless.md](render-graph/03_bindless.md);
   it currently says texture binding remains per-pipeline descriptors.~~ **Done.**
@@ -1620,7 +1619,9 @@ not evidence about this change.
   doc sketches an app-authored `sampler2D textures[]`, and the renderer uses
   Slang's `DescriptorHeap`.
 - Update `docs/` for the shader-authoring workflow (handles are data, not
-  `Resources` entries).
+  `Resources` entries). **Done: [`docs/bindless.md`](../docs/bindless.md)**,
+  which also records BDA pointers and handles-via-push-constants as the
+  preferred defaults.
 - **State the uniformity invariant as a hard rule in `docs/`**, not just here:
   *a texture handle — and any index used to select the struct that carries it —
   must be dynamically uniform within a draw.* Don't source handles or their
@@ -1638,10 +1639,13 @@ not evidence about this change.
   needed; see Phase 9). Phase 6 decided against a `mltrs::TexHandle` alias, so
   `docs/` is the only place this rule lives — there is no vendored comment for
   shader authors to read instead, which makes writing it down properly matter
-  more, not less.
+  more, not less. **Done: [`docs/bindless.md`](../docs/bindless.md) § "The
+  uniformity rule".**
 - **Say how the invariant is actually satisfied today**, not just what it
   forbids: the material index rides in a push constant, and a push constant is
-  per-draw constant by definition. That is the pattern to copy.
+  per-draw constant by definition. That is the pattern to copy. **Done:
+  [`docs/bindless.md`](../docs/bindless.md) § "The supported pattern: one draw
+  per material", pointing at `toon_link`'s `MaterialSlot::push` and draw loop.**
 - ~~Update [render-graph/05_multi_draw_rendering.md](render-graph/05_multi_draw_rendering.md)
   §4 (:225-237), which states the push-constant path is "completely dead — no
   `.slang` declares one, there is no `cmd_push_constants` call, and no `Gpu`
@@ -1925,7 +1929,7 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 8 | ✅ `cargo check --workspace --all-targets`, `just lint`, `just test` with no snapshot churn, `just sweep` — plus a forced push-block run, since nothing declares one yet ([detail](bindless_textures/phase_08.md)) |
 | 8b | ✅ `cargo check --workspace --all-targets` across every example, `just test`, `just lint`, `just sweep` — plus the four `multi_mesh` controls re-run as compile errors, and a fifth (same-size imposter block) Phase 8 could not express ([detail](bindless_textures/phase_08b.md)) |
 | 9 | `just shaders toon_link`, `just test` and `just sweep` ✅; `just toon_link link-verify-p1` not recorded as run — the four-point visual A/B (a wrong material index is silent) has **not** been run ([detail](bindless_textures/phase_09.md)) |
-| 10 | docs only — llm_notes updates ✅, `docs/` deliverables open |
+| 10 | ✅ docs only — the llm_notes updates plus [`docs/bindless.md`](../docs/bindless.md) |
 | 11 | `just shaders watercolor`, `just test`, `just sweep` — plus a frame comparison against the pre-migration build, since a wrong ping-pong handle is silent |
 
 Per [`docs/testing.md`](../docs/testing.md), read before accepting any snapshot or
