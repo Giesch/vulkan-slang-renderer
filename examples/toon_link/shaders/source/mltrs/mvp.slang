@@ -5,7 +5,7 @@ module mvp;
 namespace mltrs {
 
 // provided by the cpu; see shaders::MATRIX_LAYOUT
-extern static const bool columnMajor;
+extern public static const bool columnMajor;
 
 // "GLM was originally designed for OpenGL,
 // where the Y coordinate of the clip coordinates is inverted.

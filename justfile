@@ -75,7 +75,7 @@ shaders example="all":
     cargo fmt
 
 # the examples with a `textures` recipe; add new ones here
-examples_with_textures := "depth_texture koch_curve serenity_crt space_invaders sprite_batch suzanne viking_room"
+examples_with_textures := "depth_texture koch_curve serenity_crt space_invaders sprite_batch suzanne viking_room cards"
 
 # re-encode every example's source images to ktx2 (needs `cargo install ctt-cli`)
 [unix]

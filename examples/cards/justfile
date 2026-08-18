@@ -1,0 +1,9 @@
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
+[unix]
+textures:
+    ctt textures/texture.jpg \
+        -o textures/texture.ktx2 \
+        -f bc7 --mipmap --quality very-slow --zstd=19
