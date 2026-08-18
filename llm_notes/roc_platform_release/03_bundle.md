@@ -34,6 +34,10 @@
 > `cd platform` before bundling, `--network=host` with a loopback server, the
 > read-only mounts, the image contents, and the decision to record `PT_INTERP`
 > rather than assert it.
+>
+> **Update 2026-08-18:** the roc fix from
+> [`../roc_interp_fix.md`](../roc_interp_fix.md) is merged, and
+> `ci/bundle_test.sh` asserts the interpreter path.
 
 Sub-plan of [`roc_platform_release.md`](../roc_platform_release.md) §3 and
 §4. That document holds the rationale: why a bundle, why the size is
@@ -59,6 +63,11 @@ Two corrections to the main plan apply throughout:
   "`readelf -l` names `/lib64/ld-linux-x86-64.so.2`" is waived until that
   fix lands; the container test records the observed interpreter path
   instead of asserting it.
+
+  > **Resolved 2026-08-18.** The roc fix is merged (see the banner in
+  > [`../roc_interp_fix.md`](../roc_interp_fix.md)). The verification item
+  > is reinstated, the container test asserts the path, and the README
+  > limitation section is removed.
 
 Deliverables:
 

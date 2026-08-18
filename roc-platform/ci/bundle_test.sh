@@ -251,15 +251,17 @@ if [ "${1:-}" = "--container" ]; then
     fi
 
     # --- interpreter ---------------------------------------------------------
-    #
-    # Recorded, not asserted. roc writes the dynamic-linker path of the build
-    # machine, and a Debian-family path exists on Debian-family machines only.
-    # The correction belongs in roc: llm_notes/roc_interp_fix.md.
 
     echo ""
-    echo "--- interpreter (recorded, not asserted) ---"
+    echo "--- interpreter ---"
     readelf -l "$exe" > headers.txt 2>&1
-    grep "Requesting program interpreter" headers.txt | sed 's/^/    /'
+    if grep -q "Requesting program interpreter: /lib64/ld-linux-x86-64.so.2" headers.txt; then
+        echo "PASS: interpreter is /lib64/ld-linux-x86-64.so.2"
+    else
+        echo "FAIL(interpreter): not the ABI-constant path"
+        grep "Requesting program interpreter" headers.txt | sed 's/^/    /'
+        failed=1
+    fi
 
     # --- runs ----------------------------------------------------------------
 
