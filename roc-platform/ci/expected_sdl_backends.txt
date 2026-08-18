@@ -1,0 +1,12 @@
+ALSA_bootstrap
+DISKAUDIO_bootstrap
+DUMMYAUDIO_bootstrap
+DUMMYCAMERA_bootstrap
+DUMMY_bootstrap
+DUMMY_evdev_bootstrap
+OFFSCREEN_bootstrap
+V4L2_bootstrap
+Wayland_bootstrap
+Wayland_preferred_bootstrap
+X11_bootstrap
+deduped_bootstrap

@@ -12,7 +12,7 @@ See `LICENSE`.
 
 To build the platform:
 
-- Rust (stable)
+- Rust. `rust-toolchain.toml` pins the version.
 - `roc` on `PATH`
 - `rust_glue` installed for the same roc build: `roc install rust_glue <url>`
 - SDL3 build dependencies
@@ -83,6 +83,7 @@ just roc-platform test         # build and run every example headlessly
 just roc-platform bundle       # bundle the platform into dist/
 just roc-platform bundle-test  # prove the bundle runs from a URL
 just roc-platform stubs        # regenerate the committed link inputs
+just roc-platform licenses     # regenerate platform/LICENSES
 just roc-platform glue         # regenerate src/roc_platform_abi.rs
 just roc-platform shaders      # regenerate src/generated/ from shaders/source/
 ```
@@ -108,6 +109,12 @@ flag:
 roc --max-transitive-mb=0 main.roc
 ```
 
+The archive carries `NOTICE` and `LICENSES/`. They record the licence of the
+platform and of every redistributed file: `libstdc++.a`, the glibc startup
+objects, and the libraries `libhost.a` links statically. `ci/licenses.sh`
+regenerates `LICENSES/` from the toolchain and from `cargo metadata`, and
+`stubs/generate.sh` calls it.
+
 `just roc-platform bundle-test` proves the archive. It serves `dist/` on
 loopback and runs the example in an `ubuntu:24.04` container. That container
 holds the Vulkan loader and the lavapipe software driver. It has no rust, no
@@ -131,6 +138,34 @@ plan. Until it lands, link release executables on Fedora or Arch. Those
 machines record the standard path `/lib64/ld-linux-x86-64.so.2`, which works
 on every glibc distribution, Debian-family included.
 
+## Releasing
+
+`.github/workflows/roc-platform-release.yml` builds, tests and publishes the
+platform. It runs on a pinned `ubuntu-24.04` runner, which is the floor image:
+a host symbol above glibc 2.39 fails the release build at link time.
+
+A pull request that touches `roc-platform/**` runs every job except the
+release. A `workflow_dispatch` with a `release_version` of `X.Y.Z` publishes
+the tested archive under the tag `roc-platform-X.Y.Z`.
+
+The workflow builds roc from source at the commit in `ci/roc_commit.txt`, then
+asserts `roc version` names it. `built_with_roc_version.txt` records a
+different hash: it names the dev machine's build, whose branch carries local
+commits. Update both files in one commit.
+
+Three checks guard the committed artifacts:
+
+- `ci/expected_sdl_backends.txt` names the SDL backend set. A dev package on
+  the runner that the dev machine lacks turns on another backend, and the
+  comparison fails with the backend's name.
+- `stubs/*.s` must not change when the runner regenerates them. That is the
+  signal a new dependency entered the host.
+- A change to `platform/targets/x64glibc`, `platform/LICENSES` or
+  `built_with_toolchain.txt` prints a warning. Those files are byte copies
+  from apt packages, so an Ubuntu point update moves them with no fix
+  available from the dev machine. The workflow restores the committed bytes,
+  so the release always ships the reviewed inputs.
+
 ## Layout
 
 - `platform/main.roc` — the platform header: `requires`, `hosted`, and the
@@ -140,8 +175,12 @@ on every glibc distribution, Debian-family included.
 - `platform/InitConfig.roc` — internal: the `Init` alias an app returns and the
   nominal type the host reads.
 - `platform/Host.roc` — the hosted-effect boundary the modules above wrap.
+- `platform/NOTICE`, `platform/LICENSES/` — the licence texts the archive
+  ships. `ci/licenses.sh` regenerates `LICENSES/`.
 - `platform/targets/x64glibc/` — the link inputs. Committed except `libhost.a`.
-- `stubs/generate.sh` — regenerates those link inputs.
+- `stubs/generate.sh` — regenerates those link inputs and the licence texts.
+- `ci/roc_commit.txt` — the upstream roc commit CI builds.
+- `ci/expected_sdl_backends.txt` — the SDL backend set CI asserts.
 - `stubs/*_stub.s` — the generated stub sources, committed for review.
 - `stubs/forward/` — the C sources behind `libc_forward.a`.
 - `src/lib.rs` — allocators, hosted-effect implementations, and `rust_main`.

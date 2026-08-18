@@ -1522,12 +1522,12 @@ in exactly one place, `:854`, which is the per-package check.
 `groupKeyForDep` (`:1004`) never branches on `is_platform`. A platform named by
 URL therefore joins the transitive tally like any package.
 
-The platform expands to 161,198,326 bytes against a 104,857,600-byte default.
+The platform expands to 161,460,808 bytes against a 104,857,600-byte default.
 `ci/bundle_test.sh` measures this on every run. The observed diagnostic:
 
 ```
 DEPENDENCY TREE TOO LARGE
-has pulled more than 104857600 bytes of packages into the build (161198326
+has pulled more than 104857600 bytes of packages into the build (161460808
 bytes so far).
 ```
 

@@ -12,6 +12,13 @@ set -eo pipefail
 # main.roc leads the argument list because `roc bundle` uses the first .roc
 # path as its module-discovery entry point. The glob repeats it; roc sorts and
 # deduplicates the list.
+#
+# NOTICE and LICENSES/ ship beside the modules. The archive redistributes
+# libstdc++.a, three glibc startup objects and a libhost.a that statically
+# links SDL3, slang and the rust crates, so it carries their licence texts.
+# roc's archive path check applies no extension rule
+# (../roc/src/unbundle/unbundle.zig pathHasUnbundleErr), so the extensionless
+# name is accepted.
 
 TARGET_NAME=x64glibc
 TARGET_DIR="platform/targets/$TARGET_NAME"
@@ -48,12 +55,19 @@ if [ ${#missing[@]} -ne 0 ]; then
     exit 1
 fi
 
+if [ ! -f platform/NOTICE ] || [ ! -d platform/LICENSES ]; then
+    echo "Error: platform/NOTICE or platform/LICENSES is missing." >&2
+    echo "The archive redistributes licensed files and cannot ship without them." >&2
+    echo "Regenerate them with \`just roc-platform licenses\`." >&2
+    exit 1
+fi
+
 # One archive per run keeps the output glob unambiguous. roc bundle opens
 # --output-dir rather than creating it.
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
-(cd platform && roc bundle main.roc *.roc "targets/$TARGET_NAME"/* --output-dir "../$DIST_DIR")
+(cd platform && roc bundle main.roc *.roc NOTICE LICENSES/* "targets/$TARGET_NAME"/* --output-dir "../$DIST_DIR")
 
 bundles=("$DIST_DIR"/*.tar.zst)
 if [ ${#bundles[@]} -ne 1 ]; then

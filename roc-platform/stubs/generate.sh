@@ -491,4 +491,14 @@ printf '  %-28s %4s\n' "allowlisted (not stubbed)" "$(comm -12 "$work/s.txt" "$w
 echo ""
 printf '  %-28s %4s\n' "stub set" "$stub_total"
 echo ""
-echo "Done. Commit $TARGET_DIR, $STUB_DIR/*.s and built_with_toolchain.txt."
+# --- step 14: licence texts --------------------------------------------------
+#
+# The licence texts describe the files this script just copied, so they are
+# regenerated in the same run. ci/licenses.sh reads the same toolchain and the
+# same build output.
+
+echo "=== Licence texts ==="
+bash ci/licenses.sh
+echo ""
+
+echo "Done. Commit $TARGET_DIR, $STUB_DIR/*.s, platform/LICENSES and built_with_toolchain.txt."
