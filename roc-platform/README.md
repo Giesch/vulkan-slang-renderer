@@ -76,14 +76,60 @@ from `examples/basic_triangle`. Roc controls the title and nothing else.
 ## Usage
 
 ```bash
-just roc-platform build    # build the host archive
-just roc-platform run      # run examples/basic_triangle.roc
-just roc-platform exe      # build a standalone executable
-just roc-platform test     # build and run every example headlessly
-just roc-platform stubs    # regenerate the committed link inputs
-just roc-platform glue     # regenerate src/roc_platform_abi.rs
-just roc-platform shaders  # regenerate src/generated/ from shaders/source/
+just roc-platform build        # build the host archive
+just roc-platform run          # run examples/basic_triangle.roc
+just roc-platform exe          # build a standalone executable
+just roc-platform test         # build and run every example headlessly
+just roc-platform bundle       # bundle the platform into dist/
+just roc-platform bundle-test  # prove the bundle runs from a URL
+just roc-platform stubs        # regenerate the committed link inputs
+just roc-platform glue         # regenerate src/roc_platform_abi.rs
+just roc-platform shaders      # regenerate src/generated/ from shaders/source/
 ```
+
+## Shipping
+
+`just roc-platform bundle` writes `dist/<hash>.tar.zst`. The name is a BLAKE3
+hash of the content, so every release has a different name. Put the archive at
+a public URL, and name that URL in the app header:
+
+```roc
+app [game] { pf: platform "https://example.com/<hash>.tar.zst" }
+```
+
+The archive is 41 MB. It expands to 154 MiB, because `libhost.a` is 155 MB.
+
+roc keeps a platform package out of the 10 MB per-package limit, so an app
+needs no `--max-package-mb` flag. roc applies the 100 MB transitive limit to
+the platform package, so an app that names this platform by URL needs one
+flag:
+
+```bash
+roc --max-transitive-mb=0 main.roc
+```
+
+`just roc-platform bundle-test` proves the archive. It serves `dist/` on
+loopback and runs the example in an `ubuntu:24.04` container. That container
+holds the Vulkan loader and the lavapipe software driver. It has no rust, no
+cargo, no cmake, no gcc, no SDL3, no Vulkan headers and no `libvulkan-dev`.
+The test then examines the executable: the library list, the symbol versions,
+the undefined symbols, the copy relocations and the exported symbols. A green
+run shows that the executable needs a Vulkan loader and glibc 2.39, and
+nothing else.
+
+### Debian-family limitation
+
+An executable from `roc build` on a Debian-family machine runs on
+Debian-family Linux only. roc writes the dynamic-linker path of the build
+machine into the executable. A Debian-family machine keeps that file at a
+multiarch path, and no other distribution has that path. The executable
+therefore stops with `ENOENT` on Fedora, Arch and SteamOS.
+
+The correction belongs in roc.
+[`../llm_notes/roc_interp_fix.md`](../llm_notes/roc_interp_fix.md) holds the
+plan. Until it lands, link release executables on Fedora or Arch. Those
+machines record the standard path `/lib64/ld-linux-x86-64.so.2`, which works
+on every glibc distribution, Debian-family included.
 
 ## Layout
 

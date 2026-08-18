@@ -18,6 +18,8 @@ stubs/floor_probe.*
 *.ll
 
 # Archives (platform bundles)
+dist/
+platform/.roc_bundle_tmp/
 *.tar.br
 *.tar.gz
 *.tar.zst

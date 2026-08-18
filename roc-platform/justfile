@@ -14,6 +14,14 @@ exe example="basic_triangle": build
 test:
     bash ci/all_tests.sh
 
+# bundle the platform into dist/<hash>.tar.zst
+bundle:
+    bash bundle.sh
+
+# serve the bundle and prove it runs from a URL in an ubuntu:24.04 container
+bundle-test:
+    bash ci/bundle_test.sh
+
 # regenerate the committed link inputs; asserts the glibc floor, needs gcc and binutils
 stubs:
     bash stubs/generate.sh
