@@ -168,6 +168,11 @@ exactly like the shared object.
 The GCC Runtime Library Exception covers redistribution. Name it in the
 bundle's license notice, because the archive is a shipped artifact.
 
+> **Widened in phase 4.** `libstdc++.a` and the CRT objects are not the only
+> redistributed material. `libhost.a` statically links SDL3, slang and about
+> 140 rust crates, and SDL's Zlib licence requires attribution in the
+> distribution. `platform/NOTICE` and `platform/LICENSES/` cover all of it.
+
 ### Prior art
 
 The stub technique is sanctioned, not a workaround.
@@ -449,6 +454,21 @@ matrix runs `ubuntu-latest` only
 (`../roc-ray/scripts/release_helpers.py:17`), so it does not test the
 floor; the `ubuntu:22.04` container test stays alongside it.
 
+> **Superseded at planning time, 2026-08-18.** The phase-4 sub-plan,
+> [`roc_platform_release/04_release_ci.md`](roc_platform_release/04_release_ci.md),
+> is the spec, and it drops two choices made here.
+>
+> - **There is no build container.** Phase 2 moved the floor to Ubuntu 24.04 /
+>   glibc 2.39 and never built the container image. The workflow runs on a
+>   pinned `ubuntu-24.04` runner, which is the floor image; a symbol above
+>   glibc 2.39 still fails the release build at link time.
+> - **The release-package suite is not adopted.** The platform ships one bundle
+>   for one target, so the suite's bundle matrix adds no coverage, and its
+>   `publish-release` creates bare `X.Y.Z` git tags, which do not namespace in
+>   this monorepo. The workflow is hand-rolled from the template, tags are
+>   `roc-platform-X.Y.Z`, the availability check is written by hand, and the
+>   `roc bump` gate waits for the second release.
+
 ## Phases
 
 Phases 2 to 4 each get a sub-plan in `llm_notes/roc_platform_release/`.
@@ -501,6 +521,19 @@ Phases 2 to 4 each get a sub-plan in `llm_notes/roc_platform_release/`.
    phases 1 to 3. It runs before the game API work, so `run-bump-check`
    takes its compatibility baseline from the triangle platform, and every
    later phase lands on a releasable pipeline.
+
+   > **Done 2026-08-18, with two departures from §7 and one from the
+   > sub-plan.** There is no build container and the release-package suite is
+   > not adopted; the banner above §Phases records both. The third: the bundle
+   > carries a `NOTICE` and a `LICENSES/` directory that cover `libhost.a`'s
+   > static dependencies, not only `libstdc++.a` and the CRT objects that §2
+   > names. `libhost.a` links SDL3 under the Zlib licence, which requires
+   > attribution in the distribution. `roc-platform/ci/licenses.sh` copies
+   > every licence text the build already has, and `stubs/generate.sh` calls
+   > it. Six defects in the sub-plan are recorded in the banner at the top of
+   > [`04_release_ci.md`](roc_platform_release/04_release_ci.md); the two that
+   > would have shipped a wrong artifact are the missing tree restore and the
+   > dead `git diff` pathspec.
 5. **Roc game API (§5).** Deferred to a future plan.
 6. **`mltrs dev` and `mltrs run` (§6).**
 

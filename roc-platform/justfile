@@ -26,6 +26,10 @@ bundle-test:
 stubs:
     bash stubs/generate.sh
 
+# regenerate platform/LICENSES from the toolchain and the dependency graph
+licenses:
+    bash ci/licenses.sh
+
 # regenerate src/roc_platform_abi.rs from platform/main.roc
 glue:
     roc glue rust_glue ./src/ platform/main.roc
