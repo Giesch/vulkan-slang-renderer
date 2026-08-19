@@ -2,9 +2,12 @@
 #
 # Declares the symbols the host archive leaves undefined, so the link
 # resolves and the executable records libm.so.6 as a plain DT_NEEDED. The
-# real library provides every implementation at run time. No .symver
-# anywhere: a versioned reference would pin the executable to a
-# GLIBC_2.xx the player may not have.
+# real library provides every implementation at run time. A symbol
+# with a single version stays unversioned and carries no GLIBC_2.xx
+# requirement. A symbol the library also exports at a compat version
+# carries a .symver pin to the default version: ld.so binds an
+# unversioned reference to the oldest version node, which is the
+# compat implementation.
 #
 # glibc floor: 2.39. Toolchain: built_with_toolchain.txt.
 
@@ -60,24 +63,28 @@ cos: ret
 cosf: ret
 
 .balign 8
-.globl exp
-.type exp, @function
-exp: ret
+.globl __pin_exp
+.type __pin_exp, @function
+__pin_exp: ret
+.symver __pin_exp, exp@@GLIBC_2.29, remove
 
 .balign 8
-.globl exp2
-.type exp2, @function
-exp2: ret
+.globl __pin_exp2
+.type __pin_exp2, @function
+__pin_exp2: ret
+.symver __pin_exp2, exp2@@GLIBC_2.29, remove
 
 .balign 8
-.globl exp2f
-.type exp2f, @function
-exp2f: ret
+.globl __pin_exp2f
+.type __pin_exp2f, @function
+__pin_exp2f: ret
+.symver __pin_exp2f, exp2f@@GLIBC_2.27, remove
 
 .balign 8
-.globl expf
-.type expf, @function
-expf: ret
+.globl __pin_expf
+.type __pin_expf, @function
+__pin_expf: ret
+.symver __pin_expf, expf@@GLIBC_2.27, remove
 
 .balign 8
 .globl fegetround
@@ -100,9 +107,10 @@ frexp: ret
 frexpl: ret
 
 .balign 8
-.globl hypotf
-.type hypotf, @function
-hypotf: ret
+.globl __pin_hypotf
+.type __pin_hypotf, @function
+__pin_hypotf: ret
+.symver __pin_hypotf, hypotf@@GLIBC_2.35, remove
 
 .balign 8
 .globl ldexp
@@ -110,9 +118,10 @@ hypotf: ret
 ldexp: ret
 
 .balign 8
-.globl log
-.type log, @function
-log: ret
+.globl __pin_log
+.type __pin_log, @function
+__pin_log: ret
+.symver __pin_log, log@@GLIBC_2.29, remove
 
 .balign 8
 .globl log10
@@ -125,14 +134,16 @@ log10: ret
 log10f: ret
 
 .balign 8
-.globl log2
-.type log2, @function
-log2: ret
+.globl __pin_log2
+.type __pin_log2, @function
+__pin_log2: ret
+.symver __pin_log2, log2@@GLIBC_2.29, remove
 
 .balign 8
-.globl logf
-.type logf, @function
-logf: ret
+.globl __pin_logf
+.type __pin_logf, @function
+__pin_logf: ret
+.symver __pin_logf, logf@@GLIBC_2.27, remove
 
 .balign 8
 .globl lround
@@ -155,14 +166,16 @@ modf: ret
 modff: ret
 
 .balign 8
-.globl pow
-.type pow, @function
-pow: ret
+.globl __pin_pow
+.type __pin_pow, @function
+__pin_pow: ret
+.symver __pin_pow, pow@@GLIBC_2.29, remove
 
 .balign 8
-.globl powf
-.type powf, @function
-powf: ret
+.globl __pin_powf
+.type __pin_powf, @function
+__pin_powf: ret
+.symver __pin_powf, powf@@GLIBC_2.27, remove
 
 .balign 8
 .globl scalbn

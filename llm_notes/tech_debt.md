@@ -33,7 +33,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 14. [Multiple `ParameterBlock` globals are supported end-to-end but never exercised](#14-multiple-parameterblock-globals-are-supported-end-to-end-but-never-exercised) — untested path, an ordering contract held together by a comment
 15. [`Game::draw` takes `&mut self`, so a frame-scoped GPU address can be stashed across frames](#15-gamedraw-takes-mut-self-so-a-frame-scoped-gpu-address-can-be-stashed-across-frames) — latent **silent-wrong-data** hazard, nothing in the type system prevents it
 16. [Typed device-address minting is split across two layers](#16-typed-device-address-minting-is-split-across-two-layers) — an invariant held by convention that could be held by the compiler
-17. [Picking is a second rendering path rather than a pass, so every new capability must be re-implemented or refused](#17-picking-is-a-second-rendering-path-rather-than-a-pass-so-every-new-capability-must-be-re-implemented-or-refused) — recurring per-feature carve-outs; the cost lands on whoever adds the *next* feature
+17. [Picking is a second rendering path rather than a pass, so every new capability must be re-implemented or refused](#17-picking-is-a-second-rendering-path-rather-than-a-pass-so-every-new-capability-must-be-re-implemented-or-refused) — recurring per-feature carve-outs; the cost lands on whoever adds the _next_ feature
 18. [The roc platform's glibc 2.39 floor excludes SteamOS, Debian stable and Ubuntu 22.04 LTS](#18-the-roc-platforms-glibc-239-floor-excludes-steamos-debian-stable-and-ubuntu-2204-lts) — **shipped-artifact reach**, and the Steam Deck number is unmeasured
 
 ## 1. Vulkan objects leak when an init function fails partway
@@ -62,14 +62,14 @@ family still needs a pass):
 - `create_compute_pipeline` (`src/renderer.rs:1147`) — leaks
   `pipeline_layout` on any later failure, and additionally leaks
   `shader_module` if `create_compute_pipelines` fails, since the explicit
-  `destroy_shader_module` sits *after* pipeline creation.
+  `destroy_shader_module` sits _after_ pipeline creation.
 - `create_mesh` (`src/renderer.rs:1002`) — leaks the vertex buffer and its
   allocation if `create_index_buffer` fails.
 - `create_texture_image` (`src/renderer.rs:4174`) — leaks the staging buffer if
   `write_to_gpu_buffer`, `create_vk_image` or the layout transition fails.
 
 **Why it's tolerable today.** Every one of these is startup-only and its error
-is fatal, so process exit reclaims the memory. Hot reload is *not* affected: it
+is fatal, so process exit reclaims the memory. Hot reload is _not_ affected: it
 recreates only the pipeline and retires the old objects through
 `self.old_pipelines` (`src/renderer.rs:2648`), never calling `init_pipeline`.
 The real cost is diagnostic — a genuine bring-up error arrives buried in
@@ -113,7 +113,7 @@ renderer keeps drawing with a `vk::Pipeline` it has already queued for
 destruction.
 
 **The problem.** In `try_shader_recompile` (`src/renderer.rs:2638-2668`) the
-old pipeline handle is retired *before* its replacement exists:
+old pipeline handle is retired _before_ its replacement exists:
 
 ```rust
 self.old_pipelines.push((                     // :2648 — queued for destruction
@@ -156,7 +156,7 @@ has exactly one spelling.
 
 The two consumers (`examples/sprite_batch.rs`, `examples/space_invaders.rs`)
 migrated to a new `RasterState::no_depth()` constructor. That was a deliberate
-behavior change, not a 1:1 port: the old flag set the depth *test* to disabled
+behavior change, not a 1:1 port: the old flag set the depth _test_ to disabled
 and never touched `depth_write`, so both examples had been writing depth
 unconditionally (Vulkan honors writes with the test off). `no_depth()` sets
 both, and exists so that pairing is hard to get wrong for the next caller.
@@ -197,11 +197,11 @@ module's definition of a same-named but potentially differently-laid-out struct.
 
 Note what changed and what didn't when the codegen was made
 order-independent (`link_rendering/follow_up.md` §5b): `reflect_slang_module_types`
-now sorts its module list, so the collision *winner* is at least reproducible
+now sorts its module list, so the collision _winner_ is at least reproducible
 across machines. But reproducible is not correct — the rule is now "whichever
 module name sorts last," which nobody would choose on purpose and which will read
 as a bug the first time someone hits it. Sorting removed the
-machine-to-machine variation that would have made this *undebuggable*; it did
+machine-to-machine variation that would have made this _undebuggable_; it did
 not remove the hazard.
 
 **The in-repo precedent for the fix.** One level down, the analogous case is
@@ -288,7 +288,7 @@ paths, and the debug/release divergences are few.
    `target/release/<example>`, and update the `VALIDATION_DISABLED` check at
    `game/traits.rs:98` to key off the runtime setting rather than the const.
 
-Watch for: `VK_LAYER_KHRONOS_validation` becomes a *runtime* requirement of any
+Watch for: `VK_LAYER_KHRONOS_validation` becomes a _runtime_ requirement of any
 release run that opts in (`check_required_layers` bails if the layer package is
 missing — see `build_reproducibility.md:348`); the shader-`println` device
 features (`src/renderer.rs:3211`, `:3228`) are gated on the same
@@ -312,14 +312,14 @@ new runtime dependency).
 **Context.** The 2026-08 workspace migration ran in a fresh container (no
 direnv, no display, restricted network via proxy, a fixed disk allowance, 4
 cores, lavapipe only). Everything below was hit in one session. Items marked
-*known* re-confirm an existing entry in
+_known_ re-confirm an existing entry in
 [`build_reproducibility.md`](build_reproducibility.md); the disk and
 sweep-timing items are new.
 
 **Hit again, exactly as documented (annotations added there):**
 
-- ***known*, §3 — slang-rhi's OptiX fetch.** `cmake --preset default
-  -DSLANG_LIB_TYPE=STATIC` failed configuring: slang-rhi unconditionally
+- **_known_, §3 — slang-rhi's OptiX fetch.** `cmake --preset default
+-DSLANG_LIB_TYPE=STATIC` failed configuring: slang-rhi unconditionally
   fetches the OptiX headers from GitHub, which a restricted proxy 403s.
   Fixed with the flags the Windows recipe already passes:
   `-DSLANG_ENABLE_SLANG_RHI=OFF -DSLANG_ENABLE_TESTS=OFF`. **The unix
@@ -327,20 +327,20 @@ sweep-timing items are new.
   §3 prescribed). Also re-confirmed: the static build produces no
   `libslang.a` — `libslang-compiler.a` + `libcompiler-core.a` + `libcore.a`
   are the artifacts to wait for.
-- ***known*, §4 — undocumented system deps.** `libasound2-dev` (alsa-sys ←
+- **_known_, §4 — undocumented system deps.** `libasound2-dev` (alsa-sys ←
   rodio) was the first build failure; the sweep set
   (`mesa-vulkan-drivers vulkan-validationlayers libvulkan-dev`) was needed
   exactly as listed. One wrinkle worth a word in §4: on a stale image the
-  pinned package index 404s, so it's `apt-get update` *then* install.
-- ***known*, §5 — env vars without direnv.** Every non-interactive shell needs
+  pinned package index 404s, so it's `apt-get update` _then_ install.
+- **_known_, §5 — env vars without direnv.** Every non-interactive shell needs
   the `SLANG_*` exports by hand. A sharper footgun surfaced: `.env` computes
   the paths from `$PWD`, so sourcing it (or exporting inline) from a
   subdirectory silently bakes a wrong absolute path, and the eventual
   `shader-slang-sys` build-script panic points at a nonsense nested path far
   from the actual mistake. A `load-env.sh` that resolves relative to its own
   file location (not `$PWD`) would remove the trap; `.cargo/config.toml
-  [env] relative = true` (§5's option 2) would too.
-- ***known*, §6 — `cargo-insta` not installed by anything.** Needed
+[env] relative = true` (§5's option 2) would too.
+- **_known_, §6 — `cargo-insta` not installed by anything.** Needed
   `cargo install cargo-insta` before the snapshot-rename step could run.
 
 **New — disk footprint of the debug workspace build.** A full
@@ -386,13 +386,13 @@ and a slow-machine sweep either passes or fails with a message that says
 ## 7. The Y-down clip space flip is applied in three different places, none documented
 
 **Context.** Surfaced while upgrading glam 0.30.8 → 0.33.2 (2026-08). The
-upgrade itself is done and is *not* the debt — this entry records what the
+upgrade itself is done and is _not_ the debt — this entry records what the
 upgrade exposed and deliberately did not fix.
 
 > **Correction (same session).** A first draft of this entry claimed the flip
 > was absent from the shared code and hand-rolled per example. That was wrong,
 > and it was wrong in the direction that would have caused damage: acting on it
-> would have double-flipped six examples. The flip *is* centralized — in two
+> would have double-flipped six examples. The flip _is_ centralized — in two
 > vendored slang modules, below. The draft also read `Vec3::Z` in
 > `viking_room`/`depth_texture` as clip-space compensation; it is the model's
 > orientation. Kept visible rather than silently rewritten, since the
@@ -408,7 +408,7 @@ any of them:
    `mul(reflectY, this.proj)`, with the Vulkan-tutorial citation inline. This
    covers `basic_triangle`, `suzanne`, `multi_mesh`, `viking_room`,
    `depth_texture` and `toon_link`.
-2. **`crates/cli/vendor/mltrs/fullscreen_triangle.slang`** — a *second*,
+2. **`crates/cli/vendor/mltrs/fullscreen_triangle.slang`** — a _second_,
    independent `reflectY` producing `centeredCoords`, annotated "OpenGL-style
    Y-up" against the same struct's Y-down `svPosition`/`texCoord`. Sixteen
    examples read it; only `gpu_picking` and `ray_marching` invert a projection
@@ -417,7 +417,7 @@ any of them:
 3. **Swapped orthographic bounds** — `examples/sprite_batch/src/main.rs:141`
    and `examples/space_invaders/src/main.rs:380` pass
    `bottom = height, top = 0.0`. `Projection` (`projection.slang`) applies no
-   flip of its own, so for these two the swap *is* the flip.
+   flip of its own, so for these two the swap _is_ the flip.
 
 Not a mechanism, listed because a first read mistakes it for one:
 `viking_room`/`depth_texture` pass `Vec3::Z` as the up vector because
@@ -430,17 +430,17 @@ something invisible from the Rust side: whether the shader went through
 `MVPMatrices` or bare `Projection`.
 
 **Why it's tolerable today.** Every example looks right, `just sweep` covers
-them, and the convention is at least *consistent* even if it is unwritten.
+them, and the convention is at least _consistent_ even if it is unwritten.
 Nothing ships from this repo, so the cost is the next author's time.
 
 **What the glam upgrade changed.** glam 0.33.2 deprecated the whole
 view/projection family (`Mat4::look_at_rh`, `Mat4::perspective_rh`,
 `Mat4::orthographic_lh`, …) and moved it to free functions under
-`glam::camera::{lh,rh}::{view,proj}`, where the `proj` sub-module *names the
-NDC convention*:
+`glam::camera::{lh,rh}::{view,proj}`, where the `proj` sub-module _names the
+NDC convention_:
 
 | module    | NDC Z   | NDC Y |
-|-----------|---------|-------|
+| --------- | ------- | ----- |
 | `opengl`  | [-1, 1] | Up    |
 | `directx` | [0, 1]  | Up    |
 | `vulkan`  | [0, 1]  | Down  |
@@ -448,7 +448,7 @@ NDC convention*:
 `vulkan::perspective` is `directx::perspective` with the Y row negated. The old
 `Mat4::perspective_rh` was Z ∈ [0,1] **Y-up** — i.e. `directx`. The migration
 therefore used `directx::perspective` / `directx::orthographic` /
-`view::look_at_mat4`. Each call site carries a short comment naming *which* of
+`view::look_at_mat4`. Each call site carries a short comment naming _which_ of
 the three mechanisms above flips it, because `directx` in a Vulkan renderer
 reads as a mistake otherwise.
 
@@ -500,7 +500,7 @@ compile-time win — the used surface is only `Vec2/3/4`, `UVec4`, `IVec4`,
 but `crates/mltrs/src/**` contains zero references to it. Neither is worth a
 numbered entry; both are free wins for whoever is next in the neighborhood.
 
-The layout half of the glam contract is *not* debt and must not be disturbed by
+The layout half of the glam contract is _not_ debt and must not be disturbed by
 any of the above — see Phase 6 of
 [`vulkan_1_3_migration.md`](vulkan_1_3_migration.md) for the model (sizes
 stable, alignments feature-dependent, never substitute `Vec3A`, and the
@@ -521,10 +521,10 @@ synthetic consumer crate. Every `.slang` file in that corpus is a byte-identical
 copy of a file that lives somewhere else in the repo — nothing there is unique
 to the fixtures:
 
-| fixture files | copy of | real source of truth |
-|---|---|---|
-| `mltrs.slang` + `mltrs/*.slang` (6) | `crates/cli/vendor/`, and every example's seeded copy | `crates/cli/vendor/` |
-| `basic_triangle.shader.slang`, `sdf_2d.shader.slang`, `gpu_picking.shader.slang`, `gpu_picking_common.slang`, `particle.slang`, `particle_render.shader.slang`, `particles.compute.slang`, `ray_march_camera.slang` (8) | one example each (`ray_march_camera.slang` also exists identically in 3 examples) | the example crate |
+| fixture files                                                                                                                                                                                                           | copy of                                                                           | real source of truth |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------- |
+| `mltrs.slang` + `mltrs/*.slang` (6)                                                                                                                                                                                     | `crates/cli/vendor/`, and every example's seeded copy                             | `crates/cli/vendor/` |
+| `basic_triangle.shader.slang`, `sdf_2d.shader.slang`, `gpu_picking.shader.slang`, `gpu_picking_common.slang`, `particle.slang`, `particle_render.shader.slang`, `particles.compute.slang`, `ray_march_camera.slang` (8) | one example each (`ray_march_camera.slang` also exists identically in 3 examples) | the example crate    |
 
 The copies are maintained by hand, and nothing checks that a copy still matches
 its origin. The namespace refactor had to rewrite every engine import twice —
@@ -533,7 +533,7 @@ kept in sync only by remembering to do both. Drift doesn't fail: it silently
 weakens what the snapshots cover, since the corpus would keep exercising the
 codegen paths, just not the ones any real consumer uses.
 
-Note the corpus *was* deliberately curated, not accidentally accumulated —
+Note the corpus _was_ deliberately curated, not accidentally accumulated —
 `mltrs_workspace.md:462-470` specifies "a curated set exercising every codegen
 path" and lists them by the path each covers (vertex-buffer graphics,
 vertex-less fullscreen, compute + shared module, cross-module import). That
@@ -556,7 +556,7 @@ they cover, which is arguably the shape this corpus should have too.
   the reason for having a separate corpus at all — at the cost of the "fixtures
   mirror real usage" property.
 - **(b) Make the example crates the source of truth and regenerate.** A `just
-  sync-fixtures` recipe that copies the 8 example-owned files from their example
+sync-fixtures` recipe that copies the 8 example-owned files from their example
   homes, plus a test (or `pre-commit` step) that fails when they drift.
   Guarantees the corpus tracks real usage; couples cli snapshot churn to every
   example shader edit, so a purely visual tweak in `sdf_2d` starts producing
@@ -709,7 +709,7 @@ the result verbatim — `write_generated_file`
 invoke the cli follow it with a whole-workspace `cargo fmt`
 (`justfile:69`, `:77`, and the windows arm at `:103`).
 
-That makes formatting a property of *how the cli was invoked*, not of the cli.
+That makes formatting a property of _how the cli was invoked_, not of the cli.
 A consumer following the documented workflow in `CLAUDE.md` —
 `cargo add mltrs`, `mltrs shaders init`, `mltrs shaders compile` — gets
 unformatted files with no newline at EOF, and then gets a spurious diff in
@@ -761,7 +761,7 @@ commit.** The snapshot tests glob generated files off disk
 (`crates/cli/src/build_tasks.rs:1806`, `:1973`, both
 `insta::glob!(…, "**/*.{rs,json}")`), so formatting at write time changes every
 `.rs` snapshot — a one-time `cargo insta test -p mltrs-cli --accept` — and
-afterwards those snapshots encode the *local* rustfmt's output. A rustfmt
+afterwards those snapshots encode the _local_ rustfmt's output. A rustfmt
 version bump could then fail CI on formatting alone. For generated code this
 simple that is unlikely, but whoever takes this should decide knowingly. The
 alternative that avoids it entirely is to snapshot `GeneratedFile.content`
@@ -782,13 +782,13 @@ successfully, with a warning and unformatted-but-valid output.
 `justfile:71-77`, re-seeds all 16 examples). They are delivered as one
 undifferentiated set. They are not one thing:
 
-| module | example crates using it | engine coupling |
-|---|---|---|
-| `addr.slang` | 7 — dragon, gpu_picking, particles, ray_marching, space_invaders, sprite_batch, watercolor | **hard**: mirrors `crates/renderer/src/renderer/addr.rs` |
-| `mvp.slang` | 16 (all) | soft: the `columnMajor` extern |
-| `projection.slang` | 5 — dragon, gpu_picking, ray_marching, space_invaders, sprite_batch | soft: the same extern |
-| `fullscreen_triangle.slang` | 7 — dragon, gpu_picking, koch_curve, ray_marching, sdf_2d, serenity_crt, watercolor | none |
-| `super_sample.slang` | 2 — ray_marching, sdf_2d | none |
+| module                      | example crates using it                                                                    | engine coupling                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| `addr.slang`                | 7 — dragon, gpu_picking, particles, ray_marching, space_invaders, sprite_batch, watercolor | **hard**: mirrors `crates/renderer/src/renderer/addr.rs` |
+| `mvp.slang`                 | 16 (all)                                                                                   | soft: the `columnMajor` extern                           |
+| `projection.slang`          | 5 — dragon, gpu_picking, ray_marching, space_invaders, sprite_batch                        | soft: the same extern                                    |
+| `fullscreen_triangle.slang` | 7 — dragon, gpu_picking, koch_curve, ray_marching, sdf_2d, serenity_crt, watercolor        | none                                                     |
+| `super_sample.slang`        | 2 — ray_marching, sdf_2d                                                                   | none                                                     |
 
 `addr.slang` is genuine engine API: its three typealiases have to stay in lockstep
 with `Addr`/`ReadAddr`/`ImmutableAddr` (`crates/renderer/src/renderer/addr.rs:9`,
@@ -800,7 +800,7 @@ touches nothing engine-owned. Shipping them through `shaders init` presents them
 as engine contract, which means a change to a convenience utility is a breaking
 change to every consumer's source tree.
 
-The mirror image of the same gap: the modules that examples *actually* share are
+The mirror image of the same gap: the modules that examples _actually_ share are
 duplicated by hand with no mechanism at all. `ray_march.slang` lives in dragon and
 ray_marching; `ray_march_camera.slang` in dragon, gpu_picking and ray_marching.
 Byte-identical today (md5-verified, 2026-08), but nothing makes them stay that way.
@@ -817,19 +817,19 @@ hand-duplicated example modules are two files across three crates. The bill arri
 the first time an external consumer pins against `MVPMatrices`, or the first time
 one of those two files is edited in one crate and not the others.
 
-**Two things a split does *not* fix, both worth knowing before starting.**
+**Two things a split does _not_ fix, both worth knowing before starting.**
 
 1. **`columnMajor` stays engine API even if `MVPMatrices` doesn't.** Both
    `mvp.slang:8` and `projection.slang:8` declare
    `extern static const bool columnMajor`, and the value comes from a module the
-   renderer *generates at compile time*: `load_cpu_constants_module`
+   renderer _generates at compile time_: `load_cpu_constants_module`
    (`crates/renderer/src/shaders.rs:23-35`) emits
    `export static const bool columnMajor = …` inside `namespace mltrs`, driven by
    `MATRIX_LAYOUT` (`shaders.rs:14`). Demoting those two modules to the examples
    side does not decouple them — it just moves the coupling somewhere less
    visible. Either the extern becomes documented public API in its own right, or
    `mvp`/`projection` keep a foot in the engine set.
-2. **It buys no namespace isolation.** Reflection records type names *unqualified*
+2. **It buys no namespace isolation.** Reflection records type names _unqualified_
    into a flat map, so every public struct/enum name must still be unique across a
    crate's entire `shaders/source/` regardless of which side it came from — see §4,
    which is the same flat-map hazard one level up. The win here is API surface and
@@ -847,7 +847,7 @@ one of those two files is edited in one crate and not the others.
   payoff, since they get a source of truth they have never had.
 
 Mechanical consequences to plan for: `VENDORED_MODULES` becomes two lists, and
-`LEGACY_MODULES` (`crates/cli/src/main.rs:88-94`) — which *deletes* stale
+`LEGACY_MODULES` (`crates/cli/src/main.rs:88-94`) — which _deletes_ stale
 pre-namespace copies — needs a story for files that change sides, since a demoted
 module left behind in a consumer's `shaders/source/` is exactly the case it exists
 to clean up. The `mltrs.slang` prelude (`crates/cli/vendor/mltrs.slang`)
@@ -897,11 +897,11 @@ and debug builds additionally slang-compile every shader at startup through the
 hot-reload path (`create_from_atlas`). A full sweep at the default gives
 **13 ok / 1 skip / 2 fail**, both failures spurious:
 
-| example | pipelines | verdict at 10s | at 16s | at 18s |
-|---|---|---|---|---|
-| `watercolor` | 21 (11 shaders × ping/pong parity) | `no clean teardown`, exit 137 | `no frames` | ok |
-| `multi_mesh` | 17 (1 shader, `P_CUBE`…`P_GRAY_UNORM`) | `no frames` | ok | ok |
-| every other example | 1–2 | ok | ok | ok |
+| example             | pipelines                              | verdict at 10s                | at 16s      | at 18s |
+| ------------------- | -------------------------------------- | ----------------------------- | ----------- | ------ |
+| `watercolor`        | 21 (11 shaders × ping/pong parity)     | `no clean teardown`, exit 137 | `no frames` | ok     |
+| `multi_mesh`        | 17 (1 shader, `P_CUBE`…`P_GRAY_UNORM`) | `no frames`                   | ok          | ok     |
+| every other example | 1–2                                    | ok                            | ok          | ok     |
 
 The driver is **pipeline count, not shader count** — `multi_mesh` has a single
 `.shader.slang` and is the second-slowest to first frame. Slang compilation is
@@ -918,7 +918,7 @@ failure you get, and the early one points at the wrong entry:
   `FAIL(no clean teardown): watercolor died on a signal` — was written to catch
   a process that skipped `drain_gpu` and `Drop for Renderer`, i.e. **§1**. The
   log is empty at `RUST_LOG=warn`, so there is nothing in it to contradict the
-  reading. A process that never finished *starting* is indicted for a teardown
+  reading. A process that never finished _starting_ is indicted for a teardown
   bug it does not have.
 - **after the loop is up, before the first frame** (both at 15-16s) — clean
   exit, zero frames, `VKR_SWEEP` exit 3, `FAIL(no frames)`. This is §6's
@@ -956,9 +956,9 @@ takes everything else down with it.
    "died before presenting a frame" from "died during teardown" before blaming
    the latter. The renderer already counts presented frames for `VKR_SWEEP`'s
    exit 3; a marker line at first present would let the script say
-   *"never reached the first frame in Ns — widen `SWEEP_TIMEOUT`"* instead of
+   _"never reached the first frame in Ns — widen `SWEEP_TIMEOUT`"_ instead of
    accusing §1. Note the sequencing constraint: raising the default (1 or 2)
-   *hides* the 137 spelling without fixing it, so if only one lands, land this.
+   _hides_ the 137 spelling without fixing it, so if only one lands, land this.
 
 **Done means.** `just sweep` passes on a GPU-less 4-core box with no env vars
 set. An example that genuinely hangs, and one that genuinely leaks at teardown,
@@ -970,7 +970,7 @@ page-cache warmth.
 
 **Context.** Written after Phase 6 of
 [`bindless_textures.md`](bindless_textures.md) (2026-08), which is the fourth
-piece of work in this repo whose *actual* verification was a screenshot. Not a
+piece of work in this repo whose _actual_ verification was a screenshot. Not a
 bug — the renderer is correct; this entry is about the verification path being
 outside the repo.
 
@@ -1033,10 +1033,10 @@ BGRA→RGBA swizzle, and the three prerequisite fixes (`format_block_info` must
 learn BGRA; two barrier stage masks must widen `BLIT` → `ALL_TRANSFER` or the
 copy is itself a sync-validation error; `recreate_swapchain` must drop the
 capture). But that is filed under "**Phase 2 — golden images**", and Phase 2 is
-deferred on §12's genuinely hard, deliberately-open question: *which driver do
-you bless goldens on?*
+deferred on §12's genuinely hard, deliberately-open question: _which driver do
+you bless goldens on?_
 
-**Capture does not depend on that question.** Golden *comparison* needs
+**Capture does not depend on that question.** Golden _comparison_ needs
 determinism, a virtual clock (§10), reproducible SPIR-V (§11) and a blessed
 driver. Writing the current frame to a PNG on request needs none of them — a
 human looks at it. Bundling the two is what has kept a ~150-line feature behind
@@ -1047,7 +1047,7 @@ entry.
 this copy every frame — `cmd_copy_image_to_buffer` from the picking image into
 per-flight-slot readback buffers (`crates/renderer/src/renderer.rs:1868`).
 A screenshot is that same call with a full-extent region instead of a 1×1 one,
-and single-buffered instead of per-flight-slot. The synchronization is *easier*
+and single-buffered instead of per-flight-slot. The synchronization is _easier_
 than picking's, not harder: picking tolerates two frames of staleness by design,
 while a capture can simply be read after the `drain_gpu()` that `run_loop`
 already performs.
@@ -1106,7 +1106,7 @@ BUFFERS:  ["pa_buffer", "pb_buffer"]
 Two descriptor sets, and `Resources` gains one field per texture plus one buffer
 per block, in set order. The renderer consumes it correctly too:
 `create_descriptor_sets` (`crates/renderer/src/renderer.rs:4310`) walks sets in
-layout order carrying a running index *per resource kind*, so set 0 takes
+layout order carrying a running index _per resource kind_, so set 0 takes
 `pa_buffer`/`atex` and set 1 takes `pb_buffer`/`btex`.
 
 **The design is intentional**, on four pieces of in-repo evidence:
@@ -1128,7 +1128,7 @@ together by that comment alone. A single-block shader cannot distinguish a
 correct implementation from several wrong ones, so any refactor of
 `collect_parameter_block`, `resources_struct` or `create_descriptor_sets` is
 unverifiable in that dimension. There is also a live subtlety no test pins:
-within a block, codegen pushes textures *before* the block's uniform buffer,
+within a block, codegen pushes textures _before_ the block's uniform buffer,
 while the layout puts the buffer at binding 0 and the textures after. That
 reordering is harmless only because the two kinds live in separate vectors with
 independent indices — order matters within a kind, not across. Nothing states
@@ -1137,13 +1137,13 @@ that, and nothing would catch someone merging the vectors.
 **On removing support instead — the slang docs argue against it.** There is no
 explicit multi-block example in the slang documentation; every sample shows one
 (`docs/language-guide.md:81`, `docs/user-guide/09-reflection.md:359,657`). But
-the stated *rationale* only pays off with more than one.
+the stated _rationale_ only pays off with more than one.
 `docs/user-guide/a2-01-spirv-target-specific.md:196-200`: "a `ParameterBlock<T>`
 introduces a new descriptor set ID … designed specifically for
 D3D12/Vulkan/Metal/WebGPU, so that parameters defined in `T` can be placed into
 an independent descriptor table/descriptor set … This allows the user
 application to create and pre-populate the descriptor set and reuse it during
-command encoding". Independent pre-population and reuse *is* the
+command encoding". Independent pre-population and reuse _is_ the
 per-update-frequency split — per-frame view params, per-material, per-object —
 and that is the canonical reason to have several. Removing support would
 foreclose the pattern parameter blocks exist to enable, to delete a loop that
@@ -1174,7 +1174,7 @@ the reader to take it on faith.
 **Context.** Raised while landing Phase 7c of
 [`bindless_textures.md`](bindless_textures.md) (2026-08-09), as a question about
 whether a `&self` receiver could have replaced the `flight_slot` assert that
-phase added. It cannot — see "What this is *not*" below — but the underlying
+phase added. It cannot — see "What this is _not_" below — but the underlying
 hazard it points at is real and unowned, so it is recorded here.
 
 **The problem.** `Game::draw` takes `&mut self`
@@ -1189,7 +1189,7 @@ Every device address the engine hands a game is valid for **one frame only**.
 slot, so `Gpu::current_immutable_addr` and its `FrameRenderer`
 twin return a different `u64` depending on `flight_slot`, which cycles with
 `MAX_FRAMES_IN_FLIGHT = 2`. A game that caches one in a field and reuses it next
-frame reads the *other* slot's buffer — stale data, not a crash. Nothing in the
+frame reads the _other_ slot's buffer — stale data, not a crash. Nothing in the
 type system says so: `ImmutableAddr<T>` is an 8-byte `Copy` newtype whose
 `to_raw()` is public, and `&mut self` lets a game write it straight into its own
 state.
@@ -1201,11 +1201,11 @@ fault, and no crash — just data one frame out of date, alternating every frame
 **Why it's tolerable today.** No example does it. The only address-bearing
 example is `sprite_batch`, which mints inside the `submit_draws` closure and
 writes the result straight into the param struct it is building. And a stale
-address is *self-consistent* in the common case — a buffer the CPU rewrites with
+address is _self-consistent_ in the common case — a buffer the CPU rewrites with
 similar data every frame looks fine when read one slot late, which is precisely
 why this would be found by staring at a diff rather than by a tool.
 
-**What this is *not*.** It is not the invariant the Phase 7c assert
+**What this is _not_.** It is not the invariant the Phase 7c assert
 (`renderer.rs:2481`) protects. That one is entirely renderer-internal: it checks
 that `flight_slot` is unchanged between `FrameRenderer` reading it at queue time
 and `Gpu` being built from it later in the same `Renderer::draw_frame`. The game
@@ -1217,7 +1217,7 @@ The two entries share a subject (per-frame addresses) and nothing else.
 1. **`fn draw(&self, …)`.** Blocks the obvious `self.cached = addr`. It does not
    block `Cell`/`RefCell`, a `static`, or `addr.to_raw()` into a plain `u64`
    field. It also **breaks the entire write API**: `write_uniform`,
-   `write_storage` and `write_immutable` all take `&mut` *handles*
+   `write_storage` and `write_immutable` all take `&mut` _handles_
    (`renderer.rs:5399`, `:5420`, and the `get_mapped_mem_for_frame_*` family in
    `renderer/storage_buffer.rs`), and those
    handles live on the game struct — `sprite_batch` does
@@ -1232,7 +1232,7 @@ The two entries share a subject (per-frame addresses) and nothing else.
    PODs memcpy'd into mapped memory, so the lifetime propagates through
    `gather_struct_defs` (`crates/cli/src/build_tasks.rs`) into every generated
    struct and every example that names one. Worth pricing before committing.
-   Note it must *not* forbid the legitimate case — writing the address into a
+   Note it must _not_ forbid the legitimate case — writing the address into a
    param struct that outlives the closure is the whole point (the same
    realization that moved `bindless_handle` off `Gpu` in Phase 5 of
    `bindless_textures.md`: "a handle written into a param struct outlives the
@@ -1251,7 +1251,7 @@ plainly in scope and the natural place to put the result is a local — or a fie
 The surface is wider than when this was last implicitly safe.
 
 **Done means.** Either a game cannot hold a frame-scoped address past the frame
-(option 2), or every address a game *can* hold is one whose validity does not
+(option 2), or every address a game _can_ hold is one whose validity does not
 expire (option 3 covering the static case, with the per-frame remainder
 documented at the accessors). Failing both, at minimum: `addr.rs` and the four
 `current_*_addr*` accessors say in their doc comments that the value is valid for
@@ -1260,7 +1260,7 @@ exactly one frame and must not be cached, which today none of them do.
 ## 16. Typed device-address minting is split across two layers
 
 **Context.** Phase 7c of [`bindless_textures.md`](bindless_textures.md)
-(2026-08-09) needed `ImmutableAddr` minting from *two* surfaces — `Gpu` inside
+(2026-08-09) needed `ImmutableAddr` minting from _two_ surfaces — `Gpu` inside
 the submit closure and `FrameRenderer` at queue time — and de-duplicating them
 pushed the `ImmutableAddr::from_raw` wrap down into `StorageBufferStorage`
 (`immutable_addr_for_frame` / `immutable_element_addr_for_frame`,
@@ -1270,13 +1270,13 @@ which pointer type you ask for.
 
 **The problem.** `u64` → typed wrapper now happens in two places:
 
-| accessor | mints in | via |
-|---|---|---|
-| `Gpu::addr` (`renderer.rs:5435`) | `Gpu` | `Addr::from_raw` |
-| `Gpu::current_addr` (`:5446`) | `Gpu` | `Addr::from_raw` |
-| `Gpu::previous_addr` (`:5457`) | `Gpu` | `ReadAddr::from_raw` |
-| `Gpu::current_immutable_addr{,_at}` | `StorageBufferStorage` | already moved |
-| `FrameRenderer::current_immutable_addr{,_at}` | `StorageBufferStorage` | already moved |
+| accessor                                      | mints in               | via                  |
+| --------------------------------------------- | ---------------------- | -------------------- |
+| `Gpu::addr` (`renderer.rs:5435`)              | `Gpu`                  | `Addr::from_raw`     |
+| `Gpu::current_addr` (`:5446`)                 | `Gpu`                  | `Addr::from_raw`     |
+| `Gpu::previous_addr` (`:5457`)                | `Gpu`                  | `ReadAddr::from_raw` |
+| `Gpu::current_immutable_addr{,_at}`           | `StorageBufferStorage` | already moved        |
+| `FrameRenderer::current_immutable_addr{,_at}` | `StorageBufferStorage` | already moved        |
 
 Three raw-mint sites remain, all in `Gpu`, and they are the only callers of
 `get_device_address_for_frame` (`storage_buffer.rs:104`) and
@@ -1284,7 +1284,7 @@ Three raw-mint sites remain, all in `Gpu`, and they are the only callers of
 
 The cost is not the split itself — it is what the split prevents.
 `Addr::from_raw`, `ReadAddr::from_raw` and `ImmutableAddr::from_raw` are all
-`pub(super)` in `renderer::addr`, i.e. callable from *anywhere* in `renderer` and
+`pub(super)` in `renderer::addr`, i.e. callable from _anywhere_ in `renderer` and
 its descendants. `addr.rs:136-138` states the actual rule in a comment:
 
 ```rust
@@ -1314,8 +1314,8 @@ is the point, and doing only the first half buys tidiness and nothing else.
    `(flight_slot + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT` step
    (`renderer.rs:5458`). Leave it in `Gpu` and pass the resolved frame — the
    storage layer has no business knowing about ping-pong semantics, which
-   `GpuOnlyBufferHandle`'s own doc comment frames as a property of the *handle
-   kind*, not of the slab.
+   `GpuOnlyBufferHandle`'s own doc comment frames as a property of the _handle
+   kind_, not of the slab.
 3. Then narrow all three `from_raw`s from `pub(super)` to
    `pub(in crate::renderer::storage_buffer)`, and rewrite the `addr.rs` comment
    above from a promise into a description of what the compiler now checks. Also
@@ -1328,7 +1328,7 @@ is the point, and doing only the first half buys tidiness and nothing else.
   (`addr.rs:84`, `:152`) build the struct literally rather than through
   `from_raw`. They convert an address that was already minted legitimately, so
   they do not weaken the invariant — but they do mean `addr.rs` keeps a
-  construction path of its own, and "one layer" is precise only about *raw u64*
+  construction path of its own, and "one layer" is precise only about _raw u64_
   entry.
 - `TextureHandle::bindless_handle` mints a `BindlessHandle` from a heap slot
   (`renderer/bindless.rs`, `renderer/texture.rs`). Same shape of idea, but the
@@ -1348,27 +1348,27 @@ and `just sweep` still passes, since this is behaviour-preserving throughout.
 (2026-08-11) added per-draw push constants, and could not give them to picking.
 The result is an `anyhow::ensure!` in `create_picking_pipeline`
 (`renderer.rs:1283`) rejecting any picking shader that declares a push block.
-That check is correct and cheap — but it is the *third* time a feature has had to
+That check is correct and cheap — but it is the _third_ time a feature has had to
 carve picking out, and the carve-outs are the symptom rather than the problem.
 
 **The problem.** Picking is not a pass in the rendering system; it is a parallel
 copy of one. Grep `picking` in `renderer.rs` and the pattern is unmistakable —
 almost every core concept has a picking-shaped twin:
 
-| the main path | picking's twin |
-|---|---|
-| `PipelineHandle<T>` (`pipeline.rs:88`) | `PickingPipelineHandle` (`:104`) |
-| `PipelineStorage::add` (`:117`) | `add_picking` (`:128`), `get_picking` (`:142`) |
-| `create_pipeline` (`renderer.rs:1209`) | `create_picking_pipeline` (`:1262`) |
-| `descriptor_sets_for_frame` (`:2419`) | `picking_descriptor_sets_for_frame` (`:2517`) |
-| the `pending_draws` queue | `PickingDrawConfig` (`:6037`), threaded as an `Option` through `draw_frame` and `record_command_buffer` |
-| `DrawCallConfig` | a hardcoded `cmd_draw(3, 1, 0, 0)` (`:1880`) |
-| `submit_draws` | `draw_vertex_count_with_picking` (`:5972`) |
+| the main path                          | picking's twin                                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `PipelineHandle<T>` (`pipeline.rs:88`) | `PickingPipelineHandle` (`:104`)                                                                        |
+| `PipelineStorage::add` (`:117`)        | `add_picking` (`:128`), `get_picking` (`:142`)                                                          |
+| `create_pipeline` (`renderer.rs:1209`) | `create_picking_pipeline` (`:1262`)                                                                     |
+| `descriptor_sets_for_frame` (`:2419`)  | `picking_descriptor_sets_for_frame` (`:2517`)                                                           |
+| the `pending_draws` queue              | `PickingDrawConfig` (`:6037`), threaded as an `Option` through `draw_frame` and `record_command_buffer` |
+| `DrawCallConfig`                       | a hardcoded `cmd_draw(3, 1, 0, 0)` (`:1880`)                                                            |
+| `submit_draws`                         | `draw_vertex_count_with_picking` (`:5972`)                                                              |
 
 The two descriptor-set accessors are **byte-identical** apart from how they
 resolve the pipeline — a duplication `original_compute_shaders_plan.md:431`
 already flagged when compute threatened to add a third copy. And both handle
-kinds index the *same* `PipelineStorage`; the split is purely at the API surface,
+kinds index the _same_ `PipelineStorage`; the split is purely at the API surface,
 not in the storage.
 
 The compounding cost is what the parallel path forces on each new feature:
@@ -1379,14 +1379,14 @@ The compounding cost is what the parallel path forces on each new feature:
 - **Push constants:** refused outright, the `ensure!` above. Reopening it is
   Phase 13 of `bindless_textures.md`, and the reason it is not trivial is that
   the main and picking pipelines are different shaders, so the entry point would
-  need *two* independent payloads.
+  need _two_ independent payloads.
 - **Next feature:** whatever it is, it inherits the same decision.
 
 None of these is expensive alone. The pattern is what costs — each one is
 individually cheap enough to defer, so the asymmetry never gets paid down, and
 the bill lands on whoever adds the feature after next.
 
-**Why it's tolerable today.** Everything about picking *works*, and one example
+**Why it's tolerable today.** Everything about picking _works_, and one example
 uses it (`gpu_picking`). The bespoke path is small, self-contained, and its
 limitations are all guarded rather than silent: the mutual exclusion is a
 `debug_assert!`, the push refusal is an `Err` at pipeline creation. Nothing is
@@ -1401,13 +1401,13 @@ that already went wrong. The right moment is whenever the render-graph work in
 node: its own color target and format, one draw, a readback edge.
 `original_compute_shaders_plan.md:170` already assumes this — it calls picking's
 migration into a unified `PipelineKind::Graphics` "a trivial migration", which is
-true of the *pipeline* and not of the six other twins above.
+true of the _pipeline_ and not of the six other twins above.
 
 **One thing that happens sooner, and is not this entry's win.** Phase 8b of
 `bindless_textures.md` threads the push block type through `PipelineHandle`,
 which turns the `ensure!` at `:1283` into a compile error at the call site and
 deletes the runtime check. That is a real improvement, but it removes a
-*diagnostic*, not the asymmetry — picking still has no push-constant channel.
+_diagnostic_, not the asymmetry — picking still has no push-constant channel.
 Do not read 8b landing as this entry being addressed.
 
 **Done means.** Picking is expressed with the same vocabulary as any other pass:
@@ -1421,7 +1421,7 @@ themselves rather than being relocated. `gpu_picking` still picks, and
 ## 18. The roc platform's glibc 2.39 floor excludes SteamOS, Debian stable and Ubuntu 22.04 LTS
 
 **Context.** Recorded when `roc-platform/stubs/generate.sh` landed. This is the
-one deliberate trade that phase made, and it is a property of the *shipped*
+one deliberate trade that phase made, and it is a property of the _shipped_
 artifact rather than of the repo, so it needs a home outside the phase plan.
 
 **The problem.** `stubs/generate.sh` derives the committed `libc.so` and
@@ -1439,14 +1439,14 @@ What the extra distance buys is real but small: no build container, no SDL3 apt
 dependency list, and no allowlist for symbols the build machine references and
 an older libc lacks. What it costs:
 
-| distro | glibc | in? |
-|---|---|---|
-| Ubuntu 24.04+, Debian 13, Fedora 40+, RHEL 10, Arch | ≥ 2.39 | yes |
-| Ubuntu 22.04 LTS — supported to 2027, ESM to 2032 | 2.35 | no |
-| Debian 12 bookworm — current stable | 2.36 | no |
-| RHEL / Rocky / Alma 9 | 2.34 | no |
-| Linux Mint 21.x | 2.35 | no |
-| SteamOS 3.x | unmeasured | probably not |
+| distro                                              | glibc      | in?          |
+| --------------------------------------------------- | ---------- | ------------ |
+| Ubuntu 24.04+, Debian 13, Fedora 40+, RHEL 10, Arch | ≥ 2.39     | yes          |
+| Ubuntu 22.04 LTS — supported to 2027, ESM to 2032   | 2.35       | no           |
+| Debian 12 bookworm — current stable                 | 2.36       | no           |
+| RHEL / Rocky / Alma 9                               | 2.34       | no           |
+| Linux Mint 21.x                                     | 2.35       | no           |
+| SteamOS 3.x                                         | unmeasured | probably not |
 
 **SteamOS is the one that matters, and its number is unmeasured.** The audience
 for this platform is PC games, which makes the Steam Deck the most likely target
@@ -1481,7 +1481,7 @@ happy path only.
    `stubs/generate_in_container.sh` wrapper, and a `stubs/above_floor.txt`
    allowlist carrying the thirteen symbols so local development still links.
    The allowlist needs two assertions to be safe — each entry absent from the
-   floor `libc.so.6`, *and* absent from the container-measured symbol set —
+   floor `libc.so.6`, _and_ absent from the container-measured symbol set —
    or it becomes a way to silence a genuine floor violation. Costs a rust
    toolchain and the SDL3 build dependencies inside the image, plus a docker
    round-trip per regeneration.
@@ -1510,10 +1510,10 @@ the shipped artifact, so it lives outside the phase plan.
 **The problem.** roc applies two size limits to a downloaded dependency, and
 they treat platforms differently:
 
-| limit | flag | default | platform exempt? |
-| --- | --- | --- | --- |
-| per-package expanded size | `--max-package-mb` | 10 MB | yes |
-| per-direct-dependency transitive size | `--max-transitive-mb` | 100 MB | **no** |
+| limit                                 | flag                  | default | platform exempt? |
+| ------------------------------------- | --------------------- | ------- | ---------------- |
+| per-package expanded size             | `--max-package-mb`    | 10 MB   | yes              |
+| per-direct-dependency transitive size | `--max-transitive-mb` | 100 MB  | **no**           |
 
 The exemption is one boolean, `platform_exempt`. It is set from
 `dep.is_platform` in `../roc/src/compile/package_resolution.zig:696`, and read
@@ -1564,3 +1564,49 @@ behaviour is unspecified by its suite rather than deliberate.
 size flag. `ci/bundle_test.sh` prints `MEASURED: an app needs neither
 --max-package-mb nor --max-transitive-mb.`, and the "Shipping" section of
 `roc-platform/README.md` drops the flag.
+
+## 20. Slang cannot read files inside the roc-linked host, so the platform cannot hot reload — **done**
+
+Fixed in the stub generator. The cause was symbol-version binding, not the
+file layer.
+
+The symptom: `slang::Session::load_module` failed with
+`error[E00001]: cannot open file` on a path that exists, an absolute path
+failed the same way, `strace -e trace=%file` recorded no syscall for the
+file, and `LD_BIND_NOW=1` reported no missing provider. Only the roc-linked
+executable failed; the cargo-linked build of the same sources worked.
+
+The mechanism, measured under gdb:
+
+- For a module path, slang calls `realpath(path, NULL)` before any other
+  file API (`Path::getCanonical`, `slang-io.cpp:683` at v2026.13.1). When
+  `realpath` fails, slang reports E00001 with zero file syscalls.
+- The stub libc exported every symbol unversioned, and ld.so binds an
+  unversioned reference to the **oldest** version node, not the default.
+  `realpath` bound to the compat `realpath@GLIBC_2.2.5` (`__old_realpath`),
+  which returns NULL with `EINVAL` and no syscall whenever the second
+  argument is NULL — exactly how slang calls it. Observed:
+  `__old_realpath(name=<existing path>, resolved=0x0)` → NULL, errno 22.
+- The same misbinding covered 51 libc symbols and 10 libm symbols,
+  including `memcpy`, `pthread_cond_*` and `__libc_start_main`.
+
+The fix: `stubs/generate.sh` pins each symbol that also has a compat
+version to its default version with `.symver` and a version script.
+Single-version symbols stay unversioned. `ci/bundle_test.sh` asserts the
+executable's version requirements exist and stay at or below the floor.
+The libc pins top out at `GLIBC_2.34`, so the intended audience floor is
+unchanged.
+
+Verified: `ci/bundle_test.sh` asserts the executable's glibc version
+requirements exist and stay at or below the floor, and `readelf` on the
+built example shows `realpath@GLIBC_2.3` rather than an unversioned
+reference. Hot reload inside the roc-linked host was exercised once during
+the fix session; running it routinely needs the `VKR_SHADER_HOT_RELOAD`
+flag, which ships in its own PR against `main`
+([`roc_platform_release/06_mltrs_dev.md`](roc_platform_release/06_mltrs_dev.md)).
+
+Two adjacent link defects surfaced during the investigation. The
+weak-undefined `__cxa_pure_virtual` resolved to address 0; `force_extract.o`
+now forces its extraction from `libstdc++.a`. The roc link emits no
+`PT_GNU_EH_FRAME`, so a C++ `throw` in the host terminates instead of
+unwinding; the fix for that belongs in roc, not here.

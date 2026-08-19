@@ -187,10 +187,15 @@ system shared libraries. Every one of them is committed except `libhost.a`,
 which `build.sh` rebuilds.
 
 - `libc.so`, `libm.so`, `libgcc_s.so` and `libvulkan.so` are **stubs**. Each
-  declares the symbols the host archive leaves undefined, carries the real
-  library's SONAME, and carries no symbol versions. The executable therefore
-  records `libc.so.6` as a plain `DT_NEEDED` and no `GLIBC_2.xx` requirement,
-  and the real library supplies every implementation at run time.
+  declares the symbols the host archive leaves undefined and carries the real
+  library's SONAME, and the real library supplies every implementation at run
+  time. A symbol with a single version in its provider stays unversioned and
+  adds no `GLIBC_2.xx` requirement. A symbol the provider also exports at a
+  compat version carries a pin to the default version, because ld.so binds an
+  unversioned reference to the oldest version node — the compat
+  implementation. glibc 2.39 binds an unversioned `realpath` to
+  `realpath@GLIBC_2.2.5`, which rejects a null resolved buffer with `EINVAL`.
+  Every pinned version is a version of the floor glibc.
 - `libstdc++.a` is a committed copy. The host links the C++ runtime
   statically, so `ldd` on a built example lists no `libstdc++.so.6`. A stub
   cannot do this job: 26 of the libstdc++ symbols the host needs are data

@@ -2,9 +2,12 @@
 #
 # Declares the symbols the host archive leaves undefined, so the link
 # resolves and the executable records libvulkan.so.1 as a plain DT_NEEDED. The
-# real library provides every implementation at run time. No .symver
-# anywhere: a versioned reference would pin the executable to a
-# GLIBC_2.xx the player may not have.
+# real library provides every implementation at run time. A symbol
+# with a single version stays unversioned and carries no GLIBC_2.xx
+# requirement. A symbol the library also exports at a compat version
+# carries a .symver pin to the default version: ld.so binds an
+# unversioned reference to the oldest version node, which is the
+# compat implementation.
 #
 # glibc floor: 2.39. Toolchain: built_with_toolchain.txt.
 

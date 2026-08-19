@@ -4,8 +4,12 @@
 #
 # Measures what the host archive leaves undefined, assigns each symbol to the
 # system library that defines it, and emits one stub shared object per library
-# with that library's SONAME and no symbol versions. The executable roc links
-# then records a plain libc.so.6-style DT_NEEDED and no GLIBC_2.xx requirement.
+# with that library's SONAME. A symbol with a single version in its provider
+# stays unversioned, so the executable roc links records a plain
+# libc.so.6-style DT_NEEDED and no GLIBC_2.xx requirement for it. A symbol the
+# provider also exports at a compat version is pinned to the default version:
+# ld.so binds an unversioned reference to the oldest version node, which is
+# the compat implementation.
 #
 # See llm_notes/roc_platform_release.md for why stubs, and
 # llm_notes/roc_platform_release/02_stub_generator.md for the algorithm.
@@ -241,25 +245,41 @@ comm -23 "$work/s.txt" "$work/allow.txt" > "$work/s1.txt"
 
 # --- step 7: route nonshared symbols -----------------------------------------
 
-# Defined, default-version exports only. A compat-only export (single @) cannot
-# satisfy an unversioned reference: glibc binds such a reference to the default
-# version. A UND row is an import, not an export — libvulkan.so.1 has 61 of them.
+# Defined, default-version exports only. The stub offers the set a normal link
+# against this glibc binds; a compat export (single @) exists to serve
+# references that were pinned before the default moved, so it is not offered.
+# A UND row is an import, not an export — libvulkan.so.1 has 61 of them.
 # A LOCAL row is _DYNAMIC in a stub, which is not an export either.
 #
 # TYPE and size must come from the default-version (@@) row. glibc exports
 # memcpy twice: FUNC size 44 at GLIBC_2.2.5 and IFUNC size 273 at the default
 # GLIBC_2.14. Reading the wrong row misclassifies it, and for a data symbol it
 # would size the copy relocation wrong.
+#
+# The fifth column is the default version name, or `-` for an unversioned
+# export. Step 9 uses it to pin the symbols that also have compat versions.
 dyn_rows() {
     readelf -sW --dyn-syms "$1" | awk '
         NF>=8 && $1 ~ /^[0-9]+:$/ && $5!="LOCAL" && $7!="UND" {
-            n=$8
-            if (n ~ /@@/)     { sub(/@@.*/, "", n) }
+            n=$8; v="-"
+            if (n ~ /@@/)     { v=n; sub(/.*@@/, "", v); sub(/@@.*/, "", n) }
             else if (n ~ /@/) { next }
-            print n, $4, $3, $7
+            print n, $4, $3, $7, v
         }' | sort -u
 }
 dynsyms() { dyn_rows "$1" | awk '{print $1}' | sort -u; }
+
+# Symbols the library also exports at a compat version (single @). ld.so binds
+# an unversioned reference to the oldest version node, not the default, so a
+# stub must pin these to the default or the executable reaches the compat
+# implementation. Measured: glibc 2.39 binds an unversioned `realpath` to
+# realpath@GLIBC_2.2.5, which rejects a null resolved buffer with EINVAL.
+compat_syms() {
+    readelf -sW --dyn-syms "$1" | awk '
+        NF>=8 && $1 ~ /^[0-9]+:$/ && $5!="LOCAL" && $7!="UND" && $8 ~ /@/ && $8 !~ /@@/ {
+            n=$8; sub(/@.*/, "", n); print n
+        }' | sort -u
+}
 
 dynsyms "$LIBC_SO" > "$work/libc_dyn.txt"
 nm --defined-only --extern-only "$LIBC_NONSHARED" 2> /dev/null |
@@ -335,6 +355,7 @@ section_names() {
 for p in $PROVIDERS; do
     path=$(provider_path "$p")
     dyn_rows "$path" > "$work/$p.rows"
+    compat_syms "$path" > "$work/$p.compat"
     section_names "$path" > "$work/$p.sections"
 
     : > "$work/$p.classified"
@@ -345,10 +366,20 @@ for p in $PROVIDERS; do
         type=$(echo "$row" | cut -d' ' -f2)
         size=$(echo "$row" | cut -d' ' -f3)
         ndx=$(echo "$row" | cut -d' ' -f4)
+        ver=$(echo "$row" | cut -d' ' -f5)
+
+        # Pin a symbol that also has compat versions; leave the rest
+        # unversioned so they carry no GLIBC_2.xx requirement.
+        pin=-
+        if grep -qx "$sym" "$work/$p.compat"; then
+            [ "$ver" != - ] ||
+                fail "$sym has compat versions in $path but no default version"
+            pin=$ver
+        fi
 
         case $type in
             FUNC | IFUNC)
-                echo "$sym FUNC" >> "$work/$p.classified"
+                echo "$sym FUNC $pin" >> "$work/$p.classified"
                 ;;
             OBJECT)
                 section=$(awk -v n="$ndx" '$1==n {print $2; exit}' "$work/$p.sections")
@@ -360,7 +391,7 @@ for p in $PROVIDERS; do
                 esac
                 [ "$size" = 8 ] ||
                     echo "  note: $sym is $size bytes, not 8; that size can drift between glibc versions"
-                echo "$sym OBJECT $size $stub_section" >> "$work/$p.classified"
+                echo "$sym OBJECT $size $stub_section $pin" >> "$work/$p.classified"
                 ;;
             *)
                 fail "$sym is $type in $path; a $type symbol cannot be stubbed as a function or an object"
@@ -388,15 +419,21 @@ for stub in $STUBS; do
         echo "#"
         echo "# Declares the symbols the host archive leaves undefined, so the link"
         echo "# resolves and the executable records $soname as a plain DT_NEEDED. The"
-        echo "# real library provides every implementation at run time. No .symver"
-        echo "# anywhere: a versioned reference would pin the executable to a"
-        echo "# GLIBC_2.xx the player may not have."
+        echo "# real library provides every implementation at run time. A symbol"
+        echo "# with a single version stays unversioned and carries no GLIBC_2.xx"
+        echo "# requirement. A symbol the library also exports at a compat version"
+        echo "# carries a .symver pin to the default version: ld.so binds an"
+        echo "# unversioned reference to the oldest version node, which is the"
+        echo "# compat implementation."
         echo "#"
         echo "# glibc floor: $REQUIRED_GLIBC. Toolchain: built_with_toolchain.txt."
         echo ""
         echo ".text"
-        awk '$2=="FUNC" {
+        awk '$2=="FUNC" && $3=="-" {
             printf ".balign 8\n.globl %s\n.type %s, @function\n%s: ret\n\n", $1, $1, $1
+        }
+        $2=="FUNC" && $3!="-" {
+            printf ".balign 8\n.globl __pin_%s\n.type __pin_%s, @function\n__pin_%s: ret\n.symver __pin_%s, %s@@%s, remove\n\n", $1, $1, $1, $1, $1, $3
         }' "$rows"
 
         # .size is the point of the object branch. The linker resolves a data
@@ -407,13 +444,19 @@ for stub in $STUBS; do
         for section in .bss .data .rodata; do
             if awk -v s="$section" '$2=="OBJECT" && $4==s {found=1} END {exit !found}' "$rows"; then
                 echo ".section $section"
-                awk -v s="$section" '$2=="OBJECT" && $4==s {
+                awk -v s="$section" '$2=="OBJECT" && $4==s && $5=="-" {
                     printf ".balign 8\n.globl %s\n.type %s, @object\n.size %s, %s\n%s: .skip %s\n\n", $1, $1, $1, $3, $1, $3
+                }
+                $2=="OBJECT" && $4==s && $5!="-" {
+                    printf ".balign 8\n.globl __pin_%s\n.type __pin_%s, @object\n.size __pin_%s, %s\n__pin_%s: .skip %s\n.symver __pin_%s, %s@@%s, remove\n\n", $1, $1, $1, $3, $1, $3, $1, $1, $5
                 }' "$rows"
             fi
         done
     } > "$src"
-    echo "  $src ($(grep -c '^\.globl' "$src") symbols)"
+    awk '$2=="FUNC" && $3!="-" {print $1 "@@" $3}
+         $2=="OBJECT" && $5!="-" {print $1 "@@" $5}' "$rows" |
+        sort -u > "$work/$stub.pins"
+    echo "  $src ($(grep -c '^\.globl' "$src") symbols, $(wc -l < "$work/$stub.pins") pinned)"
 done
 echo ""
 
@@ -425,8 +468,18 @@ for stub in $STUBS; do
     # rm first. A leftover symlink from the pre-stub build.sh points into
     # /usr/lib, and gcc -o would follow it and overwrite the real library.
     rm -f "$TARGET_DIR/$stub.so"
+    # A .symver pin names a version node, and ld only creates nodes a version
+    # script declares. Empty nodes: the pins themselves assign the symbols,
+    # and every unpinned symbol stays global and unversioned.
+    version_args=()
+    if [ -s "$work/$stub.pins" ]; then
+        sed 's/.*@@//' "$work/$stub.pins" | sort -u |
+            awk '{printf "%s {};\n", $1}' > "$work/$stub.map"
+        version_args=(-Wl,--version-script,"$work/$stub.map")
+    fi
     # --build-id=none keeps two runs byte-identical.
     gcc -nostdlib -shared -Wl,-soname,"$soname" -Wl,--build-id=none \
+        "${version_args[@]}" \
         -o "$TARGET_DIR/$stub.so" "$STUB_DIR/${stub}_stub.s"
     echo "  $stub.so -> SONAME $soname"
 done
@@ -447,10 +500,28 @@ for stub in $STUBS; do
     if grep -q NEEDED "$work/dyn.out"; then
         fail "$so declares a DT_NEEDED entry; a stub must depend on nothing"
     fi
-    if grep -qE '\.gnu\.version(_d|_r)' "$work/sec.out"; then
-        fail "$so carries a symbol version section"
+    if grep -qE '\.gnu\.version_r' "$work/sec.out"; then
+        fail "$so requires symbol versions; a stub must depend on nothing"
     fi
-    echo "  $stub.so: SONAME $soname, no DT_NEEDED, no version sections"
+
+    # The exported pins must be exactly the classified ones, and version
+    # definitions must exist exactly when there are pins.
+    readelf -sW --dyn-syms "$so" | awk '
+        NF>=8 && $1 ~ /^[0-9]+:$/ && $7!="UND" && $8 ~ /@@/ {print $8}
+        ' | sort -u > "$work/actual.pins"
+    diff -u "$work/$stub.pins" "$work/actual.pins" > /dev/null ||
+        fail "$so pinned exports differ from the classified pins:
+$(diff -u "$work/$stub.pins" "$work/actual.pins" | sed 's/^/    /')"
+    if [ -s "$work/$stub.pins" ]; then
+        grep -qE '\.gnu\.version_d' "$work/sec.out" ||
+            fail "$so has pinned symbols but no version definitions"
+        echo "  $stub.so: SONAME $soname, no DT_NEEDED, $(wc -l < "$work/$stub.pins") version-pinned"
+    else
+        if grep -qE '\.gnu\.version_d' "$work/sec.out"; then
+            fail "$so defines symbol versions but has no pinned symbols"
+        fi
+        echo "  $stub.so: SONAME $soname, no DT_NEEDED, no version sections"
+    fi
 done
 
 vk_exports=$(dynsyms "$TARGET_DIR/libvulkan.so" | tr '\n' ' ' | sed 's/ $//')

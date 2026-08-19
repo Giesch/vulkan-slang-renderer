@@ -70,6 +70,15 @@ reasons.
   never run. Stripping symbol versions turns the loud
   `GLIBC_2.34 not found` error into that silent failure.
 
+> **Wrong: an unversioned reference does not bind to the default version.**
+> ld.so binds it to the oldest version node. glibc 2.39 binds an unversioned
+> `realpath` to `realpath@GLIBC_2.2.5`, which rejects a null resolved buffer
+> with `EINVAL` and broke slang's file layer
+> ([`tech_debt.md` §20](tech_debt.md)). `stubs/generate.sh` now pins every
+> symbol that also has a compat version to its default version. The libc
+> pins stay at or below `GLIBC_2.34`, so the floor is unchanged, and the
+> `__libc_start_main@GLIBC_2.34` pin makes an older glibc fail loudly again.
+
 The floor is defined by the final executable's undefined symbol set, not
 the stub set. GCC 13's `libstdc++.a` can reference `arc4random`, which is
 glibc 2.36. Building the release artifacts inside the floor image (§7)
@@ -409,6 +418,21 @@ part of the project:
 
 ## 6. `mltrs dev` and `mltrs run`
 
+> **Split and re-scoped, 2026-08-19.** The sub-plan,
+> [`roc_platform_release/06_mltrs_dev.md`](roc_platform_release/06_mltrs_dev.md),
+> was the spec. The outcome differs from it:
+>
+> - The runtime `EnvConfig` flag (`VKR_SHADER_HOT_RELOAD`), which replaces
+>   the `cfg(debug_assertions)` gate on hot reload, ships as its own PR
+>   against `main` — it is a workspace change with no platform dependency.
+> - `mltrs dev` is dropped. `mltrs run` stays deferred indefinitely.
+> - Coupling for whichever branch merges second: the flag makes
+>   `mod shader_watcher` unconditional, which puts `notify` into the release
+>   `libhost.a` and adds five libc symbols (`epoll_create1`, `epoll_ctl`,
+>   `epoll_wait`, `eventfd`, `inotify_rm_watch`) to the committed stub set.
+>   `just roc-platform stubs` regenerates it; the release workflow's stub
+>   gate fails until that lands.
+
 Do not embed the roc compiler. roc exposes no library API, and the author
 installs `roc` anyway. Both commands shell out to it.
 
@@ -535,7 +559,30 @@ Phases 2 to 4 each get a sub-plan in `llm_notes/roc_platform_release/`.
    > would have shipped a wrong artifact are the missing tree restore and the
    > dead `git diff` pathspec.
 5. **Roc game API (§5).** Deferred to a future plan.
+
+   > **Deferred 2026-08-18.** Phase 7 (the release-candidate release) and
+   > phase 6 do not depend on it. The triangle platform is the release
+   > candidate's content.
 6. **`mltrs dev` and `mltrs run` (§6).**
+
+   > **Re-scoped 2026-08-19; see the §6 banner.** The `VKR_SHADER_HOT_RELOAD`
+   > runtime flag ships as its own PR against `main`; `mltrs dev` is dropped
+   > and `mltrs run` stays deferred. The sub-plan,
+   > [`06_mltrs_dev.md`](roc_platform_release/06_mltrs_dev.md), records the
+   > implementation and what the work uncovered — including the stub-set
+   > coupling the merger of the second branch must handle.
+7. **Release-candidate release.** Publish `roc-platform-0.1.0-rc.1` on
+   GitHub as a prerelease, with the phase-4 workflow. Two workflow changes
+   come first, both in `.github/workflows/roc-platform-release.yml`:
+
+   - The version check accepts only `X.Y.Z`. Extend the pattern to accept
+     an `-rc.N` suffix.
+   - `gh release create` passes no `--prerelease` flag. Pass it for any
+     `-rc.N` version.
+
+   Then dispatch the workflow with `release_version: 0.1.0-rc.1`. This
+   release is the baseline the `roc bump` gate compares against; the gate
+   activates at the release after it.
 
 ## Verification
 
@@ -550,6 +597,10 @@ slice of this list as its done-criteria.
   `libstdc++.so.6`.
 - `readelf --version-info ./basic_triangle` shows no versioned glibc
   requirement.
+
+  > **Superseded.** The stubs pin compat-versioned symbols to their default
+  > versions (see the §2 annotation). The criterion is now: every
+  > requirement stays at or below the floor. `ci/bundle_test.sh` asserts it.
 - `readelf -l ./basic_triangle` names `/lib64/ld-linux-x86-64.so.2` as the
   interpreter, not a multiarch path.
 - `LD_BIND_NOW=1 ./basic_triangle` runs. Eager binding resolves every
