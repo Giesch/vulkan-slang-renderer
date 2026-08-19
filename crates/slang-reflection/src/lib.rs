@@ -204,7 +204,6 @@ pub fn prepare_reflected_shader_with_optimization(
     Ok(reflected_shader)
 }
 
-#[cfg(debug_assertions)]
 pub fn dev_compile_slang_shaders(
     source_file_name: &str,
     search_path: &std::path::Path,
@@ -300,7 +299,6 @@ pub fn prepare_reflected_compute_shader_with_optimization(
     })
 }
 
-#[cfg(debug_assertions)]
 pub fn dev_compile_slang_compute_shaders(
     source_file_name: &str,
     search_path: &std::path::Path,

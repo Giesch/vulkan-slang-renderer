@@ -7,21 +7,17 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use ash::vk;
 use glam::Vec2;
+use log::*;
 use sdl3::sys::vulkan::SDL_Vulkan_DestroySurface;
 use sdl3::video::Window;
 use vk_mem::Alloc as _;
 
 use crate::env_config::EnvConfig;
-use crate::shaders;
-use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader, ShaderAtlasEntry};
-
-#[cfg(debug_assertions)]
 use crate::shader_watcher;
-#[cfg(debug_assertions)]
+use crate::shaders;
 use crate::shaders::SpvBytes as _;
+use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader, ShaderAtlasEntry};
 use crate::shaders::json::ReflectedDescriptorSetLayout;
-#[cfg(debug_assertions)]
-use log::*;
 
 pub mod debug;
 mod platform;
@@ -116,11 +112,9 @@ pub struct Renderer {
     width: f32,
     height: f32,
     total_frames: usize,
-    #[cfg(debug_assertions)]
     shaders_source_dir: &'static std::path::Path,
-    #[cfg(debug_assertions)]
-    shader_watcher: shader_watcher::ShaderChanges,
-    #[cfg(debug_assertions)]
+    /// `Some` only under `VKR_SHADER_HOT_RELOAD`; see `env_config`
+    shader_watcher: Option<shader_watcher::ShaderChanges>,
     old_pipelines: Vec<(
         usize,
         vk::Pipeline,
@@ -265,12 +259,24 @@ impl Renderer {
         enable_egui: bool,
         render_scale: f32,
         max_msaa_samples: MaxMSAASamples,
-        #[cfg(debug_assertions)] shaders_source_dir: &'static str,
+        shaders_source_dir: &'static str,
     ) -> Result<Self, anyhow::Error> {
-        #[cfg(debug_assertions)]
         let shaders_source_dir = std::path::Path::new(shaders_source_dir);
-        #[cfg(debug_assertions)]
-        let shader_watcher = shader_watcher::watch(shaders_source_dir)?;
+
+        // shaders_source_dir is baked in from CARGO_MANIFEST_DIR, so it names a
+        // directory that need not exist on the machine running the binary.
+        let shader_watcher = if !env.shader_hot_reload {
+            None
+        } else if shaders_source_dir.is_dir() {
+            Some(shader_watcher::watch(shaders_source_dir)?)
+        } else {
+            anyhow::bail!(
+                "VKR_SHADER_HOT_RELOAD is set, but the shader source directory \
+                 {} does not exist. Unset the variable to run from precompiled \
+                 SPIR-V.",
+                shaders_source_dir.display()
+            );
+        };
 
         let render_scale = render_scale.clamp(0.25, 1.0);
 
@@ -429,11 +435,8 @@ impl Renderer {
             width: window_width as f32,
             height: window_height as f32,
             total_frames: 0,
-            #[cfg(debug_assertions)]
             shaders_source_dir,
-            #[cfg(debug_assertions)]
             shader_watcher,
-            #[cfg(debug_assertions)]
             old_pipelines: vec![],
             window: window.clone(),
             entry,
@@ -1276,8 +1279,7 @@ impl Renderer {
             &self.device,
             self.descriptor_heap.layout(),
             &*picking_config.shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            self.hot_reload_source_dir(),
         )?;
 
         // picking renders ids into a uint target with no depth attachment, so
@@ -1378,8 +1380,7 @@ impl Renderer {
             &self.device,
             self.descriptor_heap.layout(),
             &*config.shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            self.hot_reload_source_dir(),
         )?;
 
         let shader_module = {
@@ -1509,8 +1510,7 @@ impl Renderer {
             &self.device,
             self.descriptor_heap.layout(),
             &*config.shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            self.hot_reload_source_dir(),
         )?;
 
         let pipeline = create_graphics_pipeline(
@@ -2500,8 +2500,7 @@ impl Renderer {
         // The slot the draws were queued against
         let queue_flight_slot = self.flight_slot;
 
-        #[cfg(debug_assertions)]
-        {
+        if self.shader_watcher.is_some() {
             let mut graphics_indices: Vec<GraphicsPipelineIndex> = pending_draws
                 .iter()
                 .map(|cmd| match cmd {
@@ -2785,7 +2784,14 @@ impl Renderer {
         }
     }
 
-    #[cfg(debug_assertions)]
+    /// The slang source dir to compile from, or `None` to use the SPIR-V
+    /// embedded at build time.
+    fn hot_reload_source_dir(&self) -> Option<&'static std::path::Path> {
+        self.shader_watcher
+            .is_some()
+            .then_some(self.shaders_source_dir)
+    }
+
     fn check_for_shader_recompile(
         &mut self,
         graphics_pipeline_indices: &[GraphicsPipelineIndex],
@@ -2822,7 +2828,10 @@ impl Renderer {
         }
 
         // recompile shaders if necessary
-        let edit_events = self.shader_watcher.events()?;
+        let Some(shader_watcher) = self.shader_watcher.as_mut() else {
+            return Ok(());
+        };
+        let edit_events = shader_watcher.events()?;
         if !edit_events.is_empty() {
             info!("recompiling shaders...");
             for &graphics_index in graphics_pipeline_indices {
@@ -2837,7 +2846,6 @@ impl Renderer {
     }
 
     // shader hot reload
-    #[cfg(debug_assertions)]
     fn try_shader_recompile(
         &mut self,
         pipeline_index: GraphicsPipelineIndex,
@@ -2846,8 +2854,7 @@ impl Renderer {
             &self.device,
             self.descriptor_heap.layout(),
             &*self.pipelines.get_by_index(pipeline_index).shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            self.hot_reload_source_dir(),
         ) {
             Ok(shaders) => shaders,
             Err(e) => {
@@ -2893,7 +2900,6 @@ impl Renderer {
         Ok(())
     }
 
-    #[cfg(debug_assertions)]
     fn try_compute_shader_recompile(
         &mut self,
         compute_pipeline_index: ComputePipelineIndex,
@@ -2904,8 +2910,7 @@ impl Renderer {
             &self.device,
             self.descriptor_heap.layout(),
             &*compute_pipeline.shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            self.hot_reload_source_dir(),
         ) {
             Ok(layout) => layout,
             Err(e) => {
@@ -3036,7 +3041,6 @@ impl Drop for Renderer {
                     .destroy_image(self.resolve_images[i], &mut self.resolve_image_memories[i]);
             }
 
-            #[cfg(debug_assertions)]
             for (_frame, old_pipeline, old_pipeline_layout, old_descriptor_set_layouts) in
                 &self.old_pipelines
             {
@@ -5082,7 +5086,6 @@ fn create_color_image(
 /// updated at runtime. If the reloaded shader's reflected interface changed,
 /// writing through the old structs would silently corrupt GPU data — fail
 /// loudly instead.
-#[cfg(debug_assertions)]
 fn assert_shader_interface_unchanged<T: serde::Serialize>(
     embedded: &T,
     fresh: &T,
@@ -5119,13 +5122,33 @@ struct ShaderPipelineLayout {
 }
 
 impl ShaderPipelineLayout {
-    #[cfg(debug_assertions)]
+    /// `hot_reload_source_dir` is `Some` only under `VKR_SHADER_HOT_RELOAD`,
+    /// which compiles the slang source instead of using the embedded SPIR-V.
     fn create_from_atlas(
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ShaderAtlasEntry,
-        shaders_source_dir: &std::path::Path,
+        hot_reload_source_dir: Option<&std::path::Path>,
     ) -> Result<Self, anyhow::Error> {
+        let Some(shaders_source_dir) = hot_reload_source_dir else {
+            let precompiled = shader.precompiled_shaders();
+            let reflected_layout = shader.pipeline_layout();
+
+            let (pipeline_layout, descriptor_set_layouts) =
+                unsafe { reflected_layout.vk_create(device, bindless_heap_layout)? };
+
+            return Ok(ShaderPipelineLayout {
+                vertex_shader: precompiled.vert,
+                fragment_shader: precompiled.frag,
+                pipeline_layout,
+                descriptor_set_layouts,
+                bindless_heap_set: reflected_layout.bindless_heap_set,
+                push_constant_range: single_push_constant_range(
+                    &reflected_layout.push_constant_ranges,
+                ),
+            });
+        };
+
         let shaders::ReflectedShader {
             vertex_shader,
             fragment_shader,
@@ -5165,28 +5188,6 @@ impl ShaderPipelineLayout {
             ),
         })
     }
-
-    #[cfg(not(debug_assertions))]
-    fn create_from_atlas(
-        device: &ash::Device,
-        bindless_heap_layout: vk::DescriptorSetLayout,
-        shader: &dyn ShaderAtlasEntry,
-    ) -> Result<Self, anyhow::Error> {
-        let precompiled = shader.precompiled_shaders();
-        let reflected_layout = shader.pipeline_layout();
-
-        let (pipeline_layout, descriptor_set_layouts) =
-            unsafe { reflected_layout.vk_create(device, bindless_heap_layout)? };
-
-        Ok(ShaderPipelineLayout {
-            vertex_shader: precompiled.vert,
-            fragment_shader: precompiled.frag,
-            pipeline_layout,
-            descriptor_set_layouts,
-            bindless_heap_set: reflected_layout.bindless_heap_set,
-            push_constant_range: single_push_constant_range(&reflected_layout.push_constant_ranges),
-        })
-    }
 }
 
 pub(crate) struct ComputeShaderPipelineLayout {
@@ -5202,13 +5203,28 @@ pub(crate) struct ComputeShaderPipelineLayout {
 }
 
 impl ComputeShaderPipelineLayout {
-    #[cfg(debug_assertions)]
+    /// see [`ShaderPipelineLayout::create_from_atlas`]
     fn create_from_atlas(
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ComputeShaderAtlasEntry,
-        shaders_source_dir: &std::path::Path,
+        hot_reload_source_dir: Option<&std::path::Path>,
     ) -> Result<Self, anyhow::Error> {
+        let Some(shaders_source_dir) = hot_reload_source_dir else {
+            let precompiled = shader.precompiled_compute_shader();
+            let reflected_layout = shader.pipeline_layout();
+
+            let (pipeline_layout, descriptor_set_layouts) =
+                unsafe { reflected_layout.vk_create(device, bindless_heap_layout)? };
+
+            return Ok(ComputeShaderPipelineLayout {
+                compute_shader: precompiled,
+                pipeline_layout,
+                descriptor_set_layouts,
+                bindless_heap_set: reflected_layout.bindless_heap_set,
+            });
+        };
+
         let shaders::ReflectedComputeShader {
             compute_shader,
             reflection_json,
@@ -5239,26 +5255,6 @@ impl ComputeShaderPipelineLayout {
             pipeline_layout,
             descriptor_set_layouts,
             bindless_heap_set: reflection_json.pipeline_layout.bindless_heap_set,
-        })
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn create_from_atlas(
-        device: &ash::Device,
-        bindless_heap_layout: vk::DescriptorSetLayout,
-        shader: &dyn ComputeShaderAtlasEntry,
-    ) -> Result<Self, anyhow::Error> {
-        let precompiled = shader.precompiled_compute_shader();
-        let reflected_layout = shader.pipeline_layout();
-
-        let (pipeline_layout, descriptor_set_layouts) =
-            unsafe { reflected_layout.vk_create(device, bindless_heap_layout)? };
-
-        Ok(ComputeShaderPipelineLayout {
-            compute_shader: precompiled,
-            pipeline_layout,
-            descriptor_set_layouts,
-            bindless_heap_set: reflected_layout.bindless_heap_set,
         })
     }
 }

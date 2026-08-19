@@ -64,6 +64,12 @@ needs no GPU, no display and no sound card, so it runs in a container. The
 script pins the lavapipe ICD even on a machine with a real GPU, so results stay
 comparable across machines.
 
+The script also exports `VKR_SHADER_HOT_RELOAD=1`. Each example then compiles
+its slang source at pipeline creation instead of using the embedded SPIR-V, and
+`assert_shader_interface_unchanged` compares the result against the example's
+committed reflection json. The sweep is the only place that check runs over
+every example.
+
 ### When to run it
 
 Run it when a change could affect what the renderer records or destroys:
