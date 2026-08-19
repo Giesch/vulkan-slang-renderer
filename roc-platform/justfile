@@ -1,0 +1,43 @@
+# build the host archive and link the system libraries roc needs
+build:
+    bash build.sh
+
+# run the basic_triangle example through the interpreter
+run example="basic_triangle": build
+    roc examples/{{example}}.roc
+
+# build a standalone executable for an example
+exe example="basic_triangle": build
+    roc build examples/{{example}}.roc
+
+# build the platform and run every example headlessly
+test:
+    bash ci/all_tests.sh
+
+# bundle the platform into dist/<hash>.tar.zst
+bundle:
+    bash bundle.sh
+
+# serve the bundle and prove it runs from a URL in an ubuntu:24.04 container
+bundle-test:
+    bash ci/bundle_test.sh
+
+# regenerate the committed link inputs; asserts the glibc floor, needs gcc and binutils
+stubs:
+    bash stubs/generate.sh
+
+# regenerate platform/LICENSES from the toolchain and the dependency graph
+licenses:
+    bash ci/licenses.sh
+
+# regenerate src/roc_platform_abi.rs from platform/main.roc
+glue:
+    roc glue rust_glue ./src/ platform/main.roc
+
+# regenerate the shader bindings this crate compiles against
+shaders:
+    cargo run -p mltrs-cli --manifest-path ../Cargo.toml -- shaders compile --crate-dir .
+
+# record the roc version the platform was last built with
+record-roc-version:
+    roc version > built_with_roc_version.txt

@@ -1,1 +1,4 @@
-slang/
+generated/
+generated.rs
+
+compiled/
