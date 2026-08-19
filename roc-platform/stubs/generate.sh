@@ -133,8 +133,8 @@ echo "  libstdc++.a"
 # Everything this script owns, plus the archive build.sh writes. roc's targets
 # validator checks only that each declared input exists, so a stale file left
 # here is invisible to it and would ship in the bundle.
-EXPECTED="Scrt1.o crti.o crtn.o libstdc++.a libc_forward.a libc.so libm.so
-    libgcc_s.so libvulkan.so libhost.a"
+EXPECTED="Scrt1.o crti.o crtn.o force_extract.o libstdc++.a libc_forward.a
+    libc.so libm.so libgcc_s.so libvulkan.so libhost.a"
 for path in "$TARGET_DIR"/*; do
     [ -e "$path" ] || [ -L "$path" ] || continue
     name=$(basename "$path")
@@ -164,6 +164,14 @@ echo "  $(nm --defined-only --extern-only "$TARGET_DIR/libc_forward.a" |
     awk 'NF>=2 && length($(NF-1))==1 {print $NF}' | sort -u | tr '\n' ' ')"
 echo ""
 
+# --- step 4b: build the force object -----------------------------------------
+
+echo "=== Building force_extract.o ==="
+gcc -c -o "$TARGET_DIR/force_extract.o" "$STUB_DIR/force_extract.s"
+echo "  forces: $(nm --undefined-only "$TARGET_DIR/force_extract.o" |
+    awk '{print $NF}' | tr '\n' ' ')"
+echo ""
+
 # --- step 5: measure ---------------------------------------------------------
 
 # Every link input except `app`. The CRT objects belong here as much as the
@@ -173,6 +181,7 @@ MEASURED=(
     "$TARGET_DIR/Scrt1.o"
     "$TARGET_DIR/crti.o"
     "$TARGET_DIR/crtn.o"
+    "$TARGET_DIR/force_extract.o"
     "$LIBHOST_A"
     "$TARGET_DIR/libstdc++.a"
     "$TARGET_DIR/libc_forward.a"

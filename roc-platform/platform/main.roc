@@ -14,7 +14,7 @@ platform ""
 	}
 	targets: {
 		inputs_dir: "targets/",
-		x64glibc: { inputs: ["Scrt1.o", "crti.o", "libhost.a", app, "crtn.o", "libstdc++.a", "libvulkan.so", "libm.so", "libc.so", "libc_forward.a", "libgcc_s.so"] },
+		x64glibc: { inputs: ["Scrt1.o", "crti.o", "libhost.a", app, "crtn.o", "force_extract.o", "libstdc++.a", "libvulkan.so", "libm.so", "libc.so", "libc_forward.a", "libgcc_s.so"] },
 	}
 
 import Stdout

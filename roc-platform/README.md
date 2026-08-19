@@ -198,6 +198,11 @@ which `build.sh` rebuilds.
 - `libc_forward.a` supplies `atexit` and three other symbols that glibc keeps
   out of `libc.so.6` on every version, by forwarding each to a symbol that
   `libc.so.6` does export.
+- `force_extract.o` holds a strong reference to `__cxa_pure_virtual`. Every
+  host reference to it is weak, a weak undefined reference does not extract
+  the definition from `libstdc++.a`, and no `DT_NEEDED` library exports it,
+  so without this object the linker resolves it to address 0 and a
+  pure-virtual dispatch jumps to null.
 - `Scrt1.o`, `crti.o` and `crtn.o` are committed copies of the glibc startup
   objects.
 
