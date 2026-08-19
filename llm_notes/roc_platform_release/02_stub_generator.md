@@ -303,6 +303,15 @@ message names the symbols involved. `LC_ALL=C` throughout.
    carries no stability promise). Remove the routed symbols from S;
    `libc_forward.a` provides them.
 
+   > **Wrong: an unversioned reference binds to the oldest version node, not
+   > the default.** glibc 2.39 binds an unversioned `realpath` to the compat
+   > `realpath@GLIBC_2.2.5` (`tech_debt.md` §20). The generator now pins
+   > every symbol that also has a compat version to its default version via
+   > `.symver` and a version script; single-version symbols stay
+   > unversioned. The forwarding logic here is unaffected: each forwarding
+   > target has exactly one version in glibc 2.39, so its unversioned
+   > reference binds to that version.
+
    > **Wrong: route from U, not from S.** Step 5 puts `libc_forward.a` in the
    > measured set, so the archive's own definitions land in D and the four
    > forwarded symbols never reach S. Routing from S therefore selects nothing,

@@ -2,9 +2,12 @@
 #
 # Declares the symbols the host archive leaves undefined, so the link
 # resolves and the executable records libc.so.6 as a plain DT_NEEDED. The
-# real library provides every implementation at run time. No .symver
-# anywhere: a versioned reference would pin the executable to a
-# GLIBC_2.xx the player may not have.
+# real library provides every implementation at run time. A symbol
+# with a single version stays unversioned and carries no GLIBC_2.xx
+# requirement. A symbol the library also exports at a compat version
+# carries a .symver pin to the default version: ld.so binds an
+# unversioned reference to the oldest version node, which is the
+# compat implementation.
 #
 # glibc floor: 2.39. Toolchain: built_with_toolchain.txt.
 
@@ -125,9 +128,10 @@ __libc_current_sigrtmax: ret
 __libc_current_sigrtmin: ret
 
 .balign 8
-.globl __libc_start_main
-.type __libc_start_main, @function
-__libc_start_main: ret
+.globl __pin___libc_start_main
+.type __pin___libc_start_main, @function
+__pin___libc_start_main: ret
+.symver __pin___libc_start_main, __libc_start_main@@GLIBC_2.34, remove
 
 .balign 8
 .globl __mbsnrtowcs_chk
@@ -410,14 +414,16 @@ clearerr: ret
 clock: ret
 
 .balign 8
-.globl clock_gettime
-.type clock_gettime, @function
-clock_gettime: ret
+.globl __pin_clock_gettime
+.type __pin_clock_gettime, @function
+__pin_clock_gettime: ret
+.symver __pin_clock_gettime, clock_gettime@@GLIBC_2.17, remove
 
 .balign 8
-.globl clock_nanosleep
-.type clock_nanosleep, @function
-clock_nanosleep: ret
+.globl __pin_clock_nanosleep
+.type __pin_clock_nanosleep, @function
+__pin_clock_nanosleep: ret
+.symver __pin_clock_nanosleep, clock_nanosleep@@GLIBC_2.17, remove
 
 .balign 8
 .globl close
@@ -450,29 +456,34 @@ dirfd: ret
 dl_iterate_phdr: ret
 
 .balign 8
-.globl dladdr
-.type dladdr, @function
-dladdr: ret
+.globl __pin_dladdr
+.type __pin_dladdr, @function
+__pin_dladdr: ret
+.symver __pin_dladdr, dladdr@@GLIBC_2.34, remove
 
 .balign 8
-.globl dlclose
-.type dlclose, @function
-dlclose: ret
+.globl __pin_dlclose
+.type __pin_dlclose, @function
+__pin_dlclose: ret
+.symver __pin_dlclose, dlclose@@GLIBC_2.34, remove
 
 .balign 8
-.globl dlerror
-.type dlerror, @function
-dlerror: ret
+.globl __pin_dlerror
+.type __pin_dlerror, @function
+__pin_dlerror: ret
+.symver __pin_dlerror, dlerror@@GLIBC_2.34, remove
 
 .balign 8
-.globl dlopen
-.type dlopen, @function
-dlopen: ret
+.globl __pin_dlopen
+.type __pin_dlopen, @function
+__pin_dlopen: ret
+.symver __pin_dlopen, dlopen@@GLIBC_2.34, remove
 
 .balign 8
-.globl dlsym
-.type dlsym, @function
-dlsym: ret
+.globl __pin_dlsym
+.type __pin_dlsym, @function
+__pin_dlsym: ret
+.symver __pin_dlsym, dlsym@@GLIBC_2.34, remove
 
 .balign 8
 .globl dup
@@ -950,9 +961,10 @@ memchr: ret
 memcmp: ret
 
 .balign 8
-.globl memcpy
-.type memcpy, @function
-memcpy: ret
+.globl __pin_memcpy
+.type __pin_memcpy, @function
+__pin_memcpy: ret
+.symver __pin_memcpy, memcpy@@GLIBC_2.14, remove
 
 .balign 8
 .globl memfd_create
@@ -1025,9 +1037,10 @@ nanosleep: ret
 newlocale: ret
 
 .balign 8
-.globl nftw
-.type nftw, @function
-nftw: ret
+.globl __pin_nftw
+.type __pin_nftw, @function
+__pin_nftw: ret
+.symver __pin_nftw, nftw@@GLIBC_2.3.3, remove
 
 .balign 8
 .globl nl_langinfo
@@ -1095,9 +1108,10 @@ posix_fallocate: ret
 posix_memalign: ret
 
 .balign 8
-.globl posix_spawn
-.type posix_spawn, @function
-posix_spawn: ret
+.globl __pin_posix_spawn
+.type __pin_posix_spawn, @function
+__pin_posix_spawn: ret
+.symver __pin_posix_spawn, posix_spawn@@GLIBC_2.15, remove
 
 .balign 8
 .globl posix_spawn_file_actions_addclose
@@ -1155,9 +1169,10 @@ posix_spawnattr_setpgroup: ret
 posix_spawnattr_setsigdefault: ret
 
 .balign 8
-.globl posix_spawnp
-.type posix_spawnp, @function
-posix_spawnp: ret
+.globl __pin_posix_spawnp
+.type __pin_posix_spawnp, @function
+__pin_posix_spawnp: ret
+.symver __pin_posix_spawnp, posix_spawnp@@GLIBC_2.15, remove
 
 .balign 8
 .globl pread64
@@ -1180,14 +1195,16 @@ printf: ret
 pthread_attr_destroy: ret
 
 .balign 8
-.globl pthread_attr_getguardsize
-.type pthread_attr_getguardsize, @function
-pthread_attr_getguardsize: ret
+.globl __pin_pthread_attr_getguardsize
+.type __pin_pthread_attr_getguardsize, @function
+__pin_pthread_attr_getguardsize: ret
+.symver __pin_pthread_attr_getguardsize, pthread_attr_getguardsize@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_attr_getstack
-.type pthread_attr_getstack, @function
-pthread_attr_getstack: ret
+.globl __pin_pthread_attr_getstack
+.type __pin_pthread_attr_getstack, @function
+__pin_pthread_attr_getstack: ret
+.symver __pin_pthread_attr_getstack, pthread_attr_getstack@@GLIBC_2.34, remove
 
 .balign 8
 .globl pthread_attr_init
@@ -1200,54 +1217,64 @@ pthread_attr_init: ret
 pthread_attr_setdetachstate: ret
 
 .balign 8
-.globl pthread_attr_setstacksize
-.type pthread_attr_setstacksize, @function
-pthread_attr_setstacksize: ret
+.globl __pin_pthread_attr_setstacksize
+.type __pin_pthread_attr_setstacksize, @function
+__pin_pthread_attr_setstacksize: ret
+.symver __pin_pthread_attr_setstacksize, pthread_attr_setstacksize@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_cond_broadcast
-.type pthread_cond_broadcast, @function
-pthread_cond_broadcast: ret
+.globl __pin_pthread_cond_broadcast
+.type __pin_pthread_cond_broadcast, @function
+__pin_pthread_cond_broadcast: ret
+.symver __pin_pthread_cond_broadcast, pthread_cond_broadcast@@GLIBC_2.3.2, remove
 
 .balign 8
-.globl pthread_cond_destroy
-.type pthread_cond_destroy, @function
-pthread_cond_destroy: ret
+.globl __pin_pthread_cond_destroy
+.type __pin_pthread_cond_destroy, @function
+__pin_pthread_cond_destroy: ret
+.symver __pin_pthread_cond_destroy, pthread_cond_destroy@@GLIBC_2.3.2, remove
 
 .balign 8
-.globl pthread_cond_init
-.type pthread_cond_init, @function
-pthread_cond_init: ret
+.globl __pin_pthread_cond_init
+.type __pin_pthread_cond_init, @function
+__pin_pthread_cond_init: ret
+.symver __pin_pthread_cond_init, pthread_cond_init@@GLIBC_2.3.2, remove
 
 .balign 8
-.globl pthread_cond_signal
-.type pthread_cond_signal, @function
-pthread_cond_signal: ret
+.globl __pin_pthread_cond_signal
+.type __pin_pthread_cond_signal, @function
+__pin_pthread_cond_signal: ret
+.symver __pin_pthread_cond_signal, pthread_cond_signal@@GLIBC_2.3.2, remove
 
 .balign 8
-.globl pthread_cond_timedwait
-.type pthread_cond_timedwait, @function
-pthread_cond_timedwait: ret
+.globl __pin_pthread_cond_timedwait
+.type __pin_pthread_cond_timedwait, @function
+__pin_pthread_cond_timedwait: ret
+.symver __pin_pthread_cond_timedwait, pthread_cond_timedwait@@GLIBC_2.3.2, remove
 
 .balign 8
-.globl pthread_cond_wait
-.type pthread_cond_wait, @function
-pthread_cond_wait: ret
+.globl __pin_pthread_cond_wait
+.type __pin_pthread_cond_wait, @function
+__pin_pthread_cond_wait: ret
+.symver __pin_pthread_cond_wait, pthread_cond_wait@@GLIBC_2.3.2, remove
 
 .balign 8
-.globl pthread_create
-.type pthread_create, @function
-pthread_create: ret
+.globl __pin_pthread_create
+.type __pin_pthread_create, @function
+__pin_pthread_create: ret
+.symver __pin_pthread_create, pthread_create@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_detach
-.type pthread_detach, @function
-pthread_detach: ret
+.globl __pin_pthread_detach
+.type __pin_pthread_detach, @function
+__pin_pthread_detach: ret
+.symver __pin_pthread_detach, pthread_detach@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_getattr_np
-.type pthread_getattr_np, @function
-pthread_getattr_np: ret
+.globl __pin_pthread_getattr_np
+.type __pin_pthread_getattr_np, @function
+__pin_pthread_getattr_np: ret
+.symver __pin_pthread_getattr_np, pthread_getattr_np@@GLIBC_2.32, remove
 
 .balign 8
 .globl pthread_getschedparam
@@ -1255,24 +1282,28 @@ pthread_getattr_np: ret
 pthread_getschedparam: ret
 
 .balign 8
-.globl pthread_getspecific
-.type pthread_getspecific, @function
-pthread_getspecific: ret
+.globl __pin_pthread_getspecific
+.type __pin_pthread_getspecific, @function
+__pin_pthread_getspecific: ret
+.symver __pin_pthread_getspecific, pthread_getspecific@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_join
-.type pthread_join, @function
-pthread_join: ret
+.globl __pin_pthread_join
+.type __pin_pthread_join, @function
+__pin_pthread_join: ret
+.symver __pin_pthread_join, pthread_join@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_key_create
-.type pthread_key_create, @function
-pthread_key_create: ret
+.globl __pin_pthread_key_create
+.type __pin_pthread_key_create, @function
+__pin_pthread_key_create: ret
+.symver __pin_pthread_key_create, pthread_key_create@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_key_delete
-.type pthread_key_delete, @function
-pthread_key_delete: ret
+.globl __pin_pthread_key_delete
+.type __pin_pthread_key_delete, @function
+__pin_pthread_key_delete: ret
+.symver __pin_pthread_key_delete, pthread_key_delete@@GLIBC_2.34, remove
 
 .balign 8
 .globl pthread_mutex_destroy
@@ -1290,9 +1321,10 @@ pthread_mutex_init: ret
 pthread_mutex_lock: ret
 
 .balign 8
-.globl pthread_mutex_trylock
-.type pthread_mutex_trylock, @function
-pthread_mutex_trylock: ret
+.globl __pin_pthread_mutex_trylock
+.type __pin_pthread_mutex_trylock, @function
+__pin_pthread_mutex_trylock: ret
+.symver __pin_pthread_mutex_trylock, pthread_mutex_trylock@@GLIBC_2.34, remove
 
 .balign 8
 .globl pthread_mutex_unlock
@@ -1300,54 +1332,64 @@ pthread_mutex_trylock: ret
 pthread_mutex_unlock: ret
 
 .balign 8
-.globl pthread_mutexattr_init
-.type pthread_mutexattr_init, @function
-pthread_mutexattr_init: ret
+.globl __pin_pthread_mutexattr_init
+.type __pin_pthread_mutexattr_init, @function
+__pin_pthread_mutexattr_init: ret
+.symver __pin_pthread_mutexattr_init, pthread_mutexattr_init@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_mutexattr_settype
-.type pthread_mutexattr_settype, @function
-pthread_mutexattr_settype: ret
+.globl __pin_pthread_mutexattr_settype
+.type __pin_pthread_mutexattr_settype, @function
+__pin_pthread_mutexattr_settype: ret
+.symver __pin_pthread_mutexattr_settype, pthread_mutexattr_settype@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_once
-.type pthread_once, @function
-pthread_once: ret
+.globl __pin_pthread_once
+.type __pin_pthread_once, @function
+__pin_pthread_once: ret
+.symver __pin_pthread_once, pthread_once@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_rwlock_destroy
-.type pthread_rwlock_destroy, @function
-pthread_rwlock_destroy: ret
+.globl __pin_pthread_rwlock_destroy
+.type __pin_pthread_rwlock_destroy, @function
+__pin_pthread_rwlock_destroy: ret
+.symver __pin_pthread_rwlock_destroy, pthread_rwlock_destroy@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_rwlock_init
-.type pthread_rwlock_init, @function
-pthread_rwlock_init: ret
+.globl __pin_pthread_rwlock_init
+.type __pin_pthread_rwlock_init, @function
+__pin_pthread_rwlock_init: ret
+.symver __pin_pthread_rwlock_init, pthread_rwlock_init@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_rwlock_rdlock
-.type pthread_rwlock_rdlock, @function
-pthread_rwlock_rdlock: ret
+.globl __pin_pthread_rwlock_rdlock
+.type __pin_pthread_rwlock_rdlock, @function
+__pin_pthread_rwlock_rdlock: ret
+.symver __pin_pthread_rwlock_rdlock, pthread_rwlock_rdlock@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_rwlock_tryrdlock
-.type pthread_rwlock_tryrdlock, @function
-pthread_rwlock_tryrdlock: ret
+.globl __pin_pthread_rwlock_tryrdlock
+.type __pin_pthread_rwlock_tryrdlock, @function
+__pin_pthread_rwlock_tryrdlock: ret
+.symver __pin_pthread_rwlock_tryrdlock, pthread_rwlock_tryrdlock@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_rwlock_trywrlock
-.type pthread_rwlock_trywrlock, @function
-pthread_rwlock_trywrlock: ret
+.globl __pin_pthread_rwlock_trywrlock
+.type __pin_pthread_rwlock_trywrlock, @function
+__pin_pthread_rwlock_trywrlock: ret
+.symver __pin_pthread_rwlock_trywrlock, pthread_rwlock_trywrlock@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_rwlock_unlock
-.type pthread_rwlock_unlock, @function
-pthread_rwlock_unlock: ret
+.globl __pin_pthread_rwlock_unlock
+.type __pin_pthread_rwlock_unlock, @function
+__pin_pthread_rwlock_unlock: ret
+.symver __pin_pthread_rwlock_unlock, pthread_rwlock_unlock@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_rwlock_wrlock
-.type pthread_rwlock_wrlock, @function
-pthread_rwlock_wrlock: ret
+.globl __pin_pthread_rwlock_wrlock
+.type __pin_pthread_rwlock_wrlock, @function
+__pin_pthread_rwlock_wrlock: ret
+.symver __pin_pthread_rwlock_wrlock, pthread_rwlock_wrlock@@GLIBC_2.34, remove
 
 .balign 8
 .globl pthread_self
@@ -1360,19 +1402,22 @@ pthread_self: ret
 pthread_setcanceltype: ret
 
 .balign 8
-.globl pthread_setname_np
-.type pthread_setname_np, @function
-pthread_setname_np: ret
+.globl __pin_pthread_setname_np
+.type __pin_pthread_setname_np, @function
+__pin_pthread_setname_np: ret
+.symver __pin_pthread_setname_np, pthread_setname_np@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_setspecific
-.type pthread_setspecific, @function
-pthread_setspecific: ret
+.globl __pin_pthread_setspecific
+.type __pin_pthread_setspecific, @function
+__pin_pthread_setspecific: ret
+.symver __pin_pthread_setspecific, pthread_setspecific@@GLIBC_2.34, remove
 
 .balign 8
-.globl pthread_sigmask
-.type pthread_sigmask, @function
-pthread_sigmask: ret
+.globl __pin_pthread_sigmask
+.type __pin_pthread_sigmask, @function
+__pin_pthread_sigmask: ret
+.symver __pin_pthread_sigmask, pthread_sigmask@@GLIBC_2.32, remove
 
 .balign 8
 .globl putc
@@ -1455,9 +1500,10 @@ readv: ret
 realloc: ret
 
 .balign 8
-.globl realpath
-.type realpath, @function
-realpath: ret
+.globl __pin_realpath
+.type __pin_realpath, @function
+__pin_realpath: ret
+.symver __pin_realpath, realpath@@GLIBC_2.3, remove
 
 .balign 8
 .globl recv
@@ -1495,9 +1541,10 @@ rmdir: ret
 scandir: ret
 
 .balign 8
-.globl sched_getaffinity
-.type sched_getaffinity, @function
-sched_getaffinity: ret
+.globl __pin_sched_getaffinity
+.type __pin_sched_getaffinity, @function
+__pin_sched_getaffinity: ret
+.symver __pin_sched_getaffinity, sched_getaffinity@@GLIBC_2.3.4, remove
 
 .balign 8
 .globl sched_getparam
@@ -1530,39 +1577,46 @@ secure_getenv: ret
 select: ret
 
 .balign 8
-.globl sem_destroy
-.type sem_destroy, @function
-sem_destroy: ret
+.globl __pin_sem_destroy
+.type __pin_sem_destroy, @function
+__pin_sem_destroy: ret
+.symver __pin_sem_destroy, sem_destroy@@GLIBC_2.34, remove
 
 .balign 8
-.globl sem_getvalue
-.type sem_getvalue, @function
-sem_getvalue: ret
+.globl __pin_sem_getvalue
+.type __pin_sem_getvalue, @function
+__pin_sem_getvalue: ret
+.symver __pin_sem_getvalue, sem_getvalue@@GLIBC_2.34, remove
 
 .balign 8
-.globl sem_init
-.type sem_init, @function
-sem_init: ret
+.globl __pin_sem_init
+.type __pin_sem_init, @function
+__pin_sem_init: ret
+.symver __pin_sem_init, sem_init@@GLIBC_2.34, remove
 
 .balign 8
-.globl sem_post
-.type sem_post, @function
-sem_post: ret
+.globl __pin_sem_post
+.type __pin_sem_post, @function
+__pin_sem_post: ret
+.symver __pin_sem_post, sem_post@@GLIBC_2.34, remove
 
 .balign 8
-.globl sem_timedwait
-.type sem_timedwait, @function
-sem_timedwait: ret
+.globl __pin_sem_timedwait
+.type __pin_sem_timedwait, @function
+__pin_sem_timedwait: ret
+.symver __pin_sem_timedwait, sem_timedwait@@GLIBC_2.34, remove
 
 .balign 8
-.globl sem_trywait
-.type sem_trywait, @function
-sem_trywait: ret
+.globl __pin_sem_trywait
+.type __pin_sem_trywait, @function
+__pin_sem_trywait: ret
+.symver __pin_sem_trywait, sem_trywait@@GLIBC_2.34, remove
 
 .balign 8
-.globl sem_wait
-.type sem_wait, @function
-sem_wait: ret
+.globl __pin_sem_wait
+.type __pin_sem_wait, @function
+__pin_sem_wait: ret
+.symver __pin_sem_wait, sem_wait@@GLIBC_2.34, remove
 
 .balign 8
 .globl send

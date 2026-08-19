@@ -194,13 +194,25 @@ if [ "${1:-}" = "--container" ]; then
 
     echo ""
     echo "--- symbol versions ---"
+    # The stubs pin a symbol to its default version when the provider also
+    # exports a compat version: ld.so binds an unversioned reference to the
+    # oldest version node, which is the compat implementation. Every pin is a
+    # version of the floor glibc (REQUIRED_GLIBC in stubs/generate.sh), so
+    # the requirement must exist and must stay at or below the floor.
+    GLIBC_FLOOR=2.39
     readelf --version-info "$exe" > versions.txt 2>&1
-    if grep -q "GLIBC_" versions.txt; then
-        echo "FAIL(versions): the executable requires versioned glibc symbols"
-        grep "GLIBC_" versions.txt | sed 's/^/    /'
+    required=$(grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' versions.txt | sed 's/^GLIBC_//' | sort -uV)
+    if [ -z "$required" ]; then
+        echo "FAIL(versions): the executable pins no glibc symbol versions"
         failed=1
     else
-        echo "PASS: no versioned glibc requirement"
+        newest=$(echo "$required" | tail -1)
+        if [ "$(printf '%s\n%s\n' "$newest" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
+            echo "FAIL(versions): the executable requires GLIBC_$newest, above the $GLIBC_FLOOR floor"
+            failed=1
+        else
+            echo "PASS: version requirements stay at or below glibc $GLIBC_FLOOR ($(echo "$required" | tr '\n' ' '))"
+        fi
     fi
 
     # --- undefined symbols ---------------------------------------------------
