@@ -70,6 +70,12 @@ unset SDL_NO_SIGNAL_HANDLERS
 #    build validates nothing and would pass everything), exit 3 if the example
 #    ends without drawing a frame.
 export VKR_SWEEP=1
+#
+# 5. VKR_SHADER_HOT_RELOAD makes each example compile its slang source at
+#    pipeline creation instead of using the embedded SPIR-V. That is the only
+#    thing checking every example's committed reflection json against a fresh
+#    compile, through assert_shader_interface_unchanged.
+export VKR_SHADER_HOT_RELOAD=1
 
 : "${SWEEP_TIMEOUT:=10}"
 : "${SWEEP_LOG_DIR:=/tmp/sweep-logs}"

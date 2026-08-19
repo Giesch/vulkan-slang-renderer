@@ -36,6 +36,12 @@ pub struct EnvConfig {
     /// Unset (or false) keeps the default discrete-first order.
     pub prefer_integrated_gpu: Option<bool>,
 
+    /// `VKR_SHADER_HOT_RELOAD=1` — compile shaders from `shaders/source/` at
+    /// pipeline creation and recompile them on edit. Unset (or false) uses the
+    /// precompiled SPIR-V embedded by `mltrs shaders compile`, in every build
+    /// profile.
+    pub shader_hot_reload: bool,
+
     /// `RUST_LOG` — consumed by `pretty_env_logger`, captured for reporting.
     ///
     /// Not load-bearing: validation counting keys off message severity, not the
@@ -50,6 +56,7 @@ impl EnvConfig {
             headless_sweep: flag("VKR_SWEEP"),
             inject_validation_fault: flag("VKR_INJECT_VALIDATION_FAULT"),
             prefer_integrated_gpu: optional_flag("VKR_PREFER_INTEGRATED"),
+            shader_hot_reload: flag("VKR_SHADER_HOT_RELOAD"),
             rust_log: std::env::var("RUST_LOG").ok(),
         }
     }

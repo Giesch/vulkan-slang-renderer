@@ -123,7 +123,6 @@ pub trait Game {
             enable_egui,
             render_scale,
             max_msaa_samples,
-            #[cfg(debug_assertions)]
             Self::Atlas::SHADERS_SOURCE_DIR,
         )?;
         let game = Self::setup(&mut renderer, Self::Atlas::init())?;

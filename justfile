@@ -30,13 +30,14 @@ check:
 # run dev build with shader hot reload
 [unix]
 dev example="basic_triangle":
-    cargo run -p {{example}}
+    VKR_SHADER_HOT_RELOAD=1 cargo run -p {{example}}
 
 # run dev build with shader hot reload
 [windows]
 dev example="basic_triangle":
     pwsh -Command { \
       . ./scripts/load-env.ps1; \
+      $env:VKR_SHADER_HOT_RELOAD='1'; \
       cargo run -p {{example}}; \
     }
 
@@ -44,7 +45,7 @@ dev example="basic_triangle":
 # run with shader printf and vk validation layers at 'info'
 [unix]
 shader-debug example="viking_room":
-    RUST_LOG=info VK_LAYER_PRINTF_ONLY_PRESET=1 \
+    RUST_LOG=info VK_LAYER_PRINTF_ONLY_PRESET=1 VKR_SHADER_HOT_RELOAD=1 \
       cargo run -p {{example}}
 
 # run with shader printf and vk validation layers at 'info'
@@ -54,6 +55,7 @@ shader-debug example="viking_room":
       . ./scripts/load-env.ps1; \
       $env:RUST_LOG='info'; \
       $env:VK_LAYER_PRINTF_ONLY_PRESET='1'; \
+      $env:VKR_SHADER_HOT_RELOAD='1'; \
       cargo run -p {{example}}; \
     }
 
@@ -129,7 +131,7 @@ shaders example="all":
 [unix]
 watch example="basic_triangle" seconds="5":
     cargo build -p {{example}}
-    timeout --preserve-status -k 5 -s TERM {{seconds}} ./target/debug/{{example}}
+    VKR_SHADER_HOT_RELOAD=1 timeout --preserve-status -k 5 -s TERM {{seconds}} ./target/debug/{{example}}
 
 
 # run every example headlessly, failing on vulkan validation output
