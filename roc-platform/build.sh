@@ -20,6 +20,7 @@ COMMITTED_INPUTS=(
     Scrt1.o
     crti.o
     crtn.o
+    force_extract.o
     libstdc++.a
     libvulkan.so
     libm.so
