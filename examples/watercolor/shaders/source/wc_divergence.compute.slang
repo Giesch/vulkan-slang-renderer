@@ -7,8 +7,8 @@ import watercolor_common;
 ParameterBlock<Params> params;
 
 struct Params {
-    Texture2D<float> uIn;
-    Texture2D<float> vIn;
+    Sampler2D<float>.Handle uIn;
+    Sampler2D<float>.Handle vIn;
     RWTexture2D<float> divergence;
     float2 gridSize;
 }

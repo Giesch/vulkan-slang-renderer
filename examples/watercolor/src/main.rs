@@ -116,9 +116,7 @@ fn create_deposit_texture(
 
 struct Watercolor {
     // Simulation textures (kept alive for GPU; not read on CPU)
-    #[expect(unused)]
     velocity_u: PingPong,
-    #[expect(unused)]
     velocity_v: PingPong,
     #[expect(unused)]
     pressure: PingPong,
@@ -130,7 +128,6 @@ struct Watercolor {
     pigment_8_11: PingPong,
     #[expect(unused)]
     saturation: PingPong,
-    #[expect(unused)]
     wet_mask: PingPong,
     #[expect(unused)]
     deposit_0_3: [StorageTextureHandle; 2],
@@ -145,18 +142,25 @@ struct Watercolor {
     #[expect(unused)]
     blurred_mask: StorageTextureHandle,
 
+    // Sampled aliases. Used as bindless handles.
+    blur_temp_sampled: TextureHandle,
+    deposit_0_3_sampled: [TextureHandle; 2],
+    deposit_4_7_sampled: [TextureHandle; 2],
+    deposit_8_11_sampled: [TextureHandle; 2],
+    paper_height_sampled: TextureHandle,
+
     // Pipelines
     brush_pipelines: [PipelineHandle<Compute>; 2],
     update_velocity_pipelines: [PipelineHandle<Compute>; 2],
-    divergence_pipelines: [PipelineHandle<Compute>; 2],
+    divergence_pipeline: PipelineHandle<Compute>,
     pressure_jacobi_pipelines: [PipelineHandle<Compute>; 2],
     project_velocity_pipelines: [PipelineHandle<Compute>; 2],
-    blur_h_pipelines: [PipelineHandle<Compute>; 2],
+    blur_h_pipeline: PipelineHandle<Compute>,
     blur_v_pipeline: PipelineHandle<Compute>,
     flow_outward_pipelines: [PipelineHandle<Compute>; 2],
     advect_and_transfer_pipelines: [PipelineHandle<Compute>; 4], // [sim_parity * 2 + deposit_parity]
     capillary_flow_pipelines: [PipelineHandle<Compute>; 2],
-    display_pipelines: [PipelineHandle<DrawVertexCount>; 4], // [wet_mask_parity * 2 + deposit_parity]
+    display_pipeline: PipelineHandle<DrawVertexCount>,
 
     // Buffers
     stroke_points_buffer: StorageBufferHandle<paint_brush_compute::StrokePoint>,
@@ -528,25 +532,15 @@ impl Game for Watercolor {
             )?,
         ];
 
-        // Divergence: 2 pipelines for vel parity (reads from velocity after update)
-        let divergence_pipelines = [
+        // Divergence. The velocity reads are heap handles, written per frame,
+        // so one pipeline covers both velocity parities.
+        let divergence_pipeline =
             renderer.create_compute_pipeline(shaders.wc_divergence_compute.pipeline_config(
                 wc_divergence_compute::Resources {
-                    u_in: velocity_u.read_sampled(true), // after vel flip
-                    v_in: velocity_v.read_sampled(true),
                     divergence: &divergence,
                     params_buffer: &divergence_params_buffer,
                 },
-            ))?,
-            renderer.create_compute_pipeline(shaders.wc_divergence_compute.pipeline_config(
-                wc_divergence_compute::Resources {
-                    u_in: velocity_u.read_sampled(false),
-                    v_in: velocity_v.read_sampled(false),
-                    divergence: &divergence,
-                    params_buffer: &divergence_params_buffer,
-                },
-            ))?,
-        ];
+            ))?;
 
         // Pressure Jacobi: 2 pipelines for pressure parity
         let pressure_jacobi_pipelines = [
@@ -598,29 +592,21 @@ impl Game for Watercolor {
             )?,
         ];
 
-        // Gaussian blur H: wet_mask → blur_temp (2 pipelines for wet_mask parity)
-        let blur_h_pipelines = [
+        // Gaussian blur H: wet_mask → blur_temp. The read is a heap handle,
+        // written per frame, so one pipeline covers both wet_mask parities.
+        let blur_h_pipeline =
             renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
                 wc_gaussian_blur_compute::Resources {
-                    input_tex: wet_mask.read_sampled(false),
                     output_tex: &blur_temp,
                     params_buffer: &blur_h_params_buffer,
                 },
-            ))?,
-            renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
-                wc_gaussian_blur_compute::Resources {
-                    input_tex: wet_mask.read_sampled(true),
-                    output_tex: &blur_temp,
-                    params_buffer: &blur_h_params_buffer,
-                },
-            ))?,
-        ];
+            ))?;
 
-        // Gaussian blur V: blur_temp → blurred_mask (single pipeline, neither is ping-ponged)
+        // Gaussian blur V: blur_temp → blurred_mask. The same shader, with a
+        // different storage write and a different `direction` uniform.
         let blur_v_pipeline =
             renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
                 wc_gaussian_blur_compute::Resources {
-                    input_tex: &blur_temp_sampled,
                     output_tex: &blurred_mask,
                     params_buffer: &blur_v_params_buffer,
                 },
@@ -715,35 +701,13 @@ impl Game for Watercolor {
             ))?,
         ];
 
-        // Display pipeline: 4 variants for (wet_mask_parity × deposit_parity)
-        // Index: wet_mask_parity * 2 + deposit_parity
-        // Display reads deposit[!deposit_parity] (previous frame's output)
-        let display_pipelines = {
-            let mut pipelines = Vec::with_capacity(4);
-            for wm in [false, true] {
-                for dep in [false, true] {
-                    let dep_read = !dep as usize; // display reads previous frame's output
-                    pipelines.push(
-                        renderer.create_pipeline(shaders.paint_display.pipeline_config(
-                            paint_display::Resources {
-                                deposit_0_3: &deposit_0_3_sampled[dep_read],
-                                deposit_4_7: &deposit_4_7_sampled[dep_read],
-                                deposit_8_11: &deposit_8_11_sampled[dep_read],
-                                paper_height: &paper_height_sampled,
-                                wet_mask: wet_mask.read_sampled(wm),
-                                display_params_buffer: &display_params_buffer,
-                            },
-                        ))?,
-                    );
-                }
-            }
-            [
-                pipelines.remove(0),
-                pipelines.remove(0),
-                pipelines.remove(0),
-                pipelines.remove(0),
-            ]
-        };
+        // Display. Every texture it reads is a heap handle, written per frame,
+        // so one pipeline covers all parities.
+        let display_pipeline = renderer.create_pipeline(shaders.paint_display.pipeline_config(
+            paint_display::Resources {
+                display_params_buffer: &display_params_buffer,
+            },
+        ))?;
 
         Ok(Self {
             velocity_u,
@@ -761,17 +725,23 @@ impl Game for Watercolor {
             blur_temp,
             blurred_mask,
 
+            blur_temp_sampled,
+            deposit_0_3_sampled,
+            deposit_4_7_sampled,
+            deposit_8_11_sampled,
+            paper_height_sampled,
+
             brush_pipelines,
             update_velocity_pipelines,
-            divergence_pipelines,
+            divergence_pipeline,
             project_velocity_pipelines,
             pressure_jacobi_pipelines,
-            blur_h_pipelines,
+            blur_h_pipeline,
             blur_v_pipeline,
             flow_outward_pipelines,
             advect_and_transfer_pipelines,
             capillary_flow_pipelines,
-            display_pipelines,
+            display_pipeline,
 
             stroke_points_buffer,
             brush_params_buffer,
@@ -914,7 +884,7 @@ impl Game for Watercolor {
         // 3. Divergence (reads velocity after update)
         {
             let (wx, wy) = workgroups(wc_divergence_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.divergence_pipelines[sim as usize], wx, wy, 1);
+            renderer.dispatch(&self.divergence_pipeline, wx, wy, 1);
         }
 
         // 4. Pressure Jacobi iterations (ping-pong pressure)
@@ -940,7 +910,7 @@ impl Game for Watercolor {
         // 6. Gaussian blur H (wet_mask → blur_temp)
         {
             let (wx, wy) = workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.blur_h_pipelines[sim as usize], wx, wy, 1);
+            renderer.dispatch(&self.blur_h_pipeline, wx, wy, 1);
         }
 
         // 7. Gaussian blur V (blur_temp → blurred_mask)
@@ -970,6 +940,8 @@ impl Game for Watercolor {
 
         // Flip simulation parity
         self.sim_parity = !self.sim_parity;
+        // make sure we read what we just wrote below
+        let deposit_read = self.deposit_parity as usize;
         self.deposit_parity = !self.deposit_parity;
 
         // 11. Display
@@ -994,8 +966,7 @@ impl Game for Watercolor {
         let advect_and_transfer_params_buffer = &mut self.advect_and_transfer_params_buffer;
         let capillary_flow_params_buffer = &mut self.capillary_flow_params_buffer;
 
-        let display_idx = self.sim_parity as usize * 2 + self.deposit_parity as usize;
-        renderer.draw_vertex_count(&self.display_pipelines[display_idx], 3, |gpu| {
+        renderer.draw_vertex_count(&self.display_pipeline, 3, |gpu| {
             // Upload stroke points
             if point_count > 0 {
                 let gpu_points: Vec<paint_brush_compute::StrokePoint> = stroke_points
@@ -1051,6 +1022,10 @@ impl Game for Watercolor {
             gpu.write_uniform(
                 divergence_params_buffer,
                 wc_divergence_compute::Params {
+                    // `sim` is the pre-flip parity. `update_velocity` wrote
+                    // the other side, and divergence reads what it wrote.
+                    u_in: self.velocity_u.read_sampled(!sim).bindless_handle(),
+                    v_in: self.velocity_v.read_sampled(!sim).bindless_handle(),
                     grid_size,
                     _padding_0: Default::default(),
                 },
@@ -1075,16 +1050,20 @@ impl Game for Watercolor {
             gpu.write_uniform(
                 blur_h_params_buffer,
                 wc_gaussian_blur_compute::Params {
+                    input_tex: self.wet_mask.read_sampled(sim).bindless_handle(),
                     grid_size,
                     direction: Vec2::new(1.0, 0.0),
+                    _padding_0: Default::default(),
                 },
             );
 
             gpu.write_uniform(
                 blur_v_params_buffer,
                 wc_gaussian_blur_compute::Params {
+                    input_tex: self.blur_temp_sampled.bindless_handle(),
                     grid_size,
                     direction: Vec2::new(0.0, 1.0),
+                    _padding_0: Default::default(),
                 },
             );
 
@@ -1133,6 +1112,15 @@ impl Game for Watercolor {
             gpu.write_uniform(
                 display_params_buffer,
                 paint_display::DisplayParams {
+                    // post-flip parity: display reads what the passes above wrote
+                    deposit_0_3: self.deposit_0_3_sampled[deposit_read].bindless_handle(),
+                    deposit_4_7: self.deposit_4_7_sampled[deposit_read].bindless_handle(),
+                    deposit_8_11: self.deposit_8_11_sampled[deposit_read].bindless_handle(),
+                    paper_height: self.paper_height_sampled.bindless_handle(),
+                    wet_mask: self
+                        .wet_mask
+                        .read_sampled(self.sim_parity)
+                        .bindless_handle(),
                     texel_size,
                     debug_view: self.edit_state.debug_view,
                     canvas_aspect: grid_size.x / grid_size.y,

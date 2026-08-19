@@ -17,11 +17,11 @@ struct PigmentKM {
 }
 
 struct DisplayParams {
-    Sampler2D deposit_0_3;
-    Sampler2D deposit_4_7;
-    Sampler2D deposit_8_11;
-    Sampler2D paperHeight;
-    Sampler2D wetMask;
+    Sampler2D.Handle deposit_0_3;
+    Sampler2D.Handle deposit_4_7;
+    Sampler2D.Handle deposit_8_11;
+    Sampler2D.Handle paperHeight;
+    Sampler2D.Handle wetMask;
     float2 texelSize;
     DebugView debugView;
     float canvasAspect;

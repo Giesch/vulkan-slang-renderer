@@ -227,11 +227,13 @@ only place the index still exists.
   This is *real* evidence for exactly one of the four risks: the
   `EXPECTED_RASTER_STATES` assert runs during `setup`, so a green sweep proves
   the count is 5. It proves nothing about material *selection*.
-- **Not run: the visual A/B.** A wrong material index produces no validation
-  output at all, so a green sweep is weak evidence for the rest. The four checks
-  the master plan lists (tunic/hat colors, eyes compositing through the bangs,
-  `sleeve` still double-sided, `RawTex0`/`RawTex1` per batch) each isolate a
-  different failure and still need a human at a window.
+- **The visual A/B: run, all four checks passed.** A wrong material index
+  produces no validation output at all, so this is the check that carries the
+  weight for material selection. The four checks the master plan lists each
+  isolate a different failure, and all held: tunic and hat render their own
+  colors, eyes and brows composite through the bangs, `sleeve` is still
+  double-sided, and `RawTex0`/`RawTex1` show the right albedo and ramp per
+  batch.
 
 ## 7. What this leaves for Phase 10
 

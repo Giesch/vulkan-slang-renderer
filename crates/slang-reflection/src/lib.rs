@@ -58,9 +58,29 @@ enum MatrixLayout {
     RowMajor,
 }
 
+/// Pins the Slang bindless preset to `None`; `docs/bindless.md` explains the
+/// preset and its heap binding layout.
+///
+/// No shader imports this module. Slang matches the `export` here to an
+/// `extern` hook in its core module by name alone, so the override applies
+/// to every shader compiled with this module. Compilation must include it.
+/// A shader built without it uses `VkMutable`, which reads textures from a
+/// `VK_DESCRIPTOR_TYPE_MUTABLE_EXT` binding that this renderer does not create.
+/// The compiler gives no diagnostic, so the mismatch appears only at run time.
+fn load_bindless_options_module(session: &slang::Session) -> anyhow::Result<slang::Module> {
+    let slang_src = include_str!("bindless_options.slang");
+    let module = session.load_module_from_source_string(
+        "bindless_options",
+        "bindless_options.slang",
+        slang_src,
+    )?;
+
+    Ok(module)
+}
+
 fn load_cpu_constants_module(session: &slang::Session) -> anyhow::Result<slang::Module> {
     let column_major = MATRIX_LAYOUT == MatrixLayout::ColumnMajor;
-    let src = format!(
+    let slang_src = format!(
         r#"
         #language slang 2026
         module cpu_constants;
@@ -70,7 +90,14 @@ fn load_cpu_constants_module(session: &slang::Session) -> anyhow::Result<slang::
         }}
         "#,
     );
-    Ok(session.load_module_from_source_string("cpu_constants", "cpu_constants.slang", &src)?)
+
+    let module = session.load_module_from_source_string(
+        "cpu_constants",
+        "cpu_constants.slang",
+        &slang_src,
+    )?;
+
+    Ok(module)
 }
 
 pub struct ReflectedShader {
@@ -128,6 +155,7 @@ pub fn prepare_reflected_shader_with_optimization(
 
     let shader_module = session.load_module(source_file_name)?;
     let cpu_constants_module = load_cpu_constants_module(&session)?;
+    let bindless_options_module = load_bindless_options_module(&session)?;
 
     // the examples have 1 vert and 1 frag shader
     debug_assert!(shader_module.entry_points().len() == 2);
@@ -141,6 +169,7 @@ pub fn prepare_reflected_shader_with_optimization(
             &session,
             &shader_module,
             &cpu_constants_module,
+            &bindless_options_module,
             source_file_name,
         )?;
 
@@ -227,6 +256,7 @@ pub fn prepare_reflected_compute_shader_with_optimization(
 
     let shader_module = session.load_module(source_file_name)?;
     let cpu_constants_module = load_cpu_constants_module(&session)?;
+    let bindless_options_module = load_bindless_options_module(&session)?;
 
     // compute shaders have exactly 1 entry point
     debug_assert!(shader_module.entry_points().len() == 1);
@@ -239,6 +269,7 @@ pub fn prepare_reflected_compute_shader_with_optimization(
             &session,
             &shader_module,
             &cpu_constants_module,
+            &bindless_options_module,
             source_file_name,
         )?;
 
@@ -363,12 +394,14 @@ fn compile_shader(
     session: &slang::Session,
     shader_module: &slang::Module,
     cpu_constants_module: &slang::Module,
+    bindless_options_module: &slang::Module,
     source_file_name: &str,
 ) -> anyhow::Result<CompiledShader> {
     let program = session.create_composite_component_type(&[
         shader_module.clone().into(),
         entry_point.clone().into(),
         cpu_constants_module.clone().into(),
+        bindless_options_module.clone().into(),
     ])?;
 
     let linked_program = program.link()?;
@@ -397,4 +430,142 @@ fn compile_shader(
         stage,
         shader_bytecode,
     })
+}
+
+#[cfg(test)]
+mod bindless_preset_tests {
+    use super::*;
+
+    /// A storage-image handle. Reflection rejects that shape, so this probe
+    /// cannot be a fixture. The shader imports nothing.
+    const STORAGE_HANDLE_SHADER: &str = r#"
+        #language slang 2026
+        module preset_probe;
+
+        struct Params {
+            RWTexture2D<float>.Handle writeTex;
+            float2 gridSize;
+        }
+        ParameterBlock<Params> params;
+
+        [numthreads(16, 16, 1)]
+        [shader("compute")]
+        void computeMain(uint3 tid : SV_DispatchThreadID) {
+            int2 p = int2(tid.xy);
+            params.writeTex[p] = params.writeTex[p] + params.gridSize.x;
+        }
+    "#;
+
+    /// Returns the `Binding` and `DescriptorSet` decorations on every
+    /// `__slang_resource_heap*` variable, as (binding, set) pairs.
+    fn heap_decorations(spv: &[u8]) -> Vec<(u32, u32)> {
+        let words: Vec<u32> = spv
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+
+        const OP_NAME: u32 = 5;
+        const OP_DECORATE: u32 = 71;
+        const DECORATION_BINDING: u32 = 33;
+        const DECORATION_DESCRIPTOR_SET: u32 = 34;
+
+        let mut heap_ids = std::collections::HashSet::new();
+        let mut bindings = std::collections::HashMap::new();
+        let mut sets = std::collections::HashMap::new();
+
+        let mut i = 5; // skip the 5-word module header
+        while i < words.len() {
+            let op = words[i] & 0xFFFF;
+            let len = (words[i] >> 16) as usize;
+            if len == 0 || i + len > words.len() {
+                break;
+            }
+            match op {
+                OP_NAME if len >= 3 => {
+                    let name: Vec<u8> = words[i + 2..i + len]
+                        .iter()
+                        .flat_map(|w| w.to_le_bytes())
+                        .take_while(|b| *b != 0)
+                        .collect();
+                    if String::from_utf8_lossy(&name).starts_with("__slang_resource_heap") {
+                        heap_ids.insert(words[i + 1]);
+                    }
+                }
+                OP_DECORATE if len >= 4 => match words[i + 2] {
+                    DECORATION_BINDING => {
+                        bindings.insert(words[i + 1], words[i + 3]);
+                    }
+                    DECORATION_DESCRIPTOR_SET => {
+                        sets.insert(words[i + 1], words[i + 3]);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            i += len;
+        }
+
+        let mut out: Vec<(u32, u32)> = heap_ids
+            .iter()
+            .filter_map(|id| Some((*bindings.get(id)?, *sets.get(id)?)))
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    fn compile_probe() -> Vec<u8> {
+        let global_session = slang::GlobalSession::new().unwrap();
+        let session_options = slang::CompilerOptions::default()
+            .vulkan_use_entry_point_name(true)
+            .language(slang::SourceLanguage::Slang)
+            .optimization(OptimizationLevel::High.to_slang())
+            .emit_spirv_directly(true);
+        let session_options = match MATRIX_LAYOUT {
+            MatrixLayout::ColumnMajor => session_options.matrix_layout_column(true),
+            MatrixLayout::RowMajor => session_options.matrix_layout_row(true),
+        };
+        let target_desc = slang::TargetDesc::default()
+            .format(slang::CompileTarget::Spirv)
+            .profile(global_session.find_profile("glsl_450+spirv_1_6"));
+        let targets = [target_desc];
+        let session_desc = slang::SessionDesc::default()
+            .targets(&targets)
+            .options(&session_options);
+        let session = global_session.create_session(&session_desc).unwrap();
+
+        let shader_module = session
+            .load_module_from_source_string(
+                "preset_probe",
+                "preset_probe.slang",
+                STORAGE_HANDLE_SHADER,
+            )
+            .unwrap();
+        let cpu_constants_module = load_cpu_constants_module(&session).unwrap();
+        let bindless_options_module = load_bindless_options_module(&session).unwrap();
+
+        let entry_point = shader_module.entry_points().next().unwrap();
+        compile_shader(
+            &entry_point,
+            &session,
+            &shader_module,
+            &cpu_constants_module,
+            &bindless_options_module,
+            "preset_probe",
+        )
+        .unwrap()
+        .shader_bytecode
+    }
+
+    /// The bindless preset is `None`, so a storage image gets its own binding.
+    #[test]
+    fn storage_image_handles_land_on_their_own_heap_binding() {
+        let spv = compile_probe();
+        assert_eq!(
+            heap_decorations(&spv),
+            vec![(3, 1)],
+            "the storage-image heap array must be at binding 3 of set 1. \
+             Binding 2 means the compile lost the `None` preset and used \
+             `VkMutable`. `VkMutable` puts every non-sampler type on one binding"
+        );
+    }
 }

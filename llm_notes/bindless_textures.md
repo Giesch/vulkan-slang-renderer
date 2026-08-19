@@ -1,8 +1,9 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-10 done (including 7b, 7c, 7d and 8b), except that Phase 9's
-four-point visual A/B has not been run. Phases 11-13 are optional follow-ups,
-prerequisites for nothing.** Design note for adopting bindless
+**Status: Phases 0-11 done (including 7b, 7c, 7d and 8b). Phases 11b, 12, 13
+and 14 are optional follow-ups, prerequisites for nothing. Phase 11's spike gate
+passed on all five criteria, so 11b is viable and its plan can be written
+([bindless_textures/phase_11.md](bindless_textures/phase_11.md) §9).** Design note for adopting bindless
 texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
 
 **Phases 6-9 were one phase until Phase 6 planning found a prerequisite this
@@ -113,7 +114,17 @@ which is not descriptor state and so does not go away — counted in Phase 9.
   within one draw. See Phase 9.
 - `VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT` — see Phase 3.
 - Storage images (`RWTexture2D`, watercolor) stay on per-pipeline descriptors.
-  Still true; Phase 11 scopes what lifting it would take, and gates it on a spike.
+  Still true. Phase 11's spike measured what lifting it takes: one storage heap
+  array at binding 3, reflecting exactly like the sampler handles. Phase 11b is
+  what would lift it.
+- **The bindless binding preset is `None`, pinned by the compiler**
+  (`load_bindless_options_module`): one descriptor type per heap binding, 0
+  sampler / 1 combined image sampler / 2 sampled image / 3 storage image. Slang
+  defaults to `VkMutable`, which aliases every non-sampler type onto binding 2
+  and expects `VK_EXT_mutable_descriptor_type`. The override is linked as a
+  component, so no shader needs to import it; a shader compiled without it
+  silently reverts, which is what
+  `storage_image_handles_land_on_their_own_heap_binding` exists to catch.
 - egui keeps its own descriptors (`renderer/egui.rs`, third-party renderer).
 - Uniform buffers stay descriptor-bound; something has to carry the handles.
 
@@ -1453,7 +1464,7 @@ would have passed). `cmd_push_constants` ends up with **no** runtime checks: the
 size assert was verified redundant, and the offset one was replaced by passing
 `range.offset` rather than asserting it is zero.
 
-## Phase 9 — `toon_link`, the actual payoff ✅ done (visual A/B not run)
+## Phase 9 — `toon_link`, the actual payoff ✅ done
 
 **Detailed record: [bindless_textures/phase_09.md](bindless_textures/phase_09.md)**
 — **status: done.** 24 pipelines → 5 and 24 uniform buffers → 1, exactly as
@@ -1474,7 +1485,8 @@ argument *for* the index, which was checked and turned out to rest on a false
 premise about `05` being an indirect multi-draw. It is not; it is an ordered
 draw list where each node keeps its own push block.
 
-The visual A/B at the end of this section is the part that has **not** been run.
+The four-point visual A/B at the end of this section was run after the rest of
+the phase landed; all four checks passed.
 
 `build_material_pipelines` (examples/toon_link/src/main.rs:780-826)
 ~~collapses to one pipeline plus a `Material` buffer behind `ImmutableAddr`.
@@ -1665,21 +1677,41 @@ not evidence about this change.
   every push-block size worked through in `05` §4 was off, so the 88 B worst
   case is really 104 B.
 
-## Phase 11 — watercolor (follow-up; investigate first)
+## Phase 11 — watercolor: the spike and the reads-only collapses ✅ done
 
-Not planned as part of the original work, and **not a prerequisite for anything**.
-Added because measuring toon_link's real payoff (24 → 5, above) prompted checking
-what watercolor's would be, and it turns out to be the better demo.
+**Detailed record: [bindless_textures/phase_11.md](bindless_textures/phase_11.md)**
+— **status: done.** 25 pipelines → 20, pixel-identical at three checkpoints,
+with a per-pass poison control. The spike gate passed on all five criteria. Not part of the original work, and **not a prerequisite
+for anything**. Added because measuring toon_link's real payoff (24 → 5, above)
+prompted checking what watercolor's would be, and it turns out to be the better
+demo. Planning the phase re-measured this section's claims pass by pass and
+corrected four of them (phase_11.md §8); the corrections are struck through in
+place below.
 
-**The prize: 22 pipelines → 10, and every duplicate is pure descriptor
+~~**The prize: 22 pipelines → 10, and every duplicate is pure descriptor
 duplication.** Counted: 18 `create_compute_pipeline` calls against 9 distinct
-`*.compute.slang` shaders — exactly 2× — plus `display_pipelines:
-[PipelineHandle<DrawVertexCount>; 4]` from one graphics shader. Every duplicate
-exists only to bind the other side of a ping-pong pair, which the source says
-outright ("Brush pipeline: 2 variants for wet_mask/pigment parity",
-"4 pipelines for (sim_parity × deposit_parity)", examples/watercolor/src/main.rs:473,652).
+`*.compute.slang` shaders — exactly 2×~~ — that counted *call sites*, and the
+duplicates are three different kinds. Measured: **25** runtime pipelines — one
+call site sits in a 2×2 loop (advect is ×4, main.rs:655-692), blur_v is ×1, and
+`display_pipelines: [PipelineHandle<DrawVertexCount>; 4]` adds four graphics
+pipelines from a second 2×2 loop (main.rs:721-746). The collapse is a ladder,
+not one number:
 
-Two reasons this beats toon_link as a showcase:
+- **Vary by sampled reads alone** — display 4→1, divergence 2→1, blur_h 2→1.
+  Fits today's combined-image-sampler heap with no new machinery. **This
+  phase's scope: 25 → 20.** ~~collapses the pipelines that vary by *read*
+  target, which is most of them~~ — exactly these three sites; brush's six
+  varying slots are all `RWTexture2D`, so reads-only buys it nothing.
+- **Vary by storage writes too** — brush, update_velocity, project_velocity,
+  flow_outward, capillary_flow, advect. Needs storage-image handles, which are
+  unmeasured. **Phase 11b's scope, gated on this phase's spike: → 12.**
+- **Vary per dispatch within one frame** — jacobi (`pressure_parity` flips per
+  dispatch, main.rs:923-927) and the blur H/V pair (one shader, different
+  `direction` uniform). A handle in a once-per-frame uniform cannot vary
+  between two dispatches of one pipeline, and a different uniform buffer is a
+  different descriptor set is a different pipeline. **Phase 12's scope: → 10.**
+
+Two reasons this still beats toon_link as a showcase:
 
 - **Zero raster-state component.** toon_link's residual 5 pipelines are blend /
   depth-write / cull / color-mask variants that bindless cannot touch. Watercolor's
@@ -1687,10 +1719,15 @@ Two reasons this beats toon_link as a showcase:
   bound — exactly what the heap erases, with no floor underneath.
 - **Uniform by construction, with no index at all.** Parity is CPU state written
   into the param block per frame, so the shader reads *the* handle rather than
-  selecting one. None of the uniformity hazards in Phase 10 apply, and it needs no
-  per-draw channel (contrast toon_link, where the index has to come from
-  somewhere — Phases 7-8 exist to build that channel). It is therefore the
-  *safest* first non-trivial consumer, not just the most rewarding.
+  selecting one. None of the uniformity hazards in Phase 10 apply~~, and it
+  needs no per-draw channel~~ — true for the once-per-frame parities, false for
+  the per-dispatch rung above, which is why the ladder's floor is 12 without
+  Phase 12. Jacobi stays classic even in Phase 11b for the same reason.
+
+The safest first consumer is not a compute pass at all: the **display quad** is
+graphics — the path toon_link already proved — and all five of its textures are
+already `Sampler2D`, accessed only with `.Sample`, so the collapse changes five
+declarations and zero access sites. It goes first in phase_11.md §4.
 
 Synchronization is not the usual objection here: the renderer has no automatic
 barrier tracking for bindless to break (`PendingComputeCommand::Barrier` is
@@ -1702,15 +1739,25 @@ change.** Watercolor's compute passes read `Texture2D<float>`, which is a separa
 *sampled image* — Slang heap binding 2 — not `Sampler2D` (combined, binding 1,
 the only binding `DescriptorHeap` creates). Those declarations have to become
 `Sampler2D<float>` first. Sampling method is unaffected; a combined descriptor
-serves `Load` as well as `Sample`.
+serves `Load` as well as `Sample`. One thing even here is measured only for
+`float4`: no shader has ever mixed `Sampler2D<float>` and `Sampler2D<float4>`
+handles, so the spike carried a variant for it. Measured: both element types do
+share the one combined array at binding 1 — the element type never reaches the
+`OpTypeImage` at all (phase_11.md §9.1).
 
-**The write half (`RWTexture2D`) is out of scope until a spike says otherwise**,
-and stays a non-goal above. Storage images are `VK_DESCRIPTOR_TYPE_STORAGE_IMAGE`,
-a different type from the heap's one binding. Entering the heap would need:
+**The write half (`RWTexture2D`) stays a non-goal above, and is Phase 11b's.**
+Storage images are `VK_DESCRIPTOR_TYPE_STORAGE_IMAGE`, a different type from the
+heap's one binding. Entering the heap would need:
 
-- **Slang's heap binding number for storage images — unmeasured.** The Phase 0
-  spike confirmed 0 sampler / 1 combined / 2 sampled and never probed storage.
-  This is the spike to run before estimating anything else here.
+- ~~**Slang's storage-image heap behaviour — unmeasured** … `RWTexture2D<float>`
+  and `<float4>` are different `OpTypeImage`s, so Slang either emits one
+  descriptor-aliased array at one binding or one array *per format* at
+  several~~ — **measured, and the premise was wrong.** They are the *same*
+  `OpTypeImage`: Slang emits one scalar-`%float` image with format `Unknown` per
+  access class and truncates the result, so the format never enters the type.
+  One storage array serves every element type, at **binding 3** in set 1
+  (phase_11.md §9.1, §9.3). The project pins Slang's `None` bindless preset, so
+  each descriptor type has its own binding.
 - `descriptorBindingStorageImageUpdateAfterBind` and
   `shaderStorageImageArrayDynamicIndexing`, neither requested in Phase 2.
 - `maxPerStageDescriptorUpdateAfterBindStorageImages` and
@@ -1718,11 +1765,12 @@ a different type from the heap's one binding. Entering the heap would need:
 - A second heap binding, plus relaxing the Phase 5 shape rejection — which Phase 3
   notes must happen together.
 
-So the plausible shapes are: **(a)** convert reads only, keeping storage writes on
-per-pipeline descriptors — collapses the pipelines that vary by *read* target,
-which is most of them; or **(b)** spike storage-image handles first and convert
-both. Start with the spike, since it decides whether (a) is a stepping stone or
-the destination.
+~~So the plausible shapes are: **(a)** convert reads only … or **(b)** spike
+storage-image handles first and convert both.~~ Decided: the spike runs first
+inside this phase (it is compile-only and cheap), the read collapses land
+unconditionally, and the storage half is **Phase 11b**, written only on a
+passing gate. **The gate passed**, so the reads were a stepping stone after all; the work
+ended at 20 pipelines with 11b unblocked.
 
 **This does not delete `StorageTexture`.** That type owns `vk::Image`,
 `vk_mem::Allocation`, `vk::ImageView`, format and extent — it is an *ownership*
@@ -1733,11 +1781,48 @@ aliasing the same `VkImage`. Collapsing those into one texture type carrying bot
 usages and both views is a separate refactor that bindless neither requires nor
 provides, and which could be done today, independently.
 
-**Verify:** `just shaders watercolor`; `just test`; `just sweep`. Watercolor is a
-simulation, so a green sweep is weak evidence — a wrong ping-pong handle renders a
-plausible-looking but wrong image with no validation output. Compare frames
-against the pre-migration build, and convert one pass at a time rather than all
-nine at once.
+**Verified:** `just shaders watercolor`, `just test`, `just lint`, `just sweep`
+16/16. Watercolor is a simulation, so a green sweep is weak evidence — a wrong
+ping-pong handle renders a plausible-looking but wrong image with no validation
+output. ~~Compare frames against the pre-migration build~~ — impossible as
+written: the sim is all-zero without brush input, and the repo has no
+frame-capture facility. What carried the weight is phase_11.md §3/§9.6:
+temporary deterministic-stroke scaffolding, an A/B against a pre-migration
+baseline at three checkpoints (**0** differing pixels), and a poison control per
+collapse, each of which changed the frame. The two compute poisons read the
+wrong side of the ping-pong, which is the failure this work could actually
+cause. `dt` needed no freezing — it is already a `const`; the wall-clock input
+that did break the A/B was the FPS label.
+
+## Phase 11b — watercolor: storage-image handles (follow-up; unblocked)
+
+Split from Phase 11 the way 8b was split from 8. No plan doc exists yet: it gets
+written as `bindless_textures/phase_11b.md` with the measured facts in hand.
+**Phase 11's gate passed**, so this is unblocked. The measurements it needs are
+in phase_11.md §9.1: the storage heap array sits at **binding 2** in set 1, one
+array serves every element type (the format never reaches the `OpTypeImage`),
+and the only added capability is `RuntimeDescriptorArray`. Two things the plan
+did not expect. First, the classic path already declares
+`StorageImageRead/WriteWithoutFormat` while the renderer requests neither —
+which is legal at API 1.3, where those are per-format bits rather than device
+features, so **11b must not add them to the required-features list**; requiring
+the read bit would fail the suitability gate on an Intel Iris Xe that runs the
+classic path validation-clean today. Second, binding 2 is where Slang's
+default preset (`BindlessDescriptorOptions.VkMutable`) aliases *every*
+non-sampler descriptor type, expecting a `VK_DESCRIPTOR_TYPE_MUTABLE_EXT`
+binding. 11b does not have to implement that: overriding
+`getDescriptorFromHandle` to pass `BindlessDescriptorOptions.None` gives regular
+binding rules and puts storage images at **binding 3**, with binding 1 unchanged.
+**Done**, ahead of 11b: the override is injected as a link component, and all 71
+committed artifacts stayed byte-identical. The sketch — recorded in phase_11.md §5 so the
+gate has a visible other side — is: a second heap binding with its own slot
+counter and no-sampler insert path, two feature bits mirrored into the
+suitability gate, two more `undersized_limits` checks, a second
+`DescriptorHandleShape` through reflection + codegen + the check_crate stub,
+fixtures, then the per-pass migration ending at **12 pipelines** (jacobi
+deliberately left classic — its parity flips per dispatch, which is Phase 12's
+territory). If the gate fails, this phase never exists and storage images stay
+a non-goal, now with disassembly instead of a question mark.
 
 ---
 
@@ -1805,15 +1890,21 @@ also pushes, asserting both dispatches see their own bytes. This is the reason t
 do compute's version as considered work rather than as a freebie tacked onto
 Phase 8.
 
-**Why it is not scheduled.** Nothing wants it yet. Compute usage here is narrow,
-per-dispatch varying data goes through the params UBO or a BDA pointer today, and
-Phase 9 needs per-*draw* material indices, not per-dispatch. Phase 11's watercolor
-migration is the most likely source of demand — 18 compute pipeline creations
-against 9 distinct shaders — but its duplicates are parity variants that a
-*param-block* handle already collapses with no per-dispatch channel at all, which
-is precisely what makes it the safest first consumer. So the honest trigger for
-this phase is a compute shader that genuinely needs data varying *between
-dispatches of the same pipeline*, and none exists.
+**Why it is not scheduled.** Nothing wants it yet — but the trigger now has a
+name. Compute usage here is narrow, per-dispatch varying data goes through the
+params UBO or a BDA pointer today, and Phase 9 needs per-*draw* material
+indices, not per-dispatch. ~~Phase 11's watercolor duplicates are parity
+variants that a *param-block* handle already collapses with no per-dispatch
+channel at all~~ — measured wrong during Phase 11 planning: two of them are
+per-dispatch. Jacobi's `pressure_parity` flips between the two dispatches of
+one frame (examples/watercolor/src/main.rs:923-927), and the blur H/V pair is
+one shader dispatched twice with a different `direction` uniform. A handle in a
+once-per-frame uniform cannot express either, so Phases 11/11b leave them as
+the last duplicates: 12 pipelines, with this phase the only path to 10. The
+honest trigger — a compute shader that genuinely needs data varying *between
+dispatches of the same pipeline* — therefore exists, twice, and this phase is
+scheduled behind demand for those last two collapses rather than behind
+discovery.
 
 ## Phase 13 — push constants in the picking path (follow-up; blocked on demand, not on difficulty)
 
@@ -1883,6 +1974,71 @@ above dissolves, because each queued draw carries its own. **Doing this phase
 before that one would build the API that the multi-draw integration then
 replaces.**
 
+## Phase 14 — blanket `NonUniform` in the handle override (follow-up; no demand yet)
+
+Not a prerequisite for anything. `docs/bindless.md` ("The uniformity rule")
+names this path — a `getDescriptorFromHandle` override plus the
+`shaderSampledImageArrayNonUniformIndexing` device feature — and half of it
+already exists: `load_bindless_options_module`
+(crates/slang-reflection/src/lib.rs) overrides the hook globally to pin the
+`None` preset, and that override is the only seam where the decoration can be
+added (see "Why this option and not the others"). This section records what
+the remaining half costs.
+
+**The trigger** is a handle — or an index or pointer that selects the struct
+carrying one — that varies within a single draw. That is the case the
+uniformity rule forbids: Slang compiles the divergent access without
+`NonUniformEXT`, validation cannot see it, and wave-scalarizing hardware
+renders the wrong texture while other hardware renders correctly.
+
+**The mechanism is not a `BindlessDescriptorOptions` value.** The enum has
+exactly two members, `None` and `VkMutable`
+(slang/source/slang/hlsl.meta.slang:27589) — there is no `NonUniform` option
+to pass. The lever is the core module's `nonuniform()` intrinsic on
+`DescriptorHandle<T>` (hlsl.meta.slang:27707), which lowers to
+`OpNonUniformResourceIndex`. The override change is one line:
+
+```slang
+return defaultGetDescriptorFromHandle(nonuniform(handleValue), BindlessDescriptorOptions.None);
+```
+
+The work:
+
+- The one-line change in `load_bindless_options_module`.
+- Enable `shader_sampled_image_array_non_uniform_indexing` in
+  `PhysicalDeviceVulkan12Features` (renderer.rs:3774) and add it to the
+  missing-features suitability check (renderer.rs:3419). If Phase 11b has
+  landed storage-image handles, `shaderStorageImageArrayNonUniformIndexing`
+  joins both lists.
+- Rewrite the uniformity rule in `docs/bindless.md`: the rule dissolves into
+  performance guidance, and the one-draw-per-material pattern stays as the
+  recommended shape rather than the required one.
+
+**The open question, to verify rather than assume:** whether the `NonUniform`
+decoration survives `[ForceInline]` inlining of
+`defaultGetDescriptorFromHandle` (hlsl.meta.slang:27597) and lands on the
+descriptor access, not on a dead pre-inline value. Slang has a propagation
+pass for exactly this, but the whole point of the change is a guarantee.
+Compile a fixture with deliberately divergent handle selection — a per-pixel
+ternary between two handles is the documented forbidden case — then
+`spirv-dis` and confirm both the `NonUniform` decoration on the access chain
+and the `SampledImageArrayNonUniformIndexing` capability. Without the
+decoration the change is a silent no-op, which is the exact failure shape the
+uniformity rule documents.
+
+**The cost, and why it is not scheduled.** The override applies to every
+handle access, uniform or not. AMD compilers waterfall a decorated descriptor
+load; a value that is uniform at runtime makes the loop run once, so the cost
+is small but not provably zero. Nothing today selects a handle non-uniformly —
+Phase 9's push-constant pattern makes every existing handle uniform by
+construction — so today the change buys insurance and pays the waterfall for
+it. The per-site alternative, `nonuniform(handleValue)` written in shader
+source at the divergent access, keeps uniform accesses clean but reinstates
+the footgun: nothing enforces that the annotation is present where it is
+needed. Every committed `.spv` that touches a handle churns (new capability
+plus decorations), so the change rides `just shaders` plus the usual
+frozen-time visual A/B.
+
 ---
 
 ## macOS notes
@@ -1928,9 +2084,10 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 7d | ✅ zero snapshot churn; ~~address stable across two consecutive frames~~ dropped as vacuous — the singleton path takes no frame index; ~~migrate `toon_link`'s materials as the end-to-end proof, which means landing after Phase 9~~ `ray_marching` was the migrated consumer, before Phase 9 — a frozen-time pixel-identical A/B ([detail](bindless_textures/phase_07d.md)) |
 | 8 | ✅ `cargo check --workspace --all-targets`, `just lint`, `just test` with no snapshot churn, `just sweep` — plus a forced push-block run, since nothing declares one yet ([detail](bindless_textures/phase_08.md)) |
 | 8b | ✅ `cargo check --workspace --all-targets` across every example, `just test`, `just lint`, `just sweep` — plus the four `multi_mesh` controls re-run as compile errors, and a fifth (same-size imposter block) Phase 8 could not express ([detail](bindless_textures/phase_08b.md)) |
-| 9 | `just shaders toon_link`, `just test` and `just sweep` ✅; `just toon_link link-verify-p1` not recorded as run — the four-point visual A/B (a wrong material index is silent) has **not** been run ([detail](bindless_textures/phase_09.md)) |
+| 9 | ✅ `just shaders toon_link`, `just test`, `just sweep`, and the four-point visual A/B (all four checks passed); `just toon_link link-verify-p1` not recorded as run ([detail](bindless_textures/phase_09.md)) |
 | 10 | ✅ docs only — the llm_notes updates plus [`docs/bindless.md`](../docs/bindless.md) |
-| 11 | `just shaders watercolor`, `just test`, `just sweep` — plus a frame comparison against the pre-migration build, since a wrong ping-pong handle is silent |
+| 11 | ✅ `just shaders watercolor`, `just test` (one additive snapshot), `just lint`, `just sweep` 16/16 — plus the deterministic-stroke A/B at three checkpoints (0 differing pixels) and a poison control per collapse, each of which changed the frame ([detail](bindless_textures/phase_11.md)) |
+| 11b | written with its plan; Phase 11's gate passed, so it is unblocked |
 
 Per [`docs/testing.md`](../docs/testing.md), read before accepting any snapshot or
 adding a validation check. Layout bugs behind device addresses, heap indices and

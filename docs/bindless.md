@@ -35,9 +35,14 @@ struct Material {
   for those pipelines. No app code binds anything.
 - Only `Sampler2D` handles are supported (one combined-image-sampler heap
   binding). Reflection rejects other handle shapes and handle arrays.
-- The sample site does not change. `material.tex0.Sample(uv)` works as if
-  the field were a `Sampler2D`, and `Sampler2D tex = material.tex0;`
-  converts at a boundary so helper functions stay handle-free.
+- The compiler pins the Slang `None` bindless preset. Each descriptor type
+  then gets its own heap binding: 0 sampler, 1 combined image sampler, 2
+  sampled image, 3 storage image. This renderer uses `None` rather than
+  the Slang default preset. The default puts every non-sampler type on one
+  binding, and needs a `VK_DESCRIPTOR_TYPE_MUTABLE_EXT` binding.
+- [ ] The sample site does not change. `material.tex0.Sample(uv)` works as if
+      the field were a `Sampler2D`, and `Sampler2D tex = material.tex0;`
+      converts at a boundary so helper functions stay handle-free.
 
 `examples/depth_texture` is the minimal form: one handle in the
 `ParameterBlock`, written each frame from `bindless_handle()`.

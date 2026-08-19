@@ -8,101 +8,61 @@
         "typeName": "DisplayParams",
         "fields": [
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "deposit_0_3",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "deposit_4_7",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "deposit_8_11",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 3,
-              "count": 1
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "paperHeight",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 4,
-              "count": 1
+              "kind": "uniform",
+              "offset": 24,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "wetMask",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 5,
-              "count": 1
+              "kind": "uniform",
+              "offset": 32,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           },
           {
             "kind": "vector",
             "fieldName": "texelSize",
             "binding": {
               "kind": "uniform",
-              "offset": 0,
+              "offset": 40,
               "size": 8
             },
             "elementCount": 2,
@@ -116,7 +76,7 @@
             "fieldName": "debugView",
             "binding": {
               "kind": "uniform",
-              "offset": 8,
+              "offset": 48,
               "size": 4
             },
             "enumType": {
@@ -139,7 +99,7 @@
             "fieldName": "canvasAspect",
             "binding": {
               "kind": "uniform",
-              "offset": 12,
+              "offset": 52,
               "size": 4
             },
             "scalarType": "float32"
@@ -149,7 +109,7 @@
             "fieldName": "windowAspect",
             "binding": {
               "kind": "uniform",
-              "offset": 16,
+              "offset": 56,
               "size": 4
             },
             "scalarType": "float32"
@@ -157,48 +117,6 @@
           {
             "kind": "struct",
             "fieldName": "pigment0",
-            "binding": {
-              "kind": "uniform",
-              "offset": 32,
-              "size": 32
-            },
-            "structType": {
-              "typeName": "PigmentKM",
-              "fields": [
-                {
-                  "kind": "vector",
-                  "fieldName": "absorption",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 0,
-                    "size": 12
-                  },
-                  "elementCount": 3,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                },
-                {
-                  "kind": "vector",
-                  "fieldName": "scattering",
-                  "binding": {
-                    "kind": "uniform",
-                    "offset": 16,
-                    "size": 12
-                  },
-                  "elementCount": 3,
-                  "elementType": {
-                    "kind": "scalar",
-                    "scalarType": "float32"
-                  }
-                }
-              ]
-            }
-          },
-          {
-            "kind": "struct",
-            "fieldName": "pigment1",
             "binding": {
               "kind": "uniform",
               "offset": 64,
@@ -240,7 +158,7 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment2",
+            "fieldName": "pigment1",
             "binding": {
               "kind": "uniform",
               "offset": 96,
@@ -282,7 +200,7 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment3",
+            "fieldName": "pigment2",
             "binding": {
               "kind": "uniform",
               "offset": 128,
@@ -324,7 +242,7 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment4",
+            "fieldName": "pigment3",
             "binding": {
               "kind": "uniform",
               "offset": 160,
@@ -366,7 +284,7 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment5",
+            "fieldName": "pigment4",
             "binding": {
               "kind": "uniform",
               "offset": 192,
@@ -408,7 +326,7 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment6",
+            "fieldName": "pigment5",
             "binding": {
               "kind": "uniform",
               "offset": 224,
@@ -450,7 +368,7 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment7",
+            "fieldName": "pigment6",
             "binding": {
               "kind": "uniform",
               "offset": 256,
@@ -492,7 +410,7 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment8",
+            "fieldName": "pigment7",
             "binding": {
               "kind": "uniform",
               "offset": 288,
@@ -534,7 +452,7 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment9",
+            "fieldName": "pigment8",
             "binding": {
               "kind": "uniform",
               "offset": 320,
@@ -576,7 +494,7 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment10",
+            "fieldName": "pigment9",
             "binding": {
               "kind": "uniform",
               "offset": 352,
@@ -618,10 +536,52 @@
           },
           {
             "kind": "struct",
-            "fieldName": "pigment11",
+            "fieldName": "pigment10",
             "binding": {
               "kind": "uniform",
               "offset": 384,
+              "size": 32
+            },
+            "structType": {
+              "typeName": "PigmentKM",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "absorption",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "scattering",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "struct",
+            "fieldName": "pigment11",
+            "binding": {
+              "kind": "uniform",
+              "offset": 416,
               "size": 32
             },
             "structType": {
@@ -725,47 +685,12 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 416
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 416
-          },
-          {
-            "binding": 2,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 416
-          },
-          {
-            "binding": 3,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 416
-          },
-          {
-            "binding": 4,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 416
-          },
-          {
-            "binding": 5,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 416
+            "size": 448
           }
         ]
       }
     ],
     "pushConstantRanges": [],
-    "bindlessHeapSet": null
+    "bindlessHeapSet": 1
   }
 }

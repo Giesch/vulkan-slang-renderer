@@ -17,7 +17,9 @@ use super::texture::Texture;
 /// Metal argument buffers with much lower limits than desktop Vulkan.
 pub(super) const MAX_BINDLESS_TEXTURES: u32 = 4096;
 
-/// Defined by Slang; 0 is for samplers and 2 is for sampled images
+/// Slang sets the heap binding numbers. Under the `None` bindless preset they
+/// are 0 sampler, 1 combined image sampler, 2 sampled image, 3 storage image.
+/// The shader compiler pins that preset in `load_bindless_options_module`.
 const COMBINED_IMAGE_SAMPLER_BINDING: u32 = 1;
 
 /// A texture's slot in the heap.

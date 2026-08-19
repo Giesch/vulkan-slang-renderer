@@ -5,6 +5,7 @@ info:
 ---
 pub mod handle_mixed;
 pub mod handle_params;
+pub mod handle_params_compute;
 pub mod handle_pointee;
 pub mod pointer_dual_context;
 pub mod pointer_params_compute;
@@ -55,6 +56,7 @@ pub struct ShaderAtlas {
     pub std430_scalars: std430_scalars::Shader,
     pub std430_vec3_padding: std430_vec3_padding::Shader,
     pub std430_vectors: std430_vectors::Shader,
+    pub handle_params_compute: handle_params_compute::Shader,
     pub pointer_params_compute: pointer_params_compute::Shader,
 }
 
@@ -86,6 +88,7 @@ impl ShaderAtlasRoot for ShaderAtlas {
             std430_scalars: std430_scalars::Shader::init(),
             std430_vec3_padding: std430_vec3_padding::Shader::init(),
             std430_vectors: std430_vectors::Shader::init(),
+            handle_params_compute: handle_params_compute::Shader::init(),
             pointer_params_compute: pointer_params_compute::Shader::init(),
         }
     }

@@ -10,7 +10,7 @@ import watercolor_common;
 ParameterBlock<Params> params;
 
 struct Params {
-    Texture2D<float> inputTex;
+    Sampler2D<float>.Handle inputTex;
     RWTexture2D<float> outputTex;
     float2 gridSize;
     float2 direction; // (1,0) for horizontal, (0,1) for vertical

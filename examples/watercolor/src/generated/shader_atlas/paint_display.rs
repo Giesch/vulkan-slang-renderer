@@ -58,11 +58,16 @@ impl TryFrom<u32> for DebugView {
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct DisplayParams {
+    pub deposit_0_3: BindlessHandle<Sampler2D>,
+    pub deposit_4_7: BindlessHandle<Sampler2D>,
+    pub deposit_8_11: BindlessHandle<Sampler2D>,
+    pub paper_height: BindlessHandle<Sampler2D>,
+    pub wet_mask: BindlessHandle<Sampler2D>,
     pub texel_size: glam::Vec2,
     pub debug_view: DebugView,
     pub canvas_aspect: f32,
     pub window_aspect: f32,
-    pub _padding_0: [u8; 12],
+    pub _padding_0: [u8; 4],
     pub pigment0: PigmentKM,
     pub pigment1: PigmentKM,
     pub pigment2: PigmentKM,
@@ -78,38 +83,48 @@ pub struct DisplayParams {
 }
 
 impl GPUWrite for DisplayParams {}
-const _: () = assert!(std::mem::size_of::<DisplayParams>() == 416);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, texel_size) == 0);
+const _: () = assert!(std::mem::size_of::<DisplayParams>() == 448);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, deposit_0_3) == 0);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, deposit_4_7) == 8);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, deposit_8_11) == 16);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, paper_height) == 24);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, wet_mask) == 32);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, texel_size) == 40);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, debug_view) == 8);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, debug_view) == 48);
 const _: () = assert!(std::mem::size_of::<DebugView>() == 4);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, canvas_aspect) == 12);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, canvas_aspect) == 52);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, window_aspect) == 16);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, window_aspect) == 56);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment0) == 32);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment0) == 64);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment1) == 64);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment1) == 96);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment2) == 96);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment2) == 128);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment3) == 128);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment3) == 160);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment4) == 160);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment4) == 192);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment5) == 192);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment5) == 224);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment6) == 224);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment6) == 256);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment7) == 256);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment7) == 288);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment8) == 288);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment8) == 320);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment9) == 320);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment9) == 352);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment10) == 352);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment10) == 384);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
-const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment11) == 384);
+const _: () = assert!(std::mem::offset_of!(DisplayParams, pigment11) == 416);
 const _: () = assert!(std::mem::size_of::<PigmentKM>() == 32);
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -129,11 +144,6 @@ const _: () = assert!(std::mem::offset_of!(PigmentKM, scattering) == 16);
 const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 
 pub struct Resources<'a> {
-    pub deposit_0_3: &'a TextureHandle,
-    pub deposit_4_7: &'a TextureHandle,
-    pub deposit_8_11: &'a TextureHandle,
-    pub paper_height: &'a TextureHandle,
-    pub wet_mask: &'a TextureHandle,
     pub display_params_buffer: &'a UniformBufferHandle<DisplayParams>,
 }
 
@@ -162,11 +172,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.deposit_0_3,
-            resources.deposit_4_7,
-            resources.deposit_8_11,
-            resources.paper_height,
-            resources.wet_mask,
         ];
 
         #[rustfmt::skip]
