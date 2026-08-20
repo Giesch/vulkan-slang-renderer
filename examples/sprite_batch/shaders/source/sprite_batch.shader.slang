@@ -17,7 +17,7 @@ ParameterBlock<SpriteBatchParams> params;
 struct SpriteBatchParams {
     mltrs::ImmutableAddr<Sprite> sprites;
     mltrs::Projection projection;
-    Sampler2D texture;
+    Sampler2D.Handle texture;
 }
 
 struct Sprite {

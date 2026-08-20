@@ -330,6 +330,7 @@ pub struct MultiMesh {
     #[allow(unused)]
     mesh: MeshHandle<Vertex>,
     specs: Vec<PipelineSpec>,
+    textures: Vec<TextureHandle>,
     pipelines: Vec<(
         PipelineHandle<DrawIndexed>,
         UniformBufferHandle<MultiMeshParams>,
@@ -365,7 +366,6 @@ impl Game for MultiMesh {
         for spec in &specs {
             let params_buffer = renderer.create_uniform_buffer::<MultiMeshParams>()?;
             let resources = Resources {
-                texture: &textures[spec.texture],
                 params_buffer: &params_buffer,
             };
             let pipeline_config = shaders
@@ -381,6 +381,7 @@ impl Game for MultiMesh {
             start_time: Instant::now(),
             mesh,
             specs,
+            textures,
             pipelines,
         })
     }
@@ -412,6 +413,8 @@ impl Game for MultiMesh {
                     MultiMeshParams {
                         mvp,
                         tint: spec.tint,
+                        texture: self.textures[spec.texture].bindless_handle(),
+                        _padding_0: Default::default(),
                     },
                 );
             }

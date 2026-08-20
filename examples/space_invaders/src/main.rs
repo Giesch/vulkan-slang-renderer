@@ -29,6 +29,7 @@ struct SpaceInvaders {
     sprites_buffer: StorageBufferHandle<Sprite>,
     debug_boxes_buffer: StorageBufferHandle<DebugBox>,
     sprites: Vec<Sprite>,
+    sprite_sheet_texture: TextureHandle,
     debug_boxes: Vec<DebugBox>,
     player: Player,
     enemies: Vec<Enemy>,
@@ -162,7 +163,6 @@ impl Game for SpaceInvaders {
         let sprite_sheet_texture = load_texture(renderer, "sprite_sheet.ktx2")?;
 
         let resources = Resources {
-            sprite_sheet: &sprite_sheet_texture,
             params_buffer: &params_buffer,
         };
 
@@ -181,6 +181,7 @@ impl Game for SpaceInvaders {
             sprites_buffer,
             debug_boxes_buffer,
             sprites,
+            sprite_sheet_texture,
             debug_boxes,
             player,
             enemies,
@@ -389,6 +390,8 @@ impl Game for SpaceInvaders {
                 projection,
                 sprites: gpu.addr(&self.sprites_buffer).into(),
                 debug_boxes: gpu.addr(&self.debug_boxes_buffer).into(),
+                sprite_sheet: self.sprite_sheet_texture.bindless_handle(),
+                _padding_0: Default::default(),
             };
             gpu.write_uniform(&mut self.params_buffer, params);
 

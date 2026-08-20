@@ -11,7 +11,7 @@ struct SpaceInvadersParams {
     mltrs::Projection projection;
     mltrs::ReadAddr<Sprite> sprites;
     mltrs::ReadAddr<DebugBox> debugBoxes;
-    Sampler2D spriteSheet;
+    Sampler2D.Handle spriteSheet;
 }
 
 struct Sprite {

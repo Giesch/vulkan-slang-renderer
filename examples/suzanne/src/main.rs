@@ -20,7 +20,6 @@ fn main() -> Result<(), anyhow::Error> {
     Suzanne::run()
 }
 
-#[allow(unused)]
 pub struct Suzanne {
     start_time: Instant,
     pipeline: PipelineHandle<DrawIndexed>,
@@ -96,9 +95,6 @@ impl Game for Suzanne {
 
         let params_buffer = renderer.create_uniform_buffer::<SuzanneParams>()?;
         let resources = Resources {
-            texture0: &textures[0],
-            texture1: &textures[1],
-            texture2: &textures[2],
             params_buffer: &params_buffer,
         };
         let pipeline_config = shaders
@@ -125,6 +121,9 @@ impl Game for Suzanne {
             mvp,
             time: elapsed.as_secs_f32(),
             _padding_0: Default::default(),
+            texture0: self.textures[0].bindless_handle(),
+            texture1: self.textures[1].bindless_handle(),
+            texture2: self.textures[2].bindless_handle(),
         };
 
         renderer.draw_indexed(&self.pipeline, |gpu| {

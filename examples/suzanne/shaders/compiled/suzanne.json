@@ -77,58 +77,34 @@
             "scalarType": "float32"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "texture0",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 200,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "texture1",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
+              "kind": "uniform",
+              "offset": 208,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "texture2",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 3,
-              "count": 1
+              "kind": "uniform",
+              "offset": 216,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           }
         ]
       }
@@ -259,33 +235,12 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 208
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 208
-          },
-          {
-            "binding": 2,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 208
-          },
-          {
-            "binding": 3,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 208
+            "size": 224
           }
         ]
       }
     ],
     "pushConstantRanges": [],
-    "bindlessHeapSet": null
+    "bindlessHeapSet": 1
   }
 }

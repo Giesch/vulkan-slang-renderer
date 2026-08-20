@@ -1,7 +1,7 @@
 # Phase 11c — constant texture slots become handles
 
-**Status: watercolor portion done, 2026-08-20. The other seven examples (§2.2)
-are not started.** See [§6](#6-outcome--watercolor). Follow-up to
+**Status: done, 2026-08-20.** Watercolor in [§6](#6-outcome--watercolor), the
+other seven examples in [§7](#7-outcome--the-other-examples). Follow-up to
 [phase_11b.md](phase_11b.md), for Phase 11c of
 [../bindless_textures.md](../bindless_textures.md). Written against the 11b
 working tree; the line numbers below are that snapshot.
@@ -259,6 +259,73 @@ check. Both need a human at the window.
 `docs/bindless.md` needs no edit. The handle default, the two heap bindings,
 and the "`examples/watercolor` is the reference for storage handles" paragraph
 all still describe the tree.
+
+## 7. Outcome — the other examples
+
+**Done, 2026-08-20. 9 slots, 7 shaders, 7 examples. Pipeline counts unchanged.**
+
+### 7.1 The conversions
+
+Every slot in the §2.2 table converted to `Sampler2D.Handle`. Every shader
+body is unchanged except two:
+
+- `koch_curve` renames `cubeMap` to `reflectionMap`, taking the rename option
+  §2.2 offers. The declaration and the one read site (`:167`) change together.
+- `serenity_crt` converts at the helper boundary: `Sampler2D tex = params.tex;`
+  feeds `sampleBloom`, the toon_link pattern §3 names. `sampleBloom` keeps its
+  signature. The dead `params.tex.Sample(uv);` statement at `:46` reads
+  identically through a handle and stays.
+
+Each shader's `Resources` collapses to `params_buffer` alone, its
+`descriptorSetLayouts[0]` to `binding 0 constantBuffer` alone, and its
+`bindlessHeapSet` flips `null` → `1`.
+
+Five examples promote a `setup` local to a `Game` struct field so the
+per-frame write can reach it: `koch_curve` (`reflection_map`), `multi_mesh`
+(`textures: Vec<TextureHandle>`), `serenity_crt` (`texture`),
+`space_invaders` (`sprite_sheet_texture`), `sprite_batch` (`texture`).
+`suzanne` and `viking_room` already hold theirs; both drop their struct-level
+`#[allow(unused)]`. `multi_mesh` writes
+`self.textures[spec.texture].bindless_handle()` once per pipeline per frame,
+17 uniform buffers in all.
+
+### 7.2 Uniform cost, measured
+
+`koch_curve` absorbs the handle into existing std140 tail padding; the other
+six blocks grow by 16 (8 for the handle, 8 padding).
+
+| shader | `Params` size |
+|---|---|
+| `koch_curve` | 48 → 48 |
+| `multi_mesh` | 208 → 224 |
+| `serenity_crt` | 64 → 80 |
+| `space_invaders` | 80 → 96 |
+| `sprite_batch` | 80 → 96 |
+| `suzanne` | 208 → 224 |
+| `viking_room` (`depth_texture`) | 192 → 208 |
+
+`serenity_crt`'s `tex` lands at offset 0 and shifts every later field by 8.
+
+### 7.3 Verification
+
+Mechanical checks only, the §6.2 deviation applied again: no A/B baselines,
+no poison controls. The exposure is the same — a wrong heap slot is silent —
+and each handle expression is the expression its deleted `Resources` field
+used.
+
+| check | result |
+|---|---|
+| reflection JSON, per slot: one `bindingRanges` entry dropped, field flips `resource` → `descriptorHandle` with a `uniform` binding of size 8, shape `sampler2D` | 9 of 9 |
+| all seven `descriptorSetLayouts[0]` hold `binding 0 constantBuffer` alone, `bindlessHeapSet` `null` → `1` | yes |
+| `cargo check --workspace --all-targets` | clean |
+| `just lint` (debug and release) | clean |
+| `just test` | green, no snapshot changed |
+| `just sweep` | 16 ok / 0 skip / 0 fail, self-test detected the injected fault |
+| `git status` confined to the seven example crates | yes |
+
+`docs/bindless.md` needs no edit. Its reference examples
+(`examples/depth_texture`, `examples/watercolor`, `examples/toon_link`) and
+both heap bindings still describe the tree.
 
 ## Out of scope
 

@@ -8,29 +8,21 @@
         "typeName": "SerenityCRTParams",
         "fields": [
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "tex",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           },
           {
             "kind": "vector",
             "fieldName": "resolution",
             "binding": {
               "kind": "uniform",
-              "offset": 0,
+              "offset": 8,
               "size": 8
             },
             "elementCount": 2,
@@ -44,7 +36,7 @@
             "fieldName": "scanlineIntensity",
             "binding": {
               "kind": "uniform",
-              "offset": 8,
+              "offset": 16,
               "size": 4
             },
             "scalarType": "float32"
@@ -54,7 +46,7 @@
             "fieldName": "scanlineCount",
             "binding": {
               "kind": "uniform",
-              "offset": 12,
+              "offset": 20,
               "size": 4
             },
             "scalarType": "float32"
@@ -64,7 +56,7 @@
             "fieldName": "time",
             "binding": {
               "kind": "uniform",
-              "offset": 16,
+              "offset": 24,
               "size": 4
             },
             "scalarType": "float32"
@@ -74,7 +66,7 @@
             "fieldName": "yOffset",
             "binding": {
               "kind": "uniform",
-              "offset": 20,
+              "offset": 28,
               "size": 4
             },
             "scalarType": "float32"
@@ -84,7 +76,7 @@
             "fieldName": "brightness",
             "binding": {
               "kind": "uniform",
-              "offset": 24,
+              "offset": 32,
               "size": 4
             },
             "scalarType": "float32"
@@ -94,7 +86,7 @@
             "fieldName": "contrast",
             "binding": {
               "kind": "uniform",
-              "offset": 28,
+              "offset": 36,
               "size": 4
             },
             "scalarType": "float32"
@@ -104,7 +96,7 @@
             "fieldName": "saturation",
             "binding": {
               "kind": "uniform",
-              "offset": 32,
+              "offset": 40,
               "size": 4
             },
             "scalarType": "float32"
@@ -114,7 +106,7 @@
             "fieldName": "bloomIntensity",
             "binding": {
               "kind": "uniform",
-              "offset": 36,
+              "offset": 44,
               "size": 4
             },
             "scalarType": "float32"
@@ -124,7 +116,7 @@
             "fieldName": "bloomThreshold",
             "binding": {
               "kind": "uniform",
-              "offset": 40,
+              "offset": 48,
               "size": 4
             },
             "scalarType": "float32"
@@ -134,7 +126,7 @@
             "fieldName": "rgbShift",
             "binding": {
               "kind": "uniform",
-              "offset": 44,
+              "offset": 52,
               "size": 4
             },
             "scalarType": "float32"
@@ -144,7 +136,7 @@
             "fieldName": "adaptiveIntensity",
             "binding": {
               "kind": "uniform",
-              "offset": 48,
+              "offset": 56,
               "size": 4
             },
             "scalarType": "float32"
@@ -154,7 +146,7 @@
             "fieldName": "vignetteStrength",
             "binding": {
               "kind": "uniform",
-              "offset": 52,
+              "offset": 60,
               "size": 4
             },
             "scalarType": "float32"
@@ -164,7 +156,7 @@
             "fieldName": "curvature",
             "binding": {
               "kind": "uniform",
-              "offset": 56,
+              "offset": 64,
               "size": 4
             },
             "scalarType": "float32"
@@ -174,7 +166,7 @@
             "fieldName": "flickerStrength",
             "binding": {
               "kind": "uniform",
-              "offset": 60,
+              "offset": 68,
               "size": 4
             },
             "scalarType": "float32"
@@ -246,19 +238,12 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 64
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 64
+            "size": 80
           }
         ]
       }
     ],
     "pushConstantRanges": [],
-    "bindlessHeapSet": null
+    "bindlessHeapSet": 1
   }
 }

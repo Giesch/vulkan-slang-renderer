@@ -11,7 +11,7 @@ struct MultiMeshParams {
     float4 tint;
     // the raster/texture test objects modulate by this; every pre-existing
     // shape binds a solid white image, so their output is unchanged
-    Sampler2D texture;
+    Sampler2D.Handle texture;
 }
 
 struct Vertex {

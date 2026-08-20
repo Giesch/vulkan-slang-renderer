@@ -1,6 +1,6 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-11b done (including 7b, 7c, 7d and 8b). Phases 11c, 12, 13
+**Status: Phases 0-11c done (including 7b, 7c, 7d and 8b). Phases 12, 13
 and 14 are optional follow-ups, prerequisites for nothing.** Design note for
 adopting bindless texture access using Slang's `DescriptorHandle<T>` with its
 default SPIR-V lowering.

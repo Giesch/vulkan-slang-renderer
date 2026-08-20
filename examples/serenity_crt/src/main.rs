@@ -7,7 +7,7 @@ use mltrs::editor::Slider;
 use mltrs::game::*;
 use mltrs::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, TextureFilter,
-    UniformBufferHandle,
+    TextureHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -24,6 +24,7 @@ struct SerenityCRT {
     edit_state: EditState,
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<SerenityCRTParams>,
+    texture: TextureHandle,
 }
 
 #[derive(Facet)]
@@ -65,7 +66,6 @@ impl Game for SerenityCRT {
 
         let params_buffer = renderer.create_uniform_buffer::<SerenityCRTParams>()?;
         let resources = Resources {
-            tex: &texture,
             params_buffer: &params_buffer,
         };
 
@@ -93,6 +93,7 @@ impl Game for SerenityCRT {
             edit_state,
             pipeline,
             params_buffer,
+            texture,
         })
     }
 
@@ -100,6 +101,7 @@ impl Game for SerenityCRT {
         let elapsed = (Instant::now() - self.start_time).as_secs_f32();
 
         let params = SerenityCRTParams {
+            tex: self.texture.bindless_handle(),
             resolution: renderer.window_resolution(),
             time: elapsed,
 
@@ -116,6 +118,7 @@ impl Game for SerenityCRT {
             vignette_strength: self.edit_state.vignette_strength.value,
             curvature: self.edit_state.curvature.value,
             flicker_strength: self.edit_state.flicker_strength.value,
+            _padding_0: Default::default(),
         };
 
         renderer.draw_vertex_count(&self.pipeline, 3, |gpu| {

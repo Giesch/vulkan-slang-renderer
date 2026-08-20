@@ -9,9 +9,9 @@ ParameterBlock<SuzanneParams> params;
 struct SuzanneParams {
     mltrs::MVPMatrices mvp;
     float time;
-    Sampler2D texture0;
-    Sampler2D texture1;
-    Sampler2D texture2;
+    Sampler2D.Handle texture0;
+    Sampler2D.Handle texture1;
+    Sampler2D.Handle texture2;
 }
 
 struct Vertex {

@@ -11,7 +11,7 @@ use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, TextureFilter,
-    UniformBufferHandle,
+    TextureHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -35,6 +35,7 @@ pub struct KochCurve {
     edit_state: EditState,
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<KochCurveParams>,
+    reflection_map: TextureHandle,
     mouse_down: bool,
     mouse_position: Vec2,
 }
@@ -57,13 +58,12 @@ impl Game for KochCurve {
     {
         const IMAGE_FILE_NAME: &str = "istockphoto-uffizi-blurred-612x612.ktx2";
         let file_path = manifest_path!["textures", IMAGE_FILE_NAME];
-        let cube_map = load_ktx2_texture(renderer, &file_path, TextureFilter::Linear)?;
+        let reflection_map = load_ktx2_texture(renderer, &file_path, TextureFilter::Linear)?;
 
         let params_buffer = renderer.create_uniform_buffer::<KochCurveParams>()?;
 
         let resources = Resources {
             params_buffer: &params_buffer,
-            cube_map: &cube_map,
         };
 
         let pipeline_config = shaders.koch_curve.pipeline_config(resources);
@@ -82,6 +82,7 @@ impl Game for KochCurve {
             edit_state,
             pipeline,
             params_buffer,
+            reflection_map,
             mouse_down: false,
             mouse_position: Vec2::ZERO,
         })
@@ -126,7 +127,7 @@ impl Game for KochCurve {
             sphere_radius: self.edit_state.sphere_radius.value,
             sphere_blend: self.edit_state.sphere_blend.value,
             rotation_speed: self.edit_state.rotation_speed.value,
-            _padding_0: Default::default(),
+            reflection_map: self.reflection_map.bindless_handle(),
         };
 
         renderer.draw_vertex_count(&self.pipeline, 3, |gpu| {

@@ -22,6 +22,7 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct SerenityCRTParams {
+    pub tex: BindlessHandle<Sampler2D>,
     pub resolution: glam::Vec2,
     pub scanline_intensity: f32,
     pub scanline_count: f32,
@@ -37,43 +38,45 @@ pub struct SerenityCRTParams {
     pub vignette_strength: f32,
     pub curvature: f32,
     pub flicker_strength: f32,
+    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for SerenityCRTParams {}
-const _: () = assert!(std::mem::size_of::<SerenityCRTParams>() == 64);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, resolution) == 0);
+const _: () = assert!(std::mem::size_of::<SerenityCRTParams>() == 80);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, tex) == 0);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, resolution) == 8);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, scanline_intensity) == 8);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, scanline_intensity) == 16);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, scanline_count) == 12);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, scanline_count) == 20);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, time) == 16);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, time) == 24);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, y_offset) == 20);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, y_offset) == 28);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, brightness) == 24);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, brightness) == 32);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, contrast) == 28);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, contrast) == 36);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, saturation) == 32);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, saturation) == 40);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, bloom_intensity) == 36);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, bloom_intensity) == 44);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, bloom_threshold) == 40);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, bloom_threshold) == 48);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, rgb_shift) == 44);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, rgb_shift) == 52);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, adaptive_intensity) == 48);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, adaptive_intensity) == 56);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, vignette_strength) == 52);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, vignette_strength) == 60);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, curvature) == 56);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, curvature) == 64);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, flicker_strength) == 60);
+const _: () = assert!(std::mem::offset_of!(SerenityCRTParams, flicker_strength) == 68);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
-    pub tex: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<SerenityCRTParams>,
 }
 
@@ -102,7 +105,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.tex,
         ];
 
         #[rustfmt::skip]

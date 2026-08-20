@@ -11,7 +11,7 @@ ParameterBlock<DepthTextureParams> params;
 
 struct DepthTextureParams {
     mltrs::MVPMatrices mvp;
-    Sampler2D texture;
+    Sampler2D.Handle texture;
 }
 
 struct Vertex {

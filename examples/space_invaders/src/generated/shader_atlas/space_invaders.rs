@@ -26,16 +26,20 @@ pub struct SpaceInvadersParams {
     pub projection: Projection,
     pub sprites: ReadAddr<Sprite>,
     pub debug_boxes: ReadAddr<DebugBox>,
+    pub sprite_sheet: BindlessHandle<Sampler2D>,
+    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for SpaceInvadersParams {}
-const _: () = assert!(std::mem::size_of::<SpaceInvadersParams>() == 80);
+const _: () = assert!(std::mem::size_of::<SpaceInvadersParams>() == 96);
 const _: () = assert!(std::mem::offset_of!(SpaceInvadersParams, projection) == 0);
 const _: () = assert!(std::mem::size_of::<Projection>() == 64);
 const _: () = assert!(std::mem::offset_of!(SpaceInvadersParams, sprites) == 64);
 const _: () = assert!(std::mem::size_of::<ReadAddr<Sprite>>() == 8);
 const _: () = assert!(std::mem::offset_of!(SpaceInvadersParams, debug_boxes) == 72);
 const _: () = assert!(std::mem::size_of::<ReadAddr<DebugBox>>() == 8);
+const _: () = assert!(std::mem::offset_of!(SpaceInvadersParams, sprite_sheet) == 80);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
@@ -93,7 +97,6 @@ const _: () = assert!(std::mem::offset_of!(Sprite, color) == 48);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 
 pub struct Resources<'a> {
-    pub sprite_sheet: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<SpaceInvadersParams>,
 }
 
@@ -122,7 +125,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.sprite_sheet,
         ];
 
         #[rustfmt::skip]

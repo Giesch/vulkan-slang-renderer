@@ -23,7 +23,7 @@ use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
     DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, RasterState,
-    Renderer, TextureFilter, UniformBufferHandle,
+    Renderer, TextureFilter, TextureHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -43,6 +43,7 @@ pub struct SpriteBatch {
     params_buffer: UniformBufferHandle<SpriteBatchParams>,
     sprites_buffer: ImmutableBufferHandle<Sprite>,
     sprites: Vec<Sprite>,
+    texture: TextureHandle,
     edit_state: EditState,
     last_frame_time: Instant,
     frame_times: VecDeque<Duration>,
@@ -84,7 +85,6 @@ impl Game for SpriteBatch {
 
         let resources = Resources {
             params_buffer: &params_buffer,
-            texture: &texture,
         };
 
         let pipeline_config = shaders
@@ -98,6 +98,7 @@ impl Game for SpriteBatch {
             params_buffer,
             sprites_buffer,
             sprites,
+            texture,
             edit_state: EditState {
                 fps: Label::new("FPS: --"),
             },
@@ -145,6 +146,8 @@ impl Game for SpriteBatch {
                 sprites: gpu.current_immutable_addr(&self.sprites_buffer),
                 _padding_0: Default::default(),
                 projection,
+                texture: self.texture.bindless_handle(),
+                _padding_1: Default::default(),
             };
             gpu.write_uniform(&mut self.params_buffer, params);
             gpu.write_immutable(&mut self.sprites_buffer, &self.sprites);

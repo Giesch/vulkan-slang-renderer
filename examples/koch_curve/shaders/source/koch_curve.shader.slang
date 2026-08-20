@@ -28,7 +28,7 @@ struct KochCurveParams {
     float sphere_blend;      // Blend weight (0=koch only, 1=sphere only)
     float rotation_speed;    // XZ rotation speed
 
-    Sampler2D cubeMap;
+    Sampler2D.Handle reflectionMap;
 }
 
 struct FragInput {
@@ -164,7 +164,7 @@ float4 mainImage(FragInput input)
         col = float3(dif);
 
         col = n*.5+.5;
-        col *= params.cubeMap.Sample(r.xy).rgb;
+        col *= params.reflectionMap.Sample(r.xy).rgb;
     }
 
     col = pow(col, float3(.4545)); // gamma correction

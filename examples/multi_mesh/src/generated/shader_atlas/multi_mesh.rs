@@ -25,14 +25,18 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 pub struct MultiMeshParams {
     pub mvp: MVPMatrices,
     pub tint: glam::Vec4,
+    pub texture: BindlessHandle<Sampler2D>,
+    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for MultiMeshParams {}
-const _: () = assert!(std::mem::size_of::<MultiMeshParams>() == 208);
+const _: () = assert!(std::mem::size_of::<MultiMeshParams>() == 224);
 const _: () = assert!(std::mem::offset_of!(MultiMeshParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(MultiMeshParams, tint) == 192);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(MultiMeshParams, texture) == 208);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
@@ -45,7 +49,6 @@ pub struct Vertex {
 impl GPUWrite for Vertex {}
 
 pub struct Resources<'a> {
-    pub texture: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<MultiMeshParams>,
 }
 
@@ -105,7 +108,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.texture,
         ];
 
         #[rustfmt::skip]

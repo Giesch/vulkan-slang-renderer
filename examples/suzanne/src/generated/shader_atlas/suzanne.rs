@@ -25,15 +25,24 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 pub struct SuzanneParams {
     pub mvp: MVPMatrices,
     pub time: f32,
-    pub _padding_0: [u8; 12],
+    pub _padding_0: [u8; 4],
+    pub texture0: BindlessHandle<Sampler2D>,
+    pub texture1: BindlessHandle<Sampler2D>,
+    pub texture2: BindlessHandle<Sampler2D>,
 }
 
 impl GPUWrite for SuzanneParams {}
-const _: () = assert!(std::mem::size_of::<SuzanneParams>() == 208);
+const _: () = assert!(std::mem::size_of::<SuzanneParams>() == 224);
 const _: () = assert!(std::mem::offset_of!(SuzanneParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(SuzanneParams, time) == 192);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(SuzanneParams, texture0) == 200);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(SuzanneParams, texture1) == 208);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(SuzanneParams, texture2) == 216);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
@@ -46,9 +55,6 @@ pub struct Vertex {
 impl GPUWrite for Vertex {}
 
 pub struct Resources<'a> {
-    pub texture0: &'a TextureHandle,
-    pub texture1: &'a TextureHandle,
-    pub texture2: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<SuzanneParams>,
 }
 
@@ -108,9 +114,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.texture0,
-            resources.texture1,
-            resources.texture2,
         ];
 
         #[rustfmt::skip]

@@ -30,7 +30,7 @@ pub struct KochCurveParams {
     pub sphere_radius: f32,
     pub sphere_blend: f32,
     pub rotation_speed: f32,
-    pub _padding_0: [u8; 8],
+    pub reflection_map: BindlessHandle<Sampler2D>,
 }
 
 impl GPUWrite for KochCurveParams {}
@@ -51,9 +51,10 @@ const _: () = assert!(std::mem::offset_of!(KochCurveParams, sphere_blend) == 32)
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 const _: () = assert!(std::mem::offset_of!(KochCurveParams, rotation_speed) == 36);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(KochCurveParams, reflection_map) == 40);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
 
 pub struct Resources<'a> {
-    pub cube_map: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<KochCurveParams>,
 }
 
@@ -82,7 +83,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.cube_map,
         ];
 
         #[rustfmt::skip]

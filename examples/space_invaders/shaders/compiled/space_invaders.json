@@ -223,22 +223,14 @@
             "access": "read"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "spriteSheet",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 80,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "sampler2D"
           }
         ]
       }
@@ -345,19 +337,12 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 80
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 80
+            "size": 96
           }
         ]
       }
     ],
     "pushConstantRanges": [],
-    "bindlessHeapSet": null
+    "bindlessHeapSet": 1
   }
 }

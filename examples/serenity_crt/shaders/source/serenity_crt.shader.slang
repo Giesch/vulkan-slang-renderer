@@ -10,7 +10,7 @@ import mltrs;
 ParameterBlock<SerenityCRTParams> params;
 
 struct SerenityCRTParams {
-    Sampler2D tex;
+    Sampler2D.Handle tex;
     float2 resolution;
 
     float scanlineIntensity; // Adjust intensity (0-1)
@@ -62,7 +62,8 @@ float4 effect(FragInput input) {
 
     // Apply bloom effect early
     if (params.bloomIntensity > 0.0) {
-        float4 bloomSample = sampleBloom(params.tex, uv, 0.005);
+        Sampler2D tex = params.tex;
+        float4 bloomSample = sampleBloom(tex, uv, 0.005);
         // Apply brightness to bloom sample to match pixel processing
         bloomSample.rgb *= params.brightness;
         float lum = dot(bloomSample.rgb, float3(0.299, 0.587, 0.114));
