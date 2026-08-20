@@ -7,11 +7,11 @@ import watercolor_common;
 ParameterBlock<Params> params;
 
 struct Params {
-    Texture2D<float> saturationIn;
-    Texture2D<float> wetMaskIn;
-    Texture2D<float> paperHeight;
-    RWTexture2D<float> saturationOut;
-    RWTexture2D<float> wetMaskOut;
+    Sampler2D<float>.Handle saturationIn;
+    Sampler2D<float>.Handle wetMaskIn;
+    RWTexture2D<float>.Handle saturationOut;
+    RWTexture2D<float>.Handle wetMaskOut;
+    Sampler2D<float> paperHeight;
     float2 gridSize;
     float diffuseRate;
     float capacity;

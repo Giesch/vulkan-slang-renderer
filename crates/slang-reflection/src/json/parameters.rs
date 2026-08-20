@@ -373,11 +373,13 @@ pub struct DescriptorHandleStructField {
     pub shape: DescriptorHandleShape,
 }
 
-/// The descriptor type a handle resolves to. We only support combined image samplers.
+/// The descriptor type a handle resolves to. Only combined image samplers
+/// and storage images are supported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DescriptorHandleShape {
     Sampler2D,
+    RwTexture2D,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

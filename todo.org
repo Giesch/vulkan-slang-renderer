@@ -2,8 +2,15 @@
 
 * Possible Next Directions
 - [ ] Bindless Textures
+  - [ ] use handles consistently in all examples
+    - [ ] get any necessary reflection features done
+    - [ ] migrate watercolor
+    - [ ] migrate toon link
+    - [ ] migrate the rest
+  - [ ] rewrite the markdown doc
 
-- [ ] Fable code reviews
+- [ ] code reviews
+  use fable?
   - [ ] split up large modules
   - [ ] look for types to extract
     ie, move invariants into the type system

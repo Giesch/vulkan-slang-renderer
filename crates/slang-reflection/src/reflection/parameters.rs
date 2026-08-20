@@ -314,9 +314,8 @@ fn reflect_struct_fields(
                 );
             };
 
-            fields.push(StructField::Enum(reflect_enum_field(
-                field_name, binding, declared,
-            )?));
+            let enum_struct_field = reflect_enum_field(field_name, binding, declared)?;
+            fields.push(StructField::Enum(enum_struct_field));
             continue;
         }
 
@@ -325,11 +324,13 @@ fn reflect_struct_fields(
         if let Some(declared) = field.ty() {
             let declared_name = declared_full_name(declared);
             if declared_name.starts_with("DescriptorHandle<") {
-                fields.push(StructField::DescriptorHandle(reflect_handle_field(
-                    field_name,
-                    binding,
-                    &declared_name,
-                )?));
+                let descriptor_handle_struct_field =
+                    reflect_handle_field(field_name, binding, &declared_name)?;
+
+                fields.push(StructField::DescriptorHandle(
+                    descriptor_handle_struct_field,
+                ));
+
                 continue;
             }
         }
@@ -656,14 +657,17 @@ fn reflect_handle_field(
         anyhow::bail!("field '{field_name}' ({declared_name}): unparseable handle type");
     };
 
-    // Only combined image samplers are supported
-    if !inner.starts_with("Sampler2D<") {
+    let shape = if inner.starts_with("Sampler2D<") {
+        DescriptorHandleShape::Sampler2D
+    } else if inner.starts_with("RWTexture2D<") {
+        DescriptorHandleShape::RwTexture2D
+    } else {
         anyhow::bail!(
-            "field '{field_name}' ({declared_name}): only Sampler2D.Handle texture \
-            handles are supported; the bindless heap has a combined-image-sampler \
-            binding only"
+            "field '{field_name}' ({declared_name}): only Sampler2D.Handle and \
+            RWTexture2D.Handle texture handles are supported; the bindless heap has \
+            a combined-image-sampler binding and a storage-image binding only"
         );
-    }
+    };
 
     // A handle in a vertex-input position reflects as VaryingInput, and there is
     // no vertex format for a descriptor index. Rejecting here rather than in the
@@ -678,7 +682,7 @@ fn reflect_handle_field(
     Ok(DescriptorHandleStructField {
         field_name,
         binding,
-        shape: DescriptorHandleShape::Sampler2D,
+        shape,
     })
 }
 

@@ -8,53 +8,41 @@
         "typeName": "Params",
         "fields": [
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "u",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "v",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "shape": "rwTexture2D"
+          },
+          {
+            "kind": "descriptorHandle",
+            "fieldName": "wetMask",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
+            },
+            "shape": "sampler2D"
           },
           {
             "kind": "resource",
             "fieldName": "pressure",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 3,
-              "count": 1
-            },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "resource",
-            "fieldName": "wetMask",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 4,
+              "index": 1,
               "count": 1
             },
             "resourceShape": "texture2D",
@@ -68,7 +56,7 @@
             "fieldName": "gridSize",
             "binding": {
               "kind": "uniform",
-              "offset": 0,
+              "offset": 24,
               "size": 8
             },
             "elementCount": 2,
@@ -100,40 +88,19 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 16
+            "size": 32
           },
           {
             "binding": 1,
-            "descriptorType": "storageImage",
+            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 16
-          },
-          {
-            "binding": 2,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 16
-          },
-          {
-            "binding": 3,
-            "descriptorType": "texture",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 16
-          },
-          {
-            "binding": 4,
-            "descriptorType": "texture",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 16
+            "size": 32
           }
         ]
       }
     ],
     "pushConstantRanges": [],
-    "bindlessHeapSet": null
+    "bindlessHeapSet": 1
   }
 }

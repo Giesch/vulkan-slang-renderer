@@ -436,8 +436,8 @@ fn compile_shader(
 mod bindless_preset_tests {
     use super::*;
 
-    /// A storage-image handle. Reflection rejects that shape, so this probe
-    /// cannot be a fixture. The shader imports nothing.
+    /// A storage-image handle. The shader imports nothing, so it also proves
+    /// the preset override reaches a shader that never imports `mltrs`.
     const STORAGE_HANDLE_SHADER: &str = r#"
         #language slang 2026
         module preset_probe;

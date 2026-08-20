@@ -19,6 +19,10 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
+    pub saturation_in: BindlessHandle<Sampler2D>,
+    pub wet_mask_in: BindlessHandle<Sampler2D>,
+    pub saturation_out: BindlessHandle<RwTexture2D>,
+    pub wet_mask_out: BindlessHandle<RwTexture2D>,
     pub grid_size: glam::Vec2,
     pub diffuse_rate: f32,
     pub capacity: f32,
@@ -28,24 +32,28 @@ pub struct Params {
 }
 
 impl GPUWrite for Params {}
-const _: () = assert!(std::mem::size_of::<Params>() == 32);
-const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 0);
+const _: () = assert!(std::mem::size_of::<Params>() == 64);
+const _: () = assert!(std::mem::offset_of!(Params, saturation_in) == 0);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, wet_mask_in) == 8);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, saturation_out) == 16);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, wet_mask_out) == 24);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 32);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, diffuse_rate) == 8);
+const _: () = assert!(std::mem::offset_of!(Params, diffuse_rate) == 40);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, capacity) == 12);
+const _: () = assert!(std::mem::offset_of!(Params, capacity) == 44);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, sigma) == 16);
+const _: () = assert!(std::mem::offset_of!(Params, sigma) == 48);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, dry_threshold) == 20);
+const _: () = assert!(std::mem::offset_of!(Params, dry_threshold) == 52);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
-    pub saturation_in: &'a TextureHandle,
-    pub wet_mask_in: &'a TextureHandle,
     pub paper_height: &'a TextureHandle,
-    pub saturation_out: &'a StorageTextureHandle,
-    pub wet_mask_out: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -73,8 +81,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.saturation_in,
-            resources.wet_mask_in,
             resources.paper_height,
         ];
 
@@ -85,8 +91,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_texture_handles = vec![
-            resources.saturation_out,
-            resources.wet_mask_out,
         ];
 
         ComputePipelineConfig {

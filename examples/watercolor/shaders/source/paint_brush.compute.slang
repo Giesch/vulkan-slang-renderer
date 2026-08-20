@@ -11,12 +11,12 @@ public struct StrokePoint {
 }
 
 struct BrushParams {
-    RWTexture2D<float> wetMask;
-    RWTexture2D<float> pressure;
-    RWTexture2D<float4> pigment_0_3;
-    RWTexture2D<float4> pigment_4_7;
-    RWTexture2D<float4> pigment_8_11;
-    RWTexture2D<float> saturation;
+    RWTexture2D<float>.Handle wetMask;
+    RWTexture2D<float>.Handle pressure;
+    RWTexture2D<float4>.Handle pigment_0_3;
+    RWTexture2D<float4>.Handle pigment_4_7;
+    RWTexture2D<float4>.Handle pigment_8_11;
+    RWTexture2D<float>.Handle saturation;
     uint pointCount;
     float brushRadius;
     float brushOpacity;

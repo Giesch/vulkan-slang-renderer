@@ -36,6 +36,9 @@ impl<T> BindlessHandle<T> {
 /// In the future, there may be other markers for, eg, 3D textures
 pub enum Sampler2D {}
 
+/// Marker for `RWTexture2D.Handle`
+pub enum RwTexture2D {}
+
 // manual impls: derives would add spurious `T: ...` bounds
 impl<T> Clone for BindlessHandle<T> {
     fn clone(&self) -> Self {

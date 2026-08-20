@@ -4,7 +4,7 @@ module watercolor_common;
 
 // Bilinear sample from a R32F texture at fractional position (in texel coordinates)
 public float bilinearSampleR(
-    Texture2D<float> texture,
+    Sampler2D<float> texture,
     float2 position,
     float2 gridSize
 ) {

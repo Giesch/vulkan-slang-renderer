@@ -10,10 +10,10 @@ import watercolor_common;
 ParameterBlock<Params> params;
 
 struct Params {
-    Texture2D<float> blurredMask;   // fully-blurred wet mask
-    Texture2D<float> wetMask;
-    RWTexture2D<float> pressure;
-    RWTexture2D<float> saturation;
+    Sampler2D<float>.Handle wetMask;
+    RWTexture2D<float>.Handle saturation;
+    Sampler2D<float> blurredMask;   // fully-blurred wet mask
+    RWTexture2D<float> pressure;    // jacobi always lands pressure on side 0
     float2 gridSize;
     float eta;
 }

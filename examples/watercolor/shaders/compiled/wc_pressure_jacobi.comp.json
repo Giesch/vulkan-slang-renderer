@@ -90,14 +90,14 @@
           },
           {
             "binding": 1,
-            "descriptorType": "texture",
+            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 16
           },
           {
             "binding": 2,
-            "descriptorType": "texture",
+            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 16

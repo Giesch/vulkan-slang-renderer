@@ -1,5 +1,10 @@
+---
+source: crates/cli/src/build_tasks.rs
+info:
+  relative_path: shaders/compiled/storage_handle_params.comp.json
+---
 {
-  "sourceFileName": "wc_flow_outward.compute.slang",
+  "sourceFileName": "storage_handle_params.compute.slang",
   "globalParameters": [
     {
       "kind": "parameterBlock",
@@ -9,7 +14,7 @@
         "fields": [
           {
             "kind": "descriptorHandle",
-            "fieldName": "wetMask",
+            "fieldName": "src",
             "binding": {
               "kind": "uniform",
               "offset": 0,
@@ -19,7 +24,7 @@
           },
           {
             "kind": "descriptorHandle",
-            "fieldName": "saturation",
+            "fieldName": "dstR",
             "binding": {
               "kind": "uniform",
               "offset": 8,
@@ -28,39 +33,31 @@
             "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
-            "fieldName": "blurredMask",
+            "kind": "descriptorHandle",
+            "fieldName": "dstRgba",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
-            "fieldName": "pressure",
+            "kind": "scalar",
+            "fieldName": "scale",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
+              "kind": "uniform",
+              "offset": 24,
+              "size": 4
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "scalarType": "float32"
           },
           {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
               "kind": "uniform",
-              "offset": 16,
+              "offset": 32,
               "size": 8
             },
             "elementCount": 2,
@@ -68,16 +65,6 @@
               "kind": "scalar",
               "scalarType": "float32"
             }
-          },
-          {
-            "kind": "scalar",
-            "fieldName": "eta",
-            "binding": {
-              "kind": "uniform",
-              "offset": 24,
-              "size": 4
-            },
-            "scalarType": "float32"
           }
         ]
       }
@@ -102,21 +89,7 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 32
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 32
-          },
-          {
-            "binding": 2,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 32
+            "size": 48
           }
         ]
       }

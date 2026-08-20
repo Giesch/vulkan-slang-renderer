@@ -1,6 +1,11 @@
+---
+source: crates/cli/src/build_tasks.rs
+info:
+  relative_path: src/generated/shader_atlas/storage_handle_params_compute.rs
+---
 // GENERATED FILE (do not edit directly)
 
-//! generated from slang compute shader: wc_update_velocity.compute.slang
+//! generated from slang compute shader: storage_handle_params.compute.slang
 
 use std::ffi::CString;
 use std::io::Cursor;
@@ -8,10 +13,10 @@ use std::io::Cursor;
 use ash::util::read_spv;
 use serde::Serialize;
 
-use mltrs::renderer::gpu_write::GPUWrite;
-use mltrs::renderer::*;
-use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
-use mltrs::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
+use crate::renderer::gpu_write::GPUWrite;
+use crate::renderer::*;
+use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
+use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
@@ -19,49 +24,29 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
-    pub u_in: BindlessHandle<Sampler2D>,
-    pub v_in: BindlessHandle<Sampler2D>,
-    pub pressure: BindlessHandle<Sampler2D>,
-    pub wet_mask: BindlessHandle<Sampler2D>,
-    pub u_out: BindlessHandle<RwTexture2D>,
-    pub v_out: BindlessHandle<RwTexture2D>,
+    pub src: BindlessHandle<Sampler2D>,
+    pub dst_r: BindlessHandle<RwTexture2D>,
+    pub dst_rgba: BindlessHandle<RwTexture2D>,
+    pub scale: f32,
+    pub _padding_0: [u8; 4],
     pub grid_size: glam::Vec2,
-    pub texel_size: glam::Vec2,
-    pub dt: f32,
-    pub mu: f32,
-    pub kappa: f32,
-    pub slope_strength: f32,
+    pub _padding_1: [u8; 8],
 }
 
 impl GPUWrite for Params {}
-const _: () = assert!(std::mem::size_of::<Params>() == 80);
-const _: () = assert!(std::mem::offset_of!(Params, u_in) == 0);
+const _: () = assert!(std::mem::size_of::<Params>() == 48);
+const _: () = assert!(std::mem::offset_of!(Params, src) == 0);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, v_in) == 8);
-const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, pressure) == 16);
-const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, wet_mask) == 24);
-const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, u_out) == 32);
+const _: () = assert!(std::mem::offset_of!(Params, dst_r) == 8);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, v_out) == 40);
+const _: () = assert!(std::mem::offset_of!(Params, dst_rgba) == 16);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 48);
+const _: () = assert!(std::mem::offset_of!(Params, scale) == 24);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
+const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 32);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, texel_size) == 56);
-const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, dt) == 64);
-const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, mu) == 68);
-const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, kappa) == 72);
-const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, slope_strength) == 76);
-const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
-    pub paper_height: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -76,7 +61,7 @@ impl Shader {
     pub fn init() -> Self {
         let json_str = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/wc_update_velocity.comp.json"
+            "/shaders/compiled/storage_handle_params.comp.json"
         ));
 
         let reflection_json: ComputeReflectionJson = serde_json::from_str(json_str).unwrap();
@@ -89,7 +74,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.paper_height,
         ];
 
         #[rustfmt::skip]
@@ -122,7 +106,7 @@ impl Shader {
     fn comp_spv(&self) -> Vec<u32> {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/shaders/compiled/wc_update_velocity.comp.spv"
+            "/shaders/compiled/storage_handle_params.comp.spv"
         ));
         let byte_reader = &mut Cursor::new(bytes);
         read_spv(byte_reader).expect("failed to convert spv byte layout")

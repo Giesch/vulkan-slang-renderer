@@ -8,107 +8,71 @@
         "typeName": "BrushParams",
         "fields": [
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "wetMask",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "pressure",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "pigment_0_3",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 3,
-              "count": 1
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "pigment_4_7",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 4,
-              "count": 1
+              "kind": "uniform",
+              "offset": 24,
+              "size": 8
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "pigment_8_11",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 5,
-              "count": 1
+              "kind": "uniform",
+              "offset": 32,
+              "size": 8
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "vector",
-              "elementCount": 4,
-              "elementType": {
-                "kind": "scalar",
-                "scalarType": "float32"
-              }
-            }
+            "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "saturation",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 6,
-              "count": 1
+              "kind": "uniform",
+              "offset": 40,
+              "size": 8
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "shape": "rwTexture2D"
           },
           {
             "kind": "scalar",
             "fieldName": "pointCount",
             "binding": {
               "kind": "uniform",
-              "offset": 0,
+              "offset": 48,
               "size": 4
             },
             "scalarType": "uint32"
@@ -118,7 +82,7 @@
             "fieldName": "brushRadius",
             "binding": {
               "kind": "uniform",
-              "offset": 4,
+              "offset": 52,
               "size": 4
             },
             "scalarType": "float32"
@@ -128,7 +92,7 @@
             "fieldName": "brushOpacity",
             "binding": {
               "kind": "uniform",
-              "offset": 8,
+              "offset": 56,
               "size": 4
             },
             "scalarType": "float32"
@@ -138,7 +102,7 @@
             "fieldName": "brushPressure",
             "binding": {
               "kind": "uniform",
-              "offset": 12,
+              "offset": 60,
               "size": 4
             },
             "scalarType": "float32"
@@ -148,7 +112,7 @@
             "fieldName": "pigmentColor_0_3",
             "binding": {
               "kind": "uniform",
-              "offset": 16,
+              "offset": 64,
               "size": 16
             },
             "elementCount": 4,
@@ -162,7 +126,7 @@
             "fieldName": "pigmentColor_4_7",
             "binding": {
               "kind": "uniform",
-              "offset": 32,
+              "offset": 80,
               "size": 16
             },
             "elementCount": 4,
@@ -176,7 +140,7 @@
             "fieldName": "pigmentColor_8_11",
             "binding": {
               "kind": "uniform",
-              "offset": 48,
+              "offset": 96,
               "size": 16
             },
             "elementCount": 4,
@@ -190,7 +154,7 @@
             "fieldName": "canvasSize",
             "binding": {
               "kind": "uniform",
-              "offset": 64,
+              "offset": 112,
               "size": 8
             },
             "elementCount": 2,
@@ -204,7 +168,7 @@
             "fieldName": "strokePoints",
             "binding": {
               "kind": "uniform",
-              "offset": 72,
+              "offset": 120,
               "size": 8
             },
             "pointeeType": {
@@ -252,54 +216,12 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 80
-          },
-          {
-            "binding": 1,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 80
-          },
-          {
-            "binding": 2,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 80
-          },
-          {
-            "binding": 3,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 80
-          },
-          {
-            "binding": 4,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 80
-          },
-          {
-            "binding": 5,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 80
-          },
-          {
-            "binding": 6,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 80
+            "size": 128
           }
         ]
       }
     ],
     "pushConstantRanges": [],
-    "bindlessHeapSet": null
+    "bindlessHeapSet": 1
   }
 }

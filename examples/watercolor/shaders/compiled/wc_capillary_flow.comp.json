@@ -8,8 +8,48 @@
         "typeName": "Params",
         "fields": [
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "saturationIn",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "shape": "sampler2D"
+          },
+          {
+            "kind": "descriptorHandle",
+            "fieldName": "wetMaskIn",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "shape": "sampler2D"
+          },
+          {
+            "kind": "descriptorHandle",
+            "fieldName": "saturationOut",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
+            },
+            "shape": "rwTexture2D"
+          },
+          {
+            "kind": "descriptorHandle",
+            "fieldName": "wetMaskOut",
+            "binding": {
+              "kind": "uniform",
+              "offset": 24,
+              "size": 8
+            },
+            "shape": "rwTexture2D"
+          },
+          {
+            "kind": "resource",
+            "fieldName": "paperHeight",
             "binding": {
               "kind": "descriptorTableSlot",
               "index": 1,
@@ -22,67 +62,11 @@
             }
           },
           {
-            "kind": "resource",
-            "fieldName": "wetMaskIn",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
-            },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "resource",
-            "fieldName": "paperHeight",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 3,
-              "count": 1
-            },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "resource",
-            "fieldName": "saturationOut",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 4,
-              "count": 1
-            },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "resource",
-            "fieldName": "wetMaskOut",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 5,
-              "count": 1
-            },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
               "kind": "uniform",
-              "offset": 0,
+              "offset": 32,
               "size": 8
             },
             "elementCount": 2,
@@ -96,7 +80,7 @@
             "fieldName": "diffuseRate",
             "binding": {
               "kind": "uniform",
-              "offset": 8,
+              "offset": 40,
               "size": 4
             },
             "scalarType": "float32"
@@ -106,7 +90,7 @@
             "fieldName": "capacity",
             "binding": {
               "kind": "uniform",
-              "offset": 12,
+              "offset": 44,
               "size": 4
             },
             "scalarType": "float32"
@@ -116,7 +100,7 @@
             "fieldName": "sigma",
             "binding": {
               "kind": "uniform",
-              "offset": 16,
+              "offset": 48,
               "size": 4
             },
             "scalarType": "float32"
@@ -126,7 +110,7 @@
             "fieldName": "dryThreshold",
             "binding": {
               "kind": "uniform",
-              "offset": 20,
+              "offset": 52,
               "size": 4
             },
             "scalarType": "float32"
@@ -154,47 +138,19 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 32
+            "size": 64
           },
           {
             "binding": 1,
-            "descriptorType": "texture",
+            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 32
-          },
-          {
-            "binding": 2,
-            "descriptorType": "texture",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 32
-          },
-          {
-            "binding": 3,
-            "descriptorType": "texture",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 32
-          },
-          {
-            "binding": 4,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 32
-          },
-          {
-            "binding": 5,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 32
+            "size": 64
           }
         ]
       }
     ],
     "pushConstantRanges": [],
-    "bindlessHeapSet": null
+    "bindlessHeapSet": 1
   }
 }

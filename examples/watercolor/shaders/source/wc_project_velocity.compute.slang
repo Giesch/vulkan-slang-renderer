@@ -7,10 +7,10 @@ import watercolor_common;
 ParameterBlock<Params> params;
 
 struct Params {
-    RWTexture2D<float> u;
-    RWTexture2D<float> v;
-    Texture2D<float> pressure;
-    Texture2D<float> wetMask;
+    RWTexture2D<float>.Handle u;
+    RWTexture2D<float>.Handle v;
+    Sampler2D<float>.Handle wetMask;
+    Sampler2D<float> pressure;
     float2 gridSize;
 }
 

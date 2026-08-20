@@ -32,3 +32,6 @@ impl<T> Serialize for BindlessHandle<T> {
 
 /// Stub of the real renderer::Sampler2D marker.
 pub enum Sampler2D {}
+
+/// Stub of the real renderer::RwTexture2D marker.
+pub enum RwTexture2D {}

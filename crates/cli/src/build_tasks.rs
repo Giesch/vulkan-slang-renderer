@@ -1011,6 +1011,7 @@ fn gather_struct_defs(
             // a bindless texture handle
             let shape_marker = match handle.shape {
                 DescriptorHandleShape::Sampler2D => "Sampler2D",
+                DescriptorHandleShape::RwTexture2D => "RwTexture2D",
             };
 
             Some(GeneratedStructFieldDefinition::new(
@@ -2955,9 +2956,10 @@ float4 fragMain() : SV_Target {
     // stays here are the shapes the bindless heap cannot serve.
     //
     // A separate Texture2D.Handle or SamplerState.Handle lights up slang's heap
-    // bindings 2 and 0, and DescriptorHeap creates only binding 1 (combined
-    // image sampler). Accepting one would produce a shader sampling a descriptor
-    // array that was never declared, with no reflection or validation signal.
+    // bindings 2 and 0, and DescriptorHeap creates bindings 1 (combined image
+    // sampler) and 3 (storage image). Accepting one would produce a shader
+    // reading a descriptor array that was never declared, with no reflection or
+    // validation signal.
     #[cfg(not(windows))]
     #[test]
     fn unsupported_handle_shapes_are_rejected() {
@@ -2991,7 +2993,10 @@ float4 fragMain() : SV_Target {{
             let message = reflect_rejected_shader(module, &source);
             assert!(
                 message.contains("DescriptorHandle<")
-                    && message.contains("only Sampler2D.Handle texture handles are supported"),
+                    && message.contains(
+                        "only Sampler2D.Handle and RWTexture2D.Handle texture handles \
+                         are supported"
+                    ),
                 "unexpected error message for {module}: {message}"
             );
         }

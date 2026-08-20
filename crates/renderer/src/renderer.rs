@@ -765,6 +765,35 @@ impl Renderer {
         }
     }
 
+    fn destroy_storage_texture(&mut self, mut storage_texture: storage_texture::StorageTexture) {
+        unsafe {
+            self.device
+                .destroy_image_view(storage_texture.image_view, None);
+            self.allocator
+                .destroy_image(storage_texture.image, &mut storage_texture.image_memory);
+        }
+    }
+
+    fn register_storage_texture(
+        &mut self,
+        storage_texture: storage_texture::StorageTexture,
+    ) -> anyhow::Result<StorageTextureHandle> {
+        let bindless_slot = match self
+            .descriptor_heap
+            .insert_storage_image(&self.device, storage_texture.image_view)
+        {
+            Ok(bindless_slot) => bindless_slot,
+            Err(error) => {
+                // the texture isn't in the slab yet, so nothing else would ever free it
+                // if the heap turns out to be full
+                self.destroy_storage_texture(storage_texture);
+                return Err(error);
+            }
+        };
+
+        Ok(self.storage_textures.add(storage_texture, bindless_slot))
+    }
+
     pub fn create_storage_texture(
         &mut self,
         width: u32,
@@ -808,9 +837,7 @@ impl Renderer {
             height,
         };
 
-        let handle = self.storage_textures.add(storage_texture);
-
-        Ok(handle)
+        self.register_storage_texture(storage_texture)
     }
 
     /// Create a sampled TextureHandle that aliases the same image as the given storage texture.
@@ -3061,11 +3088,8 @@ impl Drop for Renderer {
             for texture in self.textures.take_all() {
                 self.destroy_texture(texture);
             }
-            for mut storage_texture in self.storage_textures.take_all() {
-                self.device
-                    .destroy_image_view(storage_texture.image_view, None);
-                self.allocator
-                    .destroy_image(storage_texture.image, &mut storage_texture.image_memory);
+            for storage_texture in self.storage_textures.take_all() {
+                self.destroy_storage_texture(storage_texture);
             }
             for pipeline in self.pipelines.take_all() {
                 self.destroy_pipeline(pipeline);
@@ -3408,6 +3432,10 @@ fn choose_physical_device(
                 "shaderSampledImageArrayDynamicIndexing",
             ),
             (
+                features.shader_storage_image_array_dynamic_indexing,
+                "shaderStorageImageArrayDynamicIndexing",
+            ),
+            (
                 vulkan_11_features.shader_draw_parameters,
                 "shaderDrawParameters",
             ),
@@ -3428,6 +3456,10 @@ fn choose_physical_device(
             (
                 vulkan_12_features.descriptor_binding_sampled_image_update_after_bind,
                 "descriptorBindingSampledImageUpdateAfterBind",
+            ),
+            (
+                vulkan_12_features.descriptor_binding_storage_image_update_after_bind,
+                "descriptorBindingStorageImageUpdateAfterBind",
             ),
             (
                 vulkan_12_features.descriptor_binding_update_unused_while_pending,
@@ -3509,7 +3541,7 @@ fn choose_physical_device(
              timelineSemaphore and bufferDeviceAddress, the descriptor-indexing \
              features and limits used by the bindless texture heap \
              (runtimeDescriptorArray, partially-bound and update-after-bind \
-             sampled images), plus linear-filtered sampling of the RGBA8 and \
+             sampled and storage images), plus linear-filtered sampling of the RGBA8 and \
              BC7 texture formats)"
         );
     };
@@ -3543,7 +3575,8 @@ fn choose_physical_device(
 /// `MAX_BINDLESS_TEXTURES`, each with its value; empty means the device is fine.
 ///
 /// A combined image sampler consumes a sampler descriptor *and* a sampled-image
-/// descriptor, so all four update-after-bind limits apply.
+/// descriptor, so all four of those update-after-bind limits apply. The heap's
+/// storage-image binding adds the two storage-image limits.
 pub fn undersized_limits(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
@@ -3569,6 +3602,14 @@ pub fn undersized_limits(
         (
             vulkan_12_properties.max_descriptor_set_update_after_bind_sampled_images,
             "maxDescriptorSetUpdateAfterBindSampledImages",
+        ),
+        (
+            vulkan_12_properties.max_per_stage_descriptor_update_after_bind_storage_images,
+            "maxPerStageDescriptorUpdateAfterBindStorageImages",
+        ),
+        (
+            vulkan_12_properties.max_descriptor_set_update_after_bind_storage_images,
+            "maxDescriptorSetUpdateAfterBindStorageImages",
         ),
     ]
     .into_iter()
@@ -3756,6 +3797,7 @@ fn create_logical_device(
         .texture_compression_bc(true)
         // for indexing the bindless texture heap by a value loaded from a buffer
         .shader_sampled_image_array_dynamic_indexing(true)
+        .shader_storage_image_array_dynamic_indexing(true)
         .sample_rate_shading(ENABLE_SAMPLE_SHADING);
     if cfg!(debug_assertions) {
         // features used by shader println
@@ -3781,6 +3823,7 @@ fn create_logical_device(
         .runtime_descriptor_array(true)
         .descriptor_binding_partially_bound(true)
         .descriptor_binding_sampled_image_update_after_bind(true)
+        .descriptor_binding_storage_image_update_after_bind(true)
         .descriptor_binding_update_unused_while_pending(true);
     if cfg!(debug_assertions) {
         // features used by shader println

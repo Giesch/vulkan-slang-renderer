@@ -7,13 +7,13 @@ import watercolor_common;
 ParameterBlock<Params> params;
 
 struct Params {
-    Texture2D<float> uIn;
-    Texture2D<float> vIn;
-    Texture2D<float> pressure;
-    Texture2D<float> paperHeight;
-    Texture2D<float> wetMask;
-    RWTexture2D<float> uOut;
-    RWTexture2D<float> vOut;
+    Sampler2D<float>.Handle uIn;
+    Sampler2D<float>.Handle vIn;
+    Sampler2D<float>.Handle pressure;
+    Sampler2D<float>.Handle wetMask;
+    RWTexture2D<float>.Handle uOut;
+    RWTexture2D<float>.Handle vOut;
+    Sampler2D<float> paperHeight;
     float2 gridSize;
     float2 texelSize;
     float dt;
@@ -23,7 +23,7 @@ struct Params {
 }
 
 // Interpolate v at a u-grid location (offset by half in x)
-float interpolateV(Texture2D<float> vTex, int2 pixel, float2 gridSize) {
+float interpolateV(Sampler2D<float> vTex, int2 pixel, float2 gridSize) {
     // v lives at (i, j+0.5), u lives at (i+0.5, j)
     // Average 4 surrounding v values
     int2 gs = int2(gridSize);
@@ -35,7 +35,7 @@ float interpolateV(Texture2D<float> vTex, int2 pixel, float2 gridSize) {
 }
 
 // Interpolate u at a v-grid location (offset by half in y)
-float interpolateU(Texture2D<float> uTex, int2 pixel, float2 gridSize) {
+float interpolateU(Sampler2D<float> uTex, int2 pixel, float2 gridSize) {
     int2 gs = int2(gridSize);
     int2 p00 = clamp(pixel, int2(0), gs - 1);
     int2 p10 = clamp(pixel + int2(0, 1), int2(0), gs - 1);

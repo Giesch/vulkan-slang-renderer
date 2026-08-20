@@ -21,6 +21,7 @@ pub(super) const MAX_BINDLESS_TEXTURES: u32 = 4096;
 /// are 0 sampler, 1 combined image sampler, 2 sampled image, 3 storage image.
 /// The shader compiler pins that preset in `load_bindless_options_module`.
 const COMBINED_IMAGE_SAMPLER_BINDING: u32 = 1;
+const STORAGE_IMAGE_BINDING: u32 = 3;
 
 /// A texture's slot in the heap.
 /// Distinct from its `TextureStorage` slab index, although they're both monotonic today.
@@ -37,8 +38,8 @@ pub(super) struct DescriptorHeap {
     layout: vk::DescriptorSetLayout,
     pool: vk::DescriptorPool,
     set: vk::DescriptorSet,
-    /// monotonic
-    next_slot: u32,
+    next_texture_slot: u32,
+    next_storage_image_slot: u32,
 }
 
 impl DescriptorHeap {
@@ -46,18 +47,29 @@ impl DescriptorHeap {
     /// update-after-bind limits can't hold `MAX_BINDLESS_TEXTURES`; see
     /// [`renderer::undersized_limits`].
     pub(super) fn new(device: &ash::Device) -> anyhow::Result<Self> {
-        let bindings = [vk::DescriptorSetLayoutBinding::default()
-            .binding(COMBINED_IMAGE_SAMPLER_BINDING)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(MAX_BINDLESS_TEXTURES)
-            // matches reflected global bindings
-            .stage_flags(vk::ShaderStageFlags::ALL)];
+        // one entry per binding, and `bindings` and `binding_flags` must stay
+        // parallel: Vulkan requires bindingCount == pBindingFlags.len()
+        let bindings = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(COMBINED_IMAGE_SAMPLER_BINDING)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(MAX_BINDLESS_TEXTURES)
+                // matches reflected global bindings
+                .stage_flags(vk::ShaderStageFlags::ALL),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(STORAGE_IMAGE_BINDING)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .descriptor_count(MAX_BINDLESS_TEXTURES)
+                .stage_flags(vk::ShaderStageFlags::ALL),
+        ];
 
         // PARTIALLY_BOUND to make the unwritten tail of a fixed-size array legal
         // UPDATE_AFTER_BIND to let one set serve every frame in flight
-        let binding_flags = [vk::DescriptorBindingFlags::PARTIALLY_BOUND
+        let bindless_binding_flags = vk::DescriptorBindingFlags::PARTIALLY_BOUND
             | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-            | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING];
+            | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
+        // duplicated for each bindless heap
+        let binding_flags = [bindless_binding_flags, bindless_binding_flags];
         let mut binding_flags_info =
             vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
 
@@ -67,9 +79,14 @@ impl DescriptorHeap {
             .push_next(&mut binding_flags_info);
         let layout = unsafe { device.create_descriptor_set_layout(&layout_info, None)? };
 
-        let pool_sizes = [vk::DescriptorPoolSize::default()
-            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(MAX_BINDLESS_TEXTURES)];
+        let pool_sizes = [
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(MAX_BINDLESS_TEXTURES),
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::STORAGE_IMAGE)
+                .descriptor_count(MAX_BINDLESS_TEXTURES),
+        ];
         let pool_info = vk::DescriptorPoolCreateInfo::default()
             .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
             .pool_sizes(&pool_sizes)
@@ -86,7 +103,8 @@ impl DescriptorHeap {
             layout,
             pool,
             set,
-            next_slot: 0,
+            next_texture_slot: 0,
+            next_storage_image_slot: 0,
         })
     }
 
@@ -109,12 +127,12 @@ impl DescriptorHeap {
         texture: &Texture,
     ) -> anyhow::Result<BindlessIndex> {
         anyhow::ensure!(
-            self.next_slot < MAX_BINDLESS_TEXTURES,
+            self.next_texture_slot < MAX_BINDLESS_TEXTURES,
             "bindless texture heap is full ({MAX_BINDLESS_TEXTURES} slots, \
              and slots are never released)"
         );
-        let slot = self.next_slot;
-        self.next_slot += 1;
+        let slot = self.next_texture_slot;
+        self.next_texture_slot += 1;
 
         // not SHADER_READ_ONLY_OPTIMAL: sampled aliases of storage textures
         // live in GENERAL
@@ -127,6 +145,34 @@ impl DescriptorHeap {
             .dst_binding(COMBINED_IMAGE_SAMPLER_BINDING)
             .dst_array_element(slot)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&image_info)];
+        unsafe { device.update_descriptor_sets(&writes, &[]) };
+
+        Ok(BindlessIndex(slot))
+    }
+
+    pub(super) fn insert_storage_image(
+        &mut self,
+        device: &ash::Device,
+        image_view: vk::ImageView,
+    ) -> anyhow::Result<BindlessIndex> {
+        anyhow::ensure!(
+            self.next_storage_image_slot < MAX_BINDLESS_TEXTURES,
+            "bindless storage image heap is full ({MAX_BINDLESS_TEXTURES} slots, \
+             and slots are never released)"
+        );
+        let slot = self.next_storage_image_slot;
+        self.next_storage_image_slot += 1;
+
+        // every storage texture is created in GENERAL and stays there
+        let image_info = [vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(image_view)];
+        let writes = [vk::WriteDescriptorSet::default()
+            .dst_set(self.set)
+            .dst_binding(STORAGE_IMAGE_BINDING)
+            .dst_array_element(slot)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
             .image_info(&image_info)];
         unsafe { device.update_descriptor_sets(&writes, &[]) };
 

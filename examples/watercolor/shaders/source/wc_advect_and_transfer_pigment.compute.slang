@@ -13,26 +13,27 @@ public struct PigmentProperties {
 }
 
 struct Params {
-    Sampler2D<float4> pigmentIn_0_3;
-    Sampler2D<float4> pigmentIn_4_7;
-    Sampler2D<float4> pigmentIn_8_11;
+    Sampler2D<float4>.Handle pigmentIn_0_3;
+    Sampler2D<float4>.Handle pigmentIn_4_7;
+    Sampler2D<float4>.Handle pigmentIn_8_11;
 
-    Texture2D<float> uIn;
-    Texture2D<float> vIn;
-    Texture2D<float> wetMask;
-    Texture2D<float> paperHeight;
+    Sampler2D<float>.Handle uIn;
+    Sampler2D<float>.Handle vIn;
+    Sampler2D<float>.Handle wetMask;
 
-    RWTexture2D<float4> pigmentOut_0_3;
-    RWTexture2D<float4> pigmentOut_4_7;
-    RWTexture2D<float4> pigmentOut_8_11;
+    RWTexture2D<float4>.Handle pigmentOut_0_3;
+    RWTexture2D<float4>.Handle pigmentOut_4_7;
+    RWTexture2D<float4>.Handle pigmentOut_8_11;
 
-    Texture2D<float4> depositIn_0_3;
-    Texture2D<float4> depositIn_4_7;
-    Texture2D<float4> depositIn_8_11;
+    Sampler2D<float4>.Handle depositIn_0_3;
+    Sampler2D<float4>.Handle depositIn_4_7;
+    Sampler2D<float4>.Handle depositIn_8_11;
 
-    RWTexture2D<float4> depositOut_0_3;
-    RWTexture2D<float4> depositOut_4_7;
-    RWTexture2D<float4> depositOut_8_11;
+    RWTexture2D<float4>.Handle depositOut_0_3;
+    RWTexture2D<float4>.Handle depositOut_4_7;
+    RWTexture2D<float4>.Handle depositOut_8_11;
+
+    Sampler2D<float> paperHeight;
 
     float2 gridSize;
     float dt;
@@ -75,7 +76,7 @@ void transferChannel(inout float pigmentInWater, inout float pigmentDeposit, flo
 void advectAndTransferGroup(
     Sampler2D<float4> pigmentIn,
     RWTexture2D<float4> pigmentOut,
-    Texture2D<float4> depositIn,
+    Sampler2D<float4> depositIn,
     RWTexture2D<float4> depositOut,
     int2 pixel, float wetMask, float2 velocity, float2 position,
     float paperHeight, PigmentProperties props[4], float transferRate

@@ -29,6 +29,7 @@ pub mod std430_nested_structs;
 pub mod std430_scalars;
 pub mod std430_vec3_padding;
 pub mod std430_vectors;
+pub mod storage_handle_params_compute;
 
 use crate::shaders::atlas::ShaderAtlasRoot;
 
@@ -58,6 +59,7 @@ pub struct ShaderAtlas {
     pub std430_vectors: std430_vectors::Shader,
     pub handle_params_compute: handle_params_compute::Shader,
     pub pointer_params_compute: pointer_params_compute::Shader,
+    pub storage_handle_params_compute: storage_handle_params_compute::Shader,
 }
 
 impl ShaderAtlasRoot for ShaderAtlas {
@@ -90,6 +92,7 @@ impl ShaderAtlasRoot for ShaderAtlas {
             std430_vectors: std430_vectors::Shader::init(),
             handle_params_compute: handle_params_compute::Shader::init(),
             pointer_params_compute: pointer_params_compute::Shader::init(),
+            storage_handle_params_compute: storage_handle_params_compute::Shader::init(),
         }
     }
 }

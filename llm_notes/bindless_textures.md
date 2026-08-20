@@ -1,10 +1,9 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-11 done (including 7b, 7c, 7d and 8b). Phases 11b, 12, 13
-and 14 are optional follow-ups, prerequisites for nothing. Phase 11's spike gate
-passed on all five criteria, so 11b is viable and its plan can be written
-([bindless_textures/phase_11.md](bindless_textures/phase_11.md) §9).** Design note for adopting bindless
-texture access using Slang's `DescriptorHandle<T>` with its default SPIR-V lowering.
+**Status: Phases 0-11b done (including 7b, 7c, 7d and 8b). Phases 11c, 12, 13
+and 14 are optional follow-ups, prerequisites for nothing.** Design note for
+adopting bindless texture access using Slang's `DescriptorHandle<T>` with its
+default SPIR-V lowering.
 
 **Phases 6-9 were one phase until Phase 6 planning found a prerequisite this
 doc never anticipated**: the toon_link payoff needs a per-draw material index,
@@ -113,10 +112,10 @@ which is not descriptor state and so does not go away — counted in Phase 9.
   `NonUniformEXT`, so it stops being a non-goal the moment a material index varies
   within one draw. See Phase 9.
 - `VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT` — see Phase 3.
-- Storage images (`RWTexture2D`, watercolor) stay on per-pipeline descriptors.
-  Still true. Phase 11's spike measured what lifting it takes: one storage heap
-  array at binding 3, reflecting exactly like the sampler handles. Phase 11b is
-  what would lift it.
+- ~~Storage images (`RWTexture2D`, watercolor) stay on per-pipeline
+  descriptors.~~ **Lifted by Phase 11b.** `RWTexture2D<T>.Handle` reaches one
+  storage heap array at binding 3. Per-pipeline storage descriptors still work
+  and still serve constant write targets.
 - **The bindless binding preset is `None`, pinned by the compiler**
   (`load_bindless_options_module`): one descriptor type per heap binding, 0
   sampler / 1 combined image sampler / 2 sampled image / 3 storage image. Slang
@@ -1796,10 +1795,12 @@ that did break the A/B was the FPS label.
 
 ## Phase 11b — watercolor: storage-image handles (follow-up; unblocked)
 
-Split from Phase 11 the way 8b was split from 8. No plan doc exists yet: it gets
-written as `bindless_textures/phase_11b.md` with the measured facts in hand.
+Split from Phase 11 the way 8b was split from 8. The plan is
+[bindless_textures/phase_11b.md](bindless_textures/phase_11b.md).
 **Phase 11's gate passed**, so this is unblocked. The measurements it needs are
-in phase_11.md §9.1: the storage heap array sits at **binding 2** in set 1, one
+in phase_11.md §9.1: the storage heap array sits at ~~**binding 2**~~
+**binding 3** in set 1 (2 is the default `VkMutable` preset's number; the
+pinned `None` preset is what ships, as the override note below records), one
 array serves every element type (the format never reaches the `OpTypeImage`),
 and the only added capability is `RuntimeDescriptorArray`. Two things the plan
 did not expect. First, the classic path already declares
@@ -1823,6 +1824,26 @@ fixtures, then the per-pass migration ending at **12 pipelines** (jacobi
 deliberately left classic — its parity flips per dispatch, which is Phase 12's
 territory). If the gate fails, this phase never exists and storage images stay
 a non-goal, now with disassembly instead of a question mark.
+
+---
+
+## Phase 11c — constant texture slots become handles (follow-up; unblocked)
+
+The plan is [bindless_textures/phase_11c.md](bindless_textures/phase_11c.md).
+
+Phases 11 and 11b converted the slots whose value *varies*, because only those
+collapse a pipeline. 18 constant slots across 15 shaders still declare a
+descriptor, and the "constant slots stay descriptors" rule was applied
+unevenly: `wc_update_velocity` and `paint_brush` moved their constant
+`pressure` to a handle, `wc_project_velocity` and `wc_flow_outward` did not.
+11c converts every slot a once-per-frame uniform write can carry, in watercolor
+and in the seven other examples that still bind a texture. It collapses no
+pipeline; it buys one binding style across the workspace and leaves 14 of the
+15 shaders with `params_buffer` as their whole `Resources`.
+
+Two slots stay descriptors: `wc_pressure_jacobi`'s `pressureIn` and
+`pressureOut`, which vary per dispatch. So 11c does **not** retire the
+per-pipeline descriptor path — Phase 12 is what makes that possible.
 
 ---
 

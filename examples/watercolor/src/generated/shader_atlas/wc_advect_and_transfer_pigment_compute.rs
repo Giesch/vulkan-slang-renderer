@@ -19,9 +19,25 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
+    pub pigment_in_0_3: BindlessHandle<Sampler2D>,
+    pub pigment_in_4_7: BindlessHandle<Sampler2D>,
+    pub pigment_in_8_11: BindlessHandle<Sampler2D>,
+    pub u_in: BindlessHandle<Sampler2D>,
+    pub v_in: BindlessHandle<Sampler2D>,
+    pub wet_mask: BindlessHandle<Sampler2D>,
+    pub pigment_out_0_3: BindlessHandle<RwTexture2D>,
+    pub pigment_out_4_7: BindlessHandle<RwTexture2D>,
+    pub pigment_out_8_11: BindlessHandle<RwTexture2D>,
+    pub deposit_in_0_3: BindlessHandle<Sampler2D>,
+    pub deposit_in_4_7: BindlessHandle<Sampler2D>,
+    pub deposit_in_8_11: BindlessHandle<Sampler2D>,
+    pub deposit_out_0_3: BindlessHandle<RwTexture2D>,
+    pub deposit_out_4_7: BindlessHandle<RwTexture2D>,
+    pub deposit_out_8_11: BindlessHandle<RwTexture2D>,
     pub grid_size: glam::Vec2,
     pub dt: f32,
     pub transfer_rate: f32,
+    pub _padding_0: [u8; 8],
     pub pigment0: PigmentProperties,
     pub pigment1: PigmentProperties,
     pub pigment2: PigmentProperties,
@@ -37,36 +53,66 @@ pub struct Params {
 }
 
 impl GPUWrite for Params {}
-const _: () = assert!(std::mem::size_of::<Params>() == 208);
-const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 0);
+const _: () = assert!(std::mem::size_of::<Params>() == 336);
+const _: () = assert!(std::mem::offset_of!(Params, pigment_in_0_3) == 0);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, pigment_in_4_7) == 8);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, pigment_in_8_11) == 16);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, u_in) == 24);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, v_in) == 32);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, wet_mask) == 40);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, pigment_out_0_3) == 48);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, pigment_out_4_7) == 56);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, pigment_out_8_11) == 64);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, deposit_in_0_3) == 72);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, deposit_in_4_7) == 80);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, deposit_in_8_11) == 88);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, deposit_out_0_3) == 96);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, deposit_out_4_7) == 104);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, deposit_out_8_11) == 112);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 120);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, dt) == 8);
+const _: () = assert!(std::mem::offset_of!(Params, dt) == 128);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, transfer_rate) == 12);
+const _: () = assert!(std::mem::offset_of!(Params, transfer_rate) == 132);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, pigment0) == 16);
+const _: () = assert!(std::mem::offset_of!(Params, pigment0) == 144);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment1) == 32);
+const _: () = assert!(std::mem::offset_of!(Params, pigment1) == 160);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment2) == 48);
+const _: () = assert!(std::mem::offset_of!(Params, pigment2) == 176);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment3) == 64);
+const _: () = assert!(std::mem::offset_of!(Params, pigment3) == 192);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment4) == 80);
+const _: () = assert!(std::mem::offset_of!(Params, pigment4) == 208);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment5) == 96);
+const _: () = assert!(std::mem::offset_of!(Params, pigment5) == 224);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment6) == 112);
+const _: () = assert!(std::mem::offset_of!(Params, pigment6) == 240);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment7) == 128);
+const _: () = assert!(std::mem::offset_of!(Params, pigment7) == 256);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment8) == 144);
+const _: () = assert!(std::mem::offset_of!(Params, pigment8) == 272);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment9) == 160);
+const _: () = assert!(std::mem::offset_of!(Params, pigment9) == 288);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment10) == 176);
+const _: () = assert!(std::mem::offset_of!(Params, pigment10) == 304);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, pigment11) == 192);
+const _: () = assert!(std::mem::offset_of!(Params, pigment11) == 320);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -88,22 +134,7 @@ const _: () = assert!(std::mem::offset_of!(PigmentProperties, granulation) == 8)
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
-    pub pigment_in_0_3: &'a TextureHandle,
-    pub pigment_in_4_7: &'a TextureHandle,
-    pub pigment_in_8_11: &'a TextureHandle,
-    pub u_in: &'a TextureHandle,
-    pub v_in: &'a TextureHandle,
-    pub wet_mask: &'a TextureHandle,
     pub paper_height: &'a TextureHandle,
-    pub pigment_out_0_3: &'a StorageTextureHandle,
-    pub pigment_out_4_7: &'a StorageTextureHandle,
-    pub pigment_out_8_11: &'a StorageTextureHandle,
-    pub deposit_in_0_3: &'a TextureHandle,
-    pub deposit_in_4_7: &'a TextureHandle,
-    pub deposit_in_8_11: &'a TextureHandle,
-    pub deposit_out_0_3: &'a StorageTextureHandle,
-    pub deposit_out_4_7: &'a StorageTextureHandle,
-    pub deposit_out_8_11: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -131,16 +162,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.pigment_in_0_3,
-            resources.pigment_in_4_7,
-            resources.pigment_in_8_11,
-            resources.u_in,
-            resources.v_in,
-            resources.wet_mask,
             resources.paper_height,
-            resources.deposit_in_0_3,
-            resources.deposit_in_4_7,
-            resources.deposit_in_8_11,
         ];
 
         #[rustfmt::skip]
@@ -150,12 +172,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_texture_handles = vec![
-            resources.pigment_out_0_3,
-            resources.pigment_out_4_7,
-            resources.pigment_out_8_11,
-            resources.deposit_out_0_3,
-            resources.deposit_out_4_7,
-            resources.deposit_out_8_11,
         ];
 
         ComputePipelineConfig {
