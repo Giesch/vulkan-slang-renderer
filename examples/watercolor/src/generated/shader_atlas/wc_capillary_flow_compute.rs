@@ -53,7 +53,6 @@ const _: () = assert!(std::mem::offset_of!(Params, dry_threshold) == 52);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
-    pub paper_height: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -81,7 +80,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.paper_height,
         ];
 
         #[rustfmt::skip]

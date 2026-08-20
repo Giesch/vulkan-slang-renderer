@@ -11,7 +11,7 @@ ParameterBlock<Params> params;
 
 struct Params {
     Sampler2D<float>.Handle inputTex;
-    RWTexture2D<float> outputTex;
+    RWTexture2D<float>.Handle outputTex;
     float2 gridSize;
     float2 direction; // (1,0) for horizontal, (0,1) for vertical
 }

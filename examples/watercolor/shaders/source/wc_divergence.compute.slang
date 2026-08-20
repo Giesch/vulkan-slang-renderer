@@ -9,7 +9,7 @@ ParameterBlock<Params> params;
 struct Params {
     Sampler2D<float>.Handle uIn;
     Sampler2D<float>.Handle vIn;
-    RWTexture2D<float> divergence;
+    RWTexture2D<float>.Handle divergence;
     float2 gridSize;
 }
 

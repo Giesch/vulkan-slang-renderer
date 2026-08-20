@@ -13,7 +13,7 @@ struct Params {
     Sampler2D<float>.Handle wetMask;
     RWTexture2D<float>.Handle uOut;
     RWTexture2D<float>.Handle vOut;
-    Sampler2D<float> paperHeight;
+    Sampler2D<float>.Handle paperHeight;
     float2 gridSize;
     float2 texelSize;
     float dt;

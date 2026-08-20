@@ -158,25 +158,21 @@
             "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "paperHeight",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 120,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "shape": "sampler2D"
           },
           {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
               "kind": "uniform",
-              "offset": 120,
+              "offset": 128,
               "size": 8
             },
             "elementCount": 2,
@@ -190,7 +186,7 @@
             "fieldName": "dt",
             "binding": {
               "kind": "uniform",
-              "offset": 128,
+              "offset": 136,
               "size": 4
             },
             "scalarType": "float32"
@@ -200,7 +196,7 @@
             "fieldName": "transferRate",
             "binding": {
               "kind": "uniform",
-              "offset": 132,
+              "offset": 140,
               "size": 4
             },
             "scalarType": "float32"
@@ -754,13 +750,6 @@
           {
             "binding": 0,
             "descriptorType": "constantBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 336
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 336

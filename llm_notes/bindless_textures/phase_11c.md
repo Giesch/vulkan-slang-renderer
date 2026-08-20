@@ -1,6 +1,7 @@
 # Phase 11c — constant texture slots become handles
 
-**Status: planned, not started.** Follow-up to
+**Status: watercolor portion done, 2026-08-20. The other seven examples (§2.2)
+are not started.** See [§6](#6-outcome--watercolor). Follow-up to
 [phase_11b.md](phase_11b.md), for Phase 11c of
 [../bindless_textures.md](../bindless_textures.md). Written against the 11b
 working tree; the line numbers below are that snapshot.
@@ -174,6 +175,90 @@ committed artifacts are byte-identical to the converted state.
 `docs/bindless.md` needs no rule change — it already states the handle default.
 Check whether the `RWTexture2D` line still reads correctly once the only
 remaining descriptors are Jacobi's two per-dispatch slots.
+
+## 6. Outcome — watercolor
+
+**Done, 2026-08-20. 9 slots, 8 shaders. Pipeline count stays 12.**
+
+### 6.1 The conversions
+
+| shader | slot | result |
+|---|---|---|
+| `wc_project_velocity` | `pressure` | `Sampler2D<float>.Handle` |
+| `wc_update_velocity` | `paperHeight` | `Sampler2D<float>.Handle` |
+| `wc_advect_and_transfer_pigment` | `paperHeight` | `Sampler2D<float>.Handle` |
+| `wc_capillary_flow` | `paperHeight` | field deleted, see §6.2 |
+| `wc_divergence` | `divergence` | `RWTexture2D<float>.Handle` |
+| `wc_flow_outward` | `blurredMask` | `Sampler2D<float>.Handle` |
+| `wc_flow_outward` | `pressure` | `RWTexture2D<float>.Handle` |
+| `wc_gaussian_blur` | `outputTex` | `RWTexture2D<float>.Handle` |
+| `wc_pressure_jacobi` | `divergence` | `Sampler2D<float>.Handle` |
+
+Eight of the nine shaders hold `params_buffer` alone in `Resources`.
+`wc_pressure_jacobi` keeps `pressure_in` and `pressure_out`, per §1. Its
+`bindlessHeapSet` flips from `null` to `1`, so every watercolor pipeline binds
+the heap.
+
+`main.rs` gains two fields, `blurred_mask_sampled` and `divergence_sampled`.
+Both are sampled aliases that `setup` held as locals to feed a `Resources`
+literal. `divergence`, `blur_temp` and `blurred_mask` drop their
+`#[expect(unused)]`; each is now a per-frame handle source.
+
+No access site changed. Every converted slot is read with `[pixel]` or assigned
+with `[pixel] =`, and a handle behaves as the underlying type there.
+
+### 6.2 Two deviations
+
+1. **`wc_capillary_flow`'s `paperHeight` is deleted, not converted.** §2.1
+   lists it as "handle". The field is declared and never read in the shader
+   body. Deletion drops the descriptor and adds no uniform bytes;
+   `Resources` collapses to `params_buffer` alone either way.
+   `wc_capillary_flow.comp.spv` is byte-identical after the change, which
+   confirms the slot was dead.
+2. **No A/B and no poison control.** §5 asks for the 11b scaffolding rebuilt
+   from scratch; that was declined as out of proportion to a substitution
+   which collapses no pipeline. What this leaves uncovered: a wrong heap slot
+   reaches a valid, different image and is silent, and no check in §6.4 can
+   see it. Each of the nine handle expressions is the expression its deleted
+   `Resources` field used, so the exposure is a transcription error rather
+   than a design error.
+
+### 6.3 Uniform cost, measured
+
+§4 predicts the growth. Five of the eight blocks absorb the handle into
+existing std140 tail padding and grow by 0 bytes.
+
+| shader | `Params` size |
+|---|---|
+| `wc_divergence` | 32 → 32 |
+| `wc_gaussian_blur` | 32 → 32 |
+| `wc_pressure_jacobi` | 16 → 16 |
+| `wc_capillary_flow` | 64 → 64 |
+| `wc_advect_and_transfer_pigment` | 336 → 336 |
+| `wc_flow_outward` | 32 → 48 |
+| `wc_project_velocity` | 32 → 48 |
+| `wc_update_velocity` | 80 → 96 |
+
+### 6.4 Verification
+
+| check | result |
+|---|---|
+| reflection JSON, per converted slot: one `bindingRanges` entry dropped, field flips `resource` → `descriptorHandle` with a `uniform` binding of size 8 | 8 of 8, right `shape` each |
+| `wc_capillary_flow`: binding dropped, no uniform field added, `.spv` unchanged | yes |
+| eight of nine `descriptorSetLayouts[0]` hold `binding 0 constantBuffer` alone | yes; jacobi keeps 3 |
+| `cargo check --workspace --all-targets` | clean |
+| `just lint` (debug and release) | clean |
+| `just test` | green, no snapshot changed |
+| `just sweep watercolor` | ok, self-test detected the injected fault |
+| `just sweep` | 16 ok / 0 skip / 0 fail |
+| `git status` confined to `examples/watercolor` | yes |
+
+Not run: the interactive paint-and-cycle-`DebugView` check, and the hot-reload
+check. Both need a human at the window.
+
+`docs/bindless.md` needs no edit. The handle default, the two heap bindings,
+and the "`examples/watercolor` is the reference for storage handles" paragraph
+all still describe the tree.
 
 ## Out of scope
 

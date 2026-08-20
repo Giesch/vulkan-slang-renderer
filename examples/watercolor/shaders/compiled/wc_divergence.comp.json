@@ -28,25 +28,21 @@
             "shape": "sampler2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "divergence",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
             },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "shape": "rwTexture2D"
           },
           {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
               "kind": "uniform",
-              "offset": 16,
+              "offset": 24,
               "size": 8
             },
             "elementCount": 2,
@@ -76,13 +72,6 @@
           {
             "binding": 0,
             "descriptorType": "constantBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 32
-          },
-          {
-            "binding": 1,
-            "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 32

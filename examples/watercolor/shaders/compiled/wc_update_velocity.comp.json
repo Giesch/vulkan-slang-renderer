@@ -68,25 +68,21 @@
             "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
+            "kind": "descriptorHandle",
             "fieldName": "paperHeight",
             "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
+              "kind": "uniform",
+              "offset": 48,
+              "size": 8
             },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "shape": "sampler2D"
           },
           {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
               "kind": "uniform",
-              "offset": 48,
+              "offset": 56,
               "size": 8
             },
             "elementCount": 2,
@@ -100,7 +96,7 @@
             "fieldName": "texelSize",
             "binding": {
               "kind": "uniform",
-              "offset": 56,
+              "offset": 64,
               "size": 8
             },
             "elementCount": 2,
@@ -114,7 +110,7 @@
             "fieldName": "dt",
             "binding": {
               "kind": "uniform",
-              "offset": 64,
+              "offset": 72,
               "size": 4
             },
             "scalarType": "float32"
@@ -124,7 +120,7 @@
             "fieldName": "mu",
             "binding": {
               "kind": "uniform",
-              "offset": 68,
+              "offset": 76,
               "size": 4
             },
             "scalarType": "float32"
@@ -134,7 +130,7 @@
             "fieldName": "kappa",
             "binding": {
               "kind": "uniform",
-              "offset": 72,
+              "offset": 80,
               "size": 4
             },
             "scalarType": "float32"
@@ -144,7 +140,7 @@
             "fieldName": "slopeStrength",
             "binding": {
               "kind": "uniform",
-              "offset": 76,
+              "offset": 84,
               "size": 4
             },
             "scalarType": "float32"
@@ -172,14 +168,7 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 80
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 80
+            "size": 96
           }
         ]
       }

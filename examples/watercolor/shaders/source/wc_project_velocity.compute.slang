@@ -10,7 +10,7 @@ struct Params {
     RWTexture2D<float>.Handle u;
     RWTexture2D<float>.Handle v;
     Sampler2D<float>.Handle wetMask;
-    Sampler2D<float> pressure;
+    Sampler2D<float>.Handle pressure;
     float2 gridSize;
 }
 

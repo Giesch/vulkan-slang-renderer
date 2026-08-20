@@ -34,10 +34,10 @@ pub struct Params {
     pub deposit_out_0_3: BindlessHandle<RwTexture2D>,
     pub deposit_out_4_7: BindlessHandle<RwTexture2D>,
     pub deposit_out_8_11: BindlessHandle<RwTexture2D>,
+    pub paper_height: BindlessHandle<Sampler2D>,
     pub grid_size: glam::Vec2,
     pub dt: f32,
     pub transfer_rate: f32,
-    pub _padding_0: [u8; 8],
     pub pigment0: PigmentProperties,
     pub pigment1: PigmentProperties,
     pub pigment2: PigmentProperties,
@@ -84,11 +84,13 @@ const _: () = assert!(std::mem::offset_of!(Params, deposit_out_4_7) == 104);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
 const _: () = assert!(std::mem::offset_of!(Params, deposit_out_8_11) == 112);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 120);
+const _: () = assert!(std::mem::offset_of!(Params, paper_height) == 120);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 128);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, dt) == 128);
+const _: () = assert!(std::mem::offset_of!(Params, dt) == 136);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, transfer_rate) == 132);
+const _: () = assert!(std::mem::offset_of!(Params, transfer_rate) == 140);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 const _: () = assert!(std::mem::offset_of!(Params, pigment0) == 144);
 const _: () = assert!(std::mem::size_of::<PigmentProperties>() == 16);
@@ -134,7 +136,6 @@ const _: () = assert!(std::mem::offset_of!(PigmentProperties, granulation) == 8)
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
-    pub paper_height: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -162,7 +163,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.paper_height,
         ];
 
         #[rustfmt::skip]

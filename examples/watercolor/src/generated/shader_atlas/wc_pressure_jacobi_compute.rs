@@ -19,18 +19,19 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
+    pub divergence: BindlessHandle<Sampler2D>,
     pub grid_size: glam::Vec2,
-    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for Params {}
 const _: () = assert!(std::mem::size_of::<Params>() == 16);
-const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 0);
+const _: () = assert!(std::mem::offset_of!(Params, divergence) == 0);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 8);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub pressure_in: &'a TextureHandle,
-    pub divergence: &'a TextureHandle,
     pub pressure_out: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
@@ -60,7 +61,6 @@ impl Shader {
         #[rustfmt::skip]
         let texture_handles = vec![
             resources.pressure_in,
-            resources.divergence,
         ];
 
         #[rustfmt::skip]

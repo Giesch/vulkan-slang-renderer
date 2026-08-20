@@ -8,6 +8,16 @@
         "typeName": "Params",
         "fields": [
           {
+            "kind": "descriptorHandle",
+            "fieldName": "divergence",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "shape": "sampler2D"
+          },
+          {
             "kind": "resource",
             "fieldName": "pressureIn",
             "binding": {
@@ -23,24 +33,10 @@
           },
           {
             "kind": "resource",
-            "fieldName": "divergence",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
-            },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "resource",
             "fieldName": "pressureOut",
             "binding": {
               "kind": "descriptorTableSlot",
-              "index": 3,
+              "index": 2,
               "count": 1
             },
             "resourceShape": "rWTexture2D",
@@ -54,7 +50,7 @@
             "fieldName": "gridSize",
             "binding": {
               "kind": "uniform",
-              "offset": 0,
+              "offset": 8,
               "size": 8
             },
             "elementCount": 2,
@@ -97,13 +93,6 @@
           },
           {
             "binding": 2,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 16
-          },
-          {
-            "binding": 3,
             "descriptorType": "storageImage",
             "descriptorCount": 1,
             "stageFlags": "all",
@@ -113,6 +102,6 @@
       }
     ],
     "pushConstantRanges": [],
-    "bindlessHeapSet": null
+    "bindlessHeapSet": 1
   }
 }

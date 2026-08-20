@@ -48,20 +48,6 @@
             "shape": "rwTexture2D"
           },
           {
-            "kind": "resource",
-            "fieldName": "paperHeight",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
-            },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
@@ -136,13 +122,6 @@
           {
             "binding": 0,
             "descriptorType": "constantBuffer",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 64
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 64

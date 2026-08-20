@@ -33,7 +33,7 @@ struct Params {
     RWTexture2D<float4>.Handle depositOut_4_7;
     RWTexture2D<float4>.Handle depositOut_8_11;
 
-    Sampler2D<float> paperHeight;
+    Sampler2D<float>.Handle paperHeight;
 
     float2 gridSize;
     float dt;

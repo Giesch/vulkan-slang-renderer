@@ -25,16 +25,18 @@ pub struct Params {
     pub wet_mask: BindlessHandle<Sampler2D>,
     pub u_out: BindlessHandle<RwTexture2D>,
     pub v_out: BindlessHandle<RwTexture2D>,
+    pub paper_height: BindlessHandle<Sampler2D>,
     pub grid_size: glam::Vec2,
     pub texel_size: glam::Vec2,
     pub dt: f32,
     pub mu: f32,
     pub kappa: f32,
     pub slope_strength: f32,
+    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for Params {}
-const _: () = assert!(std::mem::size_of::<Params>() == 80);
+const _: () = assert!(std::mem::size_of::<Params>() == 96);
 const _: () = assert!(std::mem::offset_of!(Params, u_in) == 0);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
 const _: () = assert!(std::mem::offset_of!(Params, v_in) == 8);
@@ -47,21 +49,22 @@ const _: () = assert!(std::mem::offset_of!(Params, u_out) == 32);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
 const _: () = assert!(std::mem::offset_of!(Params, v_out) == 40);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 48);
+const _: () = assert!(std::mem::offset_of!(Params, paper_height) == 48);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 56);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, texel_size) == 56);
+const _: () = assert!(std::mem::offset_of!(Params, texel_size) == 64);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, dt) == 64);
+const _: () = assert!(std::mem::offset_of!(Params, dt) == 72);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, mu) == 68);
+const _: () = assert!(std::mem::offset_of!(Params, mu) == 76);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, kappa) == 72);
+const _: () = assert!(std::mem::offset_of!(Params, kappa) == 80);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
-const _: () = assert!(std::mem::offset_of!(Params, slope_strength) == 76);
+const _: () = assert!(std::mem::offset_of!(Params, slope_strength) == 84);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
-    pub paper_height: &'a TextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
@@ -89,7 +92,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.paper_height,
         ];
 
         #[rustfmt::skip]

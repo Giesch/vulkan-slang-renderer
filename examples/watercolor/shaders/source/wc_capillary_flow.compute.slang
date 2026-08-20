@@ -11,7 +11,6 @@ struct Params {
     Sampler2D<float>.Handle wetMaskIn;
     RWTexture2D<float>.Handle saturationOut;
     RWTexture2D<float>.Handle wetMaskOut;
-    Sampler2D<float> paperHeight;
     float2 gridSize;
     float diffuseRate;
     float capacity;

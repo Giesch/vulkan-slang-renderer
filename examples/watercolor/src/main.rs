@@ -127,18 +127,17 @@ struct Watercolor {
     deposit_0_3: [StorageTextureHandle; 2],
     deposit_4_7: [StorageTextureHandle; 2],
     deposit_8_11: [StorageTextureHandle; 2],
-    #[expect(unused)]
     divergence: StorageTextureHandle,
-    #[expect(unused)]
     blur_temp: StorageTextureHandle,
-    #[expect(unused)]
     blurred_mask: StorageTextureHandle,
 
     // Sampled aliases. Used as bindless handles.
     blur_temp_sampled: TextureHandle,
+    blurred_mask_sampled: TextureHandle,
     deposit_0_3_sampled: [TextureHandle; 2],
     deposit_4_7_sampled: [TextureHandle; 2],
     deposit_8_11_sampled: [TextureHandle; 2],
+    divergence_sampled: TextureHandle,
     paper_height_sampled: TextureHandle,
 
     // Pipelines
@@ -476,7 +475,6 @@ impl Game for Watercolor {
         let update_velocity_pipeline = renderer.create_compute_pipeline(
             shaders.wc_update_velocity_compute.pipeline_config(
                 wc_update_velocity_compute::Resources {
-                    paper_height: &paper_height_sampled,
                     params_buffer: &update_vel_params_buffer,
                 },
             ),
@@ -485,7 +483,6 @@ impl Game for Watercolor {
         let divergence_pipeline =
             renderer.create_compute_pipeline(shaders.wc_divergence_compute.pipeline_config(
                 wc_divergence_compute::Resources {
-                    divergence: &divergence,
                     params_buffer: &divergence_params_buffer,
                 },
             ))?;
@@ -496,7 +493,6 @@ impl Game for Watercolor {
                 shaders.wc_pressure_jacobi_compute.pipeline_config(
                     wc_pressure_jacobi_compute::Resources {
                         pressure_in: pressure.read_sampled(false),
-                        divergence: &divergence_sampled,
                         pressure_out: pressure.write_storage(false),
                         params_buffer: &pressure_jacobi_params_buffer,
                     },
@@ -506,7 +502,6 @@ impl Game for Watercolor {
                 shaders.wc_pressure_jacobi_compute.pipeline_config(
                     wc_pressure_jacobi_compute::Resources {
                         pressure_in: pressure.read_sampled(true),
-                        divergence: &divergence_sampled,
                         pressure_out: pressure.write_storage(true),
                         params_buffer: &pressure_jacobi_params_buffer,
                     },
@@ -517,7 +512,6 @@ impl Game for Watercolor {
         let project_velocity_pipeline = renderer.create_compute_pipeline(
             shaders.wc_project_velocity_compute.pipeline_config(
                 wc_project_velocity_compute::Resources {
-                    pressure: pressure.read_sampled(false),
                     params_buffer: &project_vel_params_buffer,
                 },
             ),
@@ -526,7 +520,6 @@ impl Game for Watercolor {
         let blur_h_pipeline =
             renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
                 wc_gaussian_blur_compute::Resources {
-                    output_tex: &blur_temp,
                     params_buffer: &blur_h_params_buffer,
                 },
             ))?;
@@ -534,7 +527,6 @@ impl Game for Watercolor {
         let blur_v_pipeline =
             renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
                 wc_gaussian_blur_compute::Resources {
-                    output_tex: &blurred_mask,
                     params_buffer: &blur_v_params_buffer,
                 },
             ))?;
@@ -542,8 +534,6 @@ impl Game for Watercolor {
         let flow_outward_pipeline =
             renderer.create_compute_pipeline(shaders.wc_flow_outward_compute.pipeline_config(
                 wc_flow_outward_compute::Resources {
-                    blurred_mask: &blurred_mask_sampled,
-                    pressure: pressure.read_storage(false),
                     params_buffer: &flow_outward_params_buffer,
                 },
             ))?;
@@ -552,7 +542,6 @@ impl Game for Watercolor {
             shaders
                 .wc_advect_and_transfer_pigment_compute
                 .pipeline_config(wc_advect_and_transfer_pigment_compute::Resources {
-                    paper_height: &paper_height_sampled,
                     params_buffer: &advect_and_transfer_params_buffer,
                 }),
         )?;
@@ -560,7 +549,6 @@ impl Game for Watercolor {
         let capillary_flow_pipeline =
             renderer.create_compute_pipeline(shaders.wc_capillary_flow_compute.pipeline_config(
                 wc_capillary_flow_compute::Resources {
-                    paper_height: &paper_height_sampled,
                     params_buffer: &capillary_flow_params_buffer,
                 },
             ))?;
@@ -588,9 +576,11 @@ impl Game for Watercolor {
             blurred_mask,
 
             blur_temp_sampled,
+            blurred_mask_sampled,
             deposit_0_3_sampled,
             deposit_4_7_sampled,
             deposit_8_11_sampled,
+            divergence_sampled,
             paper_height_sampled,
 
             brush_pipeline,
@@ -942,12 +932,14 @@ impl Game for Watercolor {
                         .velocity_v
                         .write_storage(self.sim_parity)
                         .bindless_handle(),
+                    paper_height: self.paper_height_sampled.bindless_handle(),
                     grid_size,
                     texel_size,
                     dt: DT,
                     mu: MU,
                     kappa: KAPPA,
                     slope_strength: SLOPE_STRENGTH,
+                    _padding_0: Default::default(),
                 },
             );
 
@@ -964,16 +956,16 @@ impl Game for Watercolor {
                         .velocity_v
                         .read_sampled(!self.sim_parity)
                         .bindless_handle(),
+                    divergence: self.divergence.bindless_handle(),
                     grid_size,
-                    _padding_0: Default::default(),
                 },
             );
 
             gpu.write_uniform(
                 pressure_jacobi_params_buffer,
                 wc_pressure_jacobi_compute::Params {
+                    divergence: self.divergence_sampled.bindless_handle(),
                     grid_size,
-                    _padding_0: Default::default(),
                 },
             );
 
@@ -992,7 +984,9 @@ impl Game for Watercolor {
                         .wet_mask
                         .read_sampled(self.sim_parity)
                         .bindless_handle(),
+                    pressure: self.pressure.read_sampled(false).bindless_handle(),
                     grid_size,
+                    _padding_0: Default::default(),
                 },
             );
 
@@ -1003,9 +997,9 @@ impl Game for Watercolor {
                         .wet_mask
                         .read_sampled(self.sim_parity)
                         .bindless_handle(),
+                    output_tex: self.blur_temp.bindless_handle(),
                     grid_size,
                     direction: Vec2::new(1.0, 0.0),
-                    _padding_0: Default::default(),
                 },
             );
 
@@ -1013,9 +1007,9 @@ impl Game for Watercolor {
                 blur_v_params_buffer,
                 wc_gaussian_blur_compute::Params {
                     input_tex: self.blur_temp_sampled.bindless_handle(),
+                    output_tex: self.blurred_mask.bindless_handle(),
                     grid_size,
                     direction: Vec2::new(0.0, 1.0),
-                    _padding_0: Default::default(),
                 },
             );
 
@@ -1030,6 +1024,8 @@ impl Game for Watercolor {
                         .saturation
                         .read_storage(self.sim_parity)
                         .bindless_handle(),
+                    blurred_mask: self.blurred_mask_sampled.bindless_handle(),
+                    pressure: self.pressure.read_storage(false).bindless_handle(),
                     grid_size,
                     eta: ETA,
                     _padding_0: Default::default(),
@@ -1081,10 +1077,10 @@ impl Game for Watercolor {
                     deposit_out_0_3: self.deposit_0_3[deposit_written].bindless_handle(),
                     deposit_out_4_7: self.deposit_4_7[deposit_written].bindless_handle(),
                     deposit_out_8_11: self.deposit_8_11[deposit_written].bindless_handle(),
+                    paper_height: self.paper_height_sampled.bindless_handle(),
                     grid_size,
                     dt: DT,
                     transfer_rate: TRANSFER_RATE,
-                    _padding_0: Default::default(),
                     pigment0: Pigment::QuinacridoneRose.properties(),
                     pigment1: Pigment::IndianRed.properties(),
                     pigment2: Pigment::CadmiumYellow.properties(),

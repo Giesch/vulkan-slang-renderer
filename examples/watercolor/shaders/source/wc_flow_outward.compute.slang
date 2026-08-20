@@ -12,8 +12,8 @@ ParameterBlock<Params> params;
 struct Params {
     Sampler2D<float>.Handle wetMask;
     RWTexture2D<float>.Handle saturation;
-    Sampler2D<float> blurredMask;   // fully-blurred wet mask
-    RWTexture2D<float> pressure;    // jacobi always lands pressure on side 0
+    Sampler2D<float>.Handle blurredMask;
+    RWTexture2D<float>.Handle pressure;
     float2 gridSize;
     float eta;
 }
