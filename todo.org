@@ -9,6 +9,10 @@
     - [ ] migrate the rest
   - [ ] rewrite the markdown doc
 
+- [-] Balatro card shader
+  - [X] 3D tilt
+  - [ ] holo effect
+
 - [ ] code reviews
   use fable?
   - [ ] split up large modules
