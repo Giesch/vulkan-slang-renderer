@@ -384,6 +384,7 @@ Phase 11's three scaffolding lessons all held. One more appeared:
 ## Out of scope
 
 - **Phase 12** (compute push constants) — jacobi and the blur pair, 12 → 10.
+  Done, see [phase_12.md](phase_12.md).
 - **The two-handles-one-image ownership refactor** (`StorageTextureHandle` +
   aliased `TextureHandle`) — carved out by the parent doc and phase_11.md
   alike.

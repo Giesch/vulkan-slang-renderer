@@ -54,16 +54,18 @@ struct Material {
   the field were an `RWTexture2D`. `Sampler2D tex = material.tex0;`
   converts at a boundary, so helper functions stay handle-free.
 
-`examples/watercolor` is the reference for storage handles. A per-frame
-write target in the params uniform lets one compute pipeline write both
-textures of a ping-pong pair.
+`examples/watercolor` is the reference for storage handles. A per-dispatch
+write target lets one compute pipeline write both textures of a ping-pong
+pair. `wc_pressure_jacobi` is the reference for per-dispatch handles: both
+sides of the pair live in its push block, so one pipeline serves two
+dispatches that swap them within one frame.
 
 `examples/depth_texture` is the minimal form: one handle in the
 `ParameterBlock`, written each frame from `bindless_handle()`.
 
 ## Per-draw data: push constants
 
-A push constant block is the per-draw channel:
+A push constant block is the per-draw and per-dispatch channel:
 
 ```slang
 [[vk::push_constant]] ConstantBuffer<MyDraw> draw;
@@ -72,13 +74,15 @@ A push constant block is the per-draw channel:
 - One block per shader, at most 128 bytes, std430 layout. Codegen emits the
   Rust struct and a compile-time size assert.
 - Queue with `queue_draw_indexed_with_push_constants`,
-  `queue_draw_index_range_with_push_constants`, or
-  `queue_draw_vertex_count_with_push_constants`. The pipeline handle carries
-  the block type (`PipelineHandle<D, PushBlock<P>>` versus
-  `PipelineHandle<D, NoPush>`), so a missing, extra, or wrong-type payload
-  is a compile error.
-- Graphics only. Reflection rejects a push block in a compute shader, and a
-  picking pipeline accepts only `NoPush` handles.
+  `queue_draw_index_range_with_push_constants`,
+  `queue_draw_vertex_count_with_push_constants`, or
+  `dispatch_with_push_constants`. Every pipeline handle carries the block
+  type (`PipelineHandle<D, PushBlock<P>>` versus
+  `PipelineHandle<D, NoPush>`), graphics and compute alike, so a missing,
+  extra, or wrong-type payload is a compile error.
+- The payload is captured at queue time, so two dispatches of one pipeline
+  in one frame each read the value in hand when they were queued.
+- A picking pipeline accepts only `NoPush` handles.
 - A push block can carry a device address. `FrameRenderer` mints addresses
   at queue time: `singleton_addr_at` for singleton buffers,
   `current_immutable_addr_at` for ringed immutable buffers.

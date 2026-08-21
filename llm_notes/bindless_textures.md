@@ -1,6 +1,6 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-11c done (including 7b, 7c, 7d and 8b). Phases 12, 13
+**Status: Phases 0-12 done (including 7b, 7c, 7d and 8b). Phases 13
 and 14 are optional follow-ups, prerequisites for nothing.** Design note for
 adopting bindless texture access using Slang's `DescriptorHandle<T>` with its
 default SPIR-V lowering.
@@ -889,7 +889,8 @@ existing JSON deserializes unchanged and the new variant emits
 `"kind": "pushConstant"`.
 
 **Beyond the plan:** the two duplicated global-parameter loops were factored into
-one `reflect_global_parameters(program_layout, PushConstants::{Supported,Rejected})`
+one `reflect_global_parameters(program_layout, PushConstantSupport::{Supported,Rejected})`
+(Phase 12 deleted the parameter)
 in the reflection crate, and `collect_parameter_block` / `resources_struct_fields`
 in codegen — the graphics and compute paths had been copies of each other, and
 adding a second variant to both would have doubled the divergence risk. Also
@@ -1847,7 +1848,9 @@ per-pipeline descriptor path — Phase 12 is what makes that possible.
 
 ---
 
-## Phase 12 — push constants in compute shaders (follow-up; no demand yet)
+## Phase 12 — push constants in compute shaders ✅ done
+
+The plan is [bindless_textures/phase_12.md](bindless_textures/phase_12.md).
 
 Not part of the original work and **not a prerequisite for anything**. Added
 because Phase 7's compute rejection reads like a limitation and isn't one — this
@@ -1864,9 +1867,11 @@ is the failure shape this codegen exists to prevent.
 
 **What "silently" does and doesn't mean.** Phase 7's gate comment says a compute
 push block would be "silently never written". That is exactly right at
-*generation* time — codegen would emit `pub type PushConstants = X;` on the
-compute module, a public type with no API able to write it, and nothing in the
-output would say so. At *runtime* it is weaker: the validation layers carry
+*generation* time — codegen would emit ~~`pub type PushConstants = X;`~~ **the
+pub struct plus its `PushConstantBlock` marker impl (8b replaced the Phase 7-era
+alias; no `pub type PushConstants` is emitted anywhere)** on the compute module,
+a public type with no API able to write it, and nothing in the output would say
+so. At *runtime* it is weaker: the validation layers carry
 `UNASSIGNED-CoreValidation-DrawState-PushConstantsNotSet`, so a dispatch reading
 never-pushed constants would plausibly be flagged under `just sweep`. That is a
 layer heuristic rather than a VUID with guaranteed coverage, and it only fires if
@@ -1876,7 +1881,10 @@ API is the reliable half of the argument.
 The work, all of it mirroring Phase 8 one-for-one:
 
 - **Flip the reflection gate.** `reflect_global_parameters` already takes
-  `PushConstants::{Supported, Rejected}`; `reflect_compute_entry_point` passes
+  ~~`PushConstants::{Supported, Rejected}`~~
+  **`PushConstantSupport::{Supported, Rejected}`** — and the plan deletes the
+  enum outright rather than flipping it, since both callers then pass
+  `Supported`; `reflect_compute_entry_point` passes
   `Rejected`. Phase 7 built the parameter for exactly this. Delete
   `a_compute_push_constant_block_is_rejected` and add a compute fixture
   (`crates/cli/fixtures/alignment/push_constants.compute.slang`) alongside the
@@ -1884,35 +1892,44 @@ The work, all of it mirroring Phase 8 one-for-one:
   fixture that reaches `check_crate`.
 - **Codegen:** the `unreachable!()` arm in `collect_compute_shader_data` becomes
   a real call to `collect_push_constant_block`, and
-  `shader_compute_entry.rs.askama` gets the same `pub type PushConstants` +
-  `<= 128` assert block as the graphics template. `GeneratedComputeShaderImpl`
+  `shader_compute_entry.rs.askama` gets the same ~~`pub type PushConstants`~~
+  **marker-impl** + `<= 128` assert block as the graphics template. `GeneratedComputeShaderImpl`
   needs the `push_constant_type_name` field its graphics twin already has.
 - **Renderer:** retain the range on `ComputeShaderPipelineLayout`
-  (renderer.rs:5082), add a payload to `PendingComputeCommand::Dispatch`
-  (:5465) — same inline `[u8; 128]` + length as Phase 8, for the same reasons —
+  (renderer.rs:5235), add a payload to `PendingComputeCommand::Dispatch`
+  (:5656) — same inline `[u8; 128]` + length as Phase 8, for the same reasons —
   and call `cmd_push_constants` in `record_compute_commands` between
-  `cmd_bind_texture_heap` (:1618-1623, named `cmd_bind_bindless_heap` when the
-  earlier phases here were written) and `cmd_dispatch` (:1626). `dispatch`
-  (:5529) gains a `_with_push_constants` sibling rather than a fifth parameter,
+  `cmd_bind_texture_heap` (:1697-1702, named `cmd_bind_bindless_heap` when the
+  earlier phases here were written) and `cmd_dispatch` (:1705). `dispatch`
+  (:5794) gains a `_with_push_constants` sibling rather than a fifth parameter,
   matching Phase 8's judgement call.
-- **The same two debug asserts, both directions.** A compute pipeline whose
+- ~~**The same two debug asserts, both directions.** A compute pipeline whose
   layout declares a range receives bytes of exactly that size, and a dispatch
-  carrying bytes targets a pipeline that declares one.
+  carrying bytes targets a pipeline that declares one.~~ **Superseded by 8b
+  before this phase was scheduled**: the push slot on the handle makes the
+  mixed states unrepresentable, and the `unreachable!` inside
+  `cmd_push_constants` is the only residue, carried to compute unchanged.
 
 **The one genuinely new hazard, which graphics alone does not expose.** Push
 constant state is a single block per command buffer — it is *not* partitioned by
 bind point the way descriptor sets are, and an incompatible pipeline layout bind
 leaves it undefined. Once both graphics and compute push, interleaved draws and
 dispatches in one command buffer can clobber each other's values.
-`record_compute_commands` runs at renderer.rs:1709, in the same command buffer as
-the draw loop, so this is reachable here rather than theoretical. Verify it
-deliberately: two dispatches with different payloads separated by a draw that
+`record_compute_commands` runs at renderer.rs:1788, in the same command buffer as
+the draw loop, so ~~this is reachable here rather than theoretical~~ **measured
+while planning: structurally unreachable** — payloads ride the pending commands
+and are pushed immediately before their own dispatch/draw, and the compute pass
+fully precedes the render pass, so a draw between two dispatches cannot even be
+recorded (phase_12.md §5.1). Verify it
+deliberately: two dispatches with different payloads ~~separated by~~ **in the
+same command buffer as** a draw that
 also pushes, asserting both dispatches see their own bytes. This is the reason to
 do compute's version as considered work rather than as a freebie tacked onto
 Phase 8.
 
-**Why it is not scheduled.** Nothing wants it yet — but the trigger now has a
-name. Compute usage here is narrow, per-dispatch varying data goes through the
+**Why it ~~is~~ was not scheduled.** Nothing wants it yet — but the trigger now
+has a name, **and the demand it names arrived: the plan linked above exists to
+serve it**. Compute usage here is narrow, per-dispatch varying data goes through the
 params UBO or a BDA pointer today, and Phase 9 needs per-*draw* material
 indices, not per-dispatch. ~~Phase 11's watercolor duplicates are parity
 variants that a *param-block* handle already collapses with no per-dispatch

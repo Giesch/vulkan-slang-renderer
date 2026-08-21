@@ -8,6 +8,29 @@
         "typeName": "Params",
         "fields": [
           {
+            "kind": "vector",
+            "fieldName": "gridSize",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "pushConstant",
+      "parameterName": "blurDispatch",
+      "elementType": {
+        "typeName": "BlurDispatch",
+        "fields": [
+          {
             "kind": "descriptorHandle",
             "fieldName": "inputTex",
             "binding": {
@@ -29,7 +52,7 @@
           },
           {
             "kind": "vector",
-            "fieldName": "gridSize",
+            "fieldName": "direction",
             "binding": {
               "kind": "uniform",
               "offset": 16,
@@ -40,23 +63,10 @@
               "kind": "scalar",
               "scalarType": "float32"
             }
-          },
-          {
-            "kind": "vector",
-            "fieldName": "direction",
-            "binding": {
-              "kind": "uniform",
-              "offset": 24,
-              "size": 8
-            },
-            "elementCount": 2,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
           }
         ]
-      }
+      },
+      "elementSize": 24
     }
   ],
   "computeEntryPoint": {
@@ -78,12 +88,18 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 32
+            "size": 16
           }
         ]
       }
     ],
-    "pushConstantRanges": [],
+    "pushConstantRanges": [
+      {
+        "stageFlags": "all",
+        "offset": 0,
+        "size": 24
+      }
+    ],
     "bindlessHeapSet": 1
   }
 }

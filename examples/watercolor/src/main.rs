@@ -147,10 +147,9 @@ struct Watercolor {
     pressure_jacobi_pipeline:
         PipelineHandle<Compute, PushBlock<wc_pressure_jacobi_compute::JacobiDispatch>>,
     project_velocity_pipeline: PipelineHandle<Compute>,
-    blur_h_pipeline: PipelineHandle<Compute>,
-    blur_v_pipeline: PipelineHandle<Compute>,
+    blur_pipeline: PipelineHandle<Compute, PushBlock<wc_gaussian_blur_compute::BlurDispatch>>,
     flow_outward_pipeline: PipelineHandle<Compute>,
-    advect_and_transfer_pipeline: PipelineHandle<Compute>, // [sim_parity * 2 + deposit_parity]
+    advect_and_transfer_pipeline: PipelineHandle<Compute>,
     capillary_flow_pipeline: PipelineHandle<Compute>,
     display_pipeline: PipelineHandle<DrawVertexCount>,
 
@@ -162,15 +161,14 @@ struct Watercolor {
     divergence_params_buffer: UniformBufferHandle<wc_divergence_compute::Params>,
     pressure_jacobi_params_buffer: UniformBufferHandle<wc_pressure_jacobi_compute::Params>,
     project_vel_params_buffer: UniformBufferHandle<wc_project_velocity_compute::Params>,
-    blur_h_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
-    blur_v_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
+    blur_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
     flow_outward_params_buffer: UniformBufferHandle<wc_flow_outward_compute::Params>,
     advect_and_transfer_params_buffer:
         UniformBufferHandle<wc_advect_and_transfer_pigment_compute::Params>,
     capillary_flow_params_buffer: UniformBufferHandle<wc_capillary_flow_compute::Params>,
 
     // Parity tracking
-    pressure_parity: bool, // flips 20x per frame (net 0), used in Jacobi loop
+    pressure_parity: bool, // flips once per Jacobi iteration (net 0 per frame)
     sim_parity: bool,      // pigment + wet_mask + saturation (all flip 1x per frame)
     deposit_parity: bool,  // deposit double-buffer parity (flips 1x per frame)
 
@@ -454,9 +452,7 @@ impl Game for Watercolor {
             renderer.create_uniform_buffer::<wc_pressure_jacobi_compute::Params>()?;
         let project_vel_params_buffer =
             renderer.create_uniform_buffer::<wc_project_velocity_compute::Params>()?;
-        let blur_h_params_buffer =
-            renderer.create_uniform_buffer::<wc_gaussian_blur_compute::Params>()?;
-        let blur_v_params_buffer =
+        let blur_params_buffer =
             renderer.create_uniform_buffer::<wc_gaussian_blur_compute::Params>()?;
         let flow_outward_params_buffer =
             renderer.create_uniform_buffer::<wc_flow_outward_compute::Params>()?;
@@ -504,17 +500,10 @@ impl Game for Watercolor {
             ),
         )?;
 
-        let blur_h_pipeline =
+        let blur_pipeline =
             renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
                 wc_gaussian_blur_compute::Resources {
-                    params_buffer: &blur_h_params_buffer,
-                },
-            ))?;
-
-        let blur_v_pipeline =
-            renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
-                wc_gaussian_blur_compute::Resources {
-                    params_buffer: &blur_v_params_buffer,
+                    params_buffer: &blur_params_buffer,
                 },
             ))?;
 
@@ -575,8 +564,7 @@ impl Game for Watercolor {
             divergence_pipeline,
             project_velocity_pipeline,
             pressure_jacobi_pipeline,
-            blur_h_pipeline,
-            blur_v_pipeline,
+            blur_pipeline,
             flow_outward_pipeline,
             advect_and_transfer_pipeline,
             capillary_flow_pipeline,
@@ -589,8 +577,7 @@ impl Game for Watercolor {
             divergence_params_buffer,
             pressure_jacobi_params_buffer,
             project_vel_params_buffer,
-            blur_h_params_buffer,
-            blur_v_params_buffer,
+            blur_params_buffer,
             flow_outward_params_buffer,
             advect_and_transfer_params_buffer,
             capillary_flow_params_buffer,
@@ -756,13 +743,38 @@ impl Game for Watercolor {
         // 6. Gaussian blur H (wet_mask → blur_temp)
         {
             let (wx, wy) = workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.blur_h_pipeline, wx, wy, 1);
+            renderer.dispatch_with_push_constants(
+                &self.blur_pipeline,
+                wx,
+                wy,
+                1,
+                &wc_gaussian_blur_compute::BlurDispatch {
+                    // the side capillary flow writes: sim_parity flips below,
+                    // and the uniform write this replaces ran after that flip
+                    input_tex: self
+                        .wet_mask
+                        .read_sampled(!self.sim_parity)
+                        .bindless_handle(),
+                    output_tex: self.blur_temp.bindless_handle(),
+                    direction: Vec2::new(1.0, 0.0),
+                },
+            );
         }
 
         // 7. Gaussian blur V (blur_temp → blurred_mask)
         {
             let (wx, wy) = workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.blur_v_pipeline, wx, wy, 1);
+            renderer.dispatch_with_push_constants(
+                &self.blur_pipeline,
+                wx,
+                wy,
+                1,
+                &wc_gaussian_blur_compute::BlurDispatch {
+                    input_tex: self.blur_temp_sampled.bindless_handle(),
+                    output_tex: self.blurred_mask.bindless_handle(),
+                    direction: Vec2::new(0.0, 1.0),
+                },
+            );
         }
 
         // 8. Flow outward (blurred_mask → flow formula into pressure + saturation)
@@ -836,8 +848,7 @@ impl Game for Watercolor {
         let divergence_params_buffer = &mut self.divergence_params_buffer;
         let pressure_jacobi_params_buffer = &mut self.pressure_jacobi_params_buffer;
         let project_vel_params_buffer = &mut self.project_vel_params_buffer;
-        let blur_h_params_buffer = &mut self.blur_h_params_buffer;
-        let blur_v_params_buffer = &mut self.blur_v_params_buffer;
+        let blur_params_buffer = &mut self.blur_params_buffer;
         let flow_outward_params_buffer = &mut self.flow_outward_params_buffer;
         let advect_and_transfer_params_buffer = &mut self.advect_and_transfer_params_buffer;
         let capillary_flow_params_buffer = &mut self.capillary_flow_params_buffer;
@@ -987,25 +998,10 @@ impl Game for Watercolor {
             );
 
             gpu.write_uniform(
-                blur_h_params_buffer,
+                blur_params_buffer,
                 wc_gaussian_blur_compute::Params {
-                    input_tex: self
-                        .wet_mask
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    output_tex: self.blur_temp.bindless_handle(),
                     grid_size,
-                    direction: Vec2::new(1.0, 0.0),
-                },
-            );
-
-            gpu.write_uniform(
-                blur_v_params_buffer,
-                wc_gaussian_blur_compute::Params {
-                    input_tex: self.blur_temp_sampled.bindless_handle(),
-                    output_tex: self.blurred_mask.bindless_handle(),
-                    grid_size,
-                    direction: Vec2::new(0.0, 1.0),
+                    _padding_0: Default::default(),
                 },
             );
 

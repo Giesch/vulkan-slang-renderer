@@ -332,6 +332,7 @@ both heap bindings still describe the tree.
 - **Phase 12** (compute push constants). It owns `wc_pressure_jacobi`'s two
   per-dispatch slots, collapses jacobi 2 → 1 and the blur pair 2 → 1, and is
   what makes retiring the per-pipeline descriptor path possible.
+  Done, see [phase_12.md](phase_12.md).
 - **Retiring `texture_handles` / `storage_texture_handles`.** Blocked on
   Phase 12. See §1.
 - **The two-handles-one-image ownership refactor** (`StorageTextureHandle` +

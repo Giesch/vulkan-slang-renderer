@@ -10,9 +10,16 @@ import watercolor_common;
 ParameterBlock<Params> params;
 
 struct Params {
+    float2 gridSize;
+}
+
+// one dispatch runs horizontal and the next runs vertical, in the same frame,
+// which no once-per-frame uniform write can express
+[[vk::push_constant]] ConstantBuffer<BlurDispatch> blurDispatch;
+
+struct BlurDispatch {
     Sampler2D<float>.Handle inputTex;
     RWTexture2D<float>.Handle outputTex;
-    float2 gridSize;
     float2 direction; // (1,0) for horizontal, (0,1) for vertical
 }
 
@@ -34,7 +41,7 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     }
 
     let gridSize = int2(params.gridSize);
-    let direction = int2(params.direction);
+    let direction = int2(blurDispatch.direction);
 
     float weightSum = 0.0;
     float valueSum = 0.0;
@@ -42,9 +49,9 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
     for (int i = -BLUR_RADIUS; i <= BLUR_RADIUS; i++) {
         let samplePos = clamp(pixel + direction * i, int2(0), gridSize - 1);
         let weight = BLUR_WEIGHTS[abs(i)];
-        valueSum += params.inputTex[samplePos] * weight;
+        valueSum += blurDispatch.inputTex[samplePos] * weight;
         weightSum += weight;
     }
 
-    params.outputTex[pixel] = valueSum / weightSum;
+    blurDispatch.outputTex[pixel] = valueSum / weightSum;
 }

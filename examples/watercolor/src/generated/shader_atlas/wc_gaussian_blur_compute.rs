@@ -17,28 +17,41 @@ use mltrs::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Copy, Serialize)]
-#[repr(C, align(16))]
-pub struct Params {
+#[repr(C, align(8))]
+pub struct BlurDispatch {
     pub input_tex: BindlessHandle<Sampler2D>,
     pub output_tex: BindlessHandle<RwTexture2D>,
-    pub grid_size: glam::Vec2,
     pub direction: glam::Vec2,
 }
 
-impl GPUWrite for Params {}
-const _: () = assert!(std::mem::size_of::<Params>() == 32);
-const _: () = assert!(std::mem::offset_of!(Params, input_tex) == 0);
+impl GPUWrite for BlurDispatch {}
+const _: () = assert!(std::mem::size_of::<BlurDispatch>() == 24);
+const _: () = assert!(std::mem::offset_of!(BlurDispatch, input_tex) == 0);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, output_tex) == 8);
+const _: () = assert!(std::mem::offset_of!(BlurDispatch, output_tex) == 8);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 16);
+const _: () = assert!(std::mem::offset_of!(BlurDispatch, direction) == 16);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
-const _: () = assert!(std::mem::offset_of!(Params, direction) == 24);
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(16))]
+pub struct Params {
+    pub grid_size: glam::Vec2,
+    pub _padding_0: [u8; 8],
+}
+
+impl GPUWrite for Params {}
+const _: () = assert!(std::mem::size_of::<Params>() == 16);
+const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 0);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
+
+impl mltrs::renderer::gpu_write::PushConstantBlock for BlurDispatch {}
+// 128 bytes is the vulkan-guaranteed maxPushConstantsSize
+const _: () = assert!(std::mem::size_of::<BlurDispatch>() <= 128);
 
 pub const WORKGROUP_SIZE: [u32; 3] = [16, 16, 1];
 
@@ -62,7 +75,7 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> ComputePipelineConfig<'a, NoPush> {
+    ) -> ComputePipelineConfig<'a, PushBlock<BlurDispatch>> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
