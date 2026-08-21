@@ -43,7 +43,9 @@ pub struct PipelineConfigBuilder<'a> {
     pub storage_texture_handles: Vec<&'a StorageTextureHandle>,
 }
 
-pub struct ComputePipelineConfig<'a> {
+pub struct ComputePipelineConfig<'a, P = NoPush>(PhantomData<(&'a (), P)>);
+
+pub struct ComputePipelineConfigBuilder<'a> {
     pub shader: Box<dyn crate::shaders::atlas::ComputeShaderAtlasEntry>,
     pub texture_handles: Vec<&'a TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
@@ -57,5 +59,11 @@ impl<'a> PipelineConfigBuilder<'a> {
 
     pub fn build_vertex_count<P>(self) -> PipelineConfig<'a, NoVertex, DrawVertexCount, P> {
         PipelineConfig(PhantomData)
+    }
+}
+
+impl<'a> ComputePipelineConfigBuilder<'a> {
+    pub fn build<P>(self) -> ComputePipelineConfig<'a, P> {
+        ComputePipelineConfig(PhantomData)
     }
 }

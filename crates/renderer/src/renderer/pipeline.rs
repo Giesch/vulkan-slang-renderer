@@ -450,7 +450,7 @@ impl ComputePipelineStorage {
         Self(Default::default())
     }
 
-    pub fn add(&mut self, pipeline: ComputeRendererPipeline) -> PipelineHandle<Compute> {
+    pub fn add<P>(&mut self, pipeline: ComputeRendererPipeline) -> PipelineHandle<Compute, P> {
         let handle = PipelineHandle {
             index: self.0.len(),
             _phantom_data: PhantomData,
@@ -463,7 +463,10 @@ impl ComputePipelineStorage {
 
     #[cfg(debug_assertions)]
     #[expect(unused)]
-    pub fn get_mut(&mut self, handle: &PipelineHandle<Compute>) -> &mut ComputeRendererPipeline {
+    pub fn get_mut<P>(
+        &mut self,
+        handle: &PipelineHandle<Compute, P>,
+    ) -> &mut ComputeRendererPipeline {
         self.0[handle.index].as_mut().unwrap()
     }
 
@@ -484,10 +487,30 @@ impl ComputePipelineStorage {
     }
 }
 
+pub struct ComputePipelineConfig<'t, P = NoPush> {
+    pub(super) shader: Box<dyn ComputeShaderAtlasEntry>,
+    pub(super) texture_handles: Vec<&'t TextureHandle>,
+    pub(super) uniform_buffer_handles: Vec<RawUniformBufferHandle>,
+    pub(super) storage_texture_handles: Vec<&'t StorageTextureHandle>,
+    _push: PhantomData<P>,
+}
+
 // fields are pub because generated compute atlas entries construct this directly
-pub struct ComputePipelineConfig<'t> {
+pub struct ComputePipelineConfigBuilder<'t> {
     pub shader: Box<dyn ComputeShaderAtlasEntry>,
     pub texture_handles: Vec<&'t TextureHandle>,
     pub uniform_buffer_handles: Vec<RawUniformBufferHandle>,
     pub storage_texture_handles: Vec<&'t StorageTextureHandle>,
+}
+
+impl<'t> ComputePipelineConfigBuilder<'t> {
+    pub fn build<P>(self) -> ComputePipelineConfig<'t, P> {
+        ComputePipelineConfig {
+            shader: self.shader,
+            texture_handles: self.texture_handles,
+            uniform_buffer_handles: self.uniform_buffer_handles,
+            storage_texture_handles: self.storage_texture_handles,
+            _push: PhantomData,
+        }
+    }
 }

@@ -517,6 +517,7 @@ struct ShaderComputeEntryModule {
     enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
     shader_impl: GeneratedComputeShaderImpl,
+    push_constant_budget: usize,
 }
 
 /// The types a shader emits into its own file — everything not hoisted into a
@@ -543,9 +544,23 @@ struct GeneratedComputeShaderImpl {
     shader_name: String,
     shader_type_name: String,
     workgroup_size: [u32; 3],
+    push_constant_type_name: Option<String>,
     resources_texture_fields: Vec<String>,
     resources_uniform_buffer_fields: Vec<String>,
     resources_storage_texture_fields: Vec<String>,
+}
+
+impl GeneratedComputeShaderImpl {
+    /// What `pipeline_config()` returns. The push slot is always printed, so a
+    /// generated compute entry never leans on `ComputePipelineConfig`'s default.
+    fn config_return_type(&self) -> String {
+        let push_slot = match &self.push_constant_type_name {
+            Some(block) => format!("PushBlock<{block}>"),
+            None => "NoPush".to_string(),
+        };
+
+        format!("ComputePipelineConfig<'a, {push_slot}>")
+    }
 }
 
 #[derive(Clone)]
@@ -604,6 +619,7 @@ fn collect_compute_shader_data(
 ) -> ComputeShaderData {
     let mut defs = GeneratedTypeDefs::default();
     let mut required_resources = vec![];
+    let mut push_constant_type_name = None;
 
     for global_parameter in &reflection_json.global_parameters {
         match global_parameter {
@@ -611,10 +627,14 @@ fn collect_compute_shader_data(
                 collect_parameter_block(parameter_block, &mut defs, &mut required_resources);
             }
 
-            GlobalParameter::PushConstant(push_constant) => unreachable!(
-                "push constant block '{}' in a compute shader",
-                push_constant.parameter_name,
-            ),
+            GlobalParameter::PushConstant(push_constant) => {
+                let type_name = collect_push_constant_block(
+                    push_constant,
+                    &mut defs,
+                    &reflection_json.source_file_name,
+                );
+                push_constant_type_name = Some(type_name);
+            }
         }
     }
 
@@ -648,6 +668,7 @@ fn collect_compute_shader_data(
         shader_name: shader_name.clone(),
         shader_type_name: "Shader".to_string(),
         workgroup_size: reflection_json.workgroup_size,
+        push_constant_type_name,
         resources_texture_fields,
         resources_uniform_buffer_fields,
         resources_storage_texture_fields,
@@ -686,6 +707,7 @@ fn render_compute_shader_file(
         enum_defs: local.enum_defs,
         struct_defs: local.struct_defs,
         shader_impl: data.shader_impl.clone(),
+        push_constant_budget: MAX_PUSH_CONSTANT_BYTES,
     }
     .render()
     .unwrap();
@@ -2377,25 +2399,11 @@ mod tests {
         assert_eq!(member_offsets(member_types[6]), vec![(0, 0), (1, 8)]);
     }
 
-    /// The push-block twin of `pointer_pointee_spirv_layout`. Reflection reporting
-    /// std430 and slang *emitting* std430 are two different claims: the generated
-    /// `offset_of!` asserts only pin the first, since they are generated from the
-    /// same reflection they would agree with. A std140-shaped emission would round
-    /// `DrawInner` up to 16 and shift every member after it.
+    /// The id of the struct type behind a module's `PushConstant` variable.
     #[cfg(not(windows))]
-    #[test]
-    fn push_constant_spirv_layout() {
+    fn push_constant_block_struct_id(module: &rspirv::dr::Module) -> rspirv::spirv::Word {
         use rspirv::dr::Operand;
         use rspirv::spirv::{Op, StorageClass};
-
-        let search_path = manifest_path(["fixtures", "alignment"]);
-        let reflected =
-            prepare_reflected_shader("push_constants.shader.slang", search_path.to_str().unwrap())
-                .unwrap();
-
-        // the fragment stage is the one that reads every member of the block
-        let module = rspirv::dr::load_bytes(&reflected.fragment_shader.shader_bytecode)
-            .expect("failed to parse SPIR-V");
 
         let push_constant_ptr_type = module
             .types_global_values
@@ -2408,7 +2416,7 @@ mod tests {
             })
             .expect("no PushConstant variable in SPIR-V");
 
-        let block_struct_id = module
+        module
             .types_global_values
             .iter()
             .find(|inst| {
@@ -2422,7 +2430,27 @@ mod tests {
                 ] => Some(*pointee),
                 _ => None,
             })
-            .expect("the PushConstant variable's type is not a pointer to a block");
+            .expect("the PushConstant variable's type is not a pointer to a block")
+    }
+
+    /// The push-block twin of `pointer_pointee_spirv_layout`. Reflection reporting
+    /// std430 and slang *emitting* std430 are two different claims: the generated
+    /// `offset_of!` asserts only pin the first, since they are generated from the
+    /// same reflection they would agree with. A std140-shaped emission would round
+    /// `DrawInner` up to 16 and shift every member after it.
+    #[cfg(not(windows))]
+    #[test]
+    fn push_constant_spirv_layout() {
+        let search_path = manifest_path(["fixtures", "alignment"]);
+        let reflected =
+            prepare_reflected_shader("push_constants.shader.slang", search_path.to_str().unwrap())
+                .unwrap();
+
+        // the fragment stage is the one that reads every member of the block
+        let module = rspirv::dr::load_bytes(&reflected.fragment_shader.shader_bytecode)
+            .expect("failed to parse SPIR-V");
+
+        let block_struct_id = push_constant_block_struct_id(&module);
 
         // DrawConstants under std430 (see push_constants.shader.slang)
         assert_eq!(
@@ -2434,6 +2462,36 @@ mod tests {
         // it size 16 and push `tail` from 24 to 32
         let member_types = member_type_ids(&module, block_struct_id);
         assert_eq!(member_offsets(&module, member_types[2]), vec![(0, 0)]);
+    }
+
+    /// The compute twin of `push_constant_spirv_layout`. The graphics test cannot
+    /// pin the compute compilation path's std430 lowering: the two stages are
+    /// separate slang compilations.
+    #[cfg(not(windows))]
+    #[test]
+    fn push_constant_compute_spirv_layout() {
+        let search_path = manifest_path(["fixtures", "alignment"]);
+        let reflected = prepare_reflected_compute_shader(
+            "push_constants.compute.slang",
+            search_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+        let module = rspirv::dr::load_bytes(&reflected.compute_shader.shader_bytecode)
+            .expect("failed to parse SPIR-V");
+
+        let block_struct_id = push_constant_block_struct_id(&module);
+
+        // DispatchConstants under std430 (see push_constants.compute.slang)
+        assert_eq!(
+            member_offsets(&module, block_struct_id),
+            vec![(0, 0), (1, 8), (2, 16), (3, 24), (4, 32), (5, 48)],
+        );
+
+        // the nested struct is the std430/std140 discriminator: std140 would give
+        // it size 16 and push `tail` from 32 to 48
+        let member_types = member_type_ids(&module, block_struct_id);
+        assert_eq!(member_offsets(&module, member_types[3]), vec![(0, 0)]);
     }
 
     // A bare `T*` pointee uses slang's natural layout, which codegen would
@@ -3192,37 +3250,40 @@ float4 fragMain() : SV_Target {
         );
     }
 
-    // Nothing in the dispatch path calls cmd_push_constants, so a compute push
-    // block would reflect and generate cleanly while never being written — the
-    // shader would read whatever the last graphics draw happened to leave behind.
+    // The compute twin of a_descriptor_in_a_push_block_is_rejected. Both stages
+    // reach reject_descriptor_fields through one shared reflect_global_parameters,
+    // and this pins that routing.
     #[cfg(not(windows))]
     #[test]
-    fn a_compute_push_constant_block_is_rejected() {
+    fn a_descriptor_in_a_compute_push_block_is_rejected() {
         let source = r#"#language slang 2026
 
-module compute_push_block;
+module compute_push_block_descriptor;
 
-struct DrawConstants {
-    uint count;
+struct DispatchConstants {
+    float scale;
+    Texture2D<float4> albedo;
 }
 
 struct Params {
-    LayoutPtr<DrawConstants, Std430DataLayout> data;
+    RWTexture2D<float4> outTex;
 }
 
 ParameterBlock<Params> params;
-[[vk::push_constant]] ConstantBuffer<DrawConstants> draw;
+[[vk::push_constant]] ConstantBuffer<DispatchConstants> dispatchConstants;
 
 [numthreads(64, 1, 1)]
 [shader("compute")]
 void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID) {
-    params.data[dispatchThreadID.x].count = draw.count;
+    let texel = dispatchConstants.albedo.Load(int3(0, 0, 0));
+    params.outTex[int2(dispatchThreadID.xy)] = texel * dispatchConstants.scale;
 }
 "#;
-        let message = reflect_rejected_compute_shader("compute_push_block", source);
+        let message = reflect_rejected_compute_shader("compute_push_block_descriptor", source);
         assert!(
-            message.contains("push constant block 'draw'")
-                && message.contains("only supported in graphics shaders"),
+            message.contains("push constant block 'dispatchConstants'")
+                && message.contains("field 'albedo'")
+                && message.contains("cannot live in a push block"),
             "unexpected error message: {message}"
         );
     }

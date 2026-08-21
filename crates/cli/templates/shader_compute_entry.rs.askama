@@ -91,6 +91,13 @@ const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 {{ assert_line }}
 {%- endfor %}
 {% endfor %}
+{%- match shader_impl.push_constant_type_name -%}
+{%- when Some with (push_constant_type_name) +%}
+impl {{ import_root }}::renderer::gpu_write::PushConstantBlock for {{ push_constant_type_name }} {}
+// {{ push_constant_budget }} bytes is the vulkan-guaranteed maxPushConstantsSize
+const _: () = assert!(std::mem::size_of::<{{ push_constant_type_name }}>() <= {{ push_constant_budget }});
+{% when None -%}
+{%- endmatch +%}
 pub const WORKGROUP_SIZE: [u32; 3] = [{{ shader_impl.workgroup_size[0] }}, {{ shader_impl.workgroup_size[1] }}, {{ shader_impl.workgroup_size[2] }}];
 
 #[derive(Clone)]
@@ -110,7 +117,10 @@ impl {{ shader_impl.shader_type_name }} {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config<'a>(&self, resources: Resources<'a>) -> ComputePipelineConfig<'a> {
+    pub fn pipeline_config<'a>(
+        &self,
+        resources: Resources<'a>,
+    ) -> {{ shader_impl.config_return_type() }} {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -134,12 +144,13 @@ impl {{ shader_impl.shader_type_name }} {
 {%- endfor +%}
         ];
 
-        ComputePipelineConfig {
+        ComputePipelineConfigBuilder {
             shader: Box::new(self.clone()),
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
         }
+        .build()
     }
 
     fn comp_entry_point_name(&self) -> CString {

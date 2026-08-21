@@ -158,7 +158,10 @@ impl Shader {
         Self { reflection_json }
     }
 
-    pub fn pipeline_config<'a>(&self, resources: Resources<'a>) -> ComputePipelineConfig<'a> {
+    pub fn pipeline_config<'a>(
+        &self,
+        resources: Resources<'a>,
+    ) -> ComputePipelineConfig<'a, NoPush> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -174,12 +177,13 @@ impl Shader {
         let storage_texture_handles = vec![
         ];
 
-        ComputePipelineConfig {
+        ComputePipelineConfigBuilder {
             shader: Box::new(self.clone()),
             texture_handles,
             uniform_buffer_handles,
             storage_texture_handles,
         }
+        .build()
     }
 
     fn comp_entry_point_name(&self) -> CString {

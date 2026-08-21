@@ -27,8 +27,7 @@ pub fn reflect_entry_points(
     let mut vertex_entry_point: Option<EntryPoint> = None;
     let mut fragment_entry_point: Option<EntryPoint> = None;
 
-    let global_parameters =
-        reflect_global_parameters(program_layout, PushConstantSupport::Supported)?;
+    let global_parameters = reflect_global_parameters(program_layout)?;
 
     for entry_point in program_layout.entry_points() {
         let entry_point_name = entry_point.name().unwrap().to_string();
@@ -126,17 +125,10 @@ pub fn reflect_entry_points(
     Ok(parameters)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PushConstantSupport {
-    Supported,
-    Rejected,
-}
-
 /// Reflects the shader's global parameters: any number of `ParameterBlock<T>`
 /// globals, plus at most one `[[vk::push_constant]] ConstantBuffer<T>` block.
 fn reflect_global_parameters(
     program_layout: &slang::reflection::Shader,
-    push_constant_support: PushConstantSupport,
 ) -> anyhow::Result<Vec<GlobalParameter>> {
     let mut global_parameters: Vec<GlobalParameter> = vec![];
     let mut push_constant_block: Option<String> = None;
@@ -163,13 +155,6 @@ fn reflect_global_parameters(
         }
 
         if is_push_constant {
-            if push_constant_support != PushConstantSupport::Supported {
-                anyhow::bail!(
-                    "push constant block '{parameter_name}': push constants are only \
-                    supported in graphics shaders; the dispatch path does not write them"
-                )
-            }
-
             // add_push_constatant_range_for_constant_buffer hard-codes offset 0,
             // relying on slang emitting a single range; a second block would
             // silently overlap the first rather than sit after it.
@@ -247,7 +232,7 @@ fn reject_non_varying_entry_point_parameter(
                     "entry point parameter '{parameter_name}' on '{entry_point_name}': a uniform \
                     entry point parameter is promoted to an implicit push constant range that no \
                     generated code writes; declare a [[vk::push_constant]] ConstantBuffer<T> \
-                    global instead (graphics shaders only)"
+                    global instead"
                 )
             }
 
@@ -856,8 +841,7 @@ fn scalar_from_slang(scalar: slang::ScalarType) -> ScalarType {
 pub fn reflect_compute_entry_point(
     program_layout: &slang::reflection::Shader,
 ) -> anyhow::Result<ComputeParameters> {
-    let global_parameters =
-        reflect_global_parameters(program_layout, PushConstantSupport::Rejected)?;
+    let global_parameters = reflect_global_parameters(program_layout)?;
 
     let mut compute_entry_point: Option<EntryPoint> = None;
     let mut workgroup_size: Option<[u32; 3]> = None;
@@ -868,8 +852,7 @@ pub fn reflect_compute_entry_point(
         // Compute entry point parameters are system values (SV_DispatchThreadID, etc.)
         // and don't need to be reflected for code generation — but they still have
         // to be walked, because a `uniform` parameter here is promoted to a push
-        // constant range just as it is in a graphics entry point, and the dispatch
-        // path never writes one.
+        // constant range that bypasses the annotated-global route codegen reads.
         let params = vec![];
         for param in entry_point.parameters() {
             let parameter_name = param.name().unwrap().to_string();

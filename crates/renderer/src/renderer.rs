@@ -1397,10 +1397,10 @@ impl Renderer {
         }
     }
 
-    pub fn create_compute_pipeline(
+    pub fn create_compute_pipeline<P>(
         &mut self,
-        config: ComputePipelineConfig,
-    ) -> anyhow::Result<PipelineHandle<Compute>> {
+        config: ComputePipelineConfig<P>,
+    ) -> anyhow::Result<PipelineHandle<Compute, P>> {
         let pipeline_layout = ComputeShaderPipelineLayout::create_from_atlas(
             &self.device,
             self.descriptor_heap.layout(),
@@ -1654,13 +1654,13 @@ impl Renderer {
                 PendingComputeCommand::Dispatch {
                     pipeline_index,
                     group_count,
+                    push_constants,
                 } => {
                     let compute_pipeline = self.compute_pipelines.get_by_index(*pipeline_index);
 
-                    let label_name = CString::new(debug::clean_shader_name(
-                        compute_pipeline.shader.source_file_name(),
-                    ))
-                    .unwrap();
+                    let shader_name =
+                        debug::clean_shader_name(compute_pipeline.shader.source_file_name());
+                    let label_name = CString::new(shader_name).unwrap();
                     let label = vk::DebugUtilsLabelEXT::default()
                         .label_name(&label_name)
                         .color([0.4, 0.8, 0.4, 1.0]);
@@ -1699,6 +1699,14 @@ impl Renderer {
                         vk::PipelineBindPoint::COMPUTE,
                         compute_pipeline.layout.pipeline_layout,
                         compute_pipeline.layout.bindless_heap_set,
+                    );
+
+                    self.cmd_push_constants(
+                        command_buffer,
+                        compute_pipeline.layout.pipeline_layout,
+                        compute_pipeline.layout.push_constant_range,
+                        push_constants.as_ref(),
+                        shader_name,
                     );
 
                     unsafe {
@@ -2186,7 +2194,8 @@ impl Renderer {
 
             self.cmd_push_constants(
                 command_buffer,
-                &pipeline.layout,
+                pipeline.layout.pipeline_layout,
+                pipeline.layout.push_constant_range,
                 push_constants.as_ref(),
                 shader_name,
             );
@@ -2476,21 +2485,22 @@ impl Renderer {
         }
     }
 
-    /// Writes a draw's push constant payload.
+    /// Writes a draw's or a dispatch's push constant payload.
     fn cmd_push_constants(
         &self,
         command_buffer: vk::CommandBuffer,
-        layout: &ShaderPipelineLayout,
+        pipeline_layout: vk::PipelineLayout,
+        push_constant_range: Option<vk::PushConstantRange>,
         payload: Option<&PushConstantBytes>,
         shader_name: &str,
     ) {
-        match (layout.push_constant_range, payload) {
+        match (push_constant_range, payload) {
             (None, None) => {}
 
             (Some(range), Some(payload)) => unsafe {
                 self.device.cmd_push_constants(
                     command_buffer,
-                    layout.pipeline_layout,
+                    pipeline_layout,
                     range.stage_flags,
                     range.offset,
                     payload.as_slice(),
@@ -5242,6 +5252,9 @@ pub(crate) struct ComputeShaderPipelineLayout {
 
     /// see [`ShaderPipelineLayout::bindless_heap_set`]
     bindless_heap_set: Option<u32>,
+
+    /// see [`ShaderPipelineLayout::push_constant_range`]
+    push_constant_range: Option<vk::PushConstantRange>,
 }
 
 impl ComputeShaderPipelineLayout {
@@ -5282,6 +5295,9 @@ impl ComputeShaderPipelineLayout {
             pipeline_layout,
             descriptor_set_layouts,
             bindless_heap_set: reflection_json.pipeline_layout.bindless_heap_set,
+            push_constant_range: single_push_constant_range(
+                &reflection_json.pipeline_layout.push_constant_ranges,
+            ),
         })
     }
 
@@ -5302,6 +5318,7 @@ impl ComputeShaderPipelineLayout {
             pipeline_layout,
             descriptor_set_layouts,
             bindless_heap_set: reflected_layout.bindless_heap_set,
+            push_constant_range: single_push_constant_range(&reflected_layout.push_constant_ranges),
         })
     }
 }
@@ -5657,6 +5674,8 @@ enum PendingComputeCommand {
     Dispatch {
         pipeline_index: ComputePipelineIndex,
         group_count: [u32; 3],
+        /// `None` means "this pipeline does not declare a push block"
+        push_constants: Option<PushConstantBytes>,
     },
     Barrier {
         src_stage: vk::PipelineStageFlags2,
@@ -5791,7 +5810,32 @@ impl<'f> FrameRenderer<'f> {
     }
 
     /// Queue a compute dispatch, inserting a barrier with a previous one.
-    pub fn dispatch(&mut self, pipeline: &PipelineHandle<Compute>, x: u32, y: u32, z: u32) {
+    pub fn dispatch(&mut self, pipeline: &PipelineHandle<Compute, NoPush>, x: u32, y: u32, z: u32) {
+        self.push_dispatch(pipeline, [x, y, z], None);
+    }
+
+    /// [`Self::dispatch`], with a per-dispatch push constant block
+    pub fn dispatch_with_push_constants<P: PushConstantBlock>(
+        &mut self,
+        pipeline: &PipelineHandle<Compute, PushBlock<P>>,
+        x: u32,
+        y: u32,
+        z: u32,
+        push: &P,
+    ) {
+        self.push_dispatch(
+            pipeline,
+            [x, y, z],
+            Some(PushConstantBytes::from_value(push)),
+        );
+    }
+
+    fn push_dispatch<P>(
+        &mut self,
+        pipeline: &PipelineHandle<Compute, P>,
+        group_count: [u32; 3],
+        push_constants: Option<PushConstantBytes>,
+    ) {
         match self.pending_compute.last() {
             Some(PendingComputeCommand::Dispatch { .. }) => {
                 self.push_compute_barrier();
@@ -5802,7 +5846,8 @@ impl<'f> FrameRenderer<'f> {
 
         self.pending_compute.push(PendingComputeCommand::Dispatch {
             pipeline_index: pipeline.index(),
-            group_count: [x, y, z],
+            group_count,
+            push_constants,
         });
     }
 
