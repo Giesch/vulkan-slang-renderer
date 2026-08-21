@@ -15,15 +15,17 @@ The idea is to provide generated type-safe CPU bindings for an arbitrary slang s
 For now, only linux and windows are supported.
 
 You'll need the following dependencies installed:
+
 - rust/cargo
-- just
-- direnv
+- vulkan sdk
 - clang
 - cmake
+- direnv
+- just
 
 Then run:
 
-``` sh
+```sh
 direnv allow # allow loading env vars
 just dev     # run the default triangle example
 ```
