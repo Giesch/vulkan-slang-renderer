@@ -17,6 +17,20 @@ use mltrs::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(8))]
+pub struct JacobiDispatch {
+    pub pressure_in: BindlessHandle<Sampler2D>,
+    pub pressure_out: BindlessHandle<RwTexture2D>,
+}
+
+impl GPUWrite for JacobiDispatch {}
+const _: () = assert!(std::mem::size_of::<JacobiDispatch>() == 16);
+const _: () = assert!(std::mem::offset_of!(JacobiDispatch, pressure_in) == 0);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(JacobiDispatch, pressure_out) == 8);
+const _: () = assert!(std::mem::size_of::<BindlessHandle<RwTexture2D>>() == 8);
+
+#[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Params {
     pub divergence: BindlessHandle<Sampler2D>,
@@ -31,10 +45,12 @@ const _: () = assert!(std::mem::offset_of!(Params, grid_size) == 8);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
-    pub pressure_in: &'a TextureHandle,
-    pub pressure_out: &'a StorageTextureHandle,
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
+
+impl mltrs::renderer::gpu_write::PushConstantBlock for JacobiDispatch {}
+// 128 bytes is the vulkan-guaranteed maxPushConstantsSize
+const _: () = assert!(std::mem::size_of::<JacobiDispatch>() <= 128);
 
 pub const WORKGROUP_SIZE: [u32; 3] = [16, 16, 1];
 
@@ -58,12 +74,11 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> ComputePipelineConfig<'a, NoPush> {
+    ) -> ComputePipelineConfig<'a, PushBlock<JacobiDispatch>> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
         let texture_handles = vec![
-            resources.pressure_in,
         ];
 
         #[rustfmt::skip]
@@ -73,7 +88,6 @@ impl Shader {
 
         #[rustfmt::skip]
         let storage_texture_handles = vec![
-            resources.pressure_out,
         ];
 
         ComputePipelineConfigBuilder {

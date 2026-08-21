@@ -18,34 +18,6 @@
             "shape": "sampler2D"
           },
           {
-            "kind": "resource",
-            "fieldName": "pressureIn",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 1,
-              "count": 1
-            },
-            "resourceShape": "texture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "resource",
-            "fieldName": "pressureOut",
-            "binding": {
-              "kind": "descriptorTableSlot",
-              "index": 2,
-              "count": 1
-            },
-            "resourceShape": "rWTexture2D",
-            "resultType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
             "kind": "vector",
             "fieldName": "gridSize",
             "binding": {
@@ -61,6 +33,36 @@
           }
         ]
       }
+    },
+    {
+      "kind": "pushConstant",
+      "parameterName": "jacobiDispatch",
+      "elementType": {
+        "typeName": "JacobiDispatch",
+        "fields": [
+          {
+            "kind": "descriptorHandle",
+            "fieldName": "pressureIn",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "shape": "sampler2D"
+          },
+          {
+            "kind": "descriptorHandle",
+            "fieldName": "pressureOut",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "shape": "rwTexture2D"
+          }
+        ]
+      },
+      "elementSize": 16
     }
   ],
   "computeEntryPoint": {
@@ -83,25 +85,17 @@
             "descriptorCount": 1,
             "stageFlags": "all",
             "size": 16
-          },
-          {
-            "binding": 1,
-            "descriptorType": "combinedTextureSampler",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 16
-          },
-          {
-            "binding": 2,
-            "descriptorType": "storageImage",
-            "descriptorCount": 1,
-            "stageFlags": "all",
-            "size": 16
           }
         ]
       }
     ],
-    "pushConstantRanges": [],
+    "pushConstantRanges": [
+      {
+        "stageFlags": "all",
+        "offset": 0,
+        "size": 16
+      }
+    ],
     "bindlessHeapSet": 1
   }
 }

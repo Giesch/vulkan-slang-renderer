@@ -13,7 +13,7 @@ use glam::{Vec2, Vec3, Vec4};
 use mltrs::editor::{Label, Slider};
 use mltrs::game::*;
 use mltrs::renderer::{
-    Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer,
+    Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, PushBlock, Renderer,
     StorageBufferHandle, StorageTextureHandle, TextureHandle, UniformBufferHandle,
 };
 
@@ -144,7 +144,8 @@ struct Watercolor {
     brush_pipeline: PipelineHandle<Compute>,
     update_velocity_pipeline: PipelineHandle<Compute>,
     divergence_pipeline: PipelineHandle<Compute>,
-    pressure_jacobi_pipelines: [PipelineHandle<Compute>; 2],
+    pressure_jacobi_pipeline:
+        PipelineHandle<Compute, PushBlock<wc_pressure_jacobi_compute::JacobiDispatch>>,
     project_velocity_pipeline: PipelineHandle<Compute>,
     blur_h_pipeline: PipelineHandle<Compute>,
     blur_v_pipeline: PipelineHandle<Compute>,
@@ -487,27 +488,13 @@ impl Game for Watercolor {
                 },
             ))?;
 
-        // Pressure Jacobi: 2 pipelines for pressure parity
-        let pressure_jacobi_pipelines = [
-            renderer.create_compute_pipeline(
-                shaders.wc_pressure_jacobi_compute.pipeline_config(
-                    wc_pressure_jacobi_compute::Resources {
-                        pressure_in: pressure.read_sampled(false),
-                        pressure_out: pressure.write_storage(false),
-                        params_buffer: &pressure_jacobi_params_buffer,
-                    },
-                ),
-            )?,
-            renderer.create_compute_pipeline(
-                shaders.wc_pressure_jacobi_compute.pipeline_config(
-                    wc_pressure_jacobi_compute::Resources {
-                        pressure_in: pressure.read_sampled(true),
-                        pressure_out: pressure.write_storage(true),
-                        params_buffer: &pressure_jacobi_params_buffer,
-                    },
-                ),
-            )?,
-        ];
+        let pressure_jacobi_pipeline = renderer.create_compute_pipeline(
+            shaders.wc_pressure_jacobi_compute.pipeline_config(
+                wc_pressure_jacobi_compute::Resources {
+                    params_buffer: &pressure_jacobi_params_buffer,
+                },
+            ),
+        )?;
 
         let project_velocity_pipeline = renderer.create_compute_pipeline(
             shaders.wc_project_velocity_compute.pipeline_config(
@@ -587,7 +574,7 @@ impl Game for Watercolor {
             update_velocity_pipeline,
             divergence_pipeline,
             project_velocity_pipeline,
-            pressure_jacobi_pipelines,
+            pressure_jacobi_pipeline,
             blur_h_pipeline,
             blur_v_pipeline,
             flow_outward_pipeline,
@@ -741,8 +728,17 @@ impl Game for Watercolor {
         {
             let (wx, wy) = workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE);
             for _ in 0..JACOBI_ITERATIONS {
-                let p_idx = self.pressure_parity as usize;
-                renderer.dispatch(&self.pressure_jacobi_pipelines[p_idx], wx, wy, 1);
+                let parity = self.pressure_parity;
+                renderer.dispatch_with_push_constants(
+                    &self.pressure_jacobi_pipeline,
+                    wx,
+                    wy,
+                    1,
+                    &wc_pressure_jacobi_compute::JacobiDispatch {
+                        pressure_in: self.pressure.read_sampled(parity).bindless_handle(),
+                        pressure_out: self.pressure.write_storage(parity).bindless_handle(),
+                    },
+                );
                 self.pressure_parity = !self.pressure_parity;
             }
         }
