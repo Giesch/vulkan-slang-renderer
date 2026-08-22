@@ -9,6 +9,9 @@
     - [ ] migrate the rest
   - [ ] rewrite the markdown doc
 
+- [ ] G-buffer
+  replace the current picking setup with another attachment
+
 - [-] Balatro card shader
   - [X] 3D tilt
   - [ ] holo effect

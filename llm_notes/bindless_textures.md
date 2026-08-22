@@ -1,9 +1,17 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-12 done (including 7b, 7c, 7d and 8b). Phases 13
+**Status: Phases 0-12 done (including 7b, 7c, 7d, 8b, 11b and 11c). Phases 13
 and 14 are optional follow-ups, prerequisites for nothing.** Design note for
 adopting bindless texture access using Slang's `DescriptorHandle<T>` with its
 default SPIR-V lowering.
+
+The workspace holds zero bound texture descriptors. Retiring
+`texture_handles` / `storage_texture_handles` and the per-pipeline descriptor
+path is the one unblocked follow-up. It has no section here; the three
+sub-plans that defer it are
+[phase_11b.md](bindless_textures/phase_11b.md),
+[phase_11c.md](bindless_textures/phase_11c.md) §"Out of scope" and
+[phase_12.md](bindless_textures/phase_12.md) §"Out of scope".
 
 **Phases 6-9 were one phase until Phase 6 planning found a prerequisite this
 doc never anticipated**: the toon_link payoff needs a per-draw material index,
@@ -1794,10 +1802,15 @@ wrong side of the ping-pong, which is the failure this work could actually
 cause. `dt` needed no freezing — it is already a `const`; the wall-clock input
 that did break the A/B was the FPS label.
 
-## Phase 11b — watercolor: storage-image handles (follow-up; unblocked)
+## Phase 11b — watercolor: storage-image handles ✅ done
 
-Split from Phase 11 the way 8b was split from 8. The plan is
-[bindless_textures/phase_11b.md](bindless_textures/phase_11b.md).
+**Detailed record: [bindless_textures/phase_11b.md](bindless_textures/phase_11b.md)**
+— **status: done.** 20 pipelines → 12, with `compare -metric AE` = 0 at all
+three checkpoints for each of the seven migration steps. Six passes collapsed:
+brush, update_velocity, project_velocity, flow_outward and capillary_flow 2 → 1
+each, advect 4 → 1.
+
+Split from Phase 11 the way 8b was split from 8.
 **Phase 11's gate passed**, so this is unblocked. The measurements it needs are
 in phase_11.md §9.1: the storage heap array sits at ~~**binding 2**~~
 **binding 3** in set 1 (2 is the default `VkMutable` preset's number; the
@@ -1823,14 +1836,18 @@ suitability gate, two more `undersized_limits` checks, a second
 `DescriptorHandleShape` through reflection + codegen + the check_crate stub,
 fixtures, then the per-pass migration ending at **12 pipelines** (jacobi
 deliberately left classic — its parity flips per dispatch, which is Phase 12's
-territory). If the gate fails, this phase never exists and storage images stay
-a non-goal, now with disassembly instead of a question mark.
+territory). ~~If the gate fails, this phase never exists and storage images stay
+a non-goal, now with disassembly instead of a question mark.~~
 
 ---
 
-## Phase 11c — constant texture slots become handles (follow-up; unblocked)
+## Phase 11c — constant texture slots become handles ✅ done
 
-The plan is [bindless_textures/phase_11c.md](bindless_textures/phase_11c.md).
+**Detailed record: [bindless_textures/phase_11c.md](bindless_textures/phase_11c.md)**
+— **status: done.** 18 slots converted: 9 across 8 watercolor shaders, 9 across
+7 shaders in the other seven examples. Pipeline counts are unchanged, by
+design. Every converted shader holds `params_buffer` alone in `Resources`;
+`wc_pressure_jacobi` is the one shader that keeps a texture descriptor.
 
 Phases 11 and 11b converted the slots whose value *varies*, because only those
 collapse a pipeline. 18 constant slots across 15 shaders still declare a
@@ -1850,7 +1867,9 @@ per-pipeline descriptor path — Phase 12 is what makes that possible.
 
 ## Phase 12 — push constants in compute shaders ✅ done
 
-The plan is [bindless_textures/phase_12.md](bindless_textures/phase_12.md).
+**Detailed record: [bindless_textures/phase_12.md](bindless_textures/phase_12.md)**
+— **status: done.** Watercolor reaches 10 pipelines (9 compute + 1 graphics),
+and the workspace holds zero bound texture descriptors.
 
 Not part of the original work and **not a prerequisite for anything**. Added
 because Phase 7's compute rejection reads like a limitation and isn't one — this
@@ -2125,7 +2144,9 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 9 | ✅ `just shaders toon_link`, `just test`, `just sweep`, and the four-point visual A/B (all four checks passed); `just toon_link link-verify-p1` not recorded as run ([detail](bindless_textures/phase_09.md)) |
 | 10 | ✅ docs only — the llm_notes updates plus [`docs/bindless.md`](../docs/bindless.md) |
 | 11 | ✅ `just shaders watercolor`, `just test` (one additive snapshot), `just lint`, `just sweep` 16/16 — plus the deterministic-stroke A/B at three checkpoints (0 differing pixels) and a poison control per collapse, each of which changed the frame ([detail](bindless_textures/phase_11.md)) |
-| 11b | written with its plan; Phase 11's gate passed, so it is unblocked |
+| 11b | ✅ A/B 0 / 0 / 0 at three checkpoints for each of the seven migration steps, six poison controls each moving thousands of pixels, forced heap exhaustion naming the storage binding, forced undersized limits warn-skipping llvmpipe on six limits, `spirv-dis` showing heap arrays at set 1 bindings 1 and 3, `just sweep` 16 ok / 0 fail, `just test` green with one additive snapshot change plus two new ([detail](bindless_textures/phase_11b.md)) |
+| 11c | ✅ `just test` green with **no** snapshot changed, `just sweep` 16 ok / 0 fail with the injected-fault self-test still firing, `just lint` and `cargo check --workspace --all-targets` clean — **no A/B and no poison control**, declined as out of proportion to a substitution that collapses no pipeline, which leaves a wrong heap slot in this phase silent and uncovered ([detail](bindless_textures/phase_11c.md)) |
+| 12 | ✅ A/B 0 / 0 / 0 after both collapses, three poison controls, the interleaving probe (4 compute pushes + 1 graphics push per frame across two bind points and incompatible layouts, validation-clean), hot reload both directions, `push_constant_compute_spirv_layout` pinning `[(0,0), (1,8), (2,16), (3,24), (4,32), (5,48)]`, `just sweep` 16 ok / 0 fail, `just test` green with the seven-file delta ([detail](bindless_textures/phase_12.md)) |
 
 Per [`docs/testing.md`](../docs/testing.md), read before accepting any snapshot or
 adding a validation check. Layout bugs behind device addresses, heap indices and

@@ -18,7 +18,6 @@ You'll need the following dependencies installed:
 
 - rust/cargo
 - vulkan sdk
-- clang
 - cmake
 - direnv
 - just

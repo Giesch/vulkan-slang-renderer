@@ -1,7 +1,6 @@
 # Bindless
 
-The renderer reaches buffers and textures as plain data. These are the
-preferred defaults:
+The renderer supports traditional bindings for textures. But, 'bindless' handles into Slang's global texture heap are the preffered default. Similarly, bound storage buffers are supported, but BDA pointers are the preferred way to pass buffer data into a shader. In both cases, you can pass the texture handle or BDA pointer via a uniform buffer field or a push constant block field.
 
 - A buffer field is a device address: `mltrs::Addr<T>`, `mltrs::ReadAddr<T>`,
   or `mltrs::ImmutableAddr<T>`. Reflection rejects `StructuredBuffer` fields.
@@ -14,8 +13,7 @@ in a push constant block, or in a std430 struct behind a pointer. A texture
 reached through a handle is not welded to a pipeline, so one pipeline can
 draw many textures.
 
-One descriptor remains: the `ParameterBlock` itself, because a uniform buffer
-must carry the handles.
+One descriptor remains: the `ParameterBlock` itself.
 
 ## Texture handles
 
@@ -32,7 +30,7 @@ struct Material {
 - A handle is 8 bytes of uniform data (a `uint2`). It consumes no
   descriptor, so the generated `Resources` struct has no field for it.
 - Codegen emits the field as `BindlessHandle<Sampler2D>` or
-  `BindlessHandle<RwTexture2D>`. Mint the value with
+  `BindlessHandle<RwTexture2D>`. Get the handle value with
   `TextureHandle::bindless_handle()` or
   `StorageTextureHandle::bindless_handle()`.
 - Reflection detects handle declarations, and the renderer binds the heap
