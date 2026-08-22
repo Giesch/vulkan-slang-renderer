@@ -5,10 +5,6 @@ module handle_pointee;
 // Test: handles inside a Std430DataLayout pointee — the shape that makes
 // bindless worth doing. One pipeline plus a buffer of these replaces one
 // pipeline and one uniform buffer per material.
-//
-// The material index must be dynamically uniform within a draw: slang emits no
-// NonUniformEXT and nothing catches a violation, so this shader takes the index
-// from the block, never from vertex or instance data.
 
 struct Material {
     Sampler2D.Handle albedo;    // 0, size 8

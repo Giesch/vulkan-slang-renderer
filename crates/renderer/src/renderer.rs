@@ -3460,6 +3460,14 @@ fn choose_physical_device(
                 "runtimeDescriptorArray",
             ),
             (
+                vulkan_12_features.shader_sampled_image_array_non_uniform_indexing,
+                "shaderSampledImageArrayNonUniformIndexing",
+            ),
+            (
+                vulkan_12_features.shader_storage_image_array_non_uniform_indexing,
+                "shaderStorageImageArrayNonUniformIndexing",
+            ),
+            (
                 vulkan_12_features.descriptor_binding_partially_bound,
                 "descriptorBindingPartiallyBound",
             ),
@@ -3831,6 +3839,10 @@ fn create_logical_device(
         // partially-bound set written after it has been bound
         .descriptor_indexing(true)
         .runtime_descriptor_array(true)
+        // the getDescriptorFromHandle override decorates every heap access
+        // NonUniform; see crates/slang-reflection/src/bindless_options.slang
+        .shader_sampled_image_array_non_uniform_indexing(true)
+        .shader_storage_image_array_non_uniform_indexing(true)
         .descriptor_binding_partially_bound(true)
         .descriptor_binding_sampled_image_update_after_bind(true)
         .descriptor_binding_storage_image_update_after_bind(true)

@@ -85,50 +85,14 @@ A push constant block is the per-draw and per-dispatch channel:
   at queue time: `singleton_addr_at` for singleton buffers,
   `current_immutable_addr_at` for ringed immutable buffers.
 
-## The uniformity rule
+## Uniformity
 
-A texture handle — and any index or pointer that selects the struct that
-carries it — must be dynamically uniform within one draw.
+A handle may vary within one draw. The compiler decorates every heap access
+`NonUniform`, so a per-invocation handle reads the right texture on every
+device.
 
-- Do not read a handle, or an index that selects one, from vertex or
-  instance data.
-- Do not select between handles per invocation, for example a per-pixel
-  ternary between two material textures.
-
-Nothing enforces this rule. Slang compiles a divergent heap access without
-`NonUniformEXT` and without complaint. Validation cannot see it, because the
-divergence is data-dependent. Reflection sees declarations, not indexing
-expressions. `just sweep` stays green. The failure is wrong-texture
-rendering on wave-scalarizing hardware (AMD), while other hardware renders
-correctly.
-
-The renderer has no support for an index that varies within a draw. That
-needs a `getDescriptorFromHandle` override plus the
-`shaderSampledImageArrayNonUniformIndexing` device feature, and neither is
-implemented.
-
-## The supported pattern: one draw per material
-
-Satisfy the rule with a push constant. A push constant is constant for the
-draw by definition, so a handle selected by push data is uniform by
-construction.
-
-`examples/toon_link` is the reference:
-
-- `Material` (two `Sampler2D.Handle` fields plus TEV state) lives in a
-  singleton buffer, one element per material, in `MaterialSlot` order.
-- The push block carries a pointer at one element:
-  `ToonLinkDraw { mltrs::ImmutableAddr<Material> material; }`.
-- The draw loop issues one draw per batch. `MaterialSlot::push`
-  (`examples/toon_link/src/main.rs`) mints the element address with
-  `singleton_addr_at`, and the draw queues with
-  `queue_draw_index_range_with_push_constants`.
-- Both entry points read `draw.material[0]` directly. No interstage
-  varying, no vertex-input change.
-
-The pointer form is the strongest shape: the shader holds no selecting
-expression that could diverge, only a pushed address.
-
-For upload-once data such as a material table, use a singleton buffer
-(`create_singleton_buffer`): one allocation, a stable address, and no
-`Gpu` write accessor.
+The cost is a waterfall loop. A driver that reports
+`shaderSampledImageArrayNonUniformIndexingNative = false` runs the
+descriptor load once per distinct handle in the wave. A handle that is
+uniform at run time makes the loop run once, so a uniform handle is still
+the faster shape.

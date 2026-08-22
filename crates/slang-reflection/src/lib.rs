@@ -58,8 +58,9 @@ enum MatrixLayout {
     RowMajor,
 }
 
-/// Pins the Slang bindless preset to `None`; `docs/bindless.md` explains the
-/// preset and its heap binding layout.
+/// Pins the Slang bindless preset to `None` and decorates every heap access
+/// `NonUniform`; `docs/bindless.md` explains the preset and its heap binding
+/// layout.
 ///
 /// No shader imports this module. Slang matches the `export` here to an
 /// `extern` hook in its core module by name alone, so the override applies
@@ -67,6 +68,10 @@ enum MatrixLayout {
 /// A shader built without it uses `VkMutable`, which reads textures from a
 /// `VK_DESCRIPTOR_TYPE_MUTABLE_EXT` binding that this renderer does not create.
 /// The compiler gives no diagnostic, so the mismatch appears only at run time.
+///
+/// The `NonUniform` decoration requires the
+/// `shaderSampledImageArrayNonUniformIndexing` and
+/// `shaderStorageImageArrayNonUniformIndexing` device features.
 fn load_bindless_options_module(session: &slang::Session) -> anyhow::Result<slang::Module> {
     let slang_src = include_str!("bindless_options.slang");
     let module = session.load_module_from_source_string(
@@ -456,53 +461,67 @@ mod bindless_preset_tests {
         }
     "#;
 
-    /// Returns the `Binding` and `DescriptorSet` decorations on every
-    /// `__slang_resource_heap*` variable, as (binding, set) pairs.
-    fn heap_decorations(spv: &[u8]) -> Vec<(u32, u32)> {
+    const OP_NAME: u32 = 5;
+    const OP_CAPABILITY: u32 = 17;
+    const OP_DECORATE: u32 = 71;
+    const DECORATION_BINDING: u32 = 33;
+    const DECORATION_DESCRIPTOR_SET: u32 = 34;
+    const DECORATION_NON_UNIFORM: u32 = 5300;
+    const CAPABILITY_SHADER_NON_UNIFORM: u32 = 5301;
+    const CAPABILITY_SAMPLED_IMAGE_ARRAY_NON_UNIFORM_INDEXING: u32 = 5307;
+    const CAPABILITY_STORAGE_IMAGE_ARRAY_NON_UNIFORM_INDEXING: u32 = 5309;
+
+    /// Splits a SPIR-V module into instructions. Each item is one instruction,
+    /// starting with its opcode word.
+    fn instructions(spv: &[u8]) -> Vec<Vec<u32>> {
         let words: Vec<u32> = spv
             .chunks_exact(4)
             .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
 
-        const OP_NAME: u32 = 5;
-        const OP_DECORATE: u32 = 71;
-        const DECORATION_BINDING: u32 = 33;
-        const DECORATION_DESCRIPTOR_SET: u32 = 34;
-
-        let mut heap_ids = std::collections::HashSet::new();
-        let mut bindings = std::collections::HashMap::new();
-        let mut sets = std::collections::HashMap::new();
-
+        let mut out = Vec::new();
         let mut i = 5; // skip the 5-word module header
         while i < words.len() {
-            let op = words[i] & 0xFFFF;
             let len = (words[i] >> 16) as usize;
             if len == 0 || i + len > words.len() {
                 break;
             }
-            match op {
-                OP_NAME if len >= 3 => {
-                    let name: Vec<u8> = words[i + 2..i + len]
+            out.push(words[i..i + len].to_vec());
+            i += len;
+        }
+        out
+    }
+
+    /// Returns the `Binding` and `DescriptorSet` decorations on every
+    /// `__slang_resource_heap*` variable, as (binding, set) pairs.
+    fn heap_decorations(spv: &[u8]) -> Vec<(u32, u32)> {
+        let mut heap_ids = std::collections::HashSet::new();
+        let mut bindings = std::collections::HashMap::new();
+        let mut sets = std::collections::HashMap::new();
+
+        for inst in instructions(spv) {
+            match inst[0] & 0xFFFF {
+                OP_NAME if inst.len() >= 3 => {
+                    let name: Vec<u8> = inst[2..]
                         .iter()
                         .flat_map(|w| w.to_le_bytes())
                         .take_while(|b| *b != 0)
                         .collect();
                     if String::from_utf8_lossy(&name).starts_with("__slang_resource_heap") {
-                        heap_ids.insert(words[i + 1]);
+                        heap_ids.insert(inst[1]);
                     }
                 }
-                OP_DECORATE if len >= 4 => match words[i + 2] {
+                OP_DECORATE if inst.len() >= 4 => match inst[2] {
                     DECORATION_BINDING => {
-                        bindings.insert(words[i + 1], words[i + 3]);
+                        bindings.insert(inst[1], inst[3]);
                     }
                     DECORATION_DESCRIPTOR_SET => {
-                        sets.insert(words[i + 1], words[i + 3]);
+                        sets.insert(inst[1], inst[3]);
                     }
                     _ => {}
                 },
                 _ => {}
             }
-            i += len;
         }
 
         let mut out: Vec<(u32, u32)> = heap_ids
@@ -513,7 +532,25 @@ mod bindless_preset_tests {
         out
     }
 
-    fn compile_probe() -> Vec<u8> {
+    /// Returns the ids carrying a `NonUniform` decoration.
+    fn non_uniform_ids(spv: &[u8]) -> std::collections::HashSet<u32> {
+        instructions(spv)
+            .into_iter()
+            .filter(|inst| inst[0] & 0xFFFF == OP_DECORATE && inst.len() >= 3)
+            .filter(|inst| inst[2] == DECORATION_NON_UNIFORM)
+            .map(|inst| inst[1])
+            .collect()
+    }
+
+    fn capabilities(spv: &[u8]) -> std::collections::HashSet<u32> {
+        instructions(spv)
+            .into_iter()
+            .filter(|inst| inst[0] & 0xFFFF == OP_CAPABILITY && inst.len() >= 2)
+            .map(|inst| inst[1])
+            .collect()
+    }
+
+    fn compile_probe(module_name: &str, source: &str) -> Vec<u8> {
         let global_session = slang::GlobalSession::new().unwrap();
         let session_options = slang::CompilerOptions::default()
             .vulkan_use_entry_point_name(true)
@@ -534,11 +571,7 @@ mod bindless_preset_tests {
         let session = global_session.create_session(&session_desc).unwrap();
 
         let shader_module = session
-            .load_module_from_source_string(
-                "preset_probe",
-                "preset_probe.slang",
-                STORAGE_HANDLE_SHADER,
-            )
+            .load_module_from_source_string(module_name, &format!("{module_name}.slang"), source)
             .unwrap();
         let cpu_constants_module = load_cpu_constants_module(&session).unwrap();
         let bindless_options_module = load_bindless_options_module(&session).unwrap();
@@ -550,22 +583,85 @@ mod bindless_preset_tests {
             &shader_module,
             &cpu_constants_module,
             &bindless_options_module,
-            "preset_probe",
+            module_name,
         )
         .unwrap()
         .shader_bytecode
     }
 
+    /// A sampled handle selected per invocation. The select is the case the
+    /// decoration exists for, and it is also the case a constant-folding pass
+    /// could remove, so the probe pins both.
+    const DIVERGENT_SAMPLED_SHADER: &str = r#"
+        #language slang 2026
+        module divergent_probe;
+
+        struct Params {
+            Sampler2D.Handle a;
+            Sampler2D.Handle b;
+        }
+        ParameterBlock<Params> params;
+
+        [shader("fragment")]
+        float4 fragMain(float4 pos : SV_Position) : SV_Target {
+            Sampler2D tex = (pos.x > 100.0) ? params.a : params.b;
+            return tex.Sample(float2(0.5));
+        }
+    "#;
+
     /// The bindless preset is `None`, so a storage image gets its own binding.
     #[test]
     fn storage_image_handles_land_on_their_own_heap_binding() {
-        let spv = compile_probe();
+        let spv = compile_probe("preset_probe", STORAGE_HANDLE_SHADER);
         assert_eq!(
             heap_decorations(&spv),
             vec![(3, 1)],
             "the storage-image heap array must be at binding 3 of set 1. \
              Binding 2 means the compile lost the `None` preset and used \
              `VkMutable`. `VkMutable` puts every non-sampler type on one binding"
+        );
+    }
+
+    /// The override wraps the handle in `nonuniform()`, so a handle that
+    /// varies within a draw is legal.
+    #[test]
+    fn sampled_handle_access_is_decorated_non_uniform() {
+        let spv = compile_probe("divergent_probe", DIVERGENT_SAMPLED_SHADER);
+        assert!(
+            !non_uniform_ids(&spv).is_empty(),
+            "the divergent handle access must carry a `NonUniform` decoration. \
+             An empty set means the compile lost `nonuniform()` from the \
+             `getDescriptorFromHandle` override, or slang stopped propagating \
+             the decoration through the `[ForceInline]` default. Either way \
+             every heap access reverts to the unenforced uniformity rule, and \
+             a divergent handle renders the wrong texture on wave-scalarizing \
+             hardware"
+        );
+        let capabilities = capabilities(&spv);
+        assert!(
+            capabilities.contains(&CAPABILITY_SHADER_NON_UNIFORM)
+                && capabilities.contains(&CAPABILITY_SAMPLED_IMAGE_ARRAY_NON_UNIFORM_INDEXING),
+            "a decorated sampled-image access needs the `ShaderNonUniform` and \
+             `SampledImageArrayNonUniformIndexing` capabilities. The renderer \
+             enables the matching device features; a missing capability here \
+             means the two lists have drifted apart"
+        );
+    }
+
+    /// Storage handles take the same path and need the storage capability.
+    #[test]
+    fn storage_handle_access_is_decorated_non_uniform() {
+        let spv = compile_probe("preset_probe", STORAGE_HANDLE_SHADER);
+        assert!(
+            !non_uniform_ids(&spv).is_empty(),
+            "the storage-image handle access must carry a `NonUniform` \
+             decoration; see `sampled_handle_access_is_decorated_non_uniform`"
+        );
+        assert!(
+            capabilities(&spv).contains(&CAPABILITY_STORAGE_IMAGE_ARRAY_NON_UNIFORM_INDEXING),
+            "a decorated storage-image access needs the \
+             `StorageImageArrayNonUniformIndexing` capability, which the \
+             renderer enables as `shaderStorageImageArrayNonUniformIndexing`"
         );
     }
 }

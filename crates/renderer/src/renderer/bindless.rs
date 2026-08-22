@@ -9,8 +9,8 @@ use super::descriptor_heap::BindlessIndex;
 ///
 /// Slang lowers a handle to a `uint2`. Only the low 32 bits carry the slot.
 ///
-/// A handle must be dynamically uniform within a draw.
-/// Slang does not emit `NonUniformEXT` by default.
+/// The compiler decorates every heap access `NonUniform`, so a handle may
+/// vary within a draw. A uniform handle avoids the waterfall loop.
 #[repr(transparent)]
 pub struct BindlessHandle<T> {
     raw: u64,

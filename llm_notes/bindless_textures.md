@@ -1,7 +1,7 @@
 # Bindless Textures via Slang `DescriptorHandle`
 
-**Status: Phases 0-12 done (including 7b, 7c, 7d, 8b, 11b and 11c). Phases 13
-and 14 are optional follow-ups, prerequisites for nothing.** Design note for
+**Status: Phases 0-12 and 14 done (including 7b, 7c, 7d, 8b, 11b and 11c).
+Phase 13 is an optional follow-up, a prerequisite for nothing.** Design note for
 adopting bindless texture access using Slang's `DescriptorHandle<T>` with its
 default SPIR-V lowering.
 
@@ -2031,70 +2031,65 @@ above dissolves, because each queued draw carries its own. **Doing this phase
 before that one would build the API that the multi-draw integration then
 replaces.**
 
-## Phase 14 — blanket `NonUniform` in the handle override (follow-up; no demand yet)
+## Phase 14 — blanket `NonUniform` in the handle override ✅ done
 
-Not a prerequisite for anything. `docs/bindless.md` ("The uniformity rule")
-names this path — a `getDescriptorFromHandle` override plus the
-`shaderSampledImageArrayNonUniformIndexing` device feature — and half of it
-already exists: `load_bindless_options_module`
-(crates/slang-reflection/src/lib.rs) overrides the hook globally to pin the
-`None` preset, and that override is the only seam where the decoration can be
-added (see "Why this option and not the others"). This section records what
-the remaining half costs.
-
-**The trigger** is a handle — or an index or pointer that selects the struct
-carrying one — that varies within a single draw. That is the case the
-uniformity rule forbids: Slang compiles the divergent access without
-`NonUniformEXT`, validation cannot see it, and wave-scalarizing hardware
-renders the wrong texture while other hardware renders correctly.
+The uniformity rule is retired. A handle may vary within a draw.
 
 **The mechanism is not a `BindlessDescriptorOptions` value.** The enum has
 exactly two members, `None` and `VkMutable`
 (slang/source/slang/hlsl.meta.slang:27589) — there is no `NonUniform` option
 to pass. The lever is the core module's `nonuniform()` intrinsic on
-`DescriptorHandle<T>` (hlsl.meta.slang:27707), which lowers to
-`OpNonUniformResourceIndex`. The override change is one line:
+`DescriptorHandle<T>` (hlsl.meta.slang:27708), which lowers to
+`OpNonUniformResourceIndex`. `load_bindless_options_module`
+(crates/slang-reflection/src/lib.rs) overrides `getDescriptorFromHandle`
+globally to pin the `None` preset, and that override is the only seam where
+the decoration can be added (see "Why this option and not the others"), so
+the source change is one line in `bindless_options.slang`:
 
 ```slang
 return defaultGetDescriptorFromHandle(nonuniform(handleValue), BindlessDescriptorOptions.None);
 ```
 
-The work:
+What landed:
 
-- The one-line change in `load_bindless_options_module`.
-- Enable `shader_sampled_image_array_non_uniform_indexing` in
-  `PhysicalDeviceVulkan12Features` (renderer.rs:3774) and add it to the
-  missing-features suitability check (renderer.rs:3419). If Phase 11b has
-  landed storage-image handles, `shaderStorageImageArrayNonUniformIndexing`
-  joins both lists.
-- Rewrite the uniformity rule in `docs/bindless.md`: the rule dissolves into
-  performance guidance, and the one-draw-per-material pattern stays as the
-  recommended shape rather than the required one.
+- The one-line change in `bindless_options.slang`.
+- `shader_sampled_image_array_non_uniform_indexing` and
+  `shader_storage_image_array_non_uniform_indexing` in
+  `PhysicalDeviceVulkan12Features`, and in the missing-features suitability
+  check. Storage-image handles landed in Phase 11b, so both features are
+  required, not just the sampled one.
+- Two guard tests in `mod bindless_preset_tests`
+  (crates/slang-reflection/src/lib.rs), one per handle shape. Each pins the
+  `NonUniform` decoration and the SPIR-V capabilities. A divergent probe —
+  a per-pixel ternary between two `Sampler2D.Handle` fields — covers the
+  sampled shape, so the test also pins that no pass folds the select away.
+- The uniformity rule in `docs/bindless.md` rewritten as performance
+  guidance. One draw per material stays as the recommended shape.
 
-**The open question, to verify rather than assume:** whether the `NonUniform`
-decoration survives `[ForceInline]` inlining of
-`defaultGetDescriptorFromHandle` (hlsl.meta.slang:27597) and lands on the
-descriptor access, not on a dead pre-inline value. Slang has a propagation
-pass for exactly this, but the whole point of the change is a guarantee.
-Compile a fixture with deliberately divergent handle selection — a per-pixel
-ternary between two handles is the documented forbidden case — then
-`spirv-dis` and confirm both the `NonUniform` decoration on the access chain
-and the `SampledImageArrayNonUniformIndexing` capability. Without the
-decoration the change is a silent no-op, which is the exact failure shape the
-uniformity rule documents.
+**The open question is answered: the decoration survives `[ForceInline]`
+inlining.** `spirv-dis` on the divergent probe shows the chain intact —
+`%8` (the heap index extracted after the select), `%9` (the `OpAccessChain`
+into `__slang_resource_heap`) and `%10` (the `OpLoad` of the descriptor) each
+carry `OpDecorate ... NonUniform`, and `%10` feeds
+`OpImageSampleImplicitLod`. `ShaderNonUniform` and
+`SampledImageArrayNonUniformIndexing` are both emitted;
+`StorageImageArrayNonUniformIndexing` joins them on the storage probe.
+`spirv-val --target-env vulkan1.3` passes on both.
 
-**The cost, and why it is not scheduled.** The override applies to every
-handle access, uniform or not. AMD compilers waterfall a decorated descriptor
-load; a value that is uniform at runtime makes the loop run once, so the cost
-is small but not provably zero. Nothing today selects a handle non-uniformly —
-Phase 9's push-constant pattern makes every existing handle uniform by
-construction — so today the change buys insurance and pays the waterfall for
-it. The per-site alternative, `nonuniform(handleValue)` written in shader
-source at the divergent access, keeps uniform accesses clean but reinstates
-the footgun: nothing enforces that the annotation is present where it is
-needed. Every committed `.spv` that touches a handle churns (new capability
-plus decorations), so the change rides `just shaders` plus the usual
-frozen-time visual A/B.
+**The cost.** The override applies to every handle access, uniform or not. A
+driver that reports `shaderSampledImageArrayNonUniformIndexingNative = false`
+waterfalls a decorated descriptor load; a value that is uniform at runtime
+makes the loop run once, so the cost is small but not provably zero. Nothing
+today selects a handle non-uniformly — Phase 9's push-constant pattern makes
+every existing handle uniform by construction — so the change buys insurance
+and pays the waterfall for it. The per-site alternative,
+`nonuniform(handleValue)` written in shader source at the divergent access,
+keeps uniform accesses clean but reinstates the footgun: nothing enforces
+that the annotation is present where it is needed.
+
+19 of the 44 committed `.spv` churned, one per handle-declaring source. No
+reflection JSON and no generated Rust changed: reflection reads declarations,
+not indexing expressions.
 
 ---
 
@@ -2147,6 +2142,7 @@ an existing latent bug worth fixing before trusting any macOS result.
 | 11b | ✅ A/B 0 / 0 / 0 at three checkpoints for each of the seven migration steps, six poison controls each moving thousands of pixels, forced heap exhaustion naming the storage binding, forced undersized limits warn-skipping llvmpipe on six limits, `spirv-dis` showing heap arrays at set 1 bindings 1 and 3, `just sweep` 16 ok / 0 fail, `just test` green with one additive snapshot change plus two new ([detail](bindless_textures/phase_11b.md)) |
 | 11c | ✅ `just test` green with **no** snapshot changed, `just sweep` 16 ok / 0 fail with the injected-fault self-test still firing, `just lint` and `cargo check --workspace --all-targets` clean — **no A/B and no poison control**, declined as out of proportion to a substitution that collapses no pipeline, which leaves a wrong heap slot in this phase silent and uncovered ([detail](bindless_textures/phase_11c.md)) |
 | 12 | ✅ A/B 0 / 0 / 0 after both collapses, three poison controls, the interleaving probe (4 compute pushes + 1 graphics push per frame across two bind points and incompatible layouts, validation-clean), hot reload both directions, `push_constant_compute_spirv_layout` pinning `[(0,0), (1,8), (2,16), (3,24), (4,32), (5,48)]`, `just sweep` 16 ok / 0 fail, `just test` green with the seven-file delta ([detail](bindless_textures/phase_12.md)) |
+| 14 | ✅ `spirv-dis` on a divergent probe showing `NonUniform` on the index, the access chain and the descriptor load, plus the three capabilities; `spirv-val --target-env vulkan1.3` on both probes and on two regenerated `.spv`; two new guard tests; `just test` green with **zero** snapshot changes; `just shaders` churning 19 `.spv` and no reflection JSON; `just lint` and `cargo check --workspace --all-targets` clean; `just sweep` 16 ok / 0 fail; all 10 handle-using examples presenting frames validation-clean on a discrete GPU that reports `shaderSampledImageArrayNonUniformIndexingNative = false`, so the waterfall path is the one exercised; and a run-and-look on `toon_link`, `sprite_batch`, `depth_texture` and `watercolor`, each rendering correctly — **no poison control and no pixel-exact A/B**, declined because the change adds a decoration and moves no data, so a wrong result would have to come from the driver, which the validation-clean runs cover |
 
 Per [`docs/testing.md`](../docs/testing.md), read before accepting any snapshot or
 adding a validation check. Layout bugs behind device addresses, heap indices and
