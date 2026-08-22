@@ -190,11 +190,12 @@ struct Watercolor {
 }
 
 /// Compute the number of workgroups needed to cover the canvas for a given shader's workgroup size.
-fn workgroups(wg_size: [u32; 3]) -> (u32, u32) {
-    (
+fn workgroups(wg_size: [u32; 3]) -> [u32; 3] {
+    [
         CANVAS_WIDTH.div_ceil(wg_size[0]),
         CANVAS_HEIGHT.div_ceil(wg_size[1]),
-    )
+        1,
+    ]
 }
 
 /// Map a mouse position (in window coordinates) to canvas coordinates using crop-to-fill scaling.
@@ -695,39 +696,36 @@ impl Game for Watercolor {
 
         // 1. Brush input
         if point_count > 0 {
-            let (wx, wy) = workgroups(paint_brush_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.brush_pipeline, wx, wy, 1);
+            renderer.dispatch(
+                &self.brush_pipeline,
+                workgroups(paint_brush_compute::WORKGROUP_SIZE),
+            );
         }
 
         // 2. Update velocity (advection + forces)
-        {
-            let (wx, wy) = workgroups(wc_update_velocity_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.update_velocity_pipeline, wx, wy, 1);
-        }
+        renderer.dispatch(
+            &self.update_velocity_pipeline,
+            workgroups(wc_update_velocity_compute::WORKGROUP_SIZE),
+        );
 
         // 3. Divergence (reads velocity after update)
-        {
-            let (wx, wy) = workgroups(wc_divergence_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.divergence_pipeline, wx, wy, 1);
-        }
+        renderer.dispatch(
+            &self.divergence_pipeline,
+            workgroups(wc_divergence_compute::WORKGROUP_SIZE),
+        );
 
         // 4. Pressure Jacobi iterations (ping-pong pressure)
-        {
-            let (wx, wy) = workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE);
-            for _ in 0..JACOBI_ITERATIONS {
-                let parity = self.pressure_parity;
-                renderer.dispatch_with_push_constants(
-                    &self.pressure_jacobi_pipeline,
-                    wx,
-                    wy,
-                    1,
-                    &wc_pressure_jacobi_compute::JacobiDispatch {
-                        pressure_in: self.pressure.read_sampled(parity).bindless_handle(),
-                        pressure_out: self.pressure.write_storage(parity).bindless_handle(),
-                    },
-                );
-                self.pressure_parity = !self.pressure_parity;
-            }
+        for _ in 0..JACOBI_ITERATIONS {
+            let parity = self.pressure_parity;
+            renderer.dispatch_with_push_constants(
+                &self.pressure_jacobi_pipeline,
+                workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE),
+                &wc_pressure_jacobi_compute::JacobiDispatch {
+                    pressure_in: self.pressure.read_sampled(parity).bindless_handle(),
+                    pressure_out: self.pressure.write_storage(parity).bindless_handle(),
+                },
+            );
+            self.pressure_parity = !self.pressure_parity;
         }
 
         // 5. Project velocity
@@ -735,65 +733,55 @@ impl Game for Watercolor {
         // The one edge the automatic barrier over-synchronizes: project
         // velocity writes u/v, blur H reads wet_mask, so the two could run in
         // parallel. Nothing expresses that yet.
-        {
-            let (wx, wy) = workgroups(wc_project_velocity_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.project_velocity_pipeline, wx, wy, 1);
-        }
+        renderer.dispatch(
+            &self.project_velocity_pipeline,
+            workgroups(wc_project_velocity_compute::WORKGROUP_SIZE),
+        );
 
         // 6. Gaussian blur H (wet_mask → blur_temp)
-        {
-            let (wx, wy) = workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE);
-            renderer.dispatch_with_push_constants(
-                &self.blur_pipeline,
-                wx,
-                wy,
-                1,
-                &wc_gaussian_blur_compute::BlurDispatch {
-                    // the side capillary flow writes: sim_parity flips below,
-                    // and the uniform write this replaces ran after that flip
-                    input_tex: self
-                        .wet_mask
-                        .read_sampled(!self.sim_parity)
-                        .bindless_handle(),
-                    output_tex: self.blur_temp.bindless_handle(),
-                    direction: Vec2::new(1.0, 0.0),
-                },
-            );
-        }
+        renderer.dispatch_with_push_constants(
+            &self.blur_pipeline,
+            workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
+            &wc_gaussian_blur_compute::BlurDispatch {
+                // the side capillary flow writes: sim_parity flips below,
+                // and the uniform write this replaces ran after that flip
+                input_tex: self
+                    .wet_mask
+                    .read_sampled(!self.sim_parity)
+                    .bindless_handle(),
+                output_tex: self.blur_temp.bindless_handle(),
+                direction: Vec2::new(1.0, 0.0),
+            },
+        );
 
         // 7. Gaussian blur V (blur_temp → blurred_mask)
-        {
-            let (wx, wy) = workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE);
-            renderer.dispatch_with_push_constants(
-                &self.blur_pipeline,
-                wx,
-                wy,
-                1,
-                &wc_gaussian_blur_compute::BlurDispatch {
-                    input_tex: self.blur_temp_sampled.bindless_handle(),
-                    output_tex: self.blurred_mask.bindless_handle(),
-                    direction: Vec2::new(0.0, 1.0),
-                },
-            );
-        }
+        renderer.dispatch_with_push_constants(
+            &self.blur_pipeline,
+            workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
+            &wc_gaussian_blur_compute::BlurDispatch {
+                input_tex: self.blur_temp_sampled.bindless_handle(),
+                output_tex: self.blurred_mask.bindless_handle(),
+                direction: Vec2::new(0.0, 1.0),
+            },
+        );
 
         // 8. Flow outward (blurred_mask → flow formula into pressure + saturation)
-        {
-            let (wx, wy) = workgroups(wc_flow_outward_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.flow_outward_pipeline, wx, wy, 1);
-        }
+        renderer.dispatch(
+            &self.flow_outward_pipeline,
+            workgroups(wc_flow_outward_compute::WORKGROUP_SIZE),
+        );
 
         // 9. Advect + transfer pigment (combined)
-        {
-            let (wx, wy) = workgroups(wc_advect_and_transfer_pigment_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.advect_and_transfer_pipeline, wx, wy, 1);
-        }
+        renderer.dispatch(
+            &self.advect_and_transfer_pipeline,
+            workgroups(wc_advect_and_transfer_pigment_compute::WORKGROUP_SIZE),
+        );
 
         // 10. Capillary flow (saturation + wet_mask at sim → writes to !sim)
-        {
-            let (wx, wy) = workgroups(wc_capillary_flow_compute::WORKGROUP_SIZE);
-            renderer.dispatch(&self.capillary_flow_pipeline, wx, wy, 1);
-        }
+        renderer.dispatch(
+            &self.capillary_flow_pipeline,
+            workgroups(wc_capillary_flow_compute::WORKGROUP_SIZE),
+        );
 
         // Flip simulation parity
         self.sim_parity = !self.sim_parity;

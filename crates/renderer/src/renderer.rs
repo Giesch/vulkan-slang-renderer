@@ -5810,22 +5810,20 @@ impl<'f> FrameRenderer<'f> {
     }
 
     /// Queue a compute dispatch, inserting a barrier with a previous one.
-    pub fn dispatch(&mut self, pipeline: &PipelineHandle<Compute, NoPush>, x: u32, y: u32, z: u32) {
-        self.push_dispatch(pipeline, [x, y, z], None);
+    pub fn dispatch(&mut self, pipeline: &PipelineHandle<Compute, NoPush>, group_count: [u32; 3]) {
+        self.push_dispatch(pipeline, group_count, None);
     }
 
     /// [`Self::dispatch`], with a per-dispatch push constant block
     pub fn dispatch_with_push_constants<P: PushConstantBlock>(
         &mut self,
         pipeline: &PipelineHandle<Compute, PushBlock<P>>,
-        x: u32,
-        y: u32,
-        z: u32,
+        group_count: [u32; 3],
         push: &P,
     ) {
         self.push_dispatch(
             pipeline,
-            [x, y, z],
+            group_count,
             Some(PushConstantBytes::from_value(push)),
         );
     }
@@ -6028,8 +6026,7 @@ impl<'f> FrameRenderer<'f> {
         mouse_position: [f32; 2],
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
-        // picking is still single-draw: it hasn't been integrated with the
-        // multi-draw queue (see the link_rendering plan §4.5)
+        // picking is still single-draw: it hasn't been integrated with the multi-draw queue
         debug_assert!(
             self.pending_draws.is_empty(),
             "draw_vertex_count_with_picking does not support queued draws"

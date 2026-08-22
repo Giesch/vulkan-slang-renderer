@@ -90,7 +90,7 @@ impl Game for Particles {
         let workgroup_size = particles_compute::WORKGROUP_SIZE[0];
         let workgroup_count = NUM_PARTICLES.div_ceil(workgroup_size);
 
-        renderer.dispatch(&self.compute_pipeline, workgroup_count, 1, 1);
+        renderer.dispatch(&self.compute_pipeline, [workgroup_count, 1, 1]);
 
         let vertex_count = NUM_PARTICLES * 6; // 6 vertices per particle quad
         renderer.draw_vertex_count(&self.render_pipeline, vertex_count, |gpu| {
