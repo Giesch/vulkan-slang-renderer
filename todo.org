@@ -1,20 +1,22 @@
 #+title: Todo
 
 * Possible Next Directions
-- [ ] Bindless Textures
-  - [ ] use handles consistently in all examples
-    - [ ] get any necessary reflection features done
-    - [ ] migrate watercolor
-    - [ ] migrate toon link
-    - [ ] migrate the rest
-  - [ ] rewrite the markdown doc
+- [X] Bindless Textures
+  - [X] use handles consistently in all examples
+    - [X] get any necessary reflection features done
+    - [X] migrate watercolor
+    - [X] migrate toon link
+    - [X] migrate the rest
+  - [X] rewrite the markdown doc
 
-- [ ] G-buffer
-  replace the current picking setup with another attachment
+- [ ] use draw indirect in toon link example
 
 - [-] Balatro card shader
   - [X] 3D tilt
   - [ ] holo effect
+
+- [ ] G-buffer
+  replace the current picking setup with another attachment
 
 - [ ] code reviews
   use fable?
