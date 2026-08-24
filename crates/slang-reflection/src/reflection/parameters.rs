@@ -42,7 +42,8 @@ pub fn reflect_entry_points(
 
             let entry_point_param_json = match type_layout.kind() {
                 slang::TypeKind::Struct => {
-                    let fields = reflect_struct_fields(type_layout, program_layout, false)?;
+                    let fields =
+                        reflect_struct_fields(type_layout, program_layout, &mut Vec::new())?;
                     let type_name = type_layout.name().unwrap().to_string();
 
                     EntryPointParameter::Struct(StructEntryPointParameter {
@@ -172,7 +173,8 @@ fn reflect_global_parameters(
         let element_type = match element_type_layout.kind() {
             slang::TypeKind::Struct => {
                 let element_type_name = element_type_layout.name().unwrap().to_string();
-                let fields = reflect_struct_fields(element_type_layout, program_layout, false)?;
+                let fields =
+                    reflect_struct_fields(element_type_layout, program_layout, &mut Vec::new())?;
 
                 ParameterBlockElementType {
                     type_name: element_type_name,
@@ -274,7 +276,7 @@ fn reject_descriptor_fields(fields: &[StructField], block_name: &str) -> anyhow:
 fn reflect_struct_fields(
     struct_type_layout: &slang::reflection::TypeLayout,
     program_layout: &slang::reflection::Shader,
-    in_pointer_pointee: bool,
+    pointee_stack: &mut Vec<String>,
 ) -> anyhow::Result<Vec<StructField>> {
     let mut fields = vec![];
 
@@ -393,7 +395,7 @@ fn reflect_struct_fields(
 
             slang::TypeKind::Struct => {
                 let field_fields =
-                    reflect_struct_fields(field_type_layout, program_layout, in_pointer_pointee)?;
+                    reflect_struct_fields(field_type_layout, program_layout, pointee_stack)?;
                 let field_type_name = field_type_layout.name().unwrap().to_string();
 
                 StructField::Struct(StructStructField {
@@ -445,8 +447,11 @@ fn reflect_struct_fields(
                         let element_type_layout = field_type_layout.element_type_layout().unwrap();
                         let element_type_name = element_type_layout.name().unwrap().to_string();
 
-                        let struct_fields =
-                            reflect_struct_fields(element_type_layout, program_layout, false)?;
+                        let struct_fields = reflect_struct_fields(
+                            element_type_layout,
+                            program_layout,
+                            &mut Vec::new(),
+                        )?;
 
                         let struct_result_type = StructResultType {
                             type_name: element_type_name,
@@ -473,13 +478,6 @@ fn reflect_struct_fields(
             }
 
             slang::TypeKind::Pointer => {
-                if in_pointer_pointee {
-                    anyhow::bail!(
-                        "pointer field '{field_name}': nested pointers \
-                        (a pointer inside a pointer's pointee) are not supported"
-                    );
-                }
-
                 let ptr_type = field_type_layout.ty().unwrap();
                 let ptr_type_name = declared_full_name(ptr_type);
 
@@ -535,7 +533,21 @@ fn reflect_struct_fields(
                 }
 
                 let pointee_type_name = pointee_layout.name().unwrap().to_string();
-                let pointee_fields = reflect_struct_fields(pointee_layout, program_layout, true)?;
+
+                // Pointee fields embed inline in the reflection JSON, so a
+                // pointer cycle cannot be represented.
+                if pointee_stack.contains(&pointee_type_name) {
+                    let chain = pointee_stack.join(" -> ");
+                    anyhow::bail!(
+                        "pointer field '{field_name}': pointee '{pointee_type_name}' already \
+                        appears on the pointee chain ({chain} -> {pointee_type_name})"
+                    );
+                }
+                pointee_stack.push(pointee_type_name.clone());
+                let pointee_fields =
+                    reflect_struct_fields(pointee_layout, program_layout, pointee_stack)?;
+                pointee_stack.pop();
+
                 let pointee_size = pointee_layout.size(slang::ParameterCategory::Uniform);
 
                 StructField::Pointer(PointerStructField {

@@ -7,6 +7,7 @@ pub mod handle_mixed;
 pub mod handle_params;
 pub mod handle_params_compute;
 pub mod handle_pointee;
+pub mod nested_pointer;
 pub mod pointer_dual_context;
 pub mod pointer_params_compute;
 pub mod pointer_pointee_layout;
@@ -38,6 +39,7 @@ pub struct ShaderAtlas {
     pub handle_mixed: handle_mixed::Shader,
     pub handle_params: handle_params::Shader,
     pub handle_pointee: handle_pointee::Shader,
+    pub nested_pointer: nested_pointer::Shader,
     pub pointer_dual_context: pointer_dual_context::Shader,
     pub pointer_pointee_layout: pointer_pointee_layout::Shader,
     pub push_constants: push_constants::Shader,
@@ -72,6 +74,7 @@ impl ShaderAtlasRoot for ShaderAtlas {
             handle_mixed: handle_mixed::Shader::init(),
             handle_params: handle_params::Shader::init(),
             handle_pointee: handle_pointee::Shader::init(),
+            nested_pointer: nested_pointer::Shader::init(),
             pointer_dual_context: pointer_dual_context::Shader::init(),
             pointer_pointee_layout: pointer_pointee_layout::Shader::init(),
             push_constants: push_constants::Shader::init(),

@@ -2399,6 +2399,89 @@ mod tests {
         assert_eq!(member_offsets(member_types[6]), vec![(0, 0), (1, 8)]);
     }
 
+    /// The pointer-chain twin of `pointer_pointee_spirv_layout`: a pointer
+    /// member *inside* a Std430DataLayout pointee must get a correct 8-byte
+    /// Offset, and both pointer types must carry their pointee's std430 size
+    /// as ArrayStride.
+    #[cfg(not(windows))]
+    #[test]
+    fn nested_pointer_spirv_layout() {
+        use rspirv::dr::Operand;
+        use rspirv::spirv::{Decoration, Op, StorageClass};
+
+        let search_path = manifest_path(["fixtures", "alignment"]);
+        let reflected =
+            prepare_reflected_shader("nested_pointer.shader.slang", search_path.to_str().unwrap())
+                .unwrap();
+
+        let module = rspirv::dr::load_bytes(&reflected.vertex_shader.shader_bytecode)
+            .expect("failed to parse SPIR-V");
+
+        // the struct-pointee PhysicalStorageBuffer pointer types: →NestedSlot
+        // and →NestedInner (access chains also emit member-typed BDA pointers)
+        let struct_ids: Vec<u32> = module
+            .types_global_values
+            .iter()
+            .filter(|inst| inst.class.opcode == Op::TypeStruct)
+            .map(|inst| inst.result_id.unwrap())
+            .collect();
+        let psb_pointers: Vec<(u32, u32)> = module
+            .types_global_values
+            .iter()
+            .filter(|inst| inst.class.opcode == Op::TypePointer)
+            .filter_map(|inst| match inst.operands.as_slice() {
+                [
+                    Operand::StorageClass(StorageClass::PhysicalStorageBuffer),
+                    Operand::IdRef(pointee),
+                ] if struct_ids.contains(pointee) => Some((inst.result_id.unwrap(), *pointee)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            psb_pointers.len(),
+            2,
+            "expected two struct BDA pointer types"
+        );
+
+        // NestedSlot is the pointee whose first member is itself a BDA pointer
+        let ptr_type_ids: Vec<u32> = psb_pointers.iter().map(|(id, _)| *id).collect();
+        let (slot, inner) = {
+            let is_outer = |&(_, pointee): &&(u32, u32)| {
+                ptr_type_ids.contains(&member_type_ids(&module, *pointee)[0])
+            };
+            let outer = psb_pointers
+                .iter()
+                .find(is_outer)
+                .expect("no outer pointee");
+            let inner = psb_pointers.iter().find(|p| p != &outer).unwrap();
+            (*outer, *inner)
+        };
+
+        // NestedSlot: item at 0 (the load-bearing 8-byte pointer member), tag at 8
+        assert_eq!(member_offsets(&module, slot.1), vec![(0, 0), (1, 8)]);
+        // NestedInner: v at 0, w at 12
+        assert_eq!(member_offsets(&module, inner.1), vec![(0, 0), (1, 12)]);
+
+        // pointer indexing stride == std430 struct size, at both levels
+        let array_stride = |target_id: u32| {
+            module
+                .annotations
+                .iter()
+                .filter(|inst| inst.class.opcode == Op::Decorate)
+                .find_map(|inst| match inst.operands.as_slice() {
+                    [
+                        Operand::IdRef(target),
+                        Operand::Decoration(Decoration::ArrayStride),
+                        Operand::LiteralBit32(stride),
+                    ] if *target == target_id => Some(*stride),
+                    _ => None,
+                })
+                .expect("no ArrayStride on a PhysicalStorageBuffer pointer type")
+        };
+        assert_eq!(array_stride(slot.0), 16);
+        assert_eq!(array_stride(inner.0), 16);
+    }
+
     /// The id of the struct type behind a module's `PushConstant` variable.
     #[cfg(not(windows))]
     fn push_constant_block_struct_id(module: &rspirv::dr::Module) -> rspirv::spirv::Word {
@@ -2544,6 +2627,58 @@ float4 fragMain() : SV_Target {
         let message = format!("{err:#}");
         assert!(
             message.contains("Std430DataLayout") && message.contains("Addr<"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // Pointee fields embed inline in the reflection JSON, so a pointer cycle
+    // cannot be represented; reflection must reject it rather than recurse
+    // forever.
+    #[cfg(not(windows))]
+    #[test]
+    fn pointer_cycle_is_rejected() {
+        let tmp_dir = std::env::temp_dir().join(format!("shader-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let source = r#"#language slang 2026
+
+module pointer_cycle;
+
+struct Node {
+    LayoutPtr<Node, Std430DataLayout> next;
+    float value;
+}
+
+struct Params {
+    LayoutPtr<Node, Std430DataLayout> head;
+}
+
+ParameterBlock<Params> params;
+
+[shader("vertex")]
+float4 vertMain(uint id: SV_VertexID) : SV_Position {
+    return float4(params.head[0].next[0].value);
+}
+
+[shader("fragment")]
+float4 fragMain() : SV_Target {
+    return float4(1.0);
+}
+"#;
+        std::fs::write(tmp_dir.join("pointer_cycle.shader.slang"), source).unwrap();
+
+        let result =
+            prepare_reflected_shader("pointer_cycle.shader.slang", tmp_dir.to_str().unwrap());
+
+        std::fs::remove_dir_all(&tmp_dir).ok();
+
+        let err = match result {
+            Ok(_) => panic!("a pointer cycle must be rejected"),
+            Err(err) => err,
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("pointee chain"),
             "unexpected error message: {message}"
         );
     }

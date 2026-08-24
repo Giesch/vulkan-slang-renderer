@@ -1,0 +1,159 @@
+---
+source: crates/cli/src/build_tasks.rs
+info:
+  relative_path: shaders/compiled/nested_pointer.json
+---
+{
+  "sourceFileName": "nested_pointer.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "NestedParams",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "tint",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "pushConstant",
+      "parameterName": "draw",
+      "elementType": {
+        "typeName": "NestedDraw",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "slots",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "NestedSlot",
+              "fields": [
+                {
+                  "kind": "pointer",
+                  "fieldName": "item",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "pointeeType": {
+                    "typeName": "NestedInner",
+                    "fields": [
+                      {
+                        "kind": "vector",
+                        "fieldName": "v",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 12
+                        },
+                        "elementCount": 3,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "fieldName": "w",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 12,
+                          "size": 4
+                        },
+                        "scalarType": "float32"
+                      }
+                    ]
+                  },
+                  "pointeeSize": 16,
+                  "access": "immutable"
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "tag",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 8,
+                    "size": 4
+                  },
+                  "scalarType": "uint32"
+                }
+              ]
+            },
+            "pointeeSize": 16,
+            "access": "readWrite"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "index",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 4
+            },
+            "scalarType": "uint32"
+          }
+        ]
+      },
+      "elementSize": 16
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "id",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": []
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 16
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": [
+      {
+        "stageFlags": "all",
+        "offset": 0,
+        "size": 16
+      }
+    ],
+    "bindlessHeapSet": null
+  }
+}
