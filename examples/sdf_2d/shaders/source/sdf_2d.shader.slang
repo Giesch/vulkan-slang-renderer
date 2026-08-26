@@ -51,6 +51,8 @@ func colorForPixel(pixel: float2, time: float) -> float3 {
 
     // return somePrimitives((pixel + float2(1.0)) * 1.75, time);
 
+    // return sierpinskyCarpet(pixel);
+
     return panningCircles(pixel, time);
 }
 
@@ -245,4 +247,35 @@ func parabola(pos: float2, k: float) -> float {
         : 2.0 * cos(atan2(r, q) / 3.0) * sqrt(p);
 
     return length(pos - float2(x, k * x*x)) * sign(pos.x - x);
+}
+
+static const float3 offWhite = float3(0.95);
+static const float3 offBlack = float3(0.05);
+
+// https://www.shadertoy.com/view/NdX3WX
+func sierpinskyCarpet(pixel: float2) -> float3 {
+    // make the 0-to-resolution coordinate space used in shadertoy
+    let fragCoord = 0.5 * ((pixel + 1.0) * params.resolution.y + params.resolution);
+
+    // the number of base-2 digits in the floored pixel coordinate
+    // this is an overestimate of the number of base-3 digits,
+    // which is what we actually need
+    let n = int(log2(floor(params.resolution.x)));
+
+    var intPixel = int2(fragCoord);
+    var i = 0;
+    // we start small and zoom out, making intPixel coarser with each iteration
+    //   you could zoom in instead
+    for (i = 0; i <= n; i++, intPixel /= 3) {
+        let cell = intPixel % 3;
+        let isCenter = all(cell == int2(1));
+        // if we're in a center square,
+        // we don't need to keep zooming out
+        if (isCenter) break;
+    }
+
+    // draw a white square if we finished the loop
+    let inCarpet = i == n + 1;
+
+    return inCarpet ? offWhite : offBlack;
 }
