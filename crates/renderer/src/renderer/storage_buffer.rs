@@ -176,6 +176,14 @@ impl StorageBufferStorage {
         self.0[handle.index].as_ref().unwrap()[frame].device_address
     }
 
+    pub(super) fn vk_buffer_for_frame_immutable<T>(
+        &self,
+        handle: &ImmutableBufferHandle<T>,
+        frame: usize,
+    ) -> vk::Buffer {
+        self.0[handle.index].as_ref().unwrap()[frame].buffer
+    }
+
     /// The address of a single element, for pointing a shader at one struct in
     /// the buffer rather than at its base.
     ///

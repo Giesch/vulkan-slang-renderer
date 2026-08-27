@@ -1,9 +1,13 @@
 //! Renders Toon Link from The Wind Waker.
 //!
 //! All 24 batches draw from one shared mesh, through 5 pipelines and one
-//! bindless `Material` buffer. The example applies the model's albedo
-//! textures, the per-material raster state, the GX TEV interpreter
-//! (`shaders/source/tev.slang`), and gamma-correct output. The eye and brow
+//! bindless `Material` buffer. They record as 7 `cmd_draw_indexed_indirect`
+//! commands, one per run of consecutive batches that share a pipeline. Each
+//! sub-draw resolves its material through `SV_DrawIndex`. See [`Run`].
+//!
+//! The example applies the model's albedo textures, the per-material raster
+//! state, the GX TEV interpreter (`shaders/source/tev.slang`), and
+//! gamma-correct output. The eye and brow
 //! decals deposit coverage in destination alpha, then composite through the
 //! hair with `BlendMode::DstAlpha`. See [`DrawGroups`].
 //!
@@ -31,16 +35,17 @@ use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use image::ImageReader;
 
-use mltrs::editor::{Checkbox, IntSlider, Label, RGBPicker, Slider};
+use mltrs::editor::{Checkbox, RGBPicker, Slider};
 use mltrs::game::Game;
 // The manifest's GX enums keep the `mm::` prefix. `mm::CullMode` and
 // `mm::BlendMode` collide with the renderer's pipeline enums of the same name.
 use gx::model_manifest::{self as mm, Batch, Manifest, MaterialEntry, TextureEntry};
 use mltrs::renderer::{
-    BindlessHandle, BlendMode, CullMode, DepthCompare, DrawError, DrawIndexed, FrameRenderer,
-    MeshHandle, PipelineHandle, PushBlock, RasterState, Renderer, RgbaPixels, Sampler2D,
-    SamplerOptions, SingletonBufferHandle, TextureColorSpace, TextureFilter, TextureHandle,
-    TextureOptions, TextureWrap, UniformBufferHandle,
+    BindlessHandle, BlendMode, CullMode, DepthCompare, DrawError, DrawIndexedIndirect,
+    DrawIndexedIndirectCommand, FrameRenderer, ImmutableBufferHandle, MeshHandle, PipelineHandle,
+    PushBlock, RasterState, Renderer, RgbaPixels, Sampler2D, SamplerOptions, SingletonBufferHandle,
+    TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
+    UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -66,20 +71,17 @@ const MODEL_SPIN: f32 = 20.0 * (PI / 180.0);
 /// `link.vtx.bin` is interleaved little-endian f32: pos[3] nrm[3] uv0[2].
 const VERTEX_STRIDE: usize = 32;
 
-/// Index into `Manifest::materials`, into [`MaterialTable::base`], and into
-/// the GPU's `Material` buffer: push order defines the slot. [`Self::push`]
-/// converts a slot to the element address the shader receives. The index
-/// itself never reaches the GPU.
+/// An index into `Manifest::materials`, into [`MaterialTable::base`], and into
+/// the GPU's `Material` buffer.
 ///
-/// Not interchangeable with [`BatchIndex`]. cl.bdl's batches reference
-/// material slots in a permuted order: batch 1 uses slot 17, batch 2 uses slot
-/// 18. Both spaces hold 24 entries and the mapping is a bijection, so a mixup
-/// silently draws the wrong textures, TEV state and raster state.
+/// Passed to the GPU as a device address in the [`DrawSlot`] table,
+/// read in the shader with `SV_DrawIndex`.
+///
+/// Not interchangeable with [`BatchIndex`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct MaterialSlot(usize);
 
 impl MaterialSlot {
-    /// The only place a raw `Batch::material` becomes a slot.
     fn from_manifest(material: u16) -> Self {
         Self(material as usize)
     }
@@ -87,21 +89,10 @@ impl MaterialSlot {
     fn raw(self) -> usize {
         self.0
     }
-
-    /// This slot's `Material` as the shader's per-draw push constant.
-    fn push(
-        self,
-        renderer: &FrameRenderer,
-        materials: &SingletonBufferHandle<Material>,
-    ) -> ToonLinkDraw {
-        let index = self.0 as u32;
-        let material = renderer.singleton_addr_at(materials, index);
-        ToonLinkDraw { material }
-    }
 }
 
-/// Index into `Manifest::batches`, in INF1 draw order. The debug window's
-/// isolation slider walks this space, not [`MaterialSlot`].
+/// An index into `Manifest::batches`, in INF1 draw order.
+/// Not interchangeable with [`MaterialSlot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct BatchIndex(usize);
 
@@ -763,13 +754,13 @@ const EXPECTED_RASTER_STATES: usize = 5;
 /// `Manifest::materials`. Push order defines a [`MaterialSlot`].
 struct MaterialTable {
     /// One pipeline per distinct [`RasterState`], in first-use order.
-    pipelines: Vec<PipelineHandle<DrawIndexed, PushBlock<ToonLinkDraw>>>,
+    pipelines: Vec<PipelineHandle<DrawIndexedIndirect, PushBlock<ToonLinkDraw>>>,
     /// Maps a `MaterialSlot` to an index into [`Self::pipelines`]. Many slots
     /// share one pipeline.
     pipeline_of_slot: Vec<usize>,
-    /// Maps a `MaterialSlot` to the manifest's values verbatim. It seeds
-    /// [`ToonLink::materials_buffer`] once and never changes. Per-frame values
-    /// belong in [`ToonLinkParams`].
+    /// Maps a `MaterialSlot` to the manifest's values verbatim. It seeds the
+    /// GPU material buffer once and never changes.
+    /// Per-frame values belong in [`ToonLinkParams`].
     base: Vec<Material>,
 }
 
@@ -798,7 +789,8 @@ fn build_materials(
                 let pipeline_config = shader
                     .pipeline_config(Resources { params_buffer })
                     .with_shared_mesh(mesh)
-                    .with_raster_state(raster);
+                    .with_raster_state(raster)
+                    .indirect();
                 pipelines.push(renderer.create_pipeline(pipeline_config)?);
                 raster_states.push(raster);
                 pipelines.len() - 1
@@ -830,24 +822,104 @@ fn build_materials(
     })
 }
 
+/// The GPU-side draw list. `commands` and `slots` hold one entry per batch, in
+/// `draw_order`, and `runs` partitions them by pipeline.
+struct DrawList {
+    commands: Vec<DrawIndexedIndirectCommand>,
+    slots: Vec<DrawSlot>,
+    runs: Vec<Run>,
+}
+
+/// A span of consecutive `draw_order` entries that share one pipeline.
+/// One Run corresponds with with one `cmd_draw_indexed_indirect` call.
+struct Run {
+    /// Index into [`MaterialTable::pipelines`].
+    pipeline: usize,
+    /// Index into [`ToonLink::args_buffer`] and the parallel
+    /// [`ToonLink::slot_buffer`], which hold the batches in `draw_order`
+    /// rather than in INF1 order.
+    first: u32,
+    count: u32,
+}
+
+/// Flatten `draw_order` into indirect commands, and group consecutive entries
+/// that share a pipeline into runs.
+fn build_draw_list(
+    manifest: &Manifest,
+    draw_order: &[BatchIndex],
+    materials: &MaterialTable,
+    renderer: &Renderer,
+    materials_buffer: &SingletonBufferHandle<Material>,
+) -> anyhow::Result<DrawList> {
+    let mut commands = Vec::with_capacity(draw_order.len());
+    let mut slots = Vec::with_capacity(draw_order.len());
+    let mut runs: Vec<Run> = Vec::new();
+
+    for &index in draw_order {
+        let batch = &manifest.batches[index.raw()];
+        let slot = MaterialSlot::from_manifest(batch.material);
+        // singleton_addr_at asserts the same bound, but a panic there names no
+        // batch; a bad manifest must fail as a setup error with batch context.
+        anyhow::ensure!(
+            slot.raw() < materials.base.len(),
+            "batch {} references material {} of {}",
+            index.raw(),
+            slot.raw(),
+            materials.base.len()
+        );
+
+        let command_idx = commands.len() as u32;
+        let indirect_command = DrawIndexedIndirectCommand {
+            index_count: batch.index_count,
+            instance_count: 1,
+            first_index: batch.first_index,
+            vertex_offset: 0,
+            first_instance: 0,
+        };
+        commands.push(indirect_command);
+        let material = renderer.singleton_addr_at(materials_buffer, slot.raw() as u32);
+        slots.push(DrawSlot { material });
+
+        let pipeline = materials.pipeline_of_slot[slot.raw()];
+
+        match runs.last_mut() {
+            Some(run) if run.pipeline == pipeline => {
+                run.count += 1;
+            }
+
+            _ => {
+                runs.push(Run {
+                    pipeline,
+                    first: command_idx,
+                    count: 1,
+                });
+            }
+        }
+    }
+
+    Ok(DrawList {
+        commands,
+        slots,
+        runs,
+    })
+}
+
 pub struct ToonLink {
     start_time: Instant,
-    manifest: Manifest,
     /// The pipelines and the per-slot material records. Index them with
     /// [`Self::pipeline`], never with a [`BatchIndex`].
     materials: MaterialTable,
-    /// The whole material table on the GPU, in `MaterialSlot` order. Every
-    /// pushed [`ToonLinkDraw`] points into it.
-    materials_buffer: SingletonBufferHandle<Material>,
     /// One block for the whole example, shared by all 5 pipelines. It holds
     /// the frame globals, and `draw` uploads it.
     params_buffer: UniformBufferHandle<ToonLinkParams>,
-    /// The hardware's group order: mask, face and hair, composite, erase, then
-    /// the rest of the model.
-    draw_order: Vec<BatchIndex>,
-    /// The selection [`Self::update`] last observed. It is the change gate for
-    /// per-selection work.
-    last_selection: Option<BatchIndex>,
+    /// One indirect command per batch, in `draw_order`.
+    args_buffer: ImmutableBufferHandle<DrawIndexedIndirectCommand>,
+    /// The material pointer of the matching args_buffer entry.
+    /// Each run's push block points at its own span; see [`Self::queue_run`].
+    slot_buffer: SingletonBufferHandle<DrawSlot>,
+    /// The runs in `args_buffer` that share a pipeline, in draw order.
+    /// Each run corresponds to one multi-draw-indirect command.
+    runs: Vec<Run>,
     edit_state: EditState,
 }
 
@@ -872,36 +944,24 @@ pub struct EditState {
     /// lit end to `konst[0]`. See [`ENV_ACTOR_C0`] and [`ENV_ACTOR_K0`].
     env_actor_c0: RGBPicker,
     env_actor_k0: RGBPicker,
-    isolate_batch: Checkbox,
-    /// A [`BatchIndex`], from 0 to the batch count minus 1. It is read only
-    /// when `isolate_batch` is checked.
-    batch: IntSlider,
-    batch_info: Label,
 }
 
 impl ToonLink {
-    fn batch(&self, index: BatchIndex) -> &Batch {
-        &self.manifest.batches[index.raw()]
-    }
+    // REVIEW let's change this to take a &Run as an argument
+    /// Record `count` commands of [`Self::args_buffer`] starting at `first` as
+    /// one indirect draw. The push block is set once for the whole command, so
+    /// the slot table pointer is what tells the sub-draws apart.
+    fn queue_run(&self, renderer: &mut FrameRenderer, pipeline: usize, first: u32, count: u32) {
+        let draw_slots = renderer.singleton_addr_at(&self.slot_buffer, first);
+        let push = ToonLinkDraw { draw_slots };
 
-    fn pipeline(
-        &self,
-        slot: MaterialSlot,
-    ) -> &PipelineHandle<DrawIndexed, PushBlock<ToonLinkDraw>> {
-        &self.materials.pipelines[self.materials.pipeline_of_slot[slot.raw()]]
-    }
-
-    /// The isolated batch the debug window has selected, if any.
-    fn isolate(&self) -> Option<BatchIndex> {
-        self.edit_state
-            .isolate_batch
-            .checked
-            .then(|| self.selected())
-    }
-
-    /// The batch the slider points at, isolated or not.
-    fn selected(&self) -> BatchIndex {
-        BatchIndex::from_raw(self.edit_state.batch.value as usize)
+        renderer.queue_draw_indexed_indirect_with_push_constants(
+            &self.materials.pipelines[pipeline],
+            &self.args_buffer,
+            first,
+            count,
+            &push,
+        );
     }
 }
 
@@ -974,7 +1034,17 @@ impl Game for ToonLink {
             manifest.batches.len()
         );
 
-        let last_batch = manifest.batches.len() as i64 - 1;
+        let draw_list = build_draw_list(
+            &manifest,
+            &draw_order,
+            &materials,
+            renderer,
+            &materials_buffer,
+        )?;
+        let mut args_buffer = renderer.create_immutable_buffer(draw_list.commands.len() as u32)?;
+        renderer.write_immutable_all_frames(&mut args_buffer, &draw_list.commands);
+        let slot_buffer = renderer.create_singleton_buffer(&draw_list.slots)?;
+
         let edit_state = EditState {
             debug_mode: DebugMode::default(),
             eflight: Checkbox::new(LightRig::default().eflight),
@@ -983,31 +1053,19 @@ impl Game for ToonLink {
             eflight_elevation: Slider::new(EFLIGHT_ELEVATION, 0.0, -0.5),
             env_actor_c0: RGBPicker::from_vec3(ENV_ACTOR_C0),
             env_actor_k0: RGBPicker::from_vec3(ENV_ACTOR_K0),
-            isolate_batch: Checkbox::new(false),
-            batch: IntSlider::new(0, 0, last_batch),
-            batch_info: Label::new(""),
         };
 
         let game = Self {
             start_time: Instant::now(),
-            manifest,
             materials,
-            materials_buffer,
             params_buffer,
-            draw_order,
-            last_selection: None,
+            args_buffer,
+            slot_buffer,
+            runs: draw_list.runs,
             edit_state,
         };
 
         Ok(game)
-    }
-
-    fn update(&mut self) {
-        let selection = self.selected();
-        if self.last_selection == Some(selection) {
-            return;
-        }
-        self.last_selection = Some(selection);
     }
 
     fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
@@ -1019,20 +1077,8 @@ impl Game for ToonLink {
         let view = look_at_mat4(eye, target, Vec3::Y);
         let proj = directx::perspective(45f32.to_radians(), renderer.aspect_ratio(), 0.1, 20.0);
 
-        let isolate = self.isolate();
-        for &index in &self.draw_order {
-            if isolate.is_some_and(|only| only != index) {
-                continue;
-            }
-            let batch = self.batch(index);
-            let slot = MaterialSlot::from_manifest(batch.material);
-            let push = slot.push(&renderer, &self.materials_buffer);
-            renderer.queue_draw_index_range_with_push_constants(
-                self.pipeline(slot),
-                batch.first_index,
-                batch.index_count,
-                &push,
-            );
+        for run in &self.runs {
+            self.queue_run(&mut renderer, run.pipeline, run.first, run.count);
         }
 
         let light = LightRig {

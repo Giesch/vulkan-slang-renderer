@@ -222,19 +222,6 @@ float tevAlphaArg(uint sel, float4 regs[4], float texelA, float rasA, float kons
 
 [ForceInline]
 public float4 tevSampleTexmap(uint texmap, float2 uv, Sampler2D tex0, Sampler2D tex1) {
-    // These branches are uniform, and everything below traces back to the same
-    // root: the material arrives as a per-draw push constant.
-    //
-    //   `texmap` is `stageOrder[i].y` — a uniform address (the material) read at
-    //   a uniform index (the caller's loop counter).
-    //   `tex0` / `tex1` come from the same material, so the heap access they were
-    //   converted from is uniform too.
-    //
-    // The caller's loop bound is material-derived as well, so every lane runs
-    // every iteration. That is what the implicit-LOD `Sample` below needs — a
-    // partially-masked quad has no derivatives, even if `texmap` never diverged.
-    // A `break` on any fragment-varying value would break this.
-
     if (texmap == 0) {
         return tex0.Sample(uv);
     }

@@ -78,6 +78,12 @@ const _: () = assert!(std::mem::size_of::<FieldType>() == S);           // exten
 
 ### D4 — Nested pointers: error initially
 
+> **Lifted 2026-08-24**, exactly as the last sentence prescribes: the bail is
+> gone and a visited-type-name stack (`pointee_stack: &mut Vec<String>`) is
+> the cycle guard. The `nested_pointer` alignment fixture pins the accepted
+> shape; `pointer_cycle_is_rejected` pins the cycle error. `toon_link`'s
+> `DrawSlot` is the first consumer.
+
 `reflect_struct_fields` gains an `in_pointer_pointee: bool` parameter; the Pointer arm bails if already inside a pointee, *before* recursing. This is not just scope-trimming — it's the cycle guard (`struct Node { Node* next; }` would recurse infinitely during reflection). Descending through a Resource element keeps `false`, so a `StructuredBuffer<T>` whose `T` contains a pointer still works one level deep. Lifting later = drop the bail + add a visited-type-name stack.
 
 ### D5 — glam guards

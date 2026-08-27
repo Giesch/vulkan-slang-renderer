@@ -2,9 +2,10 @@
 
 The renderer supports traditional bindings for textures. But, 'bindless' handles into Slang's global texture heap are the preffered default. Similarly, bound storage buffers are supported, but BDA pointers are the preferred way to pass buffer data into a shader. In both cases, you can pass the texture handle or BDA pointer via a uniform buffer field or a push constant block field.
 
-- A buffer field is a device address: `mltrs::Addr<T>`, `mltrs::ReadAddr<T>`,
-  or `mltrs::ImmutableAddr<T>`. Reflection rejects `StructuredBuffer` fields.
-- A texture field is a heap handle: `Sampler2D.Handle` to read,
+- A buffer is passed as a device address: `mltrs::Addr<T>`, `mltrs::ReadAddr<T>`,
+  or `mltrs::ImmutableAddr<T>`. Reflection rejects bound `StructuredBuffer` fields.
+  Buffers can point to other buffers, by containing a struct with a pointer field.
+- A texture is passed as a heap handle: `Sampler2D.Handle` to read,
   `RWTexture2D.Handle` to write. It indexes a global texture heap. Every
   texture joins the heap at creation.
 
@@ -73,6 +74,7 @@ A push constant block is the per-draw and per-dispatch channel:
   Rust struct and a compile-time size assert.
 - Queue with `queue_draw_indexed_with_push_constants`,
   `queue_draw_index_range_with_push_constants`,
+  `queue_draw_indexed_indirect_with_push_constants`,
   `queue_draw_vertex_count_with_push_constants`, or
   `dispatch_with_push_constants`. Every pipeline handle carries the block
   type (`PipelineHandle<D, PushBlock<P>>` versus

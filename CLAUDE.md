@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   a piece of work. **Treat as possibly out of date**: much of it is a snapshot of
   what was believed at the time, some of it was superseded by the work it
   describes, and a few claims turned out to be wrong (those are annotated in
-  place rather than deleted, so the record stays honest). Useful for *why* a
+  place rather than deleted, so the record stays honest). Useful for _why_ a
   thing is the way it is; verify against the code before acting on it.
 
 ## Workspace layout
@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `crates/cli` (package `mltrs-cli`, binary `mltrs`) — shader codegen
   (`mltrs shaders compile`) and project seeding (`mltrs shaders init`);
   owns the askama templates, the vendored engine slang modules, and the
-  snapshot-test fixtures. Depends on `mltrs-slang-reflection`, *not* the
+  snapshot-test fixtures. Depends on `mltrs-slang-reflection`, _not_ the
   renderer — keep it that way.
 - `crates/gx` — GameCube manifest schema shared by `convert-link` and the
   `toon_link` example.
@@ -55,6 +55,7 @@ cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection
 ```
 
 ### After changes
+
 - Always run `just shaders EXAMPLE` after modifying an example's `.slang`
   files (`just shaders` regenerates all of them).
 - Always run `just EXAMPLE textures` after adding or replacing an example's
@@ -75,6 +76,7 @@ cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection
 ## Shader System
 
 **Workflow:**
+
 1. Create/edit `examples/<name>/shaders/source/*.shader.slang`
 2. Run `just shaders <name>`
 3. Generates: SPIR-V bytecode + reflection JSON in `shaders/compiled/`, and

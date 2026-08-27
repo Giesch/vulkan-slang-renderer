@@ -9,7 +9,17 @@ ParameterBlock<ToonLinkParams> params;
 
 [[vk::push_constant]] ConstantBuffer<ToonLinkDraw> draw;
 
+// REVIEW Let's rename this struct to MultiDraw,
+// and the DrawSlot struct below it to IndividualDraw
 struct ToonLinkDraw {
+    // all the draws from the multi-draw-indrect command
+    // index into it with SV_DrawIndex
+    mltrs::ImmutableAddr<DrawSlot> drawSlots;
+}
+
+// One entry of the run-order slot table.
+// (Our reflection system requires a pointee to be a struct)
+struct DrawSlot {
     mltrs::ImmutableAddr<Material> material;
 }
 
@@ -67,7 +77,6 @@ enum DebugMode : uint {
 
 struct Vertex {
     float3 position;
-    // model space; the converter bakes the bind pose, so no skinning here
     float3 normal;
     float2 uv0;
 };
@@ -82,19 +91,23 @@ struct FragVertex {
     // with a uniform binding, and this is a varying, so a third texgen needs a
     // `texcoord23` field. tev_ir.rs gates num_tex_gens at 2.
     float4 texcoord01;
+    nointerpolation uint drawIndex;
 };
 
 [shader("vertex")]
-FragVertex vertMain(Vertex vertex) {
+FragVertex vertMain(Vertex vertex, uint drawIndex : SV_DrawIndex) {
     let position = params.mvp.project(vertex.position);
     let worldNormal = params.mvp.rotateDirection(vertex.normal);
-    let tev = draw.material.tev;
 
+    // SV_DrawIndex counts within one indirect command, from 0 to drawCount - 1.
+    // It is not the batch index, so each command carries its own slot table.
+    let material = draw.drawSlots[drawIndex].material;
+    let tev = material.tev;
     let color0 = tev.evalRasterColor(worldNormal, params.lights);
     let forceIdentity = params.debugMode == DebugMode.IdentityTexMtx;
     let texcoord01 = tev.evalTexGens(vertex.uv0, color0, forceIdentity);
 
-    return FragVertex(position, worldNormal, vertex.uv0, color0, texcoord01);
+    return FragVertex(position, worldNormal, vertex.uv0, color0, texcoord01, drawIndex);
 }
 
 // The color target is _SRGB, so the hardware applies the linear → sRGB encode
@@ -106,7 +119,7 @@ float3 srgbDecode(float3 c) {
 
 [shader("fragment")]
 float4 fragMain(FragVertex fragVertex) : SV_TARGET {
-    let material = draw.material[0];
+    let material = draw.drawSlots[fragVertex.drawIndex].material;
 
     Sampler2D tex0 = material.tex0;
     Sampler2D tex1 = material.tex1;

@@ -3,9 +3,6 @@
 pub enum NoVertex {}
 
 /// A marker for someday-generated types that get written to GPU memory
-///
-/// An implementing struct must be repr(C, align(16))
-/// and have its fields in descending size/alignment order
 pub trait GPUWrite {}
 
 /// A generated `[[vk::push_constant]]` block

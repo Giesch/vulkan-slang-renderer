@@ -1122,7 +1122,9 @@ impl Renderer {
         let (buffer, allocation) = create_memory_buffer(
             &self.allocator,
             buffer_size,
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::INDIRECT_BUFFER,
             BufferMemory::PersistentlyMapped,
         )?;
 
@@ -1175,6 +1177,7 @@ impl Renderer {
     ) {
         debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
+
         for frame in 0..MAX_FRAMES_IN_FLIGHT {
             let mapped = self
                 .storage_buffers
@@ -1796,16 +1799,15 @@ impl Renderer {
         self.record_compute_commands(command_buffer, pending_compute);
 
         if !pending_compute.is_empty() {
-            // Graphics reads the most recent compute output, so the renderer — not
-            // the app — owns the compute -> graphics dependency. Always legal:
-            // this command buffer is always submitted on the graphics queue.
             cmd_memory_barrier2(
                 &self.device,
                 command_buffer,
                 vk::PipelineStageFlags2::COMPUTE_SHADER,
                 vk::AccessFlags2::SHADER_WRITE,
-                vk::PipelineStageFlags2::VERTEX_SHADER | vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                vk::AccessFlags2::SHADER_READ,
+                vk::PipelineStageFlags2::VERTEX_SHADER
+                    | vk::PipelineStageFlags2::FRAGMENT_SHADER
+                    | vk::PipelineStageFlags2::DRAW_INDIRECT,
+                vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::INDIRECT_COMMAND_READ,
             );
         }
 
@@ -2221,6 +2223,20 @@ impl Renderer {
                         *first_index,
                         0,
                         0,
+                    );
+                },
+
+                DrawCallConfig::IndexedIndirect {
+                    buffer,
+                    offset,
+                    draw_count,
+                } => unsafe {
+                    self.device.cmd_draw_indexed_indirect(
+                        command_buffer,
+                        *buffer,
+                        *offset,
+                        *draw_count,
+                        size_of::<DrawIndexedIndirectCommand>() as u32,
                     );
                 },
             }
@@ -3445,6 +3461,7 @@ fn choose_physical_device(
                 features.shader_storage_image_array_dynamic_indexing,
                 "shaderStorageImageArrayDynamicIndexing",
             ),
+            (features.multi_draw_indirect, "multiDrawIndirect"),
             (
                 vulkan_11_features.shader_draw_parameters,
                 "shaderDrawParameters",
@@ -3816,6 +3833,8 @@ fn create_logical_device(
         // for indexing the bindless texture heap by a value loaded from a buffer
         .shader_sampled_image_array_dynamic_indexing(true)
         .shader_storage_image_array_dynamic_indexing(true)
+        // cmd_draw_indexed_indirect with a draw count above 1
+        .multi_draw_indirect(true)
         .sample_rate_shading(ENABLE_SAMPLE_SHADING);
     if cfg!(debug_assertions) {
         // features used by shader println
@@ -5950,7 +5969,7 @@ impl<'f> FrameRenderer<'f> {
         // debug-only: a release-build out-of-range draw renders garbage
         // silently under robustBufferAccess
         debug_assert!(
-            index_range_in_bounds(first_index, index_count, self.whole_index_count(pipeline)),
+            range_in_bounds(first_index, index_count, self.whole_index_count(pipeline)),
             "index range [{first_index}, {first_index} + {index_count}) out of bounds \
              for pipeline {} (index count {})",
             self.renderer
@@ -5966,6 +5985,80 @@ impl<'f> FrameRenderer<'f> {
                 first_index,
                 index_count,
             },
+            push_constants,
+        });
+    }
+
+    /// Queues one cmd_draw_indexed_indirect over `draw_count` argument records,
+    /// starting at element `first_command` of `args`
+    ///
+    /// The shader reads `SV_DrawIndex` to tell the sub-draws apart.
+    pub fn queue_draw_indexed_indirect(
+        &mut self,
+        pipeline: &PipelineHandle<DrawIndexedIndirect>,
+        args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
+        first_command: u32,
+        draw_count: u32,
+    ) {
+        self.push_indexed_indirect_draw(pipeline, args, first_command, draw_count, None);
+    }
+
+    /// [`Self::queue_draw_indexed_indirect`], with a per-command push constant block,
+    /// set for the whole multi-draw command
+    pub fn queue_draw_indexed_indirect_with_push_constants<P: PushConstantBlock>(
+        &mut self,
+        pipeline: &PipelineHandle<DrawIndexedIndirect, PushBlock<P>>,
+        args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
+        first_command: u32,
+        draw_count: u32,
+        push: &P,
+    ) {
+        self.push_indexed_indirect_draw(
+            pipeline,
+            args,
+            first_command,
+            draw_count,
+            Some(PushConstantBytes::from_value(push)),
+        );
+    }
+
+    fn push_indexed_indirect_draw<P>(
+        &mut self,
+        pipeline: &PipelineHandle<DrawIndexedIndirect, P>,
+        args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
+        first_command: u32,
+        draw_count: u32,
+        push_constants: Option<PushConstantBytes>,
+    ) {
+        // `assert!`, not `debug_assert!`: the command processor fetches these
+        // records outside the descriptor model, so `robustBufferAccess` does
+        // not clamp a fetch past the end of the allocation. The index ranges
+        // inside each record cannot be checked at all.
+        assert!(
+            draw_count > 0,
+            "an indirect draw needs at least one command"
+        );
+        assert!(
+            range_in_bounds(first_command, draw_count, args.len()),
+            "command range [{first_command}, {first_command} + {draw_count}) out of bounds \
+             for an argument buffer of {} command(s)",
+            args.len(),
+        );
+
+        let offset = args.element_byte_offset(first_command);
+        let buffer = self
+            .renderer
+            .storage_buffers
+            .vk_buffer_for_frame_immutable(args, self.renderer.flight_slot);
+
+        let draw_call = DrawCallConfig::IndexedIndirect {
+            buffer,
+            offset,
+            draw_count,
+        };
+        self.pending_draws.push(PendingDrawCommand::Draw {
+            pipeline_index: pipeline.index(),
+            draw_call,
             push_constants,
         });
     }
@@ -6079,19 +6172,24 @@ impl<'f> FrameRenderer<'f> {
     }
 }
 
-/// true if [first_index, first_index + index_count) fits in an index buffer
-/// with total_index_count entries
-fn index_range_in_bounds(first_index: u32, index_count: u32, total_index_count: u32) -> bool {
-    first_index
-        .checked_add(index_count)
-        .is_some_and(|end| end <= total_index_count)
+/// true if [first, first + count) fits in a buffer of `total` elements
+fn range_in_bounds(first: u32, count: u32, total: u32) -> bool {
+    first.checked_add(count).is_some_and(|end| end <= total)
 }
 
 #[derive(Debug, Clone, Copy)]
 enum DrawCallConfig {
     VertexCount(u32),
     IndexCount(u32),
-    IndexRange { first_index: u32, index_count: u32 },
+    IndexRange {
+        first_index: u32,
+        index_count: u32,
+    },
+    IndexedIndirect {
+        buffer: vk::Buffer,
+        offset: vk::DeviceSize,
+        draw_count: u32,
+    },
 }
 
 struct PickingDrawConfig {
@@ -6105,7 +6203,7 @@ mod tests {
 
     use super::{
         BlendMode, CullMode, DepthCompare, GPUWrite, PushConstantBlock, PushConstantBytes,
-        RasterState, index_range_in_bounds, vk_blend_state, vk_color_write_mask, vk_cull_mode,
+        RasterState, range_in_bounds, vk_blend_state, vk_color_write_mask, vk_cull_mode,
         vk_depth_compare,
     };
 
@@ -6178,21 +6276,24 @@ mod tests {
         assert!(default.depth_write);
     }
 
+    /// The predicate guards two queue paths: an index sub-range against a
+    /// pipeline's index count, and an indirect command range against an
+    /// argument buffer's element count.
     #[test]
-    fn index_range_bounds_check() {
+    fn range_bounds_check() {
         // in range
-        assert!(index_range_in_bounds(0, 36, 108));
-        assert!(index_range_in_bounds(90, 18, 108));
+        assert!(range_in_bounds(0, 36, 108));
+        assert!(range_in_bounds(90, 18, 108));
         // exact fit
-        assert!(index_range_in_bounds(0, 108, 108));
+        assert!(range_in_bounds(0, 108, 108));
         // off by one over
-        assert!(!index_range_in_bounds(91, 18, 108));
-        assert!(!index_range_in_bounds(0, 109, 108));
+        assert!(!range_in_bounds(91, 18, 108));
+        assert!(!range_in_bounds(0, 109, 108));
         // u32 overflow must not wrap into range
-        assert!(!index_range_in_bounds(u32::MAX, 2, 108));
-        assert!(!index_range_in_bounds(2, u32::MAX, 108));
+        assert!(!range_in_bounds(u32::MAX, 2, 108));
+        assert!(!range_in_bounds(2, u32::MAX, 108));
         // empty range at the end is in bounds
-        assert!(index_range_in_bounds(108, 0, 108));
+        assert!(range_in_bounds(108, 0, 108));
     }
 
     /// Stands in for a generated push block.

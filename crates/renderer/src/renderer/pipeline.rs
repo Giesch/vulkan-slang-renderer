@@ -4,7 +4,7 @@ use ash::vk;
 
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, ShaderAtlasEntry};
 
-use super::gpu_write::PushConstantBlock;
+use super::gpu_write::{GPUWrite, PushConstantBlock};
 use super::vertex_description::{NoVertex, VertexDescription};
 use super::{
     ComputeShaderPipelineLayout, RawUniformBufferHandle, ShaderPipelineLayout,
@@ -82,6 +82,41 @@ pub struct DrawIndexed;
 impl DrawCall for DrawIndexed {
     type Index = GraphicsPipelineIndex;
 }
+
+/// A marker that the pipeline uses cmd_draw_indexed_indirect draw calls,
+/// reading draw arguments from a buffer
+#[derive(Debug)]
+pub struct DrawIndexedIndirect;
+impl DrawCall for DrawIndexedIndirect {
+    type Index = GraphicsPipelineIndex;
+}
+
+/// One `cmd_draw_indexed_indirect` argument record.
+///
+/// The layout is Vulkan's, so this is `repr(C)` at 4-byte alignment rather
+/// than the `align(16)` a generated std430 block uses. The renderer records a
+/// stride of `size_of::<Self>()`, so an argument buffer is tightly packed.
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct DrawIndexedIndirectCommand {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub vertex_offset: i32,
+    pub first_instance: u32,
+}
+
+impl GPUWrite for DrawIndexedIndirectCommand {}
+
+const _: () = assert!(
+    std::mem::size_of::<DrawIndexedIndirectCommand>()
+        == std::mem::size_of::<vk::DrawIndexedIndirectCommand>()
+);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, index_count) == 0);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, instance_count) == 4);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, first_index) == 8);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, vertex_offset) == 12);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, first_instance) == 16);
 
 /// A marker for compute pipelines
 #[derive(Debug)]
@@ -373,6 +408,23 @@ impl<'t, V: VertexDescription, P> IndexedPipelineConfig<'t, V, P> {
         PipelineConfig {
             shader: self.shader,
             vertex_config,
+            _draw_call: PhantomData,
+            _push: PhantomData,
+            texture_handles: self.texture_handles,
+            uniform_buffer_handles: self.uniform_buffer_handles,
+            storage_texture_handles: self.storage_texture_handles,
+            raster_state: self.raster_state,
+        }
+    }
+}
+
+impl<'t, V: VertexDescription, P> PipelineConfig<'t, V, DrawIndexed, P> {
+    /// Draw with cmd_draw_indexed_indirect instead of cmd_draw_indexed.
+    /// An indirect pipeline's shader must read `SV_DrawIndex`.
+    pub fn indirect(self) -> PipelineConfig<'t, V, DrawIndexedIndirect, P> {
+        PipelineConfig {
+            shader: self.shader,
+            vertex_config: self.vertex_config,
             _draw_call: PhantomData,
             _push: PhantomData,
             texture_handles: self.texture_handles,

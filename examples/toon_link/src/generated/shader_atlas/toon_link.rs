@@ -76,12 +76,23 @@ impl TryFrom<u32> for DebugMode {
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(8))]
 pub struct ToonLinkDraw {
-    pub material: ImmutableAddr<Material>,
+    pub draw_slots: ImmutableAddr<DrawSlot>,
 }
 
 impl GPUWrite for ToonLinkDraw {}
 const _: () = assert!(std::mem::size_of::<ToonLinkDraw>() == 8);
-const _: () = assert!(std::mem::offset_of!(ToonLinkDraw, material) == 0);
+const _: () = assert!(std::mem::offset_of!(ToonLinkDraw, draw_slots) == 0);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<DrawSlot>>() == 8);
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(8))]
+pub struct DrawSlot {
+    pub material: ImmutableAddr<Material>,
+}
+
+impl GPUWrite for DrawSlot {}
+const _: () = assert!(std::mem::size_of::<DrawSlot>() == 8);
+const _: () = assert!(std::mem::offset_of!(DrawSlot, material) == 0);
 const _: () = assert!(std::mem::size_of::<ImmutableAddr<Material>>() == 8);
 
 #[derive(Debug, Clone, Copy, Serialize)]

@@ -1,25 +1,22 @@
 #+title: Todo
 
 * Possible Next Directions
-- [X] Bindless Textures
-  - [X] use handles consistently in all examples
-    - [X] get any necessary reflection features done
-    - [X] migrate watercolor
-    - [X] migrate toon link
-    - [X] migrate the rest
-  - [X] rewrite the markdown doc
+- [ ] Bindless Textures
+  - [ ] use handles consistently in all examples
+    - [ ] get any necessary reflection features done
+    - [ ] migrate watercolor
+    - [ ] migrate toon link
+    - [ ] migrate the rest
+  - [ ] rewrite the markdown doc
 
-- [ ] use draw indirect in toon link example
+- [ ] G-buffer
+  replace the current picking setup with another attachment
 
 - [-] Balatro card shader
   - [X] 3D tilt
   - [ ] holo effect
 
-- [ ] G-buffer
-  replace the current picking setup with another attachment
-
 - [ ] code reviews
-  use fable?
   - [ ] split up large modules
   - [ ] look for types to extract
     ie, move invariants into the type system
@@ -27,29 +24,27 @@
     - [ ] remove tests covered by types / by construction
     - [ ] remove tests covered by const asserts
     - [ ] look for deduplication opportunities
-
 - [ ] llm skills for style guides?
   - minimal comments
   - meaningful variable names in shaders
   - slang formatting rules?
 
-- [-] adopt BC7 compression for textures consistently
-  - [X] add the option
-  - [-] get it working for toon link as well
-  - [ ] review/rewrite docs/textures.md
-
 - [ ] Make a Quaternion / Rotor demo/explanation
   https://eater.net/quaternions
-- [ ] Draw API improvements
-  - [ ] automatic compute barriers
+
+- [-] Draw API improvements
+  - [X] automatic compute barriers
   - [ ] require all draw params at once per pipeline
     is it valid to not use or swap a pipeline?
     maybe require an explicit PipelineSet or something?
+
 - [ ] Roc Platform
   - [ ] get minimal window example
   - [ ] get shader codegen working
+
 - [ ] PBR Renderer
 - [ ] WebGPU shader codegen pipeline
+  this amounts to a second renderer
 - [ ] work through the vulkan renderer book?
   this addresses PBR
 - [ ] replace ReflectionJson::layout_bindings with directly inlining data
@@ -459,7 +454,9 @@
   so we'd need to do a depth image per swapchain image if there were multiple subpasses using them?
   how does SDL3_gpu handle that?
 
-- [ ] try out using draw indirect & gpu culling
+- [-] try out using draw indirect & gpu culling
+  - [X] draw indirect
+  - [ ] gpu culling
 
 - [ ] better printf and validation layers setup
   control the validation layers with env vars
