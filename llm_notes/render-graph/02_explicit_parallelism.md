@@ -5,7 +5,7 @@
 > profiling harness, the hardware survey) is background.
 >
 > **~~Already implemented in the renderer~~ — removed 2026-07-28** by
-> [../remove_pipelined_compute.md](../remove_pipelined_compute.md). Pattern A
+> [../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md). Pattern A
 > (cross-frame simulation/rendering overlap) *did* exist as
 > `enable_pipelined_compute()` — separate compute queue, timeline semaphore,
 > graphics frame N waits on compute N−1 — but it showed no measurable framerate

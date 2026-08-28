@@ -45,11 +45,11 @@ That feature is the sole reason for a large amount of complexity:
   ring — two indices with differently-shaped correctness proofs
   ([frame_ring_collapse.md](frame_ring_collapse.md)).
 - BDA footgun #3, the "pipelined current-read race"
-  ([bda_footguns.md](bda_footguns.md) §3), and the whole planned fix for it
-  ([bda_footguns/03_pipelined_current_read_plan.md](bda_footguns/03_pipelined_current_read_plan.md),
+  ([bda_footguns.md](../bda_footguns.md) §3), and the whole planned fix for it
+  ([bda_footguns/03_pipelined_current_read_plan.md](../bda_footguns/03_pipelined_current_read_plan.md),
   domain-marked `Addr<T, S>` types).
 - The watercolor same-frame cross-queue display race
-  ([render-graph/04_design.md](render-graph/04_design.md) §8), and the
+  ([render-graph/04_design.md](../render-graph/04_design.md) §8), and the
   `CrossFrameMode` / `dispatch_pipelined` machinery designed to fix it
   ([watercolor_race_fixes.md](watercolor_race_fixes.md)).
 
@@ -239,7 +239,8 @@ part of 4b.
 Note but do **not** fix here: `recreate_swapchain` (`:2477+`) never recreates
 `render_finished`, which is sized per swapchain image. If the image count changes on
 recreation this panics or leaks. Pre-existing, orthogonal, worth its own commit
-(`frame_ring_collapse.md` Phase 4).
+(`frame_ring_collapse.md` Phase 4). **Planned 2026-08-28** in
+[`../render_finished_recreate.md`](../render_finished_recreate.md).
 
 ---
 

@@ -6,7 +6,7 @@
 > land independently as pipelined compute
 > (`Renderer::enable_pipelined_compute()`, `ComputePlacement::SeparateCommandBuffer`
 > with a compute timeline semaphore) — and was **removed again on 2026-07-28**
-> ([../remove_pipelined_compute.md](../remove_pipelined_compute.md)) for want of
+> ([../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md)) for want of
 > a measurable win. One addition since: the renderer now emits the
 > compute→graphics barrier itself, so apps no longer supply a trailing
 > `memory_barrier()`. See `04_design.md` for the current design.

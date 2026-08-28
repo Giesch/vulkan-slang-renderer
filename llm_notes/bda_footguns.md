@@ -7,7 +7,7 @@ can be evaluated per-footgun, without presupposing the FrameInputs design.
 Code references verified against main @ 5756fab.
 
 Ring model context — **updated 2026-07-28** by
-[remove_pipelined_compute.md](remove_pipelined_compute.md), which deleted
+[remove_pipelined_compute.md](archived/remove_pipelined_compute.md), which deleted
 `PRE_WAIT_RING_LEN` and `ring_slot`: there is now one ring of length
 `MAX_FRAMES_IN_FLIGHT = 2` (src/renderer.rs:65), indexed by `flight_slot`.
 Uniform, storage, immutable, and gpu-only buffers all ring across those 2 slots
@@ -37,7 +37,7 @@ is gone since 2026-07-28: CPU writes now happen after the frame_timeline wait.
 Pointing at the wrong slot's *data* remains.) Guard today: doc comments only.
 
 ### 3. Pipelined current-read race — **not applicable; removed with pipelined compute**
-*Resolved 2026-07-28 by [remove_pipelined_compute.md](remove_pipelined_compute.md),
+*Resolved 2026-07-28 by [remove_pipelined_compute.md](archived/remove_pipelined_compute.md),
 by deletion rather than by a guard.* Compute now always runs before graphics in
 the same command buffer, with a renderer-emitted compute→graphics barrier, so a
 graphics shader reading a gpu-only buffer's *current* slot reads output that is

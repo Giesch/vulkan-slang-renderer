@@ -5,7 +5,7 @@ questions resolved as `--quality very-slow` and zstd on *both* format groups. Al
 measurements taken on Dan's laptop the same day with `ctt` 0.5.0 and KTX-Software's
 `ktx` CLI; every number below is reproducible with the commands shown.
 
-The current-state document is [`../docs/textures.md`](../docs/textures.md); where the
+The current-state document is [`../docs/textures.md`](../../docs/textures.md); where the
 two disagree, it wins. Four things this design got wrong or left open were settled
 during implementation, annotated in place below: §5.5 (the helper cannot be a
 `Renderer` method), §6.1 (the drafted root recipe does not work), §9.3 (wrong header
@@ -16,11 +16,11 @@ driven by per-example `just` recipes, emitting KTX2 that the existing loader
 (`crates/mltrs/src/ktx.rs:29`) already accepts. The format is chosen per asset:
 **BC7 for model/photographic textures, lossless `rgba8unorm` + zstd for pixel art.**
 
-Companion documents: [`offscreen_testing.md`](offscreen_testing.md) — `just sweep` is
+Companion documents: [`offscreen_testing.md`](../offscreen_testing.md) — `just sweep` is
 the gate that catches validation fallout from new texture formats, and it runs on
-lavapipe, which matters here (see §6). [`build_reproducibility.md`](build_reproducibility.md)
+lavapipe, which matters here (see §6). [`build_reproducibility.md`](../build_reproducibility.md)
 — this note adds a second class of committed, regenerated binary artifact alongside
-`shaders/compiled/`, with the same determinism question. [`bindless_textures.md`](bindless_textures.md)
+`shaders/compiled/`, with the same determinism question. [`bindless_textures.md`](../bindless_textures.md)
 — its palettized-material direction overlaps with §7.
 
 ---
@@ -386,7 +386,7 @@ The natural follow-up, deliberately out of scope, because it needs more than a r
 - **Worth reconsidering the format entirely.** These are GameCube CI4/CI8 *palettized*
   textures upstream. Re-palettizing them (§8) would be lossless, 4–8× smaller than RGBA8,
   and closer to the original data than any block format — and it composes with the
-  material work in [`bindless_textures.md`](bindless_textures.md).
+  material work in [`bindless_textures.md`](../bindless_textures.md).
 
 ## 8. The option not taken: palettized textures
 

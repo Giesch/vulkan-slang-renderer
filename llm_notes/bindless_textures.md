@@ -32,7 +32,7 @@ Supersedes the "not planned" note in
 [render-graph/03_bindless.md](render-graph/03_bindless.md), which stays useful as
 background on descriptor indexing and Metal argument buffers. For how this relates
 to the BDA work, see
-[vulkan_1_3_migration/bindless_vs_bda_terminology.md](vulkan_1_3_migration/bindless_vs_bda_terminology.md).
+[vulkan_1_3_migration/bindless_vs_bda_terminology.md](archived/vulkan_1_3_migration/bindless_vs_bda_terminology.md).
 
 ## Why
 

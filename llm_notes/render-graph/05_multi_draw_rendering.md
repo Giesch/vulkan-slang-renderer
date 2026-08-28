@@ -6,7 +6,7 @@
 > post-multi-draw-queue (P4/P5) renderer.
 >
 > **Amended 2026-07-28** by
-> [../remove_pipelined_compute.md](../remove_pipelined_compute.md). Ring
+> [../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md). Ring
 > arithmetic in §13 predates the collapse: `PRE_WAIT_RING_LEN` is gone, so
 > the BDA handle ring is `M = MAX_FRAMES_IN_FLIGHT = 2` slots indexed by
 > `flight_slot`, and there is only one command stream. The §13.2 formulas
@@ -667,7 +667,7 @@ formula.
 > **2026-07-28:** the renderer is now unconditionally `SameFrame` — compute and graphics
 > share one submit, ordered by a barrier — so the live row is `SameFrame`, `R >= A*(M-1) + 1`,
 > which at `A = 1, M = 2` gives `R = 2`. That is exactly the collapse
-> [../remove_pipelined_compute.md](../remove_pipelined_compute.md) performed:
+> [../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md) performed:
 > `PRE_WAIT_RING_LEN` deleted, one 2-slot ring. The `A = 2` cell still stands as a warning:
 > a ping-pong advanced twice per execute needs 3 slots and would have to manage its own.
 
@@ -721,7 +721,7 @@ and have `build()` warn when `SyncWait` is mixed with `ExtraSlot` resources.
 ### 13.5 The frame stream is never analyzed — **the hazard was real; fixed 2026-07-28**
 
 > This section identified the exact hazard that
-> [../remove_pipelined_compute.md](../remove_pipelined_compute.md) Phase 3 had to solve, and
+> [../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md) Phase 3 had to solve, and
 > it is no longer hypothetical: with pipelining gone, *all* compute is frame-stream compute.
 > The fix is a barrier at the top of every command buffer whose first synchronization scope
 > covers all commands earlier in submission order on the queue, which orders frame N+1's

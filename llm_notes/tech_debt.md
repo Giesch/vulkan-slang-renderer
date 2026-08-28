@@ -501,7 +501,7 @@ numbered entry; both are free wins for whoever is next in the neighborhood.
 
 The layout half of the glam contract is *not* debt and must not be disturbed by
 any of the above — see Phase 6 of
-[`vulkan_1_3_migration.md`](vulkan_1_3_migration.md) for the model (sizes
+[`vulkan_1_3_migration.md`](archived/vulkan_1_3_migration.md) for the model (sizes
 stable, alignments feature-dependent, never substitute `Vec3A`, and the
 `align_of::<glam::Vec4>() == 16` assert the templates emit to catch a
 transitively-enabled `scalar-math`). The 0.33.2 upgrade left it intact:

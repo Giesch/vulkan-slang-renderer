@@ -18,7 +18,7 @@
 > itself at L82.
 
 Status: **plan, 2026-07-26.** Companion to
-[bda_footguns.md](bda_footguns.md) (§1 occasional-write flicker, §3 pipelined current-read race).
+[bda_footguns.md](../bda_footguns.md) (§1 occasional-write flicker, §3 pipelined current-read race).
 Code references verified against main @ `bd60578`; re-verify before editing.
 
 ## Context
@@ -209,6 +209,11 @@ Also update the ring-model paragraph in `llm_notes/bda_footguns.md` (lines 9-13)
 old model and cites `renderer.rs:5185` for `previous_addr` (now `renderer.rs:5419`).
 
 ### Phase 4 — acquire semaphores (separable; consider doing independently)
+
+> **Deferred (2026-08-28).** The blocking prerequisite below has its own plan:
+> [`../render_finished_recreate.md`](../render_finished_recreate.md). The
+> per-swapchain-image acquire semaphores stay deferred; that plan's §5 records
+> the design and the revisit condition.
 
 `image_available` is sized `PRE_WAIT_RING_LEN` and indexed by `ring_slot`
 (`renderer.rs:145`, `renderer.rs:3671-3677`, `renderer.rs:2188`). Tying acquire semaphores to *any*

@@ -1,7 +1,7 @@
 # FrameInputs: declarative per-frame buffer inputs
 
 > **Amended 2026-07-28** by
-> [remove_pipelined_compute.md](remove_pipelined_compute.md). Two premises this
+> [remove_pipelined_compute.md](archived/remove_pipelined_compute.md). Two premises this
 > design leans on have changed: there is no pipelined compute (so the
 > pipelined current-read race in §1 does not exist, and the **universal
 > graphics-`current()` ban loses its motivation** — a same-frame `current()`
@@ -20,8 +20,8 @@ imperative `Gpu` closure API (`write_uniform`, `write_storage`,
 `addr`/`current_addr`/`previous_addr`, `sort_storage_by`).
 
 Related notes:
-- [vulkan_1_3_migration/bda_renderer_plumbing.md](vulkan_1_3_migration/bda_renderer_plumbing.md) — how BDA addresses got into the `Gpu` API originally.
-- [vulkan_1_3_migration/slang_pointer_codegen.md](vulkan_1_3_migration/slang_pointer_codegen.md) — the pointer-field reflection/codegen this design extends.
+- [vulkan_1_3_migration/bda_renderer_plumbing.md](archived/vulkan_1_3_migration/bda_renderer_plumbing.md) — how BDA addresses got into the `Gpu` API originally.
+- [vulkan_1_3_migration/slang_pointer_codegen.md](archived/vulkan_1_3_migration/slang_pointer_codegen.md) — the pointer-field reflection/codegen this design extends.
 
 ## 1. Motivation
 
@@ -47,7 +47,7 @@ an unproven frame may still be executing — no longer applies since 2026-07-28:
 CPU writes happen after the frame_timeline wait.)
 
 **~~Pipelined current-read race.~~ Removed 2026-07-28** with pipelined compute;
-see [remove_pipelined_compute.md](remove_pipelined_compute.md). Compute now
+see [remove_pipelined_compute.md](archived/remove_pipelined_compute.md). Compute now
 always runs before graphics in the same command buffer, with a
 renderer-emitted compute→graphics barrier, so a graphics shader reading a
 gpu-only buffer's *current* slot reads already-visible output. *Original text:*

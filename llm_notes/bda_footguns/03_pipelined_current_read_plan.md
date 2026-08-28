@@ -1,6 +1,6 @@
 # Domain-marked address types: fix BDA footgun #3 (pipelined current-read race)
 
-> **SUPERSEDED by [../remove_pipelined_compute.md](../remove_pipelined_compute.md)**
+> **SUPERSEDED by [../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md)**
 > (2026-07-28). Not implemented, and no longer needed. The race this plan
 > defends against only exists under `enable_pipelined_compute`, which has been
 > removed: compute now always runs before graphics in the same command buffer,

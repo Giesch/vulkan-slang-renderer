@@ -6,7 +6,7 @@
 > Written 2026-07 against the post-BDA, post-pipelined-compute renderer.
 >
 > **Amended 2026-07-28** by
-> [../remove_pipelined_compute.md](../remove_pipelined_compute.md). Pipelined
+> [../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md). Pipelined
 > compute has been removed from the renderer; compute always runs before
 > graphics in the same command buffer, the renderer emits the compute→graphics
 > barrier itself, and there is one 2-slot ring indexed by `flight_slot`. The
@@ -95,7 +95,7 @@ compute→graphics barrier, so graphics always reads the most recent compute
 output. Cross-frame compute ordering is a barrier at the top of that same
 command buffer, not a semaphore. `ComputePlacement`,
 `enable_pipelined_compute()`, the second queue and `compute_timeline` are all
-gone — see [../remove_pipelined_compute.md](../remove_pipelined_compute.md).
+gone — see [../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md).
 
 **Consequence for the graph:** "Pattern A" from `02_explicit_parallelism.md` no
 longer exists in the renderer, so the graph cannot *own and police* inherited
@@ -395,7 +395,7 @@ uniform writes plus address minting.
 ## 8. Cross-frame reads (and the watercolor race)
 
 > **The race described here is FIXED (2026-07-28)** by
-> [../remove_pipelined_compute.md](../remove_pipelined_compute.md), not by any
+> [../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md), not by any
 > design in this section. Watercolor's compute and graphics are now one submit
 > on one queue, separated by a renderer-emitted compute→graphics barrier, so
 > there is no cross-queue concurrency to race and the display legitimately
@@ -579,7 +579,7 @@ migration (Phase 6) still owes.
   (2026-07-28)** — superseded, nothing left to mark.
 - ~~**Phase 0.5 — per-dispatch compute streams** (`watercolor_race_fixes.md`).~~
   **Done differently (2026-07-28)** by
-  [../remove_pipelined_compute.md](../remove_pipelined_compute.md). Both of its
+  [../remove_pipelined_compute.md](../archived/remove_pipelined_compute.md). Both of its
   independent motivations are delivered: the mode flags are gone (there is one
   stream), and the renderer emits the compute→graphics barrier itself, which
   closes the frame-0 barrier gap. What did *not* happen is the pipelined stream
