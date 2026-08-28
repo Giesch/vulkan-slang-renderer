@@ -1,5 +1,11 @@
 # Watercolor Painting Application — Implementation Plan
 
+> **STATUS: implemented.** All phases exist in `examples/watercolor`. Shader
+> names diverge from the "Files to create" lists: advection and transfer are
+> merged into `wc_advect_and_transfer_pigment`; `wc_pressure_jacobi`,
+> `wc_project_velocity` and `wc_gaussian_blur` replace the planned
+> slope/divergence/boundary/move/transfer files.
+
 ## Context
 
 Implement an interactive watercolor painting application based on Curtis et al. "Computer-Generated Watercolor." The user paints brushstrokes with the mouse; a shallow-water fluid simulation drives pigment transport across the canvas; Kubelka-Munk compositing renders the final image.

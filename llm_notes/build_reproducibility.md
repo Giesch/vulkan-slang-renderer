@@ -5,8 +5,8 @@ Status, per section, re-checked against `main` @ `a1d22e1`:
 | § | topic | state |
 |---|---|---|
 | 1 | shader-atlas ordering nondeterminism | ✅ **done on `main`** in `e080d72`, independently of this branch |
-| 2 | snapshots capture pre-rustfmt output | ⬜ open — re-verified unchanged |
-| 3 | `just build-slang` fails on Linux | ⬜ open |
+| 2 | snapshots capture pre-rustfmt output | ✅ **done** — `generated_rust_source_is_rustfmt_clean` in `crates/cli/src/build_tasks.rs` |
+| 3 | `just build-slang` fails on Linux | ✅ **moot** — no `build-slang` recipe exists; slang arrives as a git dependency (`shader-slang` tag `v0.1.1+slang-2026.16`) |
 | 4 | undocumented system packages | ⬜ open |
 | 5 | env vars need direnv | ⬜ open |
 | 6 | `cargo-insta` documented, not installed | ⬜ open |
@@ -634,7 +634,8 @@ this file should be read as what was believed while §7 was being built.
 
 Remaining work:
 
-- wire the script to `just headless-all`;
+- ~~wire the script to `just headless-all`~~ — **done** as `just sweep` and
+  `just sweep-self-test`;
 - document the container packages from §4 for a *fresh clone* — `CLAUDE.md`
   covers the sweep's own dependencies, but the README still lists none, and the
   `~/.asoundrc` step can go (now unnecessary — see 7.1);
@@ -675,6 +676,9 @@ Originally: §1 and §2 together, since they touch the same function and share
 one snapshot regeneration. §1 has since landed on its own, so that pairing is
 moot — §2 now costs its own regeneration pass, which is the one thing the
 pairing was meant to avoid. Not a problem, just no longer free.
+
+§2 and §3 have since landed (see the status table). Remaining order: §4 + §5
+together, then §6.
 
 Remaining: **§2** on its own (one deliberate snapshot regeneration, reviewable
 by piping the old snapshots through `rustfmt` and diffing), then **§3+§4+§5**

@@ -600,6 +600,9 @@ read and the parity is right.
 
 ## Follow-up
 
+**Done by phase_11b §5.7.** No non-`RW` `Texture2D<` declaration remains in
+`examples/watercolor/shaders/source/`.
+
 **Convert watercolor's remaining `Texture2D<T>` reads to `Sampler2D<T>`, so the
 example has one read-descriptor style.** `wc_update_velocity`, `wc_advect_and_
 transfer_pigment`, `wc_flow_outward`, `wc_capillary_flow` and

@@ -10,14 +10,15 @@ Key features:
 - Automatic UI generation from struct reflection
 - Live-updates: changes in egui immediately update your game state
 - Only enabled in debug builds (`cfg!(debug_assertions)`)
-- Supports `Slider` for bounded f32 values and nested structs
+- Supports the `editor` widget types (`Slider`, `IntSlider`, `Checkbox`,
+  `RGBPicker`, `RadioButton`, `Label`), unit enums, and nested structs
 
 ## Quick Start
 
 ```rust
 use facet::Facet;
-use vulkan_slang_renderer::editor::Slider;
-use vulkan_slang_renderer::game::Game;
+use mltrs::editor::Slider;
+use mltrs::game::Game;
 
 #[derive(Facet)]
 struct MyEditState {
@@ -73,16 +74,25 @@ Return `Some((window_name, &mut self.edit_state))` to enable the editor window w
 
 ## Supported Field Types
 
-### Slider Type
+### Widget Types
+
+All widget types live in `mltrs::editor`.
 
 | Type | Widget |
 |------|--------|
 | `Slider` | Slider with min/max bounds (f32) |
+| `IntSlider` | Slider with min/max bounds (i64) |
+| `Checkbox` | Checkbox (bool) |
+| `RGBPicker` | Color picker (`[u8; 3]`) |
+| `RadioButton` | One radio button per label, selected index |
+| `Label` | Read-only text |
+| unit enum (`#[derive(Facet)]`, no variant data) | One radio button per variant |
+| nested `Facet` struct | Collapsible section |
 
-The `Slider` type (from `vulkan_slang_renderer::editor`) encodes value bounds:
+The `Slider` type (from `mltrs::editor`) encodes value bounds:
 
 ```rust
-use vulkan_slang_renderer::editor::Slider;
+use mltrs::editor::Slider;
 
 #[derive(Facet)]
 struct MyEditState {
@@ -126,9 +136,9 @@ Based on the `serenity_crt` example:
 
 ```rust
 use facet::Facet;
-use vulkan_slang_renderer::editor::Slider;
-use vulkan_slang_renderer::game::{Game, Input};
-use vulkan_slang_renderer::renderer::{DrawError, FrameRenderer, Renderer};
+use mltrs::editor::Slider;
+use mltrs::game::{Game, Input};
+use mltrs::renderer::{DrawError, FrameRenderer, Renderer};
 
 #[derive(Facet)]
 struct CRTSettings {
@@ -190,10 +200,10 @@ impl Game for MyCRTGame {
 
 ## Implementation Details
 
-The `render_facet_ui` function in `src/renderer/facet_egui.rs`:
+The `render_facet_ui` function in `crates/renderer/src/renderer/facet_egui.rs`:
 1. Gets the type's `Shape` via reflection
-2. Classifies each field as either `Slider` or `Collapsing` (nested struct)
-3. For `Slider`, renders an egui slider with the stored min/max bounds
+2. Classifies each field by `classify_field`: one of the `editor` widget types, a unit enum, or `Collapsing` (nested struct)
+3. Renders the matching egui widget (`render_slider`, `render_checkbox`, `render_unit_enum`, …)
 4. For nested structs, renders a collapsing section and recursively processes fields
 5. Unsupported field types are skipped (no UI rendered)
 6. Returns `true` if any value was modified by user interaction

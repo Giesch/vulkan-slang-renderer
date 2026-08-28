@@ -78,6 +78,9 @@ With that gone, the pointer wins on two counts:
 The index would only win under true indirect multi-draw (`drawCount > 1`).
 Nothing in the repo plans that; if it ever lands, this reverts to a base pointer
 in the param block plus a `gl_DrawID` index, which is a small change.
+**It landed (commit `f0bdb6d`, `multi_draw_indirect.md`), in exactly that
+shape**: `toon_link.shader.slang` holds an `ImmutableAddr<DrawSlot> drawSlots`
+base pointer and indexes it with `SV_DrawIndex` in `vertMain`.
 
 `tev.slang` needed **no signature change**: `evalStages` and `tevSampleTexmap`
 still take plain `Sampler2D`, and `fragMain` converts at the boundary

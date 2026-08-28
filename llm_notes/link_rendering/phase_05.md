@@ -418,13 +418,13 @@ recording what was actually seen — plus:
 - [x] No changes to existing examples, `Cargo.toml`, or
       `templates/shader_atlas_entry.rs.askama`; `git diff` on `src/generated/`
       is limited to `multi_mesh`
-- [ ] Master plan §6 P5 row marked ✅ with the commit hash
+- [x] Master plan §6 P5 row marked ✅ with the commit hash
 - [x] Recorded facts filled in
 
 ## Recorded facts
 
 ```
-commit:                   (pending — fill in hash when committed)
+commit:                   9d8e468
 
 final API line numbers:   src/renderer/pipeline.rs — RendererPipeline.raster_state 177,
                           BlendMode 182, CullMode 193, DepthCompare 201, RasterState 216,

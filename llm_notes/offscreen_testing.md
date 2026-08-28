@@ -5,6 +5,14 @@ built around Xvfb and treated validation and goldens as one deliverable. Code
 references verified against `main` @ `aae5b71`. Driver and environment
 measurements taken on Dan's laptop the same day.
 
+**Outcome (2026-08-28).** Phase 1's goal shipped as `scripts/headless-sweep.sh`
++ `just sweep` / `just sweep-self-test` (see `docs/testing.md`), by a different
+mechanism: `SDL_VIDEODRIVER=offscreen` plus a pinned lavapipe ICD instead of
+`VK_EXT_headless_surface`. The `WindowTarget` refactor, `src/headless.rs` /
+`VKR_HEADLESS*`, `run_loop(…, iteration_cap)` and the lavapipe WSI probe were
+not built and are moot. Still unbuilt from Phase 1: the §4 `vk stack:`
+fingerprint line. Phase 2 (goldens) stays deferred.
+
 **Split into two phases:**
 
 - **Phase 1 — windowless validation gate.** Designed to completion below. Runs

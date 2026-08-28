@@ -87,8 +87,11 @@ trivially to uniform arrays.
   no streaming; buffers outlive the pipelines that draw them. (phase_04.)
 - **u16 index buffers** — index buffers are u32-only. (Master plan §4.5;
   phase_04.)
-- **Instancing and vertex offsets** — `instanceCount` stays 1,
-  `vertexOffset` stays 0 in the multi-draw path. (phase_04.)
+- **Instancing and vertex offsets** — `DrawIndexedIndirectCommand`
+  (`crates/renderer/src/renderer/pipeline.rs`) exposes `instance_count`,
+  `vertex_offset` and `first_instance` on the indirect path; `toon_link`
+  still writes 1/0/0, and no example exercises other values. (phase_04;
+  `multi_draw_indirect.md`.)
 - **Mixed-draw-type example** — a committed example mixing `DrawIndexed` +
   `DrawVertexCount` in one frame; structurally supported by the type
   erasure, "cheap to add" when wanted. (phase_04.)

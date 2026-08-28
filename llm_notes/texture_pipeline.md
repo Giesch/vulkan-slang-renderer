@@ -373,6 +373,9 @@ The natural follow-up, deliberately out of scope, because it needs more than a r
   (`examples/toon_link/src/main.rs:600`) derives from the GX manifest cannot survive the
   switch. Widening it to `TextureOptions` — with `mipmaps` taken from the level count per
   §5.4 rather than from the caller — is the prerequisite.
+  **Prerequisite met**: `create_texture_with_mips` takes `SamplerOptions`
+  (`filter`, `wrap_u`, `wrap_v`) in `crates/renderer/src/renderer.rs`. The
+  conversion itself (format, pipeline, `textures` recipe) is still not done.
 - **Format.** `BC7_UNORM_BLOCK`, not sRGB. `texture_options` hardcodes
   `TextureColorSpace::Unorm` because GX has no sRGB anywhere and the fragment shader
   applies its own decode.

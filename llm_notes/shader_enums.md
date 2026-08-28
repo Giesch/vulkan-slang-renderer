@@ -597,7 +597,11 @@ done
 - **Sign extension on unsigned tags.** `default_value_int()` returns `i64`, so a `uint` case may
   arrive sign-extended; emitting `-1 => ..` into a `match value: u32` would not compile. Values are
   normalized into the tag's range at reflection time.
-- **`GXCompare` / `mm::CompareType` ownership** is untouched — `toon_link`'s migration covered only
-  `DebugMode`, per §9. Reshaping `uint4 alphaCompare` into named fields remains the prerequisite.
+- ~~**`GXCompare` / `mm::CompareType` ownership** is untouched — `toon_link`'s migration covered only
+  `DebugMode`, per §9. Reshaping `uint4 alphaCompare` into named fields remains the prerequisite.~~
+  **Done.** `tev.slang:256` declares `public enum GXCompare : uint`; `alphaCompare` is the
+  named-field struct `GXAlphaCompare` (`tev.slang:279`). The ownership question resolved as
+  coexist-and-convert: `gx_compare` / `alpha_compare` in `examples/toon_link/src/main.rs` map
+  `mm::CompareType` onto the generated enum.
 - **Askama duplication.** Three near-identical enum blocks across templates. Accepted deliberately
   (§5), but if a fourth template appears, factor all of it out at once.

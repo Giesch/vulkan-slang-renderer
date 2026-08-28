@@ -14,8 +14,7 @@ Uniform, storage, immutable, and gpu-only buffers all ring across those 2 slots
 (src/renderer/uniform_buffer.rs, src/renderer/storage_buffer.rs); CPU writes and
 `addr`/`current_addr` use `flight_slot`, `previous_addr` uses
 `(flight_slot + 1) % 2`. CPU writes now happen *after* the frame_timeline wait,
-so there is no pre-wait window at all. Sections below still say "3 slots" and
-"N mod 3" where the count matters; read them as 2.
+so there is no pre-wait window at all.
 
 ## The original three
 

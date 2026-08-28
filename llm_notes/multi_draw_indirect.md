@@ -1,7 +1,8 @@
 # Multi-draw indirect: `vkCmdDrawIndexedIndirect` and `SV_DrawIndex`
 
-> **STATUS: DESIGN.** Adds GPU multi-draw-indirect to the renderer, and moves
-> `examples/toon_link` onto it. Line numbers are as of `1eee614`.
+> **STATUS: Phase 1 implemented (commit `f0bdb6d`). Phase 2 (§7, the
+> reflection-enforced `SV_DrawIndex` marker) is open.** Adds GPU
+> multi-draw-indirect to the renderer, and moves `examples/toon_link` onto it. Line numbers are as of `1eee614`.
 >
 > This is distinct from the repo's existing "multi draw", which is a CPU-side
 > queue of separate draw commands. See §1.
