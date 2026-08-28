@@ -253,8 +253,8 @@ existing std140 tail padding and grow by 0 bytes.
 | `just sweep` | 16 ok / 0 skip / 0 fail |
 | `git status` confined to `examples/watercolor` | yes |
 
-Not run: the interactive paint-and-cycle-`DebugView` check, and the hot-reload
-check. Both need a human at the window.
+~~Not run: the interactive paint-and-cycle-`DebugView` check, and the hot-reload
+check. Both need a human at the window.~~ Both confirmed by eye 2026-08-28.
 
 `docs/bindless.md` needs no edit. The handle default, the two heap bindings,
 and the "`examples/watercolor` is the reference for storage handles" paragraph

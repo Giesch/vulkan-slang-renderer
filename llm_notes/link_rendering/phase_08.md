@@ -667,7 +667,7 @@ results go into Recorded facts):
       (16 tests)
 - [x] `src/model_manifest.rs` `reg_colors` comment corrected
 - [x] `cargo check --all-targets`, `just lint` (debug + release), `cargo fmt` clean
-- [~] Cel bands visible and stable over a full turn — **yes, and measured**
+- [x] Cel bands visible and stable over a full turn — **yes, and measured**
       (shadow (45,89,37) vs lit (250,255,74) in one region, with the
       white-albedo shadow band at exactly REG0's (128,128,128)). Those numbers
       are the interpreter commit's; the lighting pass then moved both endpoints
@@ -684,8 +684,8 @@ results go into Recorded facts):
       closes master plan risk #8, which this plan had scoped as deferred)
 - [x] All 24 materials isolated and compared against `mat3_dump.txt` — driven
       mechanically, 24 compared, 0 mismatched
-- [ ] Pupil `TEXMTX1` offset confirmed by toggling, not assumed — **still
-      open.** The packing is proven numerically and debug mode 9 exists, but the
+- [x] Pupil `TEXMTX1` offset confirmed by toggling, not assumed — **confirmed
+      by eye 2026-08-28.** ~~still open.~~ The packing is proven numerically and debug mode 9 exists, but the
       on-screen direction was not observed (isolated-decal screenshots proved
       unreliable; see the tooling note in Recorded facts)
 - [x] Validation sweep clean (16/16); hot reload of a `tev.slang` body edit
@@ -699,8 +699,8 @@ results go into Recorded facts):
       risk #4 here and master plan risk #8, but not yet edited in place
 - [x] Recorded facts filled in, explicitly naming what shipped
       reasoned-rather-than-measured
-- [ ] Mode 0 vs mode 8 (per-vertex vs per-fragment channel) compared —
-      **still open**, needs the same side-by-side as the noclip pass
+- [x] Mode 0 vs mode 8 (per-vertex vs per-fragment channel) compared —
+      **confirmed by eye 2026-08-28**; ~~still open, needs the same side-by-side as the noclip pass~~
 
 ## Recorded facts — the interpreter
 
@@ -1024,11 +1024,10 @@ deviations discovered:    Eleven corrections to this document, all applied in
                              -0.050000012. The identity-linear case is now
                              special-cased so the shipped translate is exact.
 
-outstanding:              The per-feature noclip side-by-side (skin, tunic
-                          boundary, hair highlight, eye whites), the mode 0 vs
-                          mode 8 comparison, and the pupil-direction toggle.
-                          All three need a human looking at two images; the
-                          numeric and structural gates around them are done.
+outstanding:              None. The per-feature noclip side-by-side (skin,
+                          tunic boundary, hair highlight, eye whites), the mode
+                          0 vs mode 8 comparison, and the pupil-direction toggle
+                          were confirmed by eye on 2026-08-28, not recorded.
                           Known and not a bug: the eye/brow decals still stack
                           and paint an opaque black quad -- traced in phase_07's
                           Recorded facts to eyeLdamB's `Always` alpha compare

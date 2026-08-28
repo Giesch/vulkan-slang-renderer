@@ -369,9 +369,9 @@ Recorded-facts block:
       clean, but an opaque black rectangle surrounds each eye and brow. Traced
       to the missing BTP + the deferred `DstAlpha` pass, **not** a P7 defect —
       see the Recorded-facts entry. Persists through P8.
-- [~] UV features vs noclip: everything observed is correctly placed, but the
-      formal per-feature noclip side-by-side is folded into P8's, which uses the
-      same camera angles
+- [x] UV features vs noclip: everything observed is correctly placed; the
+      per-feature noclip side-by-side folded into P8 was confirmed by eye
+      2026-08-28
 - [x] Draw-order effect observed; `depth_write` honored per material (code-level)
 - [x] Validation sweep clean (16/16), validation layer confirmed loaded
 - [x] Hot reload preserves per-material raster state; no VMA leak on real close

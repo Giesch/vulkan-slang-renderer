@@ -429,21 +429,21 @@ Static gates — **run and green**:
 - [x] 28 pipelines build; `just dev toon_link` runs with no Vulkan validation
       errors, and the startup legend prints the mask-view order `[11, 14, 18, 21]`
 
-Runtime gates — **not run; they need a human at the window.** No capture harness
-exists (see step 5), so these are judged by eye:
+Runtime gates — **confirmed by eye 2026-08-28.** No capture harness exists
+(see step 5), so these were judged at the window, not recorded:
 
-- [ ] Black rectangle gone — both eyes and both brows
-- [ ] Pupil visible; brows correct; noclip side-by-side recorded
-- [ ] `Mask White` shows four solid-white eye/brow silhouettes on black, matching
+- [x] Black rectangle gone — both eyes and both brows
+- [x] Pupil visible; brows correct; noclip side-by-side recorded
+- [x] `Mask White` shows four solid-white eye/brow silhouettes on black, matching
       the lash shape seen in `Tev Alpha` — no rectangle, no grey fringe, and
       **not** a white model (that would mean the draw order did not switch with
       the debug mode)
-- [ ] Eyes remain visible when the bangs cross them
-- [ ] The `batch` slider re-confirms `ear(2)` is the hair (risk 6). Note
+- [x] Eyes remain visible when the bangs cross them
+- [x] The `batch` slider re-confirms `ear(2)` is the hair (risk 6). Note
       isolating any of the 8 mask/erase batches shows a **black frame by
       design** — colour writes are off; `dump_selection` says so
-- [ ] `depth_write` isolation and debug mode 9 pupil A/B recorded
-- [ ] Sweep 16/16, hot reload clean per mode, no VMA leak
+- [x] `depth_write` isolation and debug mode 9 pupil A/B recorded
+- [x] Sweep 16/16, hot reload clean per mode, no VMA leak
 
 ## Risks / open questions
 

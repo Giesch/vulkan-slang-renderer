@@ -242,9 +242,9 @@ trivially to uniform arrays.
   `DstAlpha` was only half the fix. `eyeLdamB` runs `colorUpdate = 0` on
   hardware; drawing it with color writes on is what painted the quad. **Fixed
   in P9.**)*
-  The remaining piece is the **formal per-feature noclip side-by-side**, folded
-  into P8's since it uses the same P6 camera angles. (phase_07 Recorded facts,
-  second block.)
+  ~~The remaining piece is the **formal per-feature noclip side-by-side**, folded
+  into P8's since it uses the same P6 camera angles.~~ **Confirmed by eye
+  2026-08-28.** (phase_07 Recorded facts, second block.)
 - **A runtime-verification *recipe* discovered while doing the above — recorded
   prose, NOT committed tooling.** Nothing from this entry exists on disk:
   `scripts/` contains no capture script and the justfile has no recipe for one,

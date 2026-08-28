@@ -363,7 +363,7 @@ Manual checks automation will not catch:
   status block at the top: with the layer confirming it was enabled, removing every
   barrier in watercolor still produced zero hazard reports. BDA accesses are
   invisible to it. Do not treat a silent sync-validation run as evidence.
-- **Resize under load.** Not separately exercised. Phase 4a changes when acquire
+- **Resize under load.** Confirmed by eye 2026-08-28. ~~Not separately exercised.~~ Phase 4a changes when acquire
   happens relative to the wait, and the `total_frames` fix above is what a
   repeated-`OUT_OF_DATE` resize storm tests. Worth a drag-resize pass if this area
   is touched again.
