@@ -1629,7 +1629,7 @@ impl Alignment {
 fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, String> {
     // (slang load name, rust module name); these differ for modules in a
     // subdirectory, whose types all collapse into one rust module named
-    // after the directory (eg. mltrs/addr.slang → "mltrs/addr" / "mltrs").
+    // after the directory (eg. util/math.slang → "util/math" / "util").
     let mut modules: Vec<(String, String)> = Vec::new();
     let mut subdirs = Vec::new();
 
@@ -1655,11 +1655,9 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
         modules.push((module_name.clone(), module_name));
     }
 
-    // A top-level module sharing a subdirectory's name (eg. mltrs.slang next
-    // to mltrs/) is reflected like any other.
-    // In the 'mltrs' case, it's a re-export prelude with no types of its own,
-    // but if the top module declares types,
-    // they'll collapse into the same rust module
+    // A top-level module sharing a subdirectory's name (eg. util.slang next
+    // to util/) is reflected like any other; its types collapse into the
+    // same rust module as the subdirectory's.
     for subdir in &subdirs {
         for entry in std::fs::read_dir(shaders_source_dir.join(subdir)).unwrap() {
             let entry = entry.unwrap();

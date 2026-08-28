@@ -22,7 +22,7 @@ enum Command {
 enum ShadersCommand {
     /// Compile slang shaders to SPIR-V + reflection json, and generate Rust bindings
     Compile(CompileArgs),
-    /// Seed a shaders/source dir with the vendored engine slang modules
+    /// Seed a shaders/source dir with the vendored engine slang module
     Init(InitArgs),
 }
 
@@ -55,30 +55,9 @@ struct InitArgs {
     force: bool,
 }
 
-/// The canonical engine slang modules, embedded so `cargo install mltrs-cli`
-/// is self-contained. `shaders init` writes them into a consumer's source dir:
-/// the `mltrs.slang` prelude at the top level, the modules it re-exports
-/// under `mltrs/`.
-const VENDORED_MODULES: &[(&str, &str)] = &[
-    ("mltrs.slang", include_str!("../vendor/mltrs.slang")),
-    (
-        "mltrs/addr.slang",
-        include_str!("../vendor/mltrs/addr.slang"),
-    ),
-    ("mltrs/mvp.slang", include_str!("../vendor/mltrs/mvp.slang")),
-    (
-        "mltrs/projection.slang",
-        include_str!("../vendor/mltrs/projection.slang"),
-    ),
-    (
-        "mltrs/fullscreen_triangle.slang",
-        include_str!("../vendor/mltrs/fullscreen_triangle.slang"),
-    ),
-    (
-        "mltrs/super_sample.slang",
-        include_str!("../vendor/mltrs/super_sample.slang"),
-    ),
-];
+/// The canonical engine slang module, embedded so `cargo install mltrs-cli`
+/// is self-contained. `shaders init` writes it into a consumer's source dir.
+const VENDORED_MODULES: &[(&str, &str)] = &[("mltrs.slang", include_str!("../vendor/mltrs.slang"))];
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
