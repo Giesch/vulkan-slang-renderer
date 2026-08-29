@@ -1,8 +1,8 @@
 //! The bindless texture heap set up by Slang
 //!
-//! The binding index is set by Slang, and fixed descriptor counts are
-//! effectively required by Slang (because Slang puts multiple in one bindless set,
-//! see shader-slang/slang#8063).
+//! Slang assigns the binding numbers and places every heap in one descriptor set.
+//! Vulkan permits `VARIABLE_DESCRIPTOR_COUNT` only on the highest-numbered binding
+//! in a set, so each heap has a fixed descriptor count.
 //!
 //! Textures are never freed.
 
