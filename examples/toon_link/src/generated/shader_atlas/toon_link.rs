@@ -75,24 +75,24 @@ impl TryFrom<u32> for DebugMode {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(8))]
-pub struct ToonLinkDraw {
-    pub draw_slots: ImmutableAddr<DrawSlot>,
+pub struct MultiDraw {
+    pub individual_draws: ImmutableAddr<IndividualDraw>,
 }
 
-impl GPUWrite for ToonLinkDraw {}
-const _: () = assert!(std::mem::size_of::<ToonLinkDraw>() == 8);
-const _: () = assert!(std::mem::offset_of!(ToonLinkDraw, draw_slots) == 0);
-const _: () = assert!(std::mem::size_of::<ImmutableAddr<DrawSlot>>() == 8);
+impl GPUWrite for MultiDraw {}
+const _: () = assert!(std::mem::size_of::<MultiDraw>() == 8);
+const _: () = assert!(std::mem::offset_of!(MultiDraw, individual_draws) == 0);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<IndividualDraw>>() == 8);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(8))]
-pub struct DrawSlot {
+pub struct IndividualDraw {
     pub material: ImmutableAddr<Material>,
 }
 
-impl GPUWrite for DrawSlot {}
-const _: () = assert!(std::mem::size_of::<DrawSlot>() == 8);
-const _: () = assert!(std::mem::offset_of!(DrawSlot, material) == 0);
+impl GPUWrite for IndividualDraw {}
+const _: () = assert!(std::mem::size_of::<IndividualDraw>() == 8);
+const _: () = assert!(std::mem::offset_of!(IndividualDraw, material) == 0);
 const _: () = assert!(std::mem::size_of::<ImmutableAddr<Material>>() == 8);
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -151,9 +151,9 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<ToonLinkParams>,
 }
 
-impl mltrs::renderer::gpu_write::PushConstantBlock for ToonLinkDraw {}
+impl mltrs::renderer::gpu_write::PushConstantBlock for MultiDraw {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
-const _: () = assert!(std::mem::size_of::<ToonLinkDraw>() <= 128);
+const _: () = assert!(std::mem::size_of::<MultiDraw>() <= 128);
 
 impl VertexDescription for Vertex {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
@@ -206,7 +206,7 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> IndexedPipelineConfig<'a, Vertex, PushBlock<ToonLinkDraw>> {
+    ) -> IndexedPipelineConfig<'a, Vertex, PushBlock<MultiDraw>> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]

@@ -7,19 +7,17 @@ import tev;
 
 ParameterBlock<ToonLinkParams> params;
 
-[[vk::push_constant]] ConstantBuffer<ToonLinkDraw> draw;
+[[vk::push_constant]] ConstantBuffer<MultiDraw> multiDraw;
 
-// REVIEW Let's rename this struct to MultiDraw,
-// and the DrawSlot struct below it to IndividualDraw
-struct ToonLinkDraw {
+struct MultiDraw {
     // all the draws from the multi-draw-indrect command
     // index into it with SV_DrawIndex
-    mltrs::ImmutableAddr<DrawSlot> drawSlots;
+    mltrs::ImmutableAddr<IndividualDraw> individualDraws;
 }
 
-// One entry of the run-order slot table.
+// One entry of the run-order draw table.
 // (Our reflection system requires a pointee to be a struct)
-struct DrawSlot {
+struct IndividualDraw {
     mltrs::ImmutableAddr<Material> material;
 }
 
@@ -100,8 +98,8 @@ FragVertex vertMain(Vertex vertex, uint drawIndex : SV_DrawIndex) {
     let worldNormal = params.mvp.rotateDirection(vertex.normal);
 
     // SV_DrawIndex counts within one indirect command, from 0 to drawCount - 1.
-    // It is not the batch index, so each command carries its own slot table.
-    let material = draw.drawSlots[drawIndex].material;
+    // It is not the batch index, so each command carries its own draw table.
+    let material = multiDraw.individualDraws[drawIndex].material;
     let tev = material.tev;
     let color0 = tev.evalRasterColor(worldNormal, params.lights);
     let forceIdentity = params.debugMode == DebugMode.IdentityTexMtx;
@@ -119,7 +117,7 @@ float3 srgbDecode(float3 c) {
 
 [shader("fragment")]
 float4 fragMain(FragVertex fragVertex) : SV_TARGET {
-    let material = draw.drawSlots[fragVertex.drawIndex].material;
+    let material = multiDraw.individualDraws[fragVertex.drawIndex].material;
 
     Sampler2D tex0 = material.tex0;
     Sampler2D tex1 = material.tex1;

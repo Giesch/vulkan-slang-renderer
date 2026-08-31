@@ -78,7 +78,7 @@ const VERTEX_STRIDE: usize = 32;
 /// An index into `Manifest::materials`, into [`MaterialTable::base`], and into
 /// the GPU's `Material` buffer.
 ///
-/// Passed to the GPU as a device address in the [`DrawSlot`] table,
+/// Passed to the GPU as a device address in the [`IndividualDraw`] table,
 /// read in the shader with `SV_DrawIndex`.
 ///
 /// Not interchangeable with [`BatchIndex`].
@@ -756,7 +756,7 @@ const EXPECTED_RASTER_STATES: usize = 5;
 /// `Manifest::materials`. Push order defines a [`MaterialSlot`].
 struct MaterialTable {
     /// One pipeline per distinct [`RasterState`], in first-use order.
-    pipelines: Vec<PipelineHandle<DrawIndexedIndirect, PushBlock<ToonLinkDraw>>>,
+    pipelines: Vec<PipelineHandle<DrawIndexedIndirect, PushBlock<MultiDraw>>>,
     /// Maps a `MaterialSlot` to an index into [`Self::pipelines`]. Many slots
     /// share one pipeline.
     pipeline_of_slot: Vec<usize>,
@@ -824,11 +824,11 @@ fn build_materials(
     })
 }
 
-/// The GPU-side draw list. `commands` and `slots` hold one entry per batch, in
-/// `draw_order`, and `runs` partitions them by pipeline.
+/// The GPU-side draw list. `commands` and `individual_draws` hold one entry
+/// per batch, in `draw_order`, and `runs` partitions them by pipeline.
 struct DrawList {
     commands: Vec<DrawIndexedIndirectCommand>,
-    slots: Vec<DrawSlot>,
+    individual_draws: Vec<IndividualDraw>,
     runs: Vec<Run>,
 }
 
@@ -838,8 +838,8 @@ struct Run {
     /// Index into [`MaterialTable::pipelines`].
     pipeline: usize,
     /// Index into [`ToonLink::args_buffer`] and the parallel
-    /// [`ToonLink::slot_buffer`], which hold the batches in `draw_order`
-    /// rather than in INF1 order.
+    /// [`ToonLink::individual_draw_buffer`], which hold the batches in
+    /// `draw_order` rather than in INF1 order.
     first: u32,
     count: u32,
 }
@@ -854,7 +854,7 @@ fn build_draw_list(
     materials_buffer: &SingletonBufferHandle<Material>,
 ) -> anyhow::Result<DrawList> {
     let mut commands = Vec::with_capacity(draw_order.len());
-    let mut slots = Vec::with_capacity(draw_order.len());
+    let mut individual_draws = Vec::with_capacity(draw_order.len());
     let mut runs: Vec<Run> = Vec::new();
 
     for &index in draw_order {
@@ -880,7 +880,7 @@ fn build_draw_list(
         };
         commands.push(indirect_command);
         let material = renderer.singleton_addr_at(materials_buffer, slot.raw() as u32);
-        slots.push(DrawSlot { material });
+        individual_draws.push(IndividualDraw { material });
 
         let pipeline = materials.pipeline_of_slot[slot.raw()];
 
@@ -901,7 +901,7 @@ fn build_draw_list(
 
     Ok(DrawList {
         commands,
-        slots,
+        individual_draws,
         runs,
     })
 }
@@ -918,7 +918,7 @@ pub struct ToonLink {
     args_buffer: ImmutableBufferHandle<DrawIndexedIndirectCommand>,
     /// The material pointer of the matching args_buffer entry.
     /// Each run's push block points at its own span; see [`Self::queue_run`].
-    slot_buffer: SingletonBufferHandle<DrawSlot>,
+    individual_draw_buffer: SingletonBufferHandle<IndividualDraw>,
     /// The runs in `args_buffer` that share a pipeline, in draw order.
     /// Each run corresponds to one multi-draw-indirect command.
     runs: Vec<Run>,
@@ -954,11 +954,11 @@ pub struct EditState {
 
 impl ToonLink {
     /// Record `run`'s span of [`Self::args_buffer`] as one indirect draw.
-    /// The push block is set once for the whole command, so the slot table
+    /// The push block is set once for the whole command, so the draw table
     /// pointer is what tells the sub-draws apart.
     fn queue_run(&self, renderer: &mut FrameRenderer, run: &Run) {
-        let draw_slots = renderer.singleton_addr_at(&self.slot_buffer, run.first);
-        let push = ToonLinkDraw { draw_slots };
+        let individual_draws = renderer.singleton_addr_at(&self.individual_draw_buffer, run.first);
+        let push = MultiDraw { individual_draws };
 
         renderer.queue_draw_indexed_indirect_with_push_constants(
             &self.materials.pipelines[run.pipeline],
@@ -1068,7 +1068,8 @@ impl Game for ToonLink {
         )?;
         let mut args_buffer = renderer.create_immutable_buffer(draw_list.commands.len() as u32)?;
         renderer.write_immutable_all_frames(&mut args_buffer, &draw_list.commands);
-        let slot_buffer = renderer.create_singleton_buffer(&draw_list.slots)?;
+        let individual_draw_buffer =
+            renderer.create_singleton_buffer(&draw_list.individual_draws)?;
 
         let edit_state = EditState {
             fps: Label::new("FPS: --"),
@@ -1086,7 +1087,7 @@ impl Game for ToonLink {
             materials,
             params_buffer,
             args_buffer,
-            slot_buffer,
+            individual_draw_buffer,
             runs: draw_list.runs,
             edit_state,
             last_frame_time: Instant::now(),

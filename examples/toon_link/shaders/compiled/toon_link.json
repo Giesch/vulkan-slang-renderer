@@ -230,20 +230,20 @@
     },
     {
       "kind": "pushConstant",
-      "parameterName": "draw",
+      "parameterName": "multiDraw",
       "elementType": {
-        "typeName": "ToonLinkDraw",
+        "typeName": "MultiDraw",
         "fields": [
           {
             "kind": "pointer",
-            "fieldName": "drawSlots",
+            "fieldName": "individualDraws",
             "binding": {
               "kind": "uniform",
               "offset": 0,
               "size": 8
             },
             "pointeeType": {
-              "typeName": "DrawSlot",
+              "typeName": "IndividualDraw",
               "fields": [
                 {
                   "kind": "pointer",
