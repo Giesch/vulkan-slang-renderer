@@ -18,7 +18,7 @@ struct GpuPickingParams {
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
     let fp = mltrs::fullscreenPosition(id);
-    return FragInput(fp.svPosition, fp.centeredCoords);
+    return FragInput(fp.svPosition, fp.svPosition.xy);
 }
 
 // https://iquilezles.org/articles/normalsSDF/

@@ -17,7 +17,7 @@ struct GpuPickingIdParams {
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
     let fp = mltrs::fullscreenPosition(id);
-    return FragInput(fp.svPosition, fp.centeredCoords);
+    return FragInput(fp.svPosition, fp.svPosition.xy);
 }
 
 [shader("fragment")]

@@ -384,6 +384,12 @@ and a slow-machine sweep either passes or fails with a message that says
 
 ## 7. The Y-down clip space flip is applied in three different places, none documented
 
+> **Superseded (2026-08-29).** The decision below changed. The renderer records
+> every viewport with negative height, and all three flip mechanisms named
+> here (`reflectY` in the MVP helper, `reflectY` in the fullscreen helper, the
+> swapped orthographic bounds) are gone. The convention is in
+> `docs/coordinates.md`. The rest of this entry is the historical record.
+
 **Context.** Surfaced while upgrading glam 0.30.8 → 0.33.2 (2026-08). The
 upgrade itself is done and is *not* the debt — this entry records what the
 upgrade exposed and deliberately did not fix.

@@ -1762,6 +1762,19 @@ impl Renderer {
         }
     }
 
+    /// Negative height maps clip-space +Y to the top of the framebuffer,
+    /// so shaders apply Y-up (`directx`) projections unchanged.
+    fn flipped_viewport(&self, width: f32) -> vk::Viewport {
+        let height = self.render_extent.height as f32;
+        vk::Viewport::default()
+            .x(0.0)
+            .y(height)
+            .width(width)
+            .height(-height)
+            .min_depth(0.0)
+            .max_depth(1.0)
+    }
+
     fn record_command_buffer(
         &mut self,
         pending_draws: &[PendingDrawCommand],
@@ -1870,13 +1883,7 @@ impl Renderer {
                 );
             }
 
-            let viewport = vk::Viewport::default()
-                .x(0.0)
-                .y(0.0)
-                .width(self.render_extent.width as f32)
-                .height(self.render_extent.height as f32)
-                .min_depth(0.0)
-                .max_depth(1.0);
+            let viewport = self.flipped_viewport(self.render_extent.width as f32);
             let viewports = [viewport];
             unsafe { self.device.cmd_set_viewport(command_buffer, 0, &viewports) };
 
@@ -2101,13 +2108,7 @@ impl Renderer {
         }
 
         // Use render_extent for game rendering (scaled resolution)
-        let viewport = vk::Viewport::default()
-            .x(0.0)
-            .y(0.0)
-            .width(self.viewport_width())
-            .height(self.render_extent.height as f32)
-            .min_depth(0.0)
-            .max_depth(1.0);
+        let viewport = self.flipped_viewport(self.viewport_width());
         let viewports = [viewport];
         unsafe { self.device.cmd_set_viewport(command_buffer, 0, &viewports) };
 

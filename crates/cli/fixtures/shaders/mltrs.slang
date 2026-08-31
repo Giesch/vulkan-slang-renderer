@@ -40,56 +40,31 @@ public typealias ImmutableAddr<T> =
 
 // ------------------------------------------------- fullscreen_triangle
 
+// Coordinate conventions are documented in docs/coordinates.md.
 public struct FullscreenPosition {
-    // [-1, 1] normalized device coordinates
-    // Vulkan-style Y-down
+    // [-1, 1] clip space, Y-up
     public float4 svPosition;
-    // [0, 1] uv texture coordinates
-    // Vulkan-style Y-down
+    // [0, 1] texture space, Y-down (0 is the top row)
     public float2 texCoord;
-    // [-1, 1] with origin at the center
-    // OpenGL-style Y-up
-    public float2 centeredCoords;
 }
 
-// a screen-covering triangle in [0, 1] texture coordinates
+// a screen-covering triangle in [0, 1] Y-up coordinates, counter-clockwise
 static const float2 fullScreenTriangleVerts[3] = {
     {0.0, 0.0},
-    {0.0, 2.0},
     {2.0, 0.0},
+    {0.0, 2.0},
 };
-
-static const float2x2 reflectY2 = float2x2(
-    1.0,  0.0,
-    0.0, -1.0,
-);
 
 // for use with exactly 3 vertices
 public FullscreenPosition fullscreenPosition(uint svVertexId) {
-    let texCoord = fullScreenTriangleVerts[svVertexId];
-    let svPosition = float4(2 * texCoord - 1.0, 0.0, 1.0);
+    let v = fullScreenTriangleVerts[svVertexId];
+    let svPosition = float4(2 * v - 1.0, 0.0, 1.0);
+    let texCoord = float2(v.x, 1.0 - v.y);
 
-    // reflect Y-axis to match OpenGL & move origin to center
-    // this assumes a negative-z camera position
-    let centeredCoords = mul(reflectY2, texCoord) + float2(-0.5, 0.5);
-
-    return FullscreenPosition(svPosition, texCoord, centeredCoords);
+    return FullscreenPosition(svPosition, texCoord);
 }
 
 // ----------------------------------------------------------------- mvp
-
-// "GLM was originally designed for OpenGL,
-// where the Y coordinate of the clip coordinates is inverted.
-// The easiest way to compensate for that is to flip the sign
-// on the scaling factor of the Y axis in the projection matrix.
-// If you don’t do this, then the image will be rendered upside down."
-// https://docs.vulkan.org/tutorial/latest/05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.html
-static const float4x4 reflectY4 = float4x4(
-    1.0,  0.0, 0.0, 0.0,
-    0.0, -1.0, 0.0, 0.0,
-    0.0,  0.0, 1.0, 0.0,
-    0.0,  0.0, 0.0, 1.0,
-);
 
 public struct MVPMatrices {
     float4x4 model;
@@ -99,10 +74,9 @@ public struct MVPMatrices {
     [ForceInline]
     public func project(position: float3) -> float4 {
         let position = float4(position, 1.0);
-        let projection = mul(reflectY4, this.proj);
 
         if (columnMajor) {
-            let mvpMatrix = mul(projection, mul(this.view, this.model));
+            let mvpMatrix = mul(this.proj, mul(this.view, this.model));
             return mul(mvpMatrix, position);
         }
 
@@ -111,7 +85,7 @@ public struct MVPMatrices {
         //
         // We can either transpose the component matrices,
         // or multiply everything backwards.
-        let mvpMatrix = mul(this.model, mul(this.view, projection));
+        let mvpMatrix = mul(this.model, mul(this.view, this.proj));
         return mul(position, mvpMatrix);
     }
 

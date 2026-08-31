@@ -375,7 +375,7 @@ impl Game for SpaceInvaders {
         }
 
         let projection = Projection {
-            matrix: directx::orthographic(0.0, width, height, 0.0, 0.0, -1.0),
+            matrix: directx::orthographic(0.0, width, 0.0, height, 0.0, -1.0),
         };
         // draw
         let visible_sprites = self

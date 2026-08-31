@@ -9,7 +9,7 @@ public struct RayMarchCamera {
     public float3 position;
 
     public float3 rayDirection(float2 centeredCoords) {
-        let ndc = float4(centeredCoords * 2.0, 1.0, 1.0);
+        let ndc = float4(centeredCoords, 1.0, 1.0);
 
         var worldPoint = inverseViewProj.project(ndc);
         worldPoint /= worldPoint.w;

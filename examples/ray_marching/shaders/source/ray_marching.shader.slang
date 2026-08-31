@@ -32,7 +32,7 @@ struct FragInput {
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
     let fp = mltrs::fullscreenPosition(id);
-    return FragInput(fp.svPosition, fp.centeredCoords);
+    return FragInput(fp.svPosition, fp.svPosition.xy);
 }
 
 struct RayMarchSampler : mltrs::ISuperSampler {
@@ -67,7 +67,7 @@ float4 fragMain(FragInput input) : SV_Target {
 
     let sampler = RayMarchSampler(
         input.centeredCoords,
-        1.0 / params.resolution,
+        2.0 / params.resolution,
         world,
         params.camera,
         params.lightPosition

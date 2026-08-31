@@ -22,14 +22,14 @@ struct FragInput {
 [shader("vertex")]
 FragInput vertMain(uint id : SV_VertexID) {
     let fp = mltrs::fullscreenPosition(id);
-    return FragInput(fp.svPosition, fp.centeredCoords);
+    return FragInput(fp.svPosition, fp.svPosition.xy);
 }
 
 [shader("fragment")]
 float4 fragMain(FragInput input) : SV_Target {
     let aspectRatio = params.resolution.x / params.resolution.y;
     let recenterOffset = float2(0.15, 0.0);
-    var uv = input.centeredCoords + recenterOffset;
+    var uv = input.centeredCoords * 0.5 + recenterOffset;
     uv.x *= aspectRatio;
     return dragonCurve2D(uv, params.time);
 }
