@@ -13,8 +13,9 @@ use glam::{Vec2, Vec3, Vec4};
 use mltrs::editor::{Label, Slider};
 use mltrs::game::*;
 use mltrs::renderer::{
-    Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, PushBlock, Renderer,
-    StorageBufferHandle, StorageTextureHandle, TextureHandle, UniformBufferHandle,
+    BindlessHandle, Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, PushBlock,
+    Renderer, RwTexture2D, Sampler2D, StorageBufferHandle, StorageTextureHandle, TextureHandle,
+    UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -72,16 +73,16 @@ struct PingPong {
 }
 
 impl PingPong {
-    fn read_sampled(&self, parity: bool) -> &TextureHandle {
-        &self.sampled[parity as usize]
+    fn read_sampled(&self, parity: bool) -> BindlessHandle<Sampler2D> {
+        self.sampled[parity as usize].bindless_handle()
     }
 
-    fn write_storage(&self, parity: bool) -> &StorageTextureHandle {
-        &self.storage[!parity as usize]
+    fn write_storage(&self, parity: bool) -> BindlessHandle<RwTexture2D> {
+        self.storage[!parity as usize].bindless_handle()
     }
 
-    fn read_storage(&self, parity: bool) -> &StorageTextureHandle {
-        &self.storage[parity as usize]
+    fn read_storage(&self, parity: bool) -> BindlessHandle<RwTexture2D> {
+        self.storage[parity as usize].bindless_handle()
     }
 }
 
@@ -721,8 +722,8 @@ impl Game for Watercolor {
                 &self.pressure_jacobi_pipeline,
                 workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE),
                 &wc_pressure_jacobi_compute::JacobiDispatch {
-                    pressure_in: self.pressure.read_sampled(parity).bindless_handle(),
-                    pressure_out: self.pressure.write_storage(parity).bindless_handle(),
+                    pressure_in: self.pressure.read_sampled(parity),
+                    pressure_out: self.pressure.write_storage(parity),
                 },
             );
             self.pressure_parity = !self.pressure_parity;
@@ -745,10 +746,7 @@ impl Game for Watercolor {
             &wc_gaussian_blur_compute::BlurDispatch {
                 // the side capillary flow writes: sim_parity flips below,
                 // and the uniform write this replaces ran after that flip
-                input_tex: self
-                    .wet_mask
-                    .read_sampled(!self.sim_parity)
-                    .bindless_handle(),
+                input_tex: self.wet_mask.read_sampled(!self.sim_parity),
                 output_tex: self.blur_temp.bindless_handle(),
                 direction: Vec2::new(1.0, 0.0),
             },
@@ -806,10 +804,7 @@ impl Game for Watercolor {
             deposit_4_7: self.deposit_4_7_sampled[deposit_written].bindless_handle(),
             deposit_8_11: self.deposit_8_11_sampled[deposit_written].bindless_handle(),
             paper_height: self.paper_height_sampled.bindless_handle(),
-            wet_mask: self
-                .wet_mask
-                .read_sampled(self.sim_parity)
-                .bindless_handle(),
+            wet_mask: self.wet_mask.read_sampled(self.sim_parity),
             texel_size,
             debug_view: self.edit_state.debug_view,
             canvas_aspect: grid_size.x / grid_size.y,
@@ -870,27 +865,12 @@ impl Game for Watercolor {
             gpu.write_uniform(
                 brush_params_buffer,
                 paint_brush_compute::BrushParams {
-                    wet_mask: self
-                        .wet_mask
-                        .read_storage(self.sim_parity)
-                        .bindless_handle(),
-                    pressure: self.pressure.read_storage(false).bindless_handle(),
-                    pigment_0_3: self
-                        .pigment_0_3
-                        .read_storage(self.sim_parity)
-                        .bindless_handle(),
-                    pigment_4_7: self
-                        .pigment_4_7
-                        .read_storage(self.sim_parity)
-                        .bindless_handle(),
-                    pigment_8_11: self
-                        .pigment_8_11
-                        .read_storage(self.sim_parity)
-                        .bindless_handle(),
-                    saturation: self
-                        .saturation
-                        .read_storage(self.sim_parity)
-                        .bindless_handle(),
+                    wet_mask: self.wet_mask.read_storage(self.sim_parity),
+                    pressure: self.pressure.read_storage(false),
+                    pigment_0_3: self.pigment_0_3.read_storage(self.sim_parity),
+                    pigment_4_7: self.pigment_4_7.read_storage(self.sim_parity),
+                    pigment_8_11: self.pigment_8_11.read_storage(self.sim_parity),
+                    saturation: self.saturation.read_storage(self.sim_parity),
                     point_count,
                     brush_radius,
                     brush_opacity,
@@ -906,27 +886,12 @@ impl Game for Watercolor {
             gpu.write_uniform(
                 update_vel_params_buffer,
                 wc_update_velocity_compute::Params {
-                    u_in: self
-                        .velocity_u
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    v_in: self
-                        .velocity_v
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    pressure: self.pressure.read_sampled(false).bindless_handle(),
-                    wet_mask: self
-                        .wet_mask
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    u_out: self
-                        .velocity_u
-                        .write_storage(self.sim_parity)
-                        .bindless_handle(),
-                    v_out: self
-                        .velocity_v
-                        .write_storage(self.sim_parity)
-                        .bindless_handle(),
+                    u_in: self.velocity_u.read_sampled(self.sim_parity),
+                    v_in: self.velocity_v.read_sampled(self.sim_parity),
+                    pressure: self.pressure.read_sampled(false),
+                    wet_mask: self.wet_mask.read_sampled(self.sim_parity),
+                    u_out: self.velocity_u.write_storage(self.sim_parity),
+                    v_out: self.velocity_v.write_storage(self.sim_parity),
                     paper_height: self.paper_height_sampled.bindless_handle(),
                     grid_size,
                     texel_size,
@@ -943,14 +908,8 @@ impl Game for Watercolor {
                 wc_divergence_compute::Params {
                     // `sim` is the pre-flip parity. `update_velocity` wrote
                     // the other side, and divergence reads what it wrote.
-                    u_in: self
-                        .velocity_u
-                        .read_sampled(!self.sim_parity)
-                        .bindless_handle(),
-                    v_in: self
-                        .velocity_v
-                        .read_sampled(!self.sim_parity)
-                        .bindless_handle(),
+                    u_in: self.velocity_u.read_sampled(!self.sim_parity),
+                    v_in: self.velocity_v.read_sampled(!self.sim_parity),
                     divergence: self.divergence.bindless_handle(),
                     grid_size,
                 },
@@ -967,19 +926,10 @@ impl Game for Watercolor {
             gpu.write_uniform(
                 project_vel_params_buffer,
                 wc_project_velocity_compute::Params {
-                    u: self
-                        .velocity_u
-                        .read_storage(!self.sim_parity)
-                        .bindless_handle(),
-                    v: self
-                        .velocity_v
-                        .read_storage(!self.sim_parity)
-                        .bindless_handle(),
-                    wet_mask: self
-                        .wet_mask
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    pressure: self.pressure.read_sampled(false).bindless_handle(),
+                    u: self.velocity_u.read_storage(!self.sim_parity),
+                    v: self.velocity_v.read_storage(!self.sim_parity),
+                    wet_mask: self.wet_mask.read_sampled(self.sim_parity),
+                    pressure: self.pressure.read_sampled(false),
                     grid_size,
                     _padding_0: Default::default(),
                 },
@@ -996,16 +946,10 @@ impl Game for Watercolor {
             gpu.write_uniform(
                 flow_outward_params_buffer,
                 wc_flow_outward_compute::Params {
-                    wet_mask: self
-                        .wet_mask
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    saturation: self
-                        .saturation
-                        .read_storage(self.sim_parity)
-                        .bindless_handle(),
+                    wet_mask: self.wet_mask.read_sampled(self.sim_parity),
+                    saturation: self.saturation.read_storage(self.sim_parity),
                     blurred_mask: self.blurred_mask_sampled.bindless_handle(),
-                    pressure: self.pressure.read_storage(false).bindless_handle(),
+                    pressure: self.pressure.read_storage(false),
                     grid_size,
                     eta: ETA,
                     _padding_0: Default::default(),
@@ -1015,42 +959,15 @@ impl Game for Watercolor {
             gpu.write_uniform(
                 advect_and_transfer_params_buffer,
                 wc_advect_and_transfer_pigment_compute::Params {
-                    pigment_in_0_3: self
-                        .pigment_0_3
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    pigment_in_4_7: self
-                        .pigment_4_7
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    pigment_in_8_11: self
-                        .pigment_8_11
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    u_in: self
-                        .velocity_u
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    v_in: self
-                        .velocity_v
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    wet_mask: self
-                        .wet_mask
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    pigment_out_0_3: self
-                        .pigment_0_3
-                        .write_storage(self.sim_parity)
-                        .bindless_handle(),
-                    pigment_out_4_7: self
-                        .pigment_4_7
-                        .write_storage(self.sim_parity)
-                        .bindless_handle(),
-                    pigment_out_8_11: self
-                        .pigment_8_11
-                        .write_storage(self.sim_parity)
-                        .bindless_handle(),
+                    pigment_in_0_3: self.pigment_0_3.read_sampled(self.sim_parity),
+                    pigment_in_4_7: self.pigment_4_7.read_sampled(self.sim_parity),
+                    pigment_in_8_11: self.pigment_8_11.read_sampled(self.sim_parity),
+                    u_in: self.velocity_u.read_sampled(self.sim_parity),
+                    v_in: self.velocity_v.read_sampled(self.sim_parity),
+                    wet_mask: self.wet_mask.read_sampled(self.sim_parity),
+                    pigment_out_0_3: self.pigment_0_3.write_storage(self.sim_parity),
+                    pigment_out_4_7: self.pigment_4_7.write_storage(self.sim_parity),
+                    pigment_out_8_11: self.pigment_8_11.write_storage(self.sim_parity),
                     deposit_in_0_3: self.deposit_0_3_sampled[deposit_previous].bindless_handle(),
                     deposit_in_4_7: self.deposit_4_7_sampled[deposit_previous].bindless_handle(),
                     deposit_in_8_11: self.deposit_8_11_sampled[deposit_previous].bindless_handle(),
@@ -1079,22 +996,10 @@ impl Game for Watercolor {
             gpu.write_uniform(
                 capillary_flow_params_buffer,
                 wc_capillary_flow_compute::Params {
-                    saturation_in: self
-                        .saturation
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    wet_mask_in: self
-                        .wet_mask
-                        .read_sampled(self.sim_parity)
-                        .bindless_handle(),
-                    saturation_out: self
-                        .saturation
-                        .write_storage(self.sim_parity)
-                        .bindless_handle(),
-                    wet_mask_out: self
-                        .wet_mask
-                        .write_storage(self.sim_parity)
-                        .bindless_handle(),
+                    saturation_in: self.saturation.read_sampled(self.sim_parity),
+                    wet_mask_in: self.wet_mask.read_sampled(self.sim_parity),
+                    saturation_out: self.saturation.write_storage(self.sim_parity),
+                    wet_mask_out: self.wet_mask.write_storage(self.sim_parity),
                     grid_size,
                     diffuse_rate: DIFFUSE_RATE,
                     capacity: CAPILLARY_CAPACITY,
@@ -1116,11 +1021,13 @@ fn load_paper_height_map(width: u32, height: u32) -> Vec<f32> {
     let img =
         image::open(&path).expect("missing paper texture — run `just watercolor paper-texture`");
     let gray = img.to_luma8();
+
     let mut data = Vec::with_capacity((width * height) as usize);
     for y in 0..height {
         for x in 0..width {
             data.push(gray.get_pixel(x, y).0[0] as f32 / 255.0);
         }
     }
+
     data
 }
