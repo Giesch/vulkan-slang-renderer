@@ -2049,7 +2049,7 @@ impl Renderer {
 
         let clear_color = vk::ClearValue {
             color: vk::ClearColorValue {
-                float32: [0.0, 0.0, 0.0, 1.0],
+                float32: [0.0, 0.0, 0.0, 0.0],
             },
         };
         let clear_depth_stencil = vk::ClearValue {

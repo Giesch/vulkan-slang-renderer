@@ -1,15 +1,17 @@
 #+title: Todo
 
 * Now
-- [ ] find a nicer pattern for multi-draw-indirect
-  reusable slang module/type
-  avoid dumb pointer arithmetic errors
+- [ ] get toon link animations working
+  - convert to gltf?
+    this is not workable; maybe gltf plus an extension?
+  - do a more direct version first
 
 - [ ] idiomatic wind waker toon shading in vulkan
   - [ ] check if using ramp textures is more performant than calculating
 
-- [ ] get toon link animations working
-  convert to gltf?
+- [ ] find a nicer pattern for multi-draw-indirect
+  reusable slang module/type
+  avoid dumb pointer arithmetic errors
 
 - [ ] split immutable buffers into their own storage pool
 - [ ] make a nicer builder api for queuing draw calls

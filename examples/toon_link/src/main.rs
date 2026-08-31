@@ -135,6 +135,8 @@ const HAIR_MATERIAL: &str = "ear(2)";
 /// The 12 translucent batches are 3 passes × 4 features, not 12 BTP frames.
 /// The 3 shapes of a feature are byte-identical geometry, authored 3 times so
 /// the material state can differ. The game draws all 12 every frame.
+///
+/// This depends on the renderer clearing swapchain alpha to 0 rather than 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DecalRole {
     /// `*damA`. Z-tested, source-alpha blended, color writes off. It deposits
@@ -142,13 +144,9 @@ enum DecalRole {
     /// already-drawn geometry stops eyes appearing through walls.
     Mask,
     /// `eyeL`, `eyeR`, `mayuL` and `mayuR`. Dst-alpha blended, depth test off.
-    /// It composites the feature through whatever was drawn over it.
-    ///
-    /// The `Greater 0` alpha compare is required for correctness. This clear
-    /// is alpha 1.0 and GX's clear is alpha 0, so the mask pass leaves
-    /// destination alpha at 0.75 or above across the whole quad, including
-    /// fully transparent texels. Only the shader-side discard stops this pass
-    /// repainting an opaque rectangle there.
+    /// It composites the feature through whatever was drawn over it. The
+    /// renderer clears alpha to 0, as GX does, so destination alpha outside
+    /// the feature is 0 and the pass leaves those pixels untouched.
     Composite,
     /// `*damB`. Blending off, TEV alpha identically 0. It zeroes the mask so
     /// the mask cannot leak into later alpha-buffer effects. Its RGB is black.
@@ -807,7 +805,7 @@ fn build_materials(
             tex1: resolve_texmap(material, 1, textures, dummy),
             tev: tev_pack::pack(material)?,
             alpha_compare: alpha_compare(material),
-            _padding_0: [0; 12],
+            _padding_0: Default::default(),
         });
     }
 
