@@ -953,19 +953,18 @@ pub struct EditState {
 }
 
 impl ToonLink {
-    // REVIEW let's change this to take a &Run as an argument
-    /// Record `count` commands of [`Self::args_buffer`] starting at `first` as
-    /// one indirect draw. The push block is set once for the whole command, so
-    /// the slot table pointer is what tells the sub-draws apart.
-    fn queue_run(&self, renderer: &mut FrameRenderer, pipeline: usize, first: u32, count: u32) {
-        let draw_slots = renderer.singleton_addr_at(&self.slot_buffer, first);
+    /// Record `run`'s span of [`Self::args_buffer`] as one indirect draw.
+    /// The push block is set once for the whole command, so the slot table
+    /// pointer is what tells the sub-draws apart.
+    fn queue_run(&self, renderer: &mut FrameRenderer, run: &Run) {
+        let draw_slots = renderer.singleton_addr_at(&self.slot_buffer, run.first);
         let push = ToonLinkDraw { draw_slots };
 
         renderer.queue_draw_indexed_indirect_with_push_constants(
-            &self.materials.pipelines[pipeline],
+            &self.materials.pipelines[run.pipeline],
             &self.args_buffer,
-            first,
-            count,
+            run.first,
+            run.count,
             &push,
         );
     }
@@ -1107,7 +1106,7 @@ impl Game for ToonLink {
         let proj = directx::perspective(45f32.to_radians(), renderer.aspect_ratio(), 0.1, 20.0);
 
         for run in &self.runs {
-            self.queue_run(&mut renderer, run.pipeline, run.first, run.count);
+            self.queue_run(&mut renderer, run);
         }
 
         let light = LightRig {
