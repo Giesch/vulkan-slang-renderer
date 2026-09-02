@@ -67,6 +67,13 @@ pub trait Game {
         MaxMSAASamples::default()
     }
 
+    /// Override to request a stencil-capable depth buffer.
+    /// `Renderer::stencil_support` then returns the token that builds
+    /// enabled stencil pipeline state.
+    fn needs_stencil() -> bool {
+        false
+    }
+
     /// Returns the debug window name and a mutable reference to the debug state for egui rendering.
     /// Return None to disable debug UI for this frame.
     /// Default implementation returns None.
@@ -123,6 +130,7 @@ pub trait Game {
             enable_egui,
             render_scale,
             max_msaa_samples,
+            Self::needs_stencil(),
             #[cfg(debug_assertions)]
             Self::Atlas::SHADERS_SOURCE_DIR,
         )?;

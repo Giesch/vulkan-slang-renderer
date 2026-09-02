@@ -107,6 +107,16 @@ pub enum StencilMode {
 }
 ```
 
+> **Superseded during implementation.** A public enum lets a game bake an
+> enabled stencil mode without `needs_stencil()`; Vulkan treats a stencil
+> test with no stencil attachment as always passing and discards the
+> writes, so the mistake fails silently. The shipped API closes that hole:
+> `StencilMode` is an opaque struct, `StencilMode::DISABLED` is the only
+> public constructor, and `Renderer::stencil_support()` returns
+> `Option<StencilSupport>` (`Some` iff the depth format has stencil). The
+> token's `write(reference)` and `test_equal(reference)` methods build the
+> enabled modes, so an enabled mode proves the attachment exists.
+
 - Add `pub stencil: StencilMode` to `RasterState` (:282); `Disabled` in
   `Default` (:291).
 - The type re-exports automatically through `pub use pipeline::*`

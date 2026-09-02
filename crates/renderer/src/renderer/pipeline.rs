@@ -275,6 +275,43 @@ pub enum DepthCompare {
     Disabled,
 }
 
+/// A token that means the depth buffer has a stencil component.
+/// Required for constructing an enabled [`StencilMode`].
+///
+/// Returned by `Renderer::stencil_support` if the game opted in
+/// with `Game::needs_stencil`.
+#[derive(Debug, Clone, Copy)]
+pub struct StencilSupport(pub(crate) ());
+
+impl StencilSupport {
+    /// Every fragment that passes the depth test writes `reference` to the stencil.
+    pub fn write(self, reference: u8) -> StencilMode {
+        StencilMode(StencilModeKind::Write { reference })
+    }
+
+    /// Draw only where the stencil buffer equals `reference`.
+    /// Does not write to the stencil buffer.
+    pub fn test_equal(self, reference: u8) -> StencilMode {
+        StencilMode(StencilModeKind::TestEqual { reference })
+    }
+}
+
+/// The stencil test and write behavior a graphics pipeline is baked with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StencilMode(pub(crate) StencilModeKind);
+
+impl StencilMode {
+    /// No stencil test, no stencil writes.
+    pub const DISABLED: Self = Self(StencilModeKind::Disabled);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StencilModeKind {
+    Disabled,
+    Write { reference: u8 },
+    TestEqual { reference: u8 },
+}
+
 /// The fixed-function raster state a graphics pipeline is baked with.
 /// [`RasterState::default()`] reproduces the renderer's original hardcoded
 /// pipeline exactly, so leaving it alone is always a no-op.
@@ -286,6 +323,7 @@ pub struct RasterState {
     pub depth_write: bool,
     /// per-channel color write mask, in RGBA order
     pub color_write: [bool; 4],
+    pub stencil: StencilMode,
 }
 
 impl Default for RasterState {
@@ -296,6 +334,7 @@ impl Default for RasterState {
             depth_test: DepthCompare::Less,
             depth_write: true,
             color_write: [true; 4],
+            stencil: StencilMode::DISABLED,
         }
     }
 }

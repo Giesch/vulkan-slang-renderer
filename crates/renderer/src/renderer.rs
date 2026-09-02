@@ -265,6 +265,7 @@ impl Renderer {
         enable_egui: bool,
         render_scale: f32,
         max_msaa_samples: MaxMSAASamples,
+        needs_stencil: bool,
         #[cfg(debug_assertions)] shaders_source_dir: &'static str,
     ) -> Result<Self, anyhow::Error> {
         #[cfg(debug_assertions)]
@@ -372,7 +373,7 @@ impl Renderer {
         let (image_available, render_finished, frame_timeline) =
             create_sync_objects(&device, &swapchain_images)?;
 
-        let depth_format = find_depth_format(&instance, physical_device);
+        let depth_format = find_depth_format(&instance, physical_device, needs_stencil);
 
         let egui = if enable_egui {
             Some(EguiIntegration::new(
@@ -406,13 +407,12 @@ impl Renderer {
 
         let (depth_image, depth_image_memory, depth_image_view) = create_depth_buffer_image(
             &allocator,
-            &instance,
             &device,
-            physical_device,
             command_pool,
             graphics_queue,
             render_extent,
             msaa_samples,
+            depth_format,
         )?;
 
         let pipelines = PipelineStorage::new();
@@ -1234,6 +1234,10 @@ impl Renderer {
             self.allocator
                 .destroy_buffer(storage_buffer.buffer, &mut storage_buffer.allocation);
         }
+    }
+
+    pub fn stencil_support(&self) -> Option<StencilSupport> {
+        has_stencil_component(self.depth_format).then_some(StencilSupport(()))
     }
 
     pub fn create_pipeline<V: VertexDescription, D: DrawCall, P>(
@@ -2095,11 +2099,17 @@ impl Renderer {
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::DONT_CARE)
             .clear_value(clear_depth_stencil);
-        let rendering_info = vk::RenderingInfo::default()
+        let mut rendering_info = vk::RenderingInfo::default()
             .render_area(render_area)
             .layer_count(1)
             .color_attachments(&color_attachments)
             .depth_attachment(&depth_attachment);
+        // Pipelines declare a stencil attachment format iff the depth format
+        // has a stencil aspect; the render pass instance must match. The same
+        // attachment info serves both slots.
+        if has_stencil_component(self.depth_format) {
+            rendering_info = rendering_info.stencil_attachment(&depth_attachment);
+        }
 
         // BEGIN RENDERING
         unsafe {
@@ -2800,13 +2810,12 @@ impl Renderer {
         // Depth and color at render_extent
         let (depth_image, depth_image_memory, depth_image_view) = create_depth_buffer_image(
             &self.allocator,
-            &self.instance,
             &self.device,
-            self.physical_device,
             self.command_pool,
             self.graphics_queue,
             self.render_extent,
             self.msaa_samples,
+            self.depth_format,
         )?;
         self.depth_image = depth_image;
         self.depth_image_memory = depth_image_memory;
@@ -4049,6 +4058,39 @@ fn vk_blend_state(blend: BlendMode) -> VkBlendState {
     }
 }
 
+/// Returns (stencil_test_enable, front-and-back StencilOpState).
+fn vk_stencil_state(stencil: StencilMode) -> (bool, vk::StencilOpState) {
+    match stencil.0 {
+        StencilModeKind::Disabled => (false, vk::StencilOpState::default()),
+        // depth_fail_op stays KEEP: a fragment behind opaque geometry must
+        // not mark stencil.
+        StencilModeKind::Write { reference } => (
+            true,
+            vk::StencilOpState {
+                fail_op: vk::StencilOp::KEEP,
+                pass_op: vk::StencilOp::REPLACE,
+                depth_fail_op: vk::StencilOp::KEEP,
+                compare_op: vk::CompareOp::ALWAYS,
+                compare_mask: 0xFF,
+                write_mask: 0xFF,
+                reference: reference as u32,
+            },
+        ),
+        StencilModeKind::TestEqual { reference } => (
+            true,
+            vk::StencilOpState {
+                fail_op: vk::StencilOp::KEEP,
+                pass_op: vk::StencilOp::KEEP,
+                depth_fail_op: vk::StencilOp::KEEP,
+                compare_op: vk::CompareOp::EQUAL,
+                compare_mask: 0xFF,
+                write_mask: 0,
+                reference: reference as u32,
+            },
+        ),
+    }
+}
+
 fn create_graphics_pipeline(
     device: &ash::Device,
     color_format: vk::Format,
@@ -4128,17 +4170,27 @@ fn create_graphics_pipeline(
         .attachments(&color_attachments);
 
     let (depth_test_enable, depth_compare_op) = vk_depth_compare(raster_state.depth_test);
+    let (stencil_test_enable, stencil_op_state) = vk_stencil_state(raster_state.stencil);
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
         .depth_test_enable(depth_test_enable)
         .depth_write_enable(raster_state.depth_write)
         .depth_compare_op(depth_compare_op)
         .depth_bounds_test_enable(false)
-        .stencil_test_enable(false);
+        .stencil_test_enable(stencil_test_enable)
+        .front(stencil_op_state)
+        .back(stencil_op_state);
 
+    // Dynamic rendering requires the pipeline's stencil attachment format to
+    // match the render pass instance: the depth format itself when it has a
+    // stencil aspect (begin_rendering binds it then), UNDEFINED otherwise.
+    let stencil_format = depth_format
+        .filter(|&f| has_stencil_component(f))
+        .unwrap_or(vk::Format::UNDEFINED);
     let color_attachment_formats = [color_format];
     let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
         .color_attachment_formats(&color_attachment_formats)
-        .depth_attachment_format(depth_format.unwrap_or(vk::Format::UNDEFINED));
+        .depth_attachment_format(depth_format.unwrap_or(vk::Format::UNDEFINED))
+        .stencil_attachment_format(stencil_format);
 
     let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&stages)
@@ -4995,16 +5047,13 @@ fn create_texture_sampler(
 
 fn create_depth_buffer_image(
     allocator: &vk_mem::Allocator,
-    instance: &ash::Instance,
     device: &ash::Device,
-    physical_device: vk::PhysicalDevice,
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
     swapchain_extent: vk::Extent2D,
     msaa_samples: vk::SampleCountFlags,
+    depth_format: vk::Format,
 ) -> Result<(vk::Image, vk_mem::Allocation, vk::ImageView), anyhow::Error> {
-    let depth_format = find_depth_format(instance, physical_device);
-
     let mip_levels = 1;
 
     let image_options = ImageOptions {
@@ -5018,13 +5067,12 @@ fn create_depth_buffer_image(
 
     let (depth_image, depth_image_memory) = create_vk_image(allocator, image_options)?;
 
-    let depth_image_view = create_image_view(
-        device,
-        depth_image,
-        depth_format,
-        vk::ImageAspectFlags::DEPTH,
-        mip_levels,
-    )?;
+    let mut aspect = vk::ImageAspectFlags::DEPTH;
+    if has_stencil_component(depth_format) {
+        aspect |= vk::ImageAspectFlags::STENCIL;
+    }
+    let depth_image_view =
+        create_image_view(device, depth_image, depth_format, aspect, mip_levels)?;
 
     transition_image_layout(
         device,
@@ -5067,16 +5115,27 @@ fn find_supported_format(
     None
 }
 
-fn find_depth_format(instance: &ash::Instance, physical_device: vk::PhysicalDevice) -> vk::Format {
-    let candidates = [
-        vk::Format::D32_SFLOAT,
-        vk::Format::D32_SFLOAT_S8_UINT,
-        vk::Format::D24_UNORM_S8_UINT,
-    ];
+fn find_depth_format(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    needs_stencil: bool,
+) -> vk::Format {
+    let candidates: &[vk::Format] = if needs_stencil {
+        &[
+            vk::Format::D32_SFLOAT_S8_UINT,
+            vk::Format::D24_UNORM_S8_UINT,
+        ]
+    } else {
+        &[
+            vk::Format::D32_SFLOAT,
+            vk::Format::D32_SFLOAT_S8_UINT,
+            vk::Format::D24_UNORM_S8_UINT,
+        ]
+    };
     let tiling = vk::ImageTiling::OPTIMAL;
     let features = vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT;
 
-    find_supported_format(instance, physical_device, &candidates, tiling, features)
+    find_supported_format(instance, physical_device, candidates, tiling, features)
         .expect("no supported depth format available")
 }
 
@@ -6204,8 +6263,8 @@ mod tests {
 
     use super::{
         BlendMode, CullMode, DepthCompare, GPUWrite, PushConstantBlock, PushConstantBytes,
-        RasterState, range_in_bounds, vk_blend_state, vk_color_write_mask, vk_cull_mode,
-        vk_depth_compare,
+        RasterState, StencilSupport, range_in_bounds, vk_blend_state, vk_color_write_mask,
+        vk_cull_mode, vk_depth_compare, vk_stencil_state,
     };
 
     #[test]
@@ -6254,6 +6313,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stencil_write_bakes_replace_with_keep_on_depth_fail() {
+        let (enable, state) = vk_stencil_state(StencilSupport(()).write(1));
+        assert!(enable);
+        assert_eq!(state.compare_op, vk::CompareOp::ALWAYS);
+        assert_eq!(state.pass_op, vk::StencilOp::REPLACE);
+        assert_eq!(state.fail_op, vk::StencilOp::KEEP);
+        // a fragment behind opaque geometry must not mark stencil
+        assert_eq!(state.depth_fail_op, vk::StencilOp::KEEP);
+        assert_eq!(state.compare_mask, 0xFF);
+        assert_eq!(state.write_mask, 0xFF);
+        assert_eq!(state.reference, 1);
+    }
+
+    #[test]
+    fn stencil_test_equal_bakes_equal_with_no_writes() {
+        let (enable, state) = vk_stencil_state(StencilSupport(()).test_equal(1));
+        assert!(enable);
+        assert_eq!(state.compare_op, vk::CompareOp::EQUAL);
+        assert_eq!(state.pass_op, vk::StencilOp::KEEP);
+        assert_eq!(state.fail_op, vk::StencilOp::KEEP);
+        assert_eq!(state.depth_fail_op, vk::StencilOp::KEEP);
+        assert_eq!(state.compare_mask, 0xFF);
+        assert_eq!(state.write_mask, 0);
+        assert_eq!(state.reference, 1);
+    }
+
     /// The default must reproduce the pipeline state that was hardcoded in
     /// create_graphics_pipeline before raster state became configurable.
     #[test]
@@ -6275,6 +6361,24 @@ mod tests {
             (true, vk::CompareOp::LESS)
         );
         assert!(default.depth_write);
+        let (stencil_test_enable, stencil_op_state) = vk_stencil_state(default.stencil);
+        assert!(!stencil_test_enable);
+        let vk::StencilOpState {
+            fail_op,
+            pass_op,
+            depth_fail_op,
+            compare_op,
+            compare_mask,
+            write_mask,
+            reference,
+        } = stencil_op_state;
+        assert_eq!(fail_op, vk::StencilOp::default());
+        assert_eq!(pass_op, vk::StencilOp::default());
+        assert_eq!(depth_fail_op, vk::StencilOp::default());
+        assert_eq!(compare_op, vk::CompareOp::default());
+        assert_eq!(compare_mask, 0);
+        assert_eq!(write_mask, 0);
+        assert_eq!(reference, 0);
     }
 
     /// The predicate guards two queue paths: an index sub-range against a

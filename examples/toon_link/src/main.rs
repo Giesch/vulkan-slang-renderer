@@ -45,7 +45,7 @@ use mltrs::renderer::{
     BindlessHandle, BlendMode, CullMode, DepthCompare, DrawError, DrawIndexedIndirect,
     DrawIndexedIndirectCommand, FrameRenderer, ImmutableBufferHandle, MeshHandle, PipelineHandle,
     PushBlock, RasterState, Renderer, RgbaPixels, Sampler2D, SamplerOptions, SingletonBufferHandle,
-    TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
+    StencilMode, TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
     UniformBufferHandle,
 };
 
@@ -706,6 +706,7 @@ fn raster_state(material: &MaterialEntry, role: Option<DecalRole>) -> anyhow::Re
         depth_test,
         depth_write,
         color_write,
+        stencil: StencilMode::DISABLED,
     })
 }
 
