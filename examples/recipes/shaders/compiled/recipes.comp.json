@@ -1,0 +1,93 @@
+{
+  "sourceFileName": "recipes.compute.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "IngredientParams",
+        "fields": [
+          {
+            "kind": "array",
+            "fieldName": "weights",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 64
+            },
+            "elementScalarType": "int32",
+            "elementCount": 4,
+            "elementStride": 16
+          },
+          {
+            "kind": "vector",
+            "fieldName": "calories",
+            "binding": {
+              "kind": "uniform",
+              "offset": 64,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "int32"
+            }
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "solution",
+            "binding": {
+              "kind": "uniform",
+              "offset": 80,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "Solution",
+              "fields": [
+                {
+                  "kind": "scalar",
+                  "fieldName": "maximumScore",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 4
+                  },
+                  "scalarType": "uint32"
+                }
+              ]
+            },
+            "pointeeSize": 4,
+            "access": "readWrite"
+          }
+        ]
+      }
+    }
+  ],
+  "computeEntryPoint": {
+    "entryPointName": "computeMain",
+    "stage": "compute",
+    "parameters": []
+  },
+  "workgroupSize": [
+    10,
+    10,
+    10
+  ],
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 96
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": [],
+    "bindlessHeapSet": null
+  }
+}

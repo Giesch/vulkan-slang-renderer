@@ -1,0 +1,161 @@
+// GENERATED FILE (do not edit directly)
+
+//! generated from slang shader: recipe_render.shader.slang
+
+use std::ffi::CString;
+use std::io::Cursor;
+
+use ash::util::read_spv;
+use ash::vk;
+use serde::Serialize;
+
+pub use super::shared::Solution;
+use mltrs::renderer::gpu_write::GPUWrite;
+#[allow(unused)]
+use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
+use mltrs::renderer::*;
+use mltrs::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
+use mltrs::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
+
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(16))]
+pub struct RenderParams {
+    pub solution: ReadAddr<Solution>,
+    pub _padding_0: [u8; 8],
+}
+
+impl GPUWrite for RenderParams {}
+const _: () = assert!(std::mem::size_of::<RenderParams>() == 16);
+const _: () = assert!(std::mem::offset_of!(RenderParams, solution) == 0);
+const _: () = assert!(std::mem::size_of::<ReadAddr<Solution>>() == 8);
+
+pub struct Resources<'a> {
+    pub params_buffer: &'a UniformBufferHandle<RenderParams>,
+}
+
+#[derive(Clone)]
+pub struct Shader {
+    pub reflection_json: ReflectionJson,
+}
+
+impl Shader {
+    pub fn init() -> Self {
+        let json_str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/compiled/recipe_render.json"
+        ));
+
+        let reflection_json: ReflectionJson = serde_json::from_str(json_str).unwrap();
+
+        Self { reflection_json }
+    }
+
+    pub fn pipeline_config<'a>(
+        &self,
+        resources: Resources<'a>,
+    ) -> PipelineConfig<'a, NoVertex, DrawVertexCount, NoPush> {
+        // NOTE each of these must be in descriptor set layout order in the reflection json
+
+        #[rustfmt::skip]
+        let texture_handles = vec![
+        ];
+
+        #[rustfmt::skip]
+        let uniform_buffer_handles = vec![
+            RawUniformBufferHandle::from_typed(resources.params_buffer),
+        ];
+
+        #[rustfmt::skip]
+        let storage_texture_handles = vec![
+        ];
+
+        PipelineConfigBuilder {
+            shader: Box::new(self.clone()),
+            texture_handles,
+            uniform_buffer_handles,
+            storage_texture_handles,
+        }
+        .build_vertex_count()
+    }
+
+    fn vert_entry_point_name(&self) -> CString {
+        let entry_point = self
+            .reflection_json
+            .vertex_entry_point
+            .entry_point_name
+            .clone();
+
+        CString::new(entry_point).unwrap()
+    }
+
+    fn frag_entry_point_name(&self) -> CString {
+        let entry_point = self
+            .reflection_json
+            .fragment_entry_point
+            .entry_point_name
+            .clone();
+
+        CString::new(entry_point).unwrap()
+    }
+
+    fn vert_spv(&self) -> Vec<u32> {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/compiled/recipe_render.vert.spv"
+        ));
+        let byte_reader = &mut Cursor::new(bytes);
+        read_spv(byte_reader).expect("failed to convert spv byte layout")
+    }
+
+    fn frag_spv(&self) -> Vec<u32> {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/compiled/recipe_render.frag.spv"
+        ));
+        let byte_reader = &mut Cursor::new(bytes);
+        read_spv(byte_reader).expect("failed to convert spv byte layout")
+    }
+}
+
+impl ShaderAtlasEntry for Shader {
+    fn source_file_name(&self) -> &str {
+        &self.reflection_json.source_file_name
+    }
+
+    fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
+        vec![]
+    }
+
+    fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription> {
+        vec![]
+    }
+
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
+        self.reflection_json.layout_bindings()
+    }
+
+    fn precompiled_shaders(&self) -> PrecompiledShaders {
+        let vert = PrecompiledShader {
+            entry_point_name: self.vert_entry_point_name(),
+            spv_bytes: self.vert_spv(),
+        };
+
+        let frag = PrecompiledShader {
+            entry_point_name: self.frag_entry_point_name(),
+            spv_bytes: self.frag_spv(),
+        };
+
+        PrecompiledShaders { vert, frag }
+    }
+
+    fn pipeline_layout(&self) -> &ReflectedPipelineLayout {
+        &self.reflection_json.pipeline_layout
+    }
+
+    fn reflection_json(&self) -> &ReflectionJson {
+        &self.reflection_json
+    }
+}
