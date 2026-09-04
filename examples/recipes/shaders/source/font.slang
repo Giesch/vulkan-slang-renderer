@@ -44,16 +44,15 @@ public func glyphsForUint(uint value) -> GlyphText {
 
     uint digits = 0;
     uint score = value;
-    for (;;) {
+    while (score > 0) {
         if (digits > 0 && digits % 3 == 0) {
             text.push(GLYPH_COMMA);
         }
+
         text.push(score % 10);
+
         digits += 1;
         score /= 10;
-        if (score == 0) {
-            break;
-        }
     }
 
     return text;
