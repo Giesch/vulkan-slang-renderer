@@ -121,15 +121,42 @@ shaders example="all":
       cargo fmt; \
     }
 
-# build one example, then run it for a few seconds and exit
-#
 # NOTE build and run are separate on purpose. `timeout N cargo run` times the
 # compile as well as the run, so on a cold build the timeout expires during
 # compilation and the example never starts -- with no output to say so.
+#
+# build one example, then run it for a few seconds and exit
 [unix]
 watch example="basic_triangle" seconds="5":
     cargo build -p {{example}}
     timeout --preserve-status -k 5 -s TERM {{seconds}} ./target/debug/{{example}}
+
+# NOTE renderdoc must start the process to inject its layer, so this runs the
+# built binary directly rather than `cargo run`.
+# NOTE renderdoc hooks xlib/XCB windows only, so the app must run under
+# X11 (XWayland on a wayland session). SDL_VIDEO_DRIVER overrides the
+# in-app driver order.
+#
+# build one example, then launch it under renderdoc; press F12 in the app to capture
+[linux]
+renderdoc-capture example="basic_triangle":
+    cargo build -p {{example}}
+    SDL_VIDEO_DRIVER=x11 renderdoccmd capture --wait-for-exit --working-dir "{{justfile_directory()}}" \
+      --capture-file "{{justfile_directory()}}/target/renderdoc/{{example}}" \
+      ./target/debug/{{example}}
+
+# open the newest renderdoc capture for one example in qrenderdoc
+[unix]
+renderdoc-view example="basic_triangle":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shopt -s nullglob
+    captures=(target/renderdoc/{{example}}_frame*.rdc)
+    if [ ${#captures[@]} -eq 0 ]; then
+        echo "no captures for {{example}} in target/renderdoc; run \`just renderdoc {{example}}\` first" >&2
+        exit 1
+    fi
+    qrenderdoc "$(ls -t "${captures[@]}" | head -n 1)"
 
 
 # run every example headlessly, failing on vulkan validation output

@@ -24,13 +24,15 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 #[repr(C, align(16))]
 pub struct RenderParams {
     pub solution: ReadAddr<Solution>,
-    pub _padding_0: [u8; 8],
+    pub resolution: glam::Vec2,
 }
 
 impl GPUWrite for RenderParams {}
 const _: () = assert!(std::mem::size_of::<RenderParams>() == 16);
 const _: () = assert!(std::mem::offset_of!(RenderParams, solution) == 0);
 const _: () = assert!(std::mem::size_of::<ReadAddr<Solution>>() == 8);
+const _: () = assert!(std::mem::offset_of!(RenderParams, resolution) == 8);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<RenderParams>,

@@ -32,6 +32,20 @@
             },
             "pointeeSize": 4,
             "access": "read"
+          },
+          {
+            "kind": "vector",
+            "fieldName": "resolution",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
           }
         ]
       }
@@ -56,27 +70,9 @@
       {
         "kind": "struct",
         "parameterName": "input",
-        "binding": {
-          "kind": "varyingInput",
-          "index": 0,
-          "count": 1
-        },
+        "binding": null,
         "typeName": "FragInput",
         "fields": [
-          {
-            "kind": "vector",
-            "fieldName": "color",
-            "binding": {
-              "kind": "varyingInput",
-              "index": 0,
-              "count": 1
-            },
-            "elementCount": 4,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
           {
             "kind": "vector",
             "fieldName": "position",

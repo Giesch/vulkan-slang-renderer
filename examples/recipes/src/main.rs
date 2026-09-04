@@ -69,6 +69,8 @@ impl Game for Recipes {
     }
 
     fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
+        let resolution = renderer.render_resolution();
+
         renderer.dispatch(&self.compute_pipeline, [10, 10, 10]);
 
         renderer.draw_vertex_count(&self.render_pipeline, 3, |gpu| {
@@ -86,7 +88,7 @@ impl Game for Recipes {
 
             let render_params = recipe_render::RenderParams {
                 solution: gpu.addr(&self.solution_buffer).into(),
-                _padding_0: Default::default(),
+                resolution,
             };
             gpu.write_uniform(&mut self.render_params_buffer, render_params);
         })?;

@@ -30,7 +30,7 @@ void computeMain(uint3 thread : SV_DispatchThreadID) {
     let product: uint = clamped.x * clamped.y * clamped.z * clamped.w;
 
     // Part 1
-    // InterlockedMax(params.solution.maximum, product);
+    // InterlockedMax(params.solution.maximumScore, product);
 
     // Part 2
     let calories = params.calories * recipe;
