@@ -992,18 +992,20 @@ fn gather_struct_defs(
         StructField::Matrix(matrix) => {
             let VectorElementType::Scalar(scalar) = &matrix.element_type;
 
-            // Only float4x4 is supported: it is 64 contiguous bytes under every GPU
-            // layout rule set, matching glam::Mat4 exactly. Smaller matrices have
-            // interior column-stride padding on the GPU (std140 mat3 = 48 bytes vs
-            // glam::Mat3's contiguous 36) that a Rust field of a glam type cannot
-            // express, producing silently wrong data.
+            // Only 4x4 matrices are supported.
+            //
+            // A slang float4 matches glam::Mat4 exactly. But the glam crate has
+            // no integer matrix types, so int4x4 and uint4x4 become arrays
+            // of their four columns.
             let field_type = match (scalar.scalar_type, matrix.row_count, matrix.column_count) {
                 (ScalarType::Float32, 4, 4) => "glam::Mat4",
+                (ScalarType::Int32, 4, 4) => "[glam::IVec4; 4]",
+                (ScalarType::Uint32, 4, 4) => "[glam::UVec4; 4]",
                 (s, r, c) => {
                     panic!(
                         "matrix field '{}' not supported in parameter blocks: \
                         scalar_type: {s:?}, rows: {r}, cols: {c}; \
-                        use float4x4, or padded float4 rows",
+                        use float4x4/int4x4/uint4x4, or padded rows",
                         matrix.field_name,
                     )
                 }

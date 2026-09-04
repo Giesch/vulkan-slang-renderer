@@ -8,7 +8,7 @@ import shared;
 ParameterBlock<IngredientParams> params;
 
 struct IngredientParams {
-    int4[4] weights;
+    int4x4 weights;
     int4 calories;
     mltrs::Addr<Solution> solution;
 }
@@ -25,13 +25,7 @@ void computeMain(uint3 thread : SV_DispatchThreadID) {
     let lastIngredient = 100 - sum;
     let recipe = int4(thread, lastIngredient);
 
-    let weightsMat = int4x4(
-        params.weights[0],
-        params.weights[1],
-        params.weights[2],
-        params.weights[3],
-    );
-    let weighted = mul(recipe, weightsMat);
+    let weighted = mul(recipe, params.weights);
     let clamped = max(weighted, int4(0));
     let product: uint = clamped.x * clamped.y * clamped.z * clamped.w;
 

@@ -8,16 +8,19 @@
         "typeName": "IngredientParams",
         "fields": [
           {
-            "kind": "array",
+            "kind": "matrix",
             "fieldName": "weights",
             "binding": {
               "kind": "uniform",
               "offset": 0,
               "size": 64
             },
-            "elementScalarType": "int32",
-            "elementCount": 4,
-            "elementStride": 16
+            "rowCount": 4,
+            "columnCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "int32"
+            }
           },
           {
             "kind": "vector",

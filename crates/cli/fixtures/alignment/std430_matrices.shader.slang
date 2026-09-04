@@ -17,6 +17,7 @@ struct Params {
 struct MatrixData {
     float4x4 c;     // offset 0, size 64, align 16
     float d;        // scalar after matrix, offset 64
+    int4x4 e;       // offset 80 (16-aligned after the scalar), size 64
 }
 
 [shader("vertex")]

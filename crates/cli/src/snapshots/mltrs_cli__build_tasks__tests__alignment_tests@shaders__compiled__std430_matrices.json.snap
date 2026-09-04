@@ -47,10 +47,25 @@ info:
                     "size": 4
                   },
                   "scalarType": "float32"
+                },
+                {
+                  "kind": "matrix",
+                  "fieldName": "e",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 80,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "int32"
+                  }
                 }
               ]
             },
-            "pointeeSize": 80,
+            "pointeeSize": 144,
             "access": "readWrite"
           }
         ]
