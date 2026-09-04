@@ -28,6 +28,13 @@ public struct GlyphText {
     // Glyph indices, least significant digit first; only chars[0 .. count) is set.
     public uint chars[MAX_TEXT_LENGTH];
     public uint count;
+
+    [mutating]
+    [ForceInline]
+    void push(uint char) {
+        this.chars[this.count] = char;
+        this.count += 1;
+    }
 }
 
 [ForceInline]
@@ -39,11 +46,9 @@ public func glyphsForUint(uint value) -> GlyphText {
     uint score = value;
     for (;;) {
         if (digits > 0 && digits % 3 == 0) {
-            text.chars[text.count] = GLYPH_COMMA;
-            text.count += 1;
+            text.push(GLYPH_COMMA);
         }
-        text.chars[text.count] = score % 10;
-        text.count += 1;
+        text.push(score % 10);
         digits += 1;
         score /= 10;
         if (score == 0) {
