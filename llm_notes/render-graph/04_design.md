@@ -1,5 +1,16 @@
 # Render Graph Design (Current)
 
+> **SUPERSEDED (2026-09-02) by `07_graph_api_plan.md`, which is implemented**
+> (`crates/renderer/src/renderer/render_graph.rs`, `docs/render_graph.md`).
+> The shipped graph keeps this document's build-once structure but replaces
+> its execute-time API: per-frame values arrive as a typed tuple, versioned
+> textures (read/write/mutate/read_previous) replace `ParityGroup` /
+> `GraphPingPong` (§2), and bindless makes the variant enumeration of §4
+> unnecessary — slot selection is a handle value in uniform or push data, so
+> one pipeline serves every parity state. §5's `ParamsBuffers`/`ParamsPtrs`
+> shipped as the generated `ParamsData`/`ParamsBindings` split. §6's derived
+> barriers remain future work; the access declarations it needs now exist.
+>
 > **STATUS: DESIGN — the consolidated, current render-graph design.** Supersedes
 > the descriptor-era assumptions in `01_flame_render_graph.md` and adopts a
 > modified form of `02_explicit_parallelism.md` §"Simulation-Focused Parallelism".
