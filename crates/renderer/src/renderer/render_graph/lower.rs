@@ -116,25 +116,22 @@ impl LowerCtx {
             layout: None,
         })
     }
+
     fn intern_buffer(
         &mut self,
         kind: BufferKind,
         index: usize,
         capacity: Option<u32>,
         elem_size: Option<u32>,
-    ) -> (BufferId, SlotSel) {
-        let slot = if kind == BufferKind::GpuOnlyFlight && false {
-            SlotSel::Previous
-        } else {
-            SlotSel::Current
-        };
+    ) -> BufferId {
         let key = (kind, index);
         if let Some(id) = self.buffers.get(&key).copied() {
             let b = &mut self.desc.buffers[id.0 as usize];
             b.capacity = b.capacity.or(capacity);
             b.elem_size = b.elem_size.or(elem_size);
-            return (id, slot);
+            return id;
         }
+
         let id = BufferId(self.desc.buffers.len() as u32);
         self.desc.buffers.push(BufferDecl {
             name: format!("buf.{kind:?}.{index}"),
@@ -144,8 +141,10 @@ impl LowerCtx {
         });
         self.buffer_indices.push(index);
         self.buffers.insert(key, id);
-        (id, slot)
+
+        id
     }
+
     fn intern_import(&mut self, raw: u64) -> ImportId {
         if let Some(x) = self.imports.get(&raw) {
             return *x;
@@ -201,7 +200,7 @@ impl LowerCtx {
                         (BufferKind::Singleton, SlotSel::Current, BufAccess::Read)
                     }
                 };
-                let (id, _) = self.intern_buffer(kind, x.index, None, None);
+                let id = self.intern_buffer(kind, x.index, None, None);
                 let off = match u32::try_from(x.byte_offset) {
                     Ok(v) => v,
                     Err(_) => {
@@ -383,7 +382,7 @@ impl LowerCtx {
                 byte_offset,
                 draw_count,
             } => {
-                let (b, _) = self.intern_buffer(BufferKind::Immutable, args_index, None, None);
+                let b = self.intern_buffer(BufferKind::Immutable, args_index, None, None);
                 DrawCall::IndexedIndirect {
                     args: BufferRef {
                         buffer: b,
@@ -415,8 +414,7 @@ impl LowerCtx {
         }))
     }
     pub(crate) fn upload(&mut self, index: usize, elem_size: u32, capacity: u32) {
-        let (b, _) =
-            self.intern_buffer(BufferKind::Storage, index, Some(capacity), Some(elem_size));
+        let b = self.intern_buffer(BufferKind::Storage, index, Some(capacity), Some(elem_size));
         let s = self.schema(
             format!("upload{}.elem", self.desc.uploads.len()),
             elem_size,
