@@ -301,3 +301,297 @@ pub(crate) fn compile(
         value_count: desc.values.len() as u32,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::desc::{
+        DrawCall, FieldKey, GroupSource, LeafPass, PipelineId, ResourceRef, SchemaDesc,
+        SchemaField, SchemaFieldKind, SchemaLayout, TexAccess, TexId, ValueId,
+    };
+    use super::super::test_desc::{DescBuilder, bindings, buffer, raster, read, write};
+    use super::{
+        AsmId, AssemblyProgram, AssemblySrc, AssemblyStep, BarrierKind, CompiledLeaf,
+        CompiledLeafKind, CompiledPass, build_assembly, compile,
+    };
+
+    fn data(key: u16, offset: u32, len: u32, src_offset: u32) -> SchemaField {
+        SchemaField {
+            key: FieldKey(key),
+            offset,
+            len,
+            kind: SchemaFieldKind::Data { src_offset },
+        }
+    }
+
+    fn resource(key: u16, offset: u32, len: u32, kind: SchemaFieldKind) -> SchemaField {
+        SchemaField {
+            key: FieldKey(key),
+            offset,
+            len,
+            kind,
+        }
+    }
+
+    fn schema(fields: Vec<SchemaField>) -> SchemaDesc {
+        SchemaDesc {
+            name: "block".into(),
+            size: 36,
+            resource_fields: vec![],
+            layout: Some(SchemaLayout { fields }),
+        }
+    }
+
+    /// interior padding is its own step, so the assembler never reads bytes the
+    /// layout does not name
+    #[test]
+    fn assembly_interleaved_data_resource_and_padding() {
+        let schema = schema(vec![
+            data(0, 0, 8, 0),
+            data(1, 8, 8, 8),
+            resource(2, 16, 4, SchemaFieldKind::SampledTex),
+            resource(3, 24, 8, SchemaFieldKind::BufAddr),
+            data(4, 32, 4, 16),
+        ]);
+        let value = ValueId(5);
+        let program = build_assembly(
+            &schema,
+            Some(value),
+            &bindings(&[read(1), buffer(2)])
+                .into_iter()
+                .enumerate()
+                .map(|(i, (_, resource))| (FieldKey(i as u16 + 2), resource))
+                .collect::<Vec<_>>(),
+        );
+
+        let AssemblyProgram::Steps(steps) = program else {
+            panic!("a laid-out schema assembles eagerly")
+        };
+        assert_eq!(
+            steps,
+            vec![
+                AssemblyStep {
+                    dst_offset: 0,
+                    src: AssemblySrc::FrameBytes {
+                        value,
+                        src_offset: 0,
+                        len: 8,
+                    },
+                },
+                AssemblyStep {
+                    dst_offset: 8,
+                    src: AssemblySrc::FrameBytes {
+                        value,
+                        src_offset: 8,
+                        len: 8,
+                    },
+                },
+                AssemblyStep {
+                    dst_offset: 16,
+                    src: AssemblySrc::ResolveTex {
+                        tex: TexId(1),
+                        access: TexAccess::Read,
+                    },
+                },
+                AssemblyStep {
+                    dst_offset: 24,
+                    src: match &bindings(&[buffer(2)])[0].1 {
+                        ResourceRef::Buf(args, _) => AssemblySrc::ResolveBuf(args.clone()),
+                        _ => unreachable!(),
+                    },
+                },
+                AssemblyStep {
+                    dst_offset: 32,
+                    src: AssemblySrc::FrameBytes {
+                        value,
+                        src_offset: 16,
+                        len: 4,
+                    },
+                },
+            ]
+        );
+        assert!(
+            steps
+                .iter()
+                .all(|step| !(20..24).contains(&step.dst_offset))
+        );
+    }
+
+    #[test]
+    fn assembly_data_only_schema() {
+        let schema = schema(vec![data(0, 0, 4, 0), data(1, 4, 12, 4)]);
+        let value = ValueId(0);
+
+        assert_eq!(
+            build_assembly(&schema, Some(value), &[]),
+            AssemblyProgram::Steps(vec![
+                AssemblyStep {
+                    dst_offset: 0,
+                    src: AssemblySrc::FrameBytes {
+                        value,
+                        src_offset: 0,
+                        len: 4,
+                    },
+                },
+                AssemblyStep {
+                    dst_offset: 4,
+                    src: AssemblySrc::FrameBytes {
+                        value,
+                        src_offset: 4,
+                        len: 12,
+                    },
+                },
+            ])
+        );
+    }
+
+    /// resources resolve in field order, not binding order
+    #[test]
+    fn assembly_resource_only_schema() {
+        let schema = schema(vec![
+            resource(0, 0, 4, SchemaFieldKind::SampledTex),
+            resource(1, 8, 8, SchemaFieldKind::BufAddr),
+            resource(2, 16, 4, SchemaFieldKind::StorageTex),
+        ]);
+        let bound = bindings(&[read(3), buffer(0), write(4)]);
+        let AssemblyProgram::Steps(steps) = build_assembly(&schema, None, &bound) else {
+            panic!("a laid-out schema assembles eagerly")
+        };
+
+        assert_eq!(steps.len(), 3);
+        assert_eq!(
+            steps[0].src,
+            AssemblySrc::ResolveTex {
+                tex: TexId(3),
+                access: TexAccess::Read,
+            }
+        );
+        assert!(matches!(steps[1].src, AssemblySrc::ResolveBuf(_)));
+        assert_eq!(
+            steps[2].src,
+            AssemblySrc::ResolveTex {
+                tex: TexId(4),
+                access: TexAccess::Write,
+            }
+        );
+    }
+
+    /// lowering does not record field layouts, so the lowered path defers
+    #[test]
+    fn layoutless_schema_defers_assembly() {
+        let schema = SchemaDesc {
+            name: "block".into(),
+            size: 16,
+            resource_fields: vec![],
+            layout: None,
+        };
+
+        assert_eq!(schema.size, 16);
+        assert_eq!(
+            build_assembly(&schema, Some(ValueId(0)), &[]),
+            AssemblyProgram::Deferred
+        );
+    }
+
+    #[test]
+    fn dispatches_get_compute_sync_barrier_template() {
+        let mut builder = DescBuilder::new(1);
+        for i in 0..3 {
+            let dispatch = builder.dispatch(&format!("d{i}"), &[read(0)]);
+            builder.leaf(dispatch)
+        }
+
+        let analysis = builder.validate().expect("desc under test must validate");
+        let graph = compile(&builder.desc, &analysis, &builder.schemas);
+
+        assert_eq!(graph.passes.len(), 3);
+        assert_eq!(graph.assemblies.len(), builder.desc.uniforms.len());
+        assert!(
+            graph
+                .assemblies
+                .iter()
+                .all(|program| *program == AssemblyProgram::Deferred)
+        );
+        for (i, pass) in graph.passes.iter().enumerate() {
+            let CompiledPass::Leaf(CompiledLeaf {
+                barrier_before,
+                kind:
+                    CompiledLeafKind::Dispatch {
+                        asm,
+                        uniform,
+                        pipeline,
+                        groups,
+                        push_asm,
+                    },
+                ..
+            }) = pass
+            else {
+                panic!("expected a dispatch leaf")
+            };
+            assert_eq!(*barrier_before, BarrierKind::ComputeSync);
+            assert_eq!(*asm, AsmId(uniform.0));
+            assert_eq!(uniform.0, i as u32);
+            assert_eq!(*pipeline, PipelineId(i as u32));
+            assert!(matches!(groups, GroupSource::Fixed([1, 1, 1])));
+            assert_eq!(*push_asm, None);
+        }
+    }
+
+    #[test]
+    fn raster_gets_compute_to_graphics_barrier_template() {
+        let mut builder = DescBuilder::new(1);
+        let dispatch = builder.dispatch("d0", &[write(0)]);
+        builder.leaf(dispatch);
+        let draw = builder.draw("draw0", &[read(0)]);
+        let pass = raster("main", vec![draw]);
+        builder.leaf_raster(pass);
+        let analysis = builder.validate().expect("desc under test must validate");
+        let graph = compile(&builder.desc, &analysis, &builder.schemas);
+
+        let CompiledPass::Leaf(CompiledLeaf {
+            barrier_before,
+            kind: CompiledLeafKind::Raster { draws },
+            ..
+        }) = &graph.passes[1]
+        else {
+            panic!("expected a raster leaf")
+        };
+        assert_eq!(*barrier_before, BarrierKind::ComputeToGraphics);
+        assert_eq!(draws.len(), 1);
+        assert_eq!(draws[0].asm, AsmId(draws[0].uniform.0));
+        assert_eq!(draws[0].pipeline, PipelineId(1));
+        assert_eq!(draws[0].push_asm, None);
+        assert!(matches!(draws[0].call, DrawCall::VertexCount(3)));
+    }
+
+    #[test]
+    fn repeat_and_when_structure_survives_compile() {
+        let mut builder = DescBuilder::new(2);
+        let gated = builder.dispatch("gated", &[read(1)]);
+        builder.when("when0", vec![LeafPass::Compute(gated)]);
+        let rotating = builder.dispatch_with_push("jacobi", &[read(1)], &[read(0), write(0)]);
+        builder.repeat("repeat0", vec![LeafPass::Compute(rotating)]);
+        let analysis = builder.validate().expect("desc under test must validate");
+        let graph = compile(&builder.desc, &analysis, &builder.schemas);
+
+        assert_eq!(graph.tex_phys, vec![2, 1]);
+        assert_eq!(graph.value_count, builder.desc.values.len() as u32);
+        let CompiledPass::When { body, .. } = &graph.passes[0] else {
+            panic!("expected a when pass")
+        };
+        assert_eq!(body.len(), 1);
+        assert!(body[0].access.reads.contains(&TexId(1)));
+
+        let CompiledPass::Repeat { body, .. } = &graph.passes[1] else {
+            panic!("expected a repeat pass")
+        };
+        let leaf = &body[0];
+        assert_eq!(leaf.access.reads, vec![TexId(1), TexId(0)]);
+        assert_eq!(leaf.access.writes, vec![TexId(0)]);
+        assert!(leaf.access.prev_reads.is_empty());
+        assert!(leaf.access.mutates.is_empty());
+        let CompiledLeafKind::Dispatch { push_asm, .. } = leaf.kind else {
+            panic!("expected a dispatch leaf")
+        };
+        assert_eq!(push_asm, Some(AsmId(builder.desc.uniforms.len() as u32)));
+    }
+}

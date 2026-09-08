@@ -63,6 +63,14 @@ Fix: change line 551 to `wet_mask.read()`. Annotate the 07 deviation list.
 
 ## 2. The 72-test inventory is missing
 
+RESOLVED (2026-09-08). All 72 inventory tests are in-module `#[cfg(test)]`
+modules, plus 7 tests that pin the fixes and the vocabulary below. A shared
+builder lives in `crates/renderer/src/renderer/render_graph/test_desc.rs`. The
+4 `#[expect(dead_code)]` attributes are `#[cfg_attr(not(test), allow(...))]`:
+tests reach every item, execution wiring lands in 3a. `BufAccess::Write` and
+`BufAccess::IndirectArgs` were deleted; nothing constructs them. The finding as
+written:
+
 `phase_1.md` §"Test inventory": "72 tests. This inventory is the contract; do
 not trim it." The branch contains 0 of them. No `#[cfg(test)]` module exists
 under `crates/renderer/src/renderer/render_graph/`.
@@ -83,6 +91,9 @@ Consequences:
 
 ### 3a. `DrawWritesTexture` does not fire for a mutate-only draw
 
+RESOLVED (2026-09-08). `validate` reports one error per distinct texture a draw
+writes or mutates. The finding as written:
+
 `validate.rs:684-697`. The condition counts `Write` and `Mutate` refs, but the
 error is gated on `writes.first()`. A draw whose only texture access is
 `Mutate` produces no error. `DrawNode::plan` never applies writes and
@@ -92,6 +103,12 @@ compute passes use for the same frame's version, with only the pass-level
 compute→graphics barrier.
 
 ### 3b. Per-command checks run per raster pass, not per draw
+
+RESOLVED (2026-09-08). A `commands()` helper yields one entry per
+`DispatchDesc` and one per `DrawDesc`. The id-range checks, the write and mutate
+hazard checks, and the `tex_phys` updates iterate commands. For a raster pass
+the `command` field of an error now carries the draw name. The finding as
+written:
 
 `validate.rs:544-618`. Lowering coalesces all top-level draws into one
 `RasterDesc`, and `refs()` (`validate.rs:224`) flattens every draw in the pass
@@ -104,6 +121,11 @@ produce a false `MutateAndRead` that blames the pass. The check at
 loop-invariant, so one write flags every draw.
 
 ### 3c. The uniform-source merge path is unreachable
+
+RESOLVED (2026-09-08). `uniform()` interns before it mints. On a slot hit it
+compares the interned bindings and the recorded data size; equal sources return
+the existing `UniformId` with no error, and no schema or value row is created.
+The finding as written:
 
 `lower.rs:263-301`. `uniform()` mints a fresh `SchemaId` and `ValueId`
 (lines 264-274) before the intern lookup, so
@@ -283,4 +305,7 @@ them in 3a.
 4. Reconcile `docs/render_graph.md` and annotate 07/phase_1 with what landed
    (§7).
 
-§1 is fixed.
+§1, §2, §3a, §3b, and §3c are fixed. §6's keep-or-delete resolved as keep: the
+inventory reaches every item of `compile.rs`, `expand.rs`, and lowering's side
+tables, so each is verified rather than merely compiled. Items 3d–3g, 4, 5, and
+7 stand.

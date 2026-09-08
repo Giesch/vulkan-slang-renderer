@@ -217,9 +217,7 @@ pub(crate) enum TexAccess {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BufAccess {
     Read,
-    Write,
     Mutate,
-    IndirectArgs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

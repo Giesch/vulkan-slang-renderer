@@ -260,7 +260,33 @@ impl LowerCtx {
             .collect()
     }
 
+    /// The data value of an existing uniform decl, identified by its byte size:
+    /// two sightings of one slot agree when they write the same bytes through
+    /// the same bindings.
+    fn uniform_data_size(&self, id: UniformId) -> Option<u32> {
+        let data = self.desc.uniforms[id.0 as usize].source.data?;
+        let ValueKind::Bytes { schema } = self.desc.values[data.0 as usize].kind else {
+            return None;
+        };
+
+        Some(self.schemas.get(schema)?.size)
+    }
+
     fn uniform(&mut self, input: UniformInput) -> UniformId {
+        let fields = Self::fields(&input.bindings);
+        let data_size = input.data_size;
+        let bindings = self.bindings(input.bindings);
+        if let Some(id) = self.uniforms.get(&input.slot).copied() {
+            let same_source = self.uniform_data_size(id) == Some(data_size)
+                && self.desc.uniforms[id.0 as usize].source.bindings == bindings;
+            if !same_source {
+                self.errors
+                    .push(GraphError::UniformSourceConflict { slot: input.slot });
+            }
+
+            return id;
+        }
+
         let data_schema = self.schema(
             format!("uniform{}.data", input.slot),
             input.data_size,
@@ -272,18 +298,6 @@ impl LowerCtx {
                 schema: data_schema,
             },
         );
-        let fields = Self::fields(&input.bindings);
-        let bindings = self.bindings(input.bindings);
-        if let Some(id) = self.uniforms.get(&input.slot).copied() {
-            let old = &self.desc.uniforms[id.0 as usize].source;
-            let same_source = old.data == Some(data) && old.bindings == bindings;
-            if same_source {
-                return id;
-            }
-            self.errors
-                .push(GraphError::UniformSourceConflict { slot: input.slot });
-            return id;
-        }
         let schema = self.schema(format!("uniform{}", input.slot), input.gpu_size, fields);
         let id = UniformId(self.desc.uniforms.len() as u32);
         self.desc.uniforms.push(UniformDecl {
@@ -573,5 +587,655 @@ impl LowerCtx {
             pipeline_indices: self.pipeline_indices,
             import_handles: self.import_handles,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::renderer::bindless::{BindlessHandle, RwTexture2D, Sampler2D};
+    use crate::renderer::descriptor_heap::BindlessIndex;
+
+    use super::super::desc::{
+        BufferKind, DrawCall, GraphFormat, LeafPass, PassDesc, PipelineKind, ResourceRef,
+        SizeClass, SlotSel, TexAccess, TexDecl, TexUsage, UniformId, ValueKind,
+    };
+    use super::super::validate::{GraphError, validate};
+    use super::super::{BufferBindingKind, GraphBinding, GraphTex, RawBufferBinding};
+    use super::{LowerCtx, LowerDrawCall, LowerOutput, PushInput, UniformInput};
+
+    const GROUPS: [u32; 3] = [1, 1, 1];
+
+    fn textures(count: u32) -> Vec<TexDecl> {
+        (0..count)
+            .map(|i| TexDecl {
+                name: format!("tex{i}"),
+                format: GraphFormat::R32Float,
+                size: SizeClass::Fixed(8, 8),
+                usage: TexUsage::Storage,
+            })
+            .collect()
+    }
+
+    fn sampled(tex: u32) -> GraphBinding {
+        GraphBinding::SampledTex(GraphTex(tex).read())
+    }
+
+    fn prev_sampled(tex: u32) -> GraphBinding {
+        GraphBinding::SampledTex(GraphTex(tex).read_previous())
+    }
+
+    fn storage_write(tex: u32) -> GraphBinding {
+        GraphBinding::StorageTex(GraphTex(tex).write())
+    }
+
+    fn storage_mutate(tex: u32) -> GraphBinding {
+        GraphBinding::StorageTex(GraphTex(tex).mutate())
+    }
+
+    fn buf(kind: BufferBindingKind, index: usize) -> GraphBinding {
+        GraphBinding::Buffer(RawBufferBinding {
+            kind,
+            index,
+            byte_offset: 0,
+        })
+    }
+
+    fn external_sampled(slot: u32) -> GraphBinding {
+        GraphBinding::SampledTex(
+            BindlessHandle::<Sampler2D>::from_slot(BindlessIndex::from_raw(slot)).into(),
+        )
+    }
+
+    fn external_storage(slot: u32) -> GraphBinding {
+        GraphBinding::StorageTex(
+            BindlessHandle::<RwTexture2D>::from_slot(BindlessIndex::from_raw(slot)).into(),
+        )
+    }
+
+    fn uni(slot: usize, bindings: Vec<GraphBinding>) -> UniformInput {
+        UniformInput {
+            slot,
+            gpu_size: 64,
+            data_size: 16,
+            bindings,
+        }
+    }
+
+    fn push(bindings: Vec<GraphBinding>) -> Option<PushInput> {
+        Some(PushInput { size: 16, bindings })
+    }
+
+    /// the texture ids a uniform decl binds, paired with their access
+    fn uniform_refs(out: &LowerOutput, id: UniformId) -> Vec<ResourceRef> {
+        out.desc.uniforms[id.0 as usize]
+            .source
+            .bindings
+            .iter()
+            .map(|(_, resource)| resource.clone())
+            .collect()
+    }
+
+    #[test]
+    fn nested_repeat_is_an_error() {
+        let mut cx = LowerCtx::new(textures(1));
+        cx.begin_repeat();
+        cx.begin_repeat();
+        cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
+        cx.end_repeat();
+        cx.end_repeat();
+        let out = cx.finish();
+
+        assert!(out.errors.contains(&GraphError::NestedControlFlow {
+            outer: "repeat",
+            inner: "repeat",
+        }));
+    }
+
+    #[test]
+    fn repeat_after_exit_is_allowed() {
+        let mut cx = LowerCtx::new(textures(1));
+        cx.begin_repeat();
+        cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
+        cx.end_repeat();
+        cx.begin_repeat();
+        cx.dispatch(1, GROUPS, uni(1, vec![sampled(0)]), None);
+        cx.end_repeat();
+        let out = cx.finish();
+
+        assert!(out.errors.is_empty());
+        assert_eq!(out.desc.passes.len(), 2);
+        assert!(
+            out.desc
+                .passes
+                .iter()
+                .all(|pass| matches!(pass, PassDesc::Repeat { .. }))
+        );
+    }
+
+    #[test]
+    fn a_second_picking_node_is_an_error() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.draw(0, LowerDrawCall::VertexCount(3), uni(0, vec![]), None);
+        cx.picking(0);
+        cx.picking(1);
+        let out = cx.finish();
+
+        assert!(out.errors.contains(&GraphError::MultiplePickingNodes));
+    }
+
+    #[test]
+    fn picking_without_draws_is_an_error() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.picking(0);
+        let out = cx.finish();
+
+        assert!(out.errors.contains(&GraphError::PickingWithoutDraw));
+    }
+
+    #[test]
+    fn picking_with_a_draw_is_allowed() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.draw(0, LowerDrawCall::VertexCount(3), uni(0, vec![]), None);
+        cx.picking(7);
+        let out = cx.finish();
+
+        assert!(out.errors.is_empty());
+        assert_eq!(out.picking, Some(7));
+    }
+
+    /// the slot names one uniform buffer, so two sources that disagree about
+    /// its bytes cannot both write it
+    #[test]
+    fn two_nodes_sharing_a_uniform_slot_reject() {
+        let mut cx = LowerCtx::new(textures(1));
+        cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
+        let mut second = uni(0, vec![sampled(0)]);
+        second.data_size = 32;
+        cx.dispatch(1, GROUPS, second, None);
+        let out = cx.finish();
+
+        assert!(
+            out.errors
+                .contains(&GraphError::UniformSourceConflict { slot: 0 })
+        );
+        assert_eq!(out.desc.uniforms.len(), 1);
+    }
+
+    /// two sightings that agree merge, leaving no orphan value or schema rows
+    #[test]
+    fn identical_uniform_source_merges() {
+        let mut cx = LowerCtx::new(textures(1));
+        cx.dispatch(0, GROUPS, uni(4, vec![sampled(0)]), None);
+        let before = (cx.desc.values.len(), cx.schemas.schemas.len());
+        cx.dispatch(1, GROUPS, uni(4, vec![sampled(0)]), None);
+        let after = (cx.desc.values.len(), cx.schemas.schemas.len());
+        let out = cx.finish();
+
+        assert!(out.errors.is_empty());
+        assert_eq!(out.desc.uniforms.len(), 1);
+        assert_eq!(out.uniform_slots, vec![4]);
+        assert_eq!(before, after);
+        let ids: Vec<_> = out
+            .desc
+            .passes
+            .iter()
+            .map(|pass| match pass {
+                PassDesc::Leaf(LeafPass::Compute(compute)) => compute.uniform,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(ids, vec![UniformId(0), UniformId(0)]);
+    }
+
+    #[test]
+    fn same_slot_differing_bindings_reject() {
+        let mut cx = LowerCtx::new(textures(2));
+        cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
+        cx.dispatch(1, GROUPS, uni(0, vec![sampled(1)]), None);
+        let out = cx.finish();
+
+        assert!(
+            out.errors
+                .contains(&GraphError::UniformSourceConflict { slot: 0 })
+        );
+        assert_eq!(out.desc.uniforms.len(), 1);
+    }
+
+    #[test]
+    fn optional_inside_repeat_rejects() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.begin_repeat();
+        cx.begin_optional();
+        cx.dispatch(0, GROUPS, uni(0, vec![]), None);
+        cx.end_optional();
+        cx.end_repeat();
+        let out = cx.finish();
+
+        assert!(out.errors.contains(&GraphError::NestedControlFlow {
+            outer: "repeat",
+            inner: "optional",
+        }));
+    }
+
+    #[test]
+    fn repeat_inside_optional_rejects() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.begin_optional();
+        cx.begin_repeat();
+        cx.dispatch(0, GROUPS, uni(0, vec![]), None);
+        cx.end_repeat();
+        cx.end_optional();
+        let out = cx.finish();
+
+        assert!(out.errors.contains(&GraphError::NestedControlFlow {
+            outer: "optional",
+            inner: "repeat",
+        }));
+    }
+
+    #[test]
+    fn nested_optional_rejects() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.begin_optional();
+        cx.begin_optional();
+        cx.dispatch(0, GROUPS, uni(0, vec![]), None);
+        cx.end_optional();
+        cx.end_optional();
+        let out = cx.finish();
+
+        assert!(out.errors.contains(&GraphError::NestedControlFlow {
+            outer: "optional",
+            inner: "optional",
+        }));
+    }
+
+    #[test]
+    fn empty_optional_scope_is_an_error() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.begin_optional();
+        cx.end_optional();
+        let out = cx.finish();
+
+        assert!(out.errors.contains(&GraphError::EmptyOptionalScope));
+    }
+
+    #[test]
+    fn optional_gate_is_first_scope_value_and_all_scope_values_optional() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.begin_optional();
+        cx.upload(0, 8, 16);
+        cx.dispatch(0, GROUPS, uni(0, vec![]), None);
+        cx.end_optional();
+        let out = cx.finish();
+
+        assert!(out.errors.is_empty());
+        let PassDesc::When { value, .. } = &out.desc.passes[0] else {
+            panic!("expected a when pass")
+        };
+        assert!(matches!(
+            out.desc.values[value.0 as usize].kind,
+            ValueKind::Array { .. }
+        ));
+        assert!(out.desc.values.iter().all(|value| value.optional));
+    }
+
+    /// the two slots of one gpu-only buffer are one resource with two
+    /// selectors, not two buffers
+    #[test]
+    fn gpu_only_current_and_previous_intern_to_one_buffer() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.dispatch(
+            0,
+            GROUPS,
+            uni(
+                0,
+                vec![
+                    buf(BufferBindingKind::GpuOnlyPrevious, 3),
+                    buf(BufferBindingKind::GpuOnlyCurrent, 3),
+                ],
+            ),
+            None,
+        );
+        let out = cx.finish();
+
+        assert_eq!(out.desc.buffers.len(), 1);
+        assert_eq!(out.buffer_indices, vec![3]);
+        assert_eq!(out.desc.buffers[0].kind, BufferKind::GpuOnlyFlight);
+        let slots: Vec<_> = uniform_refs(&out, UniformId(0))
+            .into_iter()
+            .map(|resource| match resource {
+                ResourceRef::Buf(buffer, _) => buffer.slot,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(slots, vec![SlotSel::Previous, SlotSel::Current]);
+    }
+
+    #[test]
+    fn external_sampled_handle_interns_once() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.dispatch(0, GROUPS, uni(0, vec![external_sampled(9)]), None);
+        cx.dispatch(1, GROUPS, uni(1, vec![external_sampled(9)]), None);
+        let out = cx.finish();
+
+        assert!(out.errors.is_empty());
+        assert_eq!(out.desc.imports.len(), 1);
+        assert_eq!(out.import_handles, vec![9]);
+    }
+
+    #[test]
+    fn mutable_external_storage_binding_rejects() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.dispatch(0, GROUPS, uni(0, vec![external_storage(2)]), None);
+        let out = cx.finish();
+
+        assert!(out.errors.contains(&GraphError::MutableExternalImport));
+        assert!(uniform_refs(&out, UniformId(0)).is_empty());
+    }
+
+    #[test]
+    fn top_level_draws_coalesce_into_one_raster_pass() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.draw(0, LowerDrawCall::VertexCount(3), uni(0, vec![]), None);
+        cx.draw(1, LowerDrawCall::WholeIndexed, uni(1, vec![]), None);
+        let out = cx.finish();
+
+        assert_eq!(out.desc.passes.len(), 1);
+        let PassDesc::Leaf(LeafPass::Raster(raster)) = &out.desc.passes[0] else {
+            panic!("expected one raster pass")
+        };
+        assert_eq!(raster.draws.len(), 2);
+        assert_eq!(raster.draws[0].name, "draw0");
+        assert_eq!(raster.draws[1].name, "draw1");
+    }
+
+    /// every table row carries a name, because names are the only handle an
+    /// error message has on a resource
+    #[test]
+    fn lowered_tables_carry_diagnostic_names() {
+        let mut cx = LowerCtx::new(textures(1));
+        cx.upload(2, 8, 16);
+        cx.dispatch(
+            5,
+            GROUPS,
+            uni(3, vec![sampled(0), buf(BufferBindingKind::Storage, 2)]),
+            None,
+        );
+        let out = cx.finish();
+
+        assert_eq!(out.desc.textures[0].name, "tex0");
+        assert_eq!(out.desc.buffers[0].name, "buf.Storage.2");
+        assert_eq!(out.desc.uploads[0].name, "upload0");
+        assert_eq!(out.desc.uniforms[0].name, "uniform3");
+        assert_eq!(out.desc.pipelines[0].name, "pipeline.Compute.5");
+        assert_eq!(
+            out.schemas.get(out.desc.uniforms[0].schema).unwrap().name,
+            "uniform3"
+        );
+        assert_eq!(
+            out.desc.passes.len(),
+            1,
+            "the upload is not a pass; only the dispatch is"
+        );
+    }
+
+    #[test]
+    fn external_import_decls_carry_names() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.dispatch(0, GROUPS, uni(0, vec![external_sampled(4)]), None);
+        let out = cx.finish();
+
+        assert_eq!(out.desc.imports[0].name, "import0");
+    }
+
+    #[test]
+    fn draw_call_variants_lower_one_to_one() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.draw(0, LowerDrawCall::VertexCount(6), uni(0, vec![]), None);
+        cx.draw(1, LowerDrawCall::WholeIndexed, uni(1, vec![]), None);
+        cx.draw(
+            2,
+            LowerDrawCall::IndexRange {
+                first_index: 3,
+                index_count: 9,
+            },
+            uni(2, vec![]),
+            None,
+        );
+        cx.draw(
+            3,
+            LowerDrawCall::IndexedIndirect {
+                args_index: 7,
+                byte_offset: 32,
+                draw_count: 5,
+            },
+            uni(3, vec![]),
+            None,
+        );
+        let out = cx.finish();
+
+        let PassDesc::Leaf(LeafPass::Raster(raster)) = &out.desc.passes[0] else {
+            panic!("expected one raster pass")
+        };
+        assert!(matches!(raster.draws[0].call, DrawCall::VertexCount(6)));
+        assert!(matches!(raster.draws[1].call, DrawCall::WholeIndexed));
+        assert!(matches!(
+            raster.draws[2].call,
+            DrawCall::IndexRange {
+                first_index: 3,
+                index_count: 9,
+            }
+        ));
+        let DrawCall::IndexedIndirect { args, draw_count } = &raster.draws[3].call else {
+            panic!("expected an indirect draw")
+        };
+        assert_eq!(*draw_count, 5);
+        assert_eq!(args.offset, 32);
+        assert_eq!(args.slot, SlotSel::Current);
+        assert_eq!(
+            out.desc.buffers[args.buffer.0 as usize].kind,
+            BufferKind::Immutable
+        );
+    }
+
+    /// the full watercolor shape, with the physical image counts derived by
+    /// hand from its binding sets
+    #[test]
+    fn watercolor_shaped_lowering_parity() {
+        const PAPER: u32 = 12;
+        let mut cx = LowerCtx::new(textures(14));
+        cx.begin_optional();
+        cx.upload(0, 32, 4096);
+        cx.dispatch(
+            0,
+            GROUPS,
+            uni(
+                0,
+                vec![
+                    storage_mutate(7),
+                    storage_mutate(2),
+                    storage_mutate(3),
+                    storage_mutate(4),
+                    storage_mutate(5),
+                    storage_mutate(6),
+                    buf(BufferBindingKind::Storage, 0),
+                ],
+            ),
+            None,
+        );
+        cx.end_optional();
+        cx.dispatch(
+            1,
+            GROUPS,
+            uni(
+                1,
+                vec![
+                    sampled(0),
+                    sampled(1),
+                    sampled(2),
+                    sampled(7),
+                    storage_write(0),
+                    storage_write(1),
+                    external_sampled(PAPER),
+                ],
+            ),
+            None,
+        );
+        cx.dispatch(
+            2,
+            GROUPS,
+            uni(2, vec![sampled(0), sampled(1), storage_write(11)]),
+            None,
+        );
+        cx.begin_repeat();
+        cx.dispatch(
+            3,
+            GROUPS,
+            uni(3, vec![sampled(11)]),
+            push(vec![sampled(2), storage_write(2)]),
+        );
+        cx.end_repeat();
+        cx.dispatch(
+            4,
+            GROUPS,
+            uni(
+                4,
+                vec![storage_mutate(0), storage_mutate(1), sampled(7), sampled(2)],
+            ),
+            None,
+        );
+        cx.dispatch(
+            5,
+            GROUPS,
+            uni(5, vec![]),
+            push(vec![sampled(7), storage_write(12)]),
+        );
+        cx.dispatch(
+            6,
+            GROUPS,
+            uni(6, vec![]),
+            push(vec![sampled(12), storage_write(13)]),
+        );
+        cx.dispatch(
+            7,
+            GROUPS,
+            uni(
+                7,
+                vec![
+                    sampled(7),
+                    storage_mutate(6),
+                    sampled(13),
+                    storage_mutate(2),
+                ],
+            ),
+            None,
+        );
+        cx.dispatch(
+            8,
+            GROUPS,
+            uni(
+                8,
+                vec![
+                    sampled(3),
+                    sampled(4),
+                    sampled(5),
+                    prev_sampled(0),
+                    prev_sampled(1),
+                    sampled(7),
+                    storage_write(3),
+                    storage_write(4),
+                    storage_write(5),
+                    sampled(8),
+                    sampled(9),
+                    sampled(10),
+                    storage_write(8),
+                    storage_write(9),
+                    storage_write(10),
+                    external_sampled(PAPER),
+                ],
+            ),
+            None,
+        );
+        cx.dispatch(
+            9,
+            GROUPS,
+            uni(
+                9,
+                vec![sampled(6), sampled(7), storage_write(6), storage_write(7)],
+            ),
+            None,
+        );
+        cx.draw(
+            0,
+            LowerDrawCall::VertexCount(3),
+            uni(
+                10,
+                vec![
+                    sampled(8),
+                    sampled(9),
+                    sampled(10),
+                    external_sampled(PAPER),
+                    prev_sampled(7),
+                ],
+            ),
+            None,
+        );
+        let out = cx.finish();
+
+        assert!(out.errors.is_empty());
+        assert_eq!(out.desc.passes.len(), 11);
+        assert_eq!(out.desc.uniforms.len(), 11);
+        assert_eq!(out.desc.pipelines.len(), 11);
+        assert_eq!(out.desc.buffers.len(), 1);
+        assert_eq!(out.desc.imports.len(), 1);
+        assert_eq!(out.desc.uploads.len(), 1);
+        assert_eq!(out.desc.values.len(), 13);
+        assert!(matches!(out.desc.passes[0], PassDesc::When { .. }));
+        assert!(matches!(out.desc.passes[3], PassDesc::Repeat { .. }));
+        assert!(matches!(
+            out.desc.passes[10],
+            PassDesc::Leaf(LeafPass::Raster(_))
+        ));
+
+        let analysis = validate(&out.desc, &out.schemas).expect("watercolor shape must validate");
+        assert_eq!(
+            analysis.tex_phys,
+            vec![2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1]
+        );
+    }
+
+    #[test]
+    fn particles_shaped_lowering_parity() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.dispatch(
+            0,
+            [16, 1, 1],
+            uni(
+                0,
+                vec![
+                    buf(BufferBindingKind::GpuOnlyPrevious, 0),
+                    buf(BufferBindingKind::GpuOnlyCurrent, 0),
+                ],
+            ),
+            None,
+        );
+        cx.draw(
+            0,
+            LowerDrawCall::VertexCount(4096),
+            uni(1, vec![buf(BufferBindingKind::GpuOnlyCurrent, 0)]),
+            None,
+        );
+        let out = cx.finish();
+
+        assert!(out.errors.is_empty());
+        assert_eq!(out.desc.passes.len(), 2);
+        assert_eq!(out.desc.buffers.len(), 1);
+        assert_eq!(out.desc.pipelines.len(), 2);
+        assert_eq!(out.pipeline_indices, vec![0, 0]);
+        assert_eq!(out.desc.pipelines[1].kind, PipelineKind::Graphics);
+
+        let analysis = validate(&out.desc, &out.schemas).expect("particles shape must validate");
+        assert!(analysis.tex_phys.is_empty());
+        let _ = TexAccess::Read;
     }
 }

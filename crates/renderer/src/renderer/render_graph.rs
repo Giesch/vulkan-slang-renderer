@@ -11,23 +11,40 @@
 //! here; the graph resolves them to concrete bindless handles and addresses
 //! at execute time and performs every CPU buffer write itself.
 
-#[expect(dead_code, reason = "phase 3a wires the pure compiler into execution")]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "tests drive the pure compiler; phase 3a wires it into execution"
+    )
+)]
 mod compile;
-#[expect(
-    dead_code,
-    reason = "later phases construct the full plain-data vocabulary"
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "tests construct the plain-data vocabulary; later phases lower into it"
+    )
 )]
 mod desc;
-#[expect(
-    dead_code,
-    reason = "phase 3a wires pure frame expansion into execution"
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "tests drive pure frame expansion; phase 3a wires it into execution"
+    )
 )]
 mod expand;
-#[expect(
-    dead_code,
-    reason = "phase 3a consumes lowering's transient side tables"
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "tests read lowering's transient side tables; phase 3a consumes them"
+    )
 )]
 mod lower;
+#[cfg(test)]
+mod test_desc;
 mod validate;
 
 pub use desc::GraphFormat;
