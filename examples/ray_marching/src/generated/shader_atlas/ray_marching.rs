@@ -111,7 +111,11 @@ impl GraphShaderParams for RayMarchingParams {
     type Data = RayMarchingParamsData;
     type Bindings = RayMarchingParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
             camera: data.camera,
             light_position: data.light_position,
@@ -119,8 +123,8 @@ impl GraphShaderParams for RayMarchingParams {
             box_count: data.box_count,
             _padding_0: Default::default(),
             resolution: data.resolution,
-            spheres: r.read_buf(bindings.spheres),
-            boxes: r.read_buf(bindings.boxes),
+            spheres: resolver.read_buf(bindings.spheres),
+            boxes: resolver.read_buf(bindings.boxes),
         }
     }
 }

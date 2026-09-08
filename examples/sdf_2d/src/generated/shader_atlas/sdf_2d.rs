@@ -44,7 +44,11 @@ impl GraphShaderParams for SDF2DParams {
     type Data = Self;
     type Bindings = ();
 
-    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        _bindings: &Self::Bindings,
+        _resolver: &BindingResolver<'_>,
+    ) -> Self {
         *data
     }
 }

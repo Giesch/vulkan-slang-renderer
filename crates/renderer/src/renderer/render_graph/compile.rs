@@ -1,6 +1,7 @@
 //! Pure compilation. Phase 1 keeps this separate from execution.
 use super::desc::*;
 use super::validate::Analysis;
+
 #[derive(Debug)]
 pub(crate) struct CompiledGraph {
     pub(crate) passes: Vec<CompiledPass>,
@@ -8,8 +9,10 @@ pub(crate) struct CompiledGraph {
     pub(crate) tex_phys: Vec<u32>,
     pub(crate) value_count: u32,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AsmId(pub(crate) u32);
+
 #[derive(Debug)]
 pub(crate) enum CompiledPass {
     Leaf(CompiledLeaf),
@@ -22,12 +25,14 @@ pub(crate) enum CompiledPass {
         body: Vec<CompiledLeaf>,
     },
 }
+
 #[derive(Debug)]
 pub(crate) struct CompiledLeaf {
     pub(crate) kind: CompiledLeafKind,
     pub(crate) barrier_before: BarrierKind,
     pub(crate) access: LeafAccess,
 }
+
 #[derive(Debug)]
 pub(crate) enum CompiledLeafKind {
     Dispatch {
@@ -41,6 +46,7 @@ pub(crate) enum CompiledLeafKind {
         draws: Vec<CompiledDraw>,
     },
 }
+
 #[derive(Debug)]
 pub(crate) struct CompiledDraw {
     pub(crate) pipeline: PipelineId,
@@ -49,6 +55,7 @@ pub(crate) struct CompiledDraw {
     pub(crate) push_asm: Option<AsmId>,
     pub(crate) call: DrawCall,
 }
+
 #[derive(Debug, Default)]
 pub(crate) struct LeafAccess {
     pub(crate) reads: Vec<TexId>,
@@ -56,21 +63,25 @@ pub(crate) struct LeafAccess {
     pub(crate) writes: Vec<TexId>,
     pub(crate) mutates: Vec<TexId>,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BarrierKind {
     ComputeSync,
     ComputeToGraphics,
 }
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum AssemblyProgram {
     Steps(Vec<AssemblyStep>),
     Deferred,
 }
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct AssemblyStep {
     pub(crate) dst_offset: u32,
     pub(crate) src: AssemblySrc,
 }
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum AssemblySrc {
     FrameBytes {
@@ -85,17 +96,19 @@ pub(crate) enum AssemblySrc {
     ResolveBuf(BufferRef),
     External(ImportId),
 }
+
 pub(crate) fn build_assembly(
-    s: &SchemaDesc,
+    schema: &SchemaDesc,
     data: Option<ValueId>,
     bindings: &[(FieldKey, ResourceRef)],
 ) -> AssemblyProgram {
-    let Some(layout) = &s.layout else {
+    let Some(layout) = &schema.layout else {
         return AssemblyProgram::Deferred;
     };
+
     let mut out = vec![];
-    for f in &layout.fields {
-        let src = match f.kind {
+    for field in &layout.fields {
+        let src = match field.kind {
             SchemaFieldKind::Data { src_offset } => {
                 let Some(value) = data else {
                     debug_assert!(false, "data field without data value");
@@ -104,167 +117,187 @@ pub(crate) fn build_assembly(
                 AssemblySrc::FrameBytes {
                     value,
                     src_offset,
-                    len: f.len,
+                    len: field.len,
                 }
             }
             SchemaFieldKind::SampledTex
             | SchemaFieldKind::StorageTex
             | SchemaFieldKind::BufAddr => {
-                let Some((_, r)) = bindings.iter().find(|(k, _)| *k == f.key) else {
+                let Some((_, resource)) = bindings.iter().find(|(key, _)| *key == field.key) else {
                     continue;
                 };
-                match r {
+                match resource {
                     ResourceRef::Tex(tex, access) => AssemblySrc::ResolveTex {
                         tex: *tex,
                         access: *access,
                     },
-                    ResourceRef::Buf(b, _) => AssemblySrc::ResolveBuf(b.clone()),
-                    ResourceRef::External(i) => AssemblySrc::External(*i),
+                    ResourceRef::Buf(buffer, _) => AssemblySrc::ResolveBuf(buffer.clone()),
+                    ResourceRef::External(import) => AssemblySrc::External(*import),
                 }
             }
         };
         out.push(AssemblyStep {
-            dst_offset: f.offset,
+            dst_offset: field.offset,
             src,
         })
     }
+
     AssemblyProgram::Steps(out)
 }
-fn access(d: &GraphDesc, l: &LeafPass) -> LeafAccess {
-    let mut a = LeafAccess::default();
-    let mut add = |r: &ResourceRef| {
-        if let ResourceRef::Tex(t, x) = r {
-            match x {
-                TexAccess::Read => &mut a.reads,
-                TexAccess::ReadPrevious => &mut a.prev_reads,
-                TexAccess::Write => &mut a.writes,
-                TexAccess::Mutate => &mut a.mutates,
+
+fn access(desc: &GraphDesc, pass: &LeafPass) -> LeafAccess {
+    let mut access = LeafAccess::default();
+    let mut add = |resource: &ResourceRef| {
+        if let ResourceRef::Tex(tex, tex_access) = resource {
+            match tex_access {
+                TexAccess::Read => &mut access.reads,
+                TexAccess::ReadPrevious => &mut access.prev_reads,
+                TexAccess::Write => &mut access.writes,
+                TexAccess::Mutate => &mut access.mutates,
             }
-            .push(*t)
+            .push(*tex)
         }
     };
-    match l {
-        LeafPass::Compute(c) => {
-            if let Some(u) = d.uniforms.get(c.uniform.0 as usize) {
-                for (_, r) in &u.source.bindings {
-                    add(r)
+    match pass {
+        LeafPass::Compute(compute) => {
+            if let Some(uniform) = desc.uniforms.get(compute.uniform.0 as usize) {
+                for (_, resource) in &uniform.source.bindings {
+                    add(resource)
                 }
             }
-            if let Some(p) = &c.push {
-                for (_, r) in &p.bindings {
-                    add(r)
+            if let Some(push) = &compute.push {
+                for (_, resource) in &push.bindings {
+                    add(resource)
                 }
             }
         }
-        LeafPass::Raster(r) => {
-            for x in &r.draws {
-                if let Some(u) = d.uniforms.get(x.uniform.0 as usize) {
-                    for (_, r) in &u.source.bindings {
-                        add(r)
+        LeafPass::Raster(raster) => {
+            for draw in &raster.draws {
+                if let Some(uniform) = desc.uniforms.get(draw.uniform.0 as usize) {
+                    for (_, resource) in &uniform.source.bindings {
+                        add(resource)
                     }
                 }
-                if let Some(p) = &x.push {
-                    for (_, r) in &p.bindings {
-                        add(r)
+                if let Some(push) = &draw.push {
+                    for (_, resource) in &push.bindings {
+                        add(resource)
                     }
                 }
             }
         }
     }
-    a
+
+    access
 }
-pub(crate) fn compile(d: &GraphDesc, a: &Analysis, s: &SchemaTable) -> CompiledGraph {
-    let mut assemblies = d
+
+pub(crate) fn compile(
+    desc: &GraphDesc,
+    analysis: &Analysis,
+    schemas: &SchemaTable,
+) -> CompiledGraph {
+    let mut assemblies = desc
         .uniforms
         .iter()
-        .map(|u| build_assembly(s.get(u.schema).unwrap(), u.source.data, &u.source.bindings))
+        .map(|uniform| {
+            build_assembly(
+                schemas.get(uniform.schema).unwrap(),
+                uniform.source.data,
+                &uniform.source.bindings,
+            )
+        })
         .collect::<Vec<_>>();
+
     fn leaf(
-        d: &GraphDesc,
-        s: &SchemaTable,
+        desc: &GraphDesc,
+        schemas: &SchemaTable,
         assemblies: &mut Vec<AssemblyProgram>,
-        l: &LeafPass,
+        pass: &LeafPass,
     ) -> CompiledLeaf {
-        let ac = access(d, l);
-        match l {
-            LeafPass::Compute(c) => {
-                let push_asm = c.push.as_ref().map(|p| {
+        let leaf_access = access(desc, pass);
+
+        match pass {
+            LeafPass::Compute(compute) => {
+                let push_asm = compute.push.as_ref().map(|push| {
                     let id = AsmId(assemblies.len() as u32);
                     assemblies.push(build_assembly(
-                        s.get(p.schema).unwrap(),
-                        p.data,
-                        &p.bindings,
+                        schemas.get(push.schema).unwrap(),
+                        push.data,
+                        &push.bindings,
                     ));
                     id
                 });
                 CompiledLeaf {
                     kind: CompiledLeafKind::Dispatch {
-                        pipeline: c.pipeline,
-                        groups: c.groups,
-                        uniform: c.uniform,
-                        asm: AsmId(c.uniform.0),
+                        pipeline: compute.pipeline,
+                        groups: compute.groups,
+                        uniform: compute.uniform,
+                        asm: AsmId(compute.uniform.0),
                         push_asm,
                     },
                     barrier_before: BarrierKind::ComputeSync,
-                    access: ac,
+                    access: leaf_access,
                 }
             }
-            LeafPass::Raster(r) => {
-                let draws = r
+            LeafPass::Raster(raster) => {
+                let draws = raster
                     .draws
                     .iter()
-                    .map(|x| {
-                        let push_asm = x.push.as_ref().map(|p| {
+                    .map(|draw| {
+                        let push_asm = draw.push.as_ref().map(|push| {
                             let id = AsmId(assemblies.len() as u32);
                             assemblies.push(build_assembly(
-                                s.get(p.schema).unwrap(),
-                                p.data,
-                                &p.bindings,
+                                schemas.get(push.schema).unwrap(),
+                                push.data,
+                                &push.bindings,
                             ));
                             id
                         });
                         CompiledDraw {
-                            pipeline: x.pipeline,
-                            uniform: x.uniform,
-                            asm: AsmId(x.uniform.0),
+                            pipeline: draw.pipeline,
+                            uniform: draw.uniform,
+                            asm: AsmId(draw.uniform.0),
                             push_asm,
-                            call: x.call.clone(),
+                            call: draw.call.clone(),
                         }
                     })
                     .collect();
                 CompiledLeaf {
                     kind: CompiledLeafKind::Raster { draws },
                     barrier_before: BarrierKind::ComputeToGraphics,
-                    access: ac,
+                    access: leaf_access,
                 }
             }
         }
     }
-    let passes = d
+
+    let passes = desc
         .passes
         .iter()
-        .map(|p| match p {
-            PassDesc::Leaf(l) => CompiledPass::Leaf(leaf(d, s, &mut assemblies, l)),
+        .map(|pass| match pass {
+            PassDesc::Leaf(body_leaf) => {
+                CompiledPass::Leaf(leaf(desc, schemas, &mut assemblies, body_leaf))
+            }
             PassDesc::Repeat { count, body, .. } => CompiledPass::Repeat {
                 count: *count,
                 body: body
                     .iter()
-                    .map(|x| leaf(d, s, &mut assemblies, x))
+                    .map(|body_leaf| leaf(desc, schemas, &mut assemblies, body_leaf))
                     .collect(),
             },
             PassDesc::When { value, body, .. } => CompiledPass::When {
                 gate: *value,
                 body: body
                     .iter()
-                    .map(|x| leaf(d, s, &mut assemblies, x))
+                    .map(|body_leaf| leaf(desc, schemas, &mut assemblies, body_leaf))
                     .collect(),
             },
         })
         .collect();
+
     CompiledGraph {
         passes,
         assemblies,
-        tex_phys: a.tex_phys.clone(),
-        value_count: d.values.len() as u32,
+        tex_phys: analysis.tex_phys.clone(),
+        value_count: desc.values.len() as u32,
     }
 }

@@ -59,10 +59,14 @@ impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            tex: r.sampled_tex(bindings.tex),
-            mask: r.sampled_tex(bindings.mask),
+            tex: resolver.sampled_tex(bindings.tex),
+            mask: resolver.sampled_tex(bindings.mask),
             grid_size: data.grid_size,
             _padding_0: Default::default(),
         }

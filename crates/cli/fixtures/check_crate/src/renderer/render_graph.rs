@@ -118,5 +118,9 @@ pub trait GraphShaderParams: Sized {
     type Data;
     type Bindings: GraphBindingSet;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self;
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self;
 }

@@ -56,11 +56,15 @@ impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            u_in: r.sampled_tex(bindings.u_in),
-            v_in: r.sampled_tex(bindings.v_in),
-            divergence: r.storage_tex(bindings.divergence),
+            u_in: resolver.sampled_tex(bindings.u_in),
+            v_in: resolver.sampled_tex(bindings.v_in),
+            divergence: resolver.storage_tex(bindings.divergence),
             grid_size: data.grid_size,
         }
     }

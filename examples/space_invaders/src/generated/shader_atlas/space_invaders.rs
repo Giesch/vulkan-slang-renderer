@@ -116,12 +116,16 @@ impl GraphShaderParams for SpaceInvadersParams {
     type Data = SpaceInvadersParamsData;
     type Bindings = SpaceInvadersParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
             projection: data.projection,
-            sprites: r.read_buf(bindings.sprites),
-            debug_boxes: r.read_buf(bindings.debug_boxes),
-            sprite_sheet: r.sampled_tex(bindings.sprite_sheet),
+            sprites: resolver.read_buf(bindings.sprites),
+            debug_boxes: resolver.read_buf(bindings.debug_boxes),
+            sprite_sheet: resolver.sampled_tex(bindings.sprite_sheet),
             _padding_0: Default::default(),
         }
     }

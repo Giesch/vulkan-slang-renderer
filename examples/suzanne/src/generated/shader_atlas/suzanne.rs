@@ -75,14 +75,18 @@ impl GraphShaderParams for SuzanneParams {
     type Data = SuzanneParamsData;
     type Bindings = SuzanneParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
             mvp: data.mvp,
             time: data.time,
             _padding_0: Default::default(),
-            texture0: r.sampled_tex(bindings.texture0),
-            texture1: r.sampled_tex(bindings.texture1),
-            texture2: r.sampled_tex(bindings.texture2),
+            texture0: resolver.sampled_tex(bindings.texture0),
+            texture1: resolver.sampled_tex(bindings.texture1),
+            texture2: resolver.sampled_tex(bindings.texture2),
         }
     }
 }

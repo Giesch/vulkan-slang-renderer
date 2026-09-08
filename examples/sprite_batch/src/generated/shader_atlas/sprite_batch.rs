@@ -93,12 +93,16 @@ impl GraphShaderParams for SpriteBatchParams {
     type Data = SpriteBatchParamsData;
     type Bindings = SpriteBatchParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            sprites: r.immutable_buf(bindings.sprites),
+            sprites: resolver.immutable_buf(bindings.sprites),
             _padding_0: Default::default(),
             projection: data.projection,
-            texture: r.sampled_tex(bindings.texture),
+            texture: resolver.sampled_tex(bindings.texture),
             _padding_1: Default::default(),
         }
     }

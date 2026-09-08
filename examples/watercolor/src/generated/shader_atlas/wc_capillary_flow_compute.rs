@@ -77,12 +77,16 @@ impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            saturation_in: r.sampled_tex(bindings.saturation_in),
-            wet_mask_in: r.sampled_tex(bindings.wet_mask_in),
-            saturation_out: r.storage_tex(bindings.saturation_out),
-            wet_mask_out: r.storage_tex(bindings.wet_mask_out),
+            saturation_in: resolver.sampled_tex(bindings.saturation_in),
+            wet_mask_in: resolver.sampled_tex(bindings.wet_mask_in),
+            saturation_out: resolver.storage_tex(bindings.saturation_out),
+            wet_mask_out: resolver.storage_tex(bindings.wet_mask_out),
             grid_size: data.grid_size,
             diffuse_rate: data.diffuse_rate,
             capacity: data.capacity,

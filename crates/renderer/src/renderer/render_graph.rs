@@ -509,12 +509,14 @@ fn collect_access<B: GraphBindingSet>(bindings: &B) -> NodeAccess {
         // external textures and buffers take no part in version tracking
         GraphBinding::SampledTex(_) | GraphBinding::StorageTex(_) | GraphBinding::Buffer(_) => {}
     });
+
     access
 }
 
 fn collect_bindings<B: GraphBindingSet>(bindings: &B) -> Vec<GraphBinding> {
     let mut out = vec![];
     bindings.visit(&mut |binding| out.push(binding));
+
     out
 }
 
@@ -586,6 +588,7 @@ impl BindingResolver<'_> {
                 self.singleton_buffers.device_address_by_index(raw.index)
             }
         };
+
         base + raw.byte_offset
     }
 }
@@ -597,7 +600,11 @@ pub trait GraphShaderParams: Sized {
     type Data;
     type Bindings: GraphBindingSet;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self;
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self;
 }
 
 /// A repeat node's per-frame iteration count. A newtype, not a bare `u32`,
@@ -660,6 +667,7 @@ impl<S: GraphShaderParams + GPUWrite> GraphNode for ComputeNode<S> {
         cx.dispatches
             .push((self.pipeline_index, self.group_count, None));
         cx.apply_writes(&collect_access(&self.bindings));
+
         Ok(())
     }
 }
@@ -733,6 +741,7 @@ where
         ));
         cx.apply_writes(&collect_access(&self.bindings));
         cx.apply_writes(&collect_access(&self.push_bindings));
+
         Ok(())
     }
 }
@@ -747,7 +756,7 @@ pub struct GraphPushPayload {
 /// per-draw payload resolved at plan time.
 pub trait GraphPush {
     fn access(&self) -> NodeAccess;
-    fn payload(&self, r: &BindingResolver<'_>) -> GraphPushPayload;
+    fn payload(&self, resolver: &BindingResolver<'_>) -> GraphPushPayload;
     fn lower_input(&self) -> Option<PushInput>;
 }
 
@@ -756,9 +765,10 @@ impl GraphPush for () {
         NodeAccess::default()
     }
 
-    fn payload(&self, _r: &BindingResolver<'_>) -> GraphPushPayload {
+    fn payload(&self, _resolver: &BindingResolver<'_>) -> GraphPushPayload {
         GraphPushPayload { bytes: None }
     }
+
     fn lower_input(&self) -> Option<PushInput> {
         None
     }
@@ -782,12 +792,13 @@ impl<B: GraphShaderParams + PushConstantBlock> GraphPush for PushValues<B> {
         collect_access(&self.bindings)
     }
 
-    fn payload(&self, r: &BindingResolver<'_>) -> GraphPushPayload {
-        let value = B::assemble(&self.data, &self.bindings, r);
+    fn payload(&self, resolver: &BindingResolver<'_>) -> GraphPushPayload {
+        let value = B::assemble(&self.data, &self.bindings, resolver);
         GraphPushPayload {
             bytes: Some(PushConstantBytes::from_value(&value)),
         }
     }
+
     fn lower_input(&self) -> Option<PushInput> {
         Some(PushInput {
             size: std::mem::size_of::<B>() as u32,
@@ -1088,6 +1099,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for DrawNode<S, P>
             draw_call,
             push_constants,
         });
+
         Ok(())
     }
 }
@@ -1132,6 +1144,7 @@ impl<C: PickingCursor> GraphNode for PickingNode<C> {
                 (position[1] * render_scale) as u32,
             ],
         });
+
         Ok(())
     }
 }
@@ -1160,6 +1173,7 @@ impl<T: GPUWrite> GraphNode for UploadNode<T> {
 
     fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
         cx.stage_storage(self.slot, frame_data);
+
         Ok(())
     }
 }
@@ -1187,6 +1201,7 @@ impl<B: GraphNode> GraphNode for RepeatNode<B> {
         for _ in 0..frame_data.0.0 {
             self.body.plan(&frame_data.1, cx)?;
         }
+
         Ok(())
     }
 }
@@ -1229,6 +1244,7 @@ macro_rules! impl_graph_node_for_tuple {
 
             fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
                 $(self.$f.plan(&frame_data.$f, cx)?;)+
+
                 Ok(())
             }
         }
@@ -1346,6 +1362,7 @@ impl StagedWrites {
             std::ptr::copy_nonoverlapping(src, self.bytes.as_mut_ptr().add(start), len);
             self.bytes.set_len(start + len);
         }
+
         start..start + len
     }
 
@@ -1559,6 +1576,7 @@ impl<N: GraphNode> RenderGraph<N> {
             frame.queue_dispatch_raw(pipeline_index, group_count, push_constants);
         }
         frame.pending_draws.extend(draws);
+
         frame.draw_frame(picking, |gpu| staged.apply(gpu))
     }
 }

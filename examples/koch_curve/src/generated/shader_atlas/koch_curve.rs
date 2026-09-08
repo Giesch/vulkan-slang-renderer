@@ -79,7 +79,11 @@ impl GraphShaderParams for KochCurveParams {
     type Data = KochCurveParamsData;
     type Bindings = KochCurveParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
             resolution: data.resolution,
             mouse: data.mouse,
@@ -89,7 +93,7 @@ impl GraphShaderParams for KochCurveParams {
             sphere_radius: data.sphere_radius,
             sphere_blend: data.sphere_blend,
             rotation_speed: data.rotation_speed,
-            reflection_map: r.sampled_tex(bindings.reflection_map),
+            reflection_map: resolver.sampled_tex(bindings.reflection_map),
         }
     }
 }

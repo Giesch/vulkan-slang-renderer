@@ -1521,7 +1521,7 @@ fn graph_split_def(
                 visit_line,
             } => {
                 assemble_lines.push(format!(
-                    "            {name}: r.{resolver_method}(bindings.{name}),"
+                    "            {name}: resolver.{resolver_method}(bindings.{name}),"
                 ));
                 visit_lines.push(format!("        {visit_line}"));
                 binding_fields.push((field, binding_type));
@@ -1537,11 +1537,11 @@ fn graph_split_def(
         lines.push("    type Data = Self;".to_string());
         lines.push("    type Bindings = ();".to_string());
         lines.push(String::new());
-        lines.push(
-            "    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: \
-             &BindingResolver<'_>) -> Self {"
-                .to_string(),
-        );
+        lines.push("    fn assemble(".to_string());
+        lines.push("        data: &Self::Data,".to_string());
+        lines.push("        _bindings: &Self::Bindings,".to_string());
+        lines.push("        _resolver: &BindingResolver<'_>,".to_string());
+        lines.push("    ) -> Self {".to_string());
         lines.push("        *data".to_string());
         lines.push("    }".to_string());
         lines.push("}".to_string());
@@ -1583,10 +1583,11 @@ fn graph_split_def(
     lines.push(format!("    type Data = {data_assoc};"));
     lines.push(format!("    type Bindings = {bindings_type};"));
     lines.push(String::new());
-    lines.push(format!(
-        "    fn assemble({data_param}: &Self::Data, bindings: &Self::Bindings, r: \
-         &BindingResolver<'_>) -> Self {{"
-    ));
+    lines.push("    fn assemble(".to_string());
+    lines.push(format!("        {data_param}: &Self::Data,"));
+    lines.push("        bindings: &Self::Bindings,".to_string());
+    lines.push("        resolver: &BindingResolver<'_>,".to_string());
+    lines.push("    ) -> Self {".to_string());
     lines.push("        Self {".to_string());
     lines.extend(assemble_lines);
     lines.push("        }".to_string());

@@ -180,13 +180,17 @@ impl GraphShaderParams for DisplayParams {
     type Data = DisplayParamsData;
     type Bindings = DisplayParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            deposit_0_3: r.sampled_tex(bindings.deposit_0_3),
-            deposit_4_7: r.sampled_tex(bindings.deposit_4_7),
-            deposit_8_11: r.sampled_tex(bindings.deposit_8_11),
-            paper_height: r.sampled_tex(bindings.paper_height),
-            wet_mask: r.sampled_tex(bindings.wet_mask),
+            deposit_0_3: resolver.sampled_tex(bindings.deposit_0_3),
+            deposit_4_7: resolver.sampled_tex(bindings.deposit_4_7),
+            deposit_8_11: resolver.sampled_tex(bindings.deposit_8_11),
+            paper_height: resolver.sampled_tex(bindings.paper_height),
+            wet_mask: resolver.sampled_tex(bindings.wet_mask),
             texel_size: data.texel_size,
             debug_view: data.debug_view,
             canvas_aspect: data.canvas_aspect,

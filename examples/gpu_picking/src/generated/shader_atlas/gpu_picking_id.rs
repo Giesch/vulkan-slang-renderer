@@ -58,12 +58,16 @@ impl GraphShaderParams for GpuPickingIdParams {
     type Data = GpuPickingIdParamsData;
     type Bindings = GpuPickingIdParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
             camera: data.camera,
             cube_count: data.cube_count,
             _padding_0: Default::default(),
-            cubes: r.read_buf(bindings.cubes),
+            cubes: resolver.read_buf(bindings.cubes),
         }
     }
 }

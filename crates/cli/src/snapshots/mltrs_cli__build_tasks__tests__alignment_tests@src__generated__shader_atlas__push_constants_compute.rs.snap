@@ -93,12 +93,16 @@ impl GraphShaderParams for DispatchConstants {
     type Data = DispatchConstantsData;
     type Bindings = DispatchConstantsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
             scale: data.scale,
             _padding_0: Default::default(),
-            tex: r.sampled_tex(bindings.tex),
-            target: r.storage_tex(bindings.target),
+            tex: resolver.sampled_tex(bindings.tex),
+            target: resolver.storage_tex(bindings.target),
             inner: data.inner,
             tail: data.tail,
             _padding_1: Default::default(),
@@ -118,7 +122,11 @@ impl GraphShaderParams for Params {
     type Data = Self;
     type Bindings = ();
 
-    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        _bindings: &Self::Bindings,
+        _resolver: &BindingResolver<'_>,
+    ) -> Self {
         *data
     }
 }

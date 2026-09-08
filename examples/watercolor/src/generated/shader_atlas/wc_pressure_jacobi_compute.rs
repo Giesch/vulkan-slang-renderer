@@ -58,10 +58,14 @@ impl GraphShaderParams for JacobiDispatch {
     type Data = ();
     type Bindings = JacobiDispatchBindings;
 
-    fn assemble(_data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        _data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            pressure_in: r.sampled_tex(bindings.pressure_in),
-            pressure_out: r.storage_tex(bindings.pressure_out),
+            pressure_in: resolver.sampled_tex(bindings.pressure_in),
+            pressure_out: resolver.storage_tex(bindings.pressure_out),
         }
     }
 }
@@ -87,9 +91,13 @@ impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            divergence: r.sampled_tex(bindings.divergence),
+            divergence: resolver.sampled_tex(bindings.divergence),
             grid_size: data.grid_size,
         }
     }

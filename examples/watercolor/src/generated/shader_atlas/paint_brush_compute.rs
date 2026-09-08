@@ -111,14 +111,18 @@ impl GraphShaderParams for BrushParams {
     type Data = BrushParamsData;
     type Bindings = BrushParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            wet_mask: r.storage_tex(bindings.wet_mask),
-            pressure: r.storage_tex(bindings.pressure),
-            pigment_0_3: r.storage_tex(bindings.pigment_0_3),
-            pigment_4_7: r.storage_tex(bindings.pigment_4_7),
-            pigment_8_11: r.storage_tex(bindings.pigment_8_11),
-            saturation: r.storage_tex(bindings.saturation),
+            wet_mask: resolver.storage_tex(bindings.wet_mask),
+            pressure: resolver.storage_tex(bindings.pressure),
+            pigment_0_3: resolver.storage_tex(bindings.pigment_0_3),
+            pigment_4_7: resolver.storage_tex(bindings.pigment_4_7),
+            pigment_8_11: resolver.storage_tex(bindings.pigment_8_11),
+            saturation: resolver.storage_tex(bindings.saturation),
             point_count: data.point_count,
             brush_radius: data.brush_radius,
             brush_opacity: data.brush_opacity,
@@ -127,7 +131,7 @@ impl GraphShaderParams for BrushParams {
             pigment_color_4_7: data.pigment_color_4_7,
             pigment_color_8_11: data.pigment_color_8_11,
             canvas_size: data.canvas_size,
-            stroke_points: r.read_buf(bindings.stroke_points),
+            stroke_points: resolver.read_buf(bindings.stroke_points),
         }
     }
 }

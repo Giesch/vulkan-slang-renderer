@@ -77,11 +77,15 @@ impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            data: r.buf(bindings.data),
-            src: r.read_buf(bindings.src),
-            lut: r.immutable_buf(bindings.lut),
+            data: resolver.buf(bindings.data),
+            src: resolver.read_buf(bindings.src),
+            lut: resolver.immutable_buf(bindings.lut),
             count: data.count,
             _padding_0: Default::default(),
         }

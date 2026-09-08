@@ -18,9 +18,7 @@ impl<T> StorageBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
-}
 
-impl<T> StorageBufferHandle<T> {
     pub(super) fn index(&self) -> usize {
         self.index
     }
@@ -106,9 +104,7 @@ impl<T> GpuOnlyBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
-}
 
-impl<T> GpuOnlyBufferHandle<T> {
     pub(super) fn index(&self) -> usize {
         self.index
     }

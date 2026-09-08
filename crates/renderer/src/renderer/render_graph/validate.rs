@@ -13,6 +13,7 @@ pub(crate) enum TableKind {
     Pipeline,
     Schema,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnsupportedFeature {
     WindowSizeClass,
@@ -23,6 +24,7 @@ pub(crate) enum UnsupportedFeature {
     RasterInWhen,
     GroupSourceValue,
 }
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum GraphError {
     IdOutOfRange {
@@ -112,6 +114,7 @@ pub(crate) enum GraphError {
         offset: u64,
     },
 }
+
 impl fmt::Display for GraphError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "render graph: ")?;
@@ -201,6 +204,7 @@ impl fmt::Display for GraphError {
         }
     }
 }
+
 impl std::error::Error for GraphError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,88 +212,103 @@ pub(crate) struct Analysis {
     pub(crate) tex_phys: Vec<u32>,
 }
 
-fn kind(v: &ValueKind) -> &'static str {
-    match v {
+fn kind(value: &ValueKind) -> &'static str {
+    match value {
         ValueKind::Count => "count",
         ValueKind::Groups => "groups",
         ValueKind::Bytes { .. } => "bytes",
         ValueKind::Array { .. } => "array",
     }
 }
-fn refs<'a>(d: &'a GraphDesc, leaf: &'a LeafPass) -> Vec<(&'a str, &'a [(FieldKey, ResourceRef)])> {
+
+fn refs<'a>(
+    desc: &'a GraphDesc,
+    leaf: &'a LeafPass,
+) -> Vec<(&'a str, &'a [(FieldKey, ResourceRef)])> {
     match leaf {
-        LeafPass::Compute(c) => {
-            let mut x = vec![];
-            if let Some(u) = d.uniforms.get(c.uniform.0 as usize) {
-                x.push((u.name.as_str(), u.source.bindings.as_slice()));
+        LeafPass::Compute(compute) => {
+            let mut out = vec![];
+            if let Some(uniform) = desc.uniforms.get(compute.uniform.0 as usize) {
+                out.push((uniform.name.as_str(), uniform.source.bindings.as_slice()));
             }
-            if let Some(p) = &c.push {
-                x.push((c.name.as_str(), p.bindings.as_slice()));
+            if let Some(push) = &compute.push {
+                out.push((compute.name.as_str(), push.bindings.as_slice()));
             }
-            x
+
+            out
         }
-        LeafPass::Raster(r) => r
+        LeafPass::Raster(raster) => raster
             .draws
             .iter()
-            .flat_map(|c| {
-                let mut x = vec![];
-                if let Some(u) = d.uniforms.get(c.uniform.0 as usize) {
-                    x.push((u.name.as_str(), u.source.bindings.as_slice()));
+            .flat_map(|draw| {
+                let mut out = vec![];
+                if let Some(uniform) = desc.uniforms.get(draw.uniform.0 as usize) {
+                    out.push((uniform.name.as_str(), uniform.source.bindings.as_slice()));
                 }
-                if let Some(p) = &c.push {
-                    x.push((c.name.as_str(), p.bindings.as_slice()));
+                if let Some(push) = &draw.push {
+                    out.push((draw.name.as_str(), push.bindings.as_slice()));
                 }
-                x
+
+                out
             })
             .collect(),
     }
 }
-fn all_leaves(d: &GraphDesc) -> Vec<(&str, &LeafPass)> {
-    let mut v = vec![];
-    for p in &d.passes {
-        match p {
-            PassDesc::Leaf(l) => v.push(("", l)),
+
+fn all_leaves(desc: &GraphDesc) -> Vec<(&str, &LeafPass)> {
+    let mut leaves = vec![];
+    for pass in &desc.passes {
+        match pass {
+            PassDesc::Leaf(leaf) => leaves.push(("", leaf)),
             PassDesc::When { name, body, .. } | PassDesc::Repeat { name, body, .. } => {
-                for l in body {
-                    v.push((name, l))
+                for leaf in body {
+                    leaves.push((name, leaf))
                 }
             }
         }
     }
-    v
+
+    leaves
 }
+
 fn check_shape(
     name: &str,
     schema: SchemaId,
     bindings: &[(FieldKey, ResourceRef)],
     schemas: &SchemaTable,
-    e: &mut Vec<GraphError>,
+    errors: &mut Vec<GraphError>,
 ) {
-    let Some(s) = schemas.get(schema) else { return };
-    if bindings.len() != s.resource_fields.len() {
-        e.push(GraphError::BindingCountMismatch {
+    let Some(schema_desc) = schemas.get(schema) else {
+        return;
+    };
+
+    if bindings.len() != schema_desc.resource_fields.len() {
+        errors.push(GraphError::BindingCountMismatch {
             uniform: name.into(),
-            expected: s.resource_fields.len(),
+            expected: schema_desc.resource_fields.len(),
             found: bindings.len(),
         });
     }
-    for (i, (key, r)) in bindings.iter().enumerate() {
+    for (i, (key, resource)) in bindings.iter().enumerate() {
         let ok = key.0 as usize == i
-            && s.resource_fields.get(i).is_some_and(|k| {
-                matches!(
-                    (k, r),
-                    (
-                        ResourceFieldKind::SampledTex,
-                        ResourceRef::Tex(_, TexAccess::Read | TexAccess::ReadPrevious)
-                            | ResourceRef::External(_)
-                    ) | (
-                        ResourceFieldKind::StorageTex,
-                        ResourceRef::Tex(_, TexAccess::Write | TexAccess::Mutate)
-                    ) | (ResourceFieldKind::BufAddr, ResourceRef::Buf(_, _))
-                )
-            });
+            && schema_desc
+                .resource_fields
+                .get(i)
+                .is_some_and(|field_kind| {
+                    matches!(
+                        (field_kind, resource),
+                        (
+                            ResourceFieldKind::SampledTex,
+                            ResourceRef::Tex(_, TexAccess::Read | TexAccess::ReadPrevious)
+                                | ResourceRef::External(_)
+                        ) | (
+                            ResourceFieldKind::StorageTex,
+                            ResourceRef::Tex(_, TexAccess::Write | TexAccess::Mutate)
+                        ) | (ResourceFieldKind::BufAddr, ResourceRef::Buf(_, _))
+                    )
+                });
         if !ok {
-            e.push(GraphError::BindingKindMismatch {
+            errors.push(GraphError::BindingKindMismatch {
                 uniform: name.into(),
                 field: key.0,
             });
@@ -297,346 +316,428 @@ fn check_shape(
     }
 }
 
-pub(crate) fn validate(d: &GraphDesc, schemas: &SchemaTable) -> Result<Analysis, Vec<GraphError>> {
-    let mut e = vec![];
-    let valid = |id: u32, n: usize, t: TableKind, e: &mut Vec<GraphError>| {
-        if id as usize >= n {
-            e.push(GraphError::IdOutOfRange { table: t, id });
+pub(crate) fn validate(
+    desc: &GraphDesc,
+    schemas: &SchemaTable,
+) -> Result<Analysis, Vec<GraphError>> {
+    let mut errors = vec![];
+    let valid = |id: u32, len: usize, table: TableKind, errors: &mut Vec<GraphError>| {
+        if id as usize >= len {
+            errors.push(GraphError::IdOutOfRange { table, id });
+
             false
         } else {
             true
         }
     };
-    for t in &d.textures {
-        match t.size {
+    for tex in &desc.textures {
+        match tex.size {
             SizeClass::Window | SizeClass::WindowDiv(_) => {
-                e.push(GraphError::UnsupportedInPhase1 {
+                errors.push(GraphError::UnsupportedInPhase1 {
                     feature: UnsupportedFeature::WindowSizeClass,
-                    at: t.name.clone(),
+                    at: tex.name.clone(),
                 })
             }
             _ => {}
         };
-        match t.usage {
-            TexUsage::Color => e.push(GraphError::UnsupportedInPhase1 {
+        match tex.usage {
+            TexUsage::Color => errors.push(GraphError::UnsupportedInPhase1 {
                 feature: UnsupportedFeature::ColorAttachmentUsage,
-                at: t.name.clone(),
+                at: tex.name.clone(),
             }),
-            TexUsage::Depth => e.push(GraphError::UnsupportedInPhase1 {
+            TexUsage::Depth => errors.push(GraphError::UnsupportedInPhase1 {
                 feature: UnsupportedFeature::DepthAttachmentUsage,
-                at: t.name.clone(),
+                at: tex.name.clone(),
             }),
             _ => {}
         }
     }
-    for value in &d.values {
+    for value in &desc.values {
         let schema = match value.kind {
             ValueKind::Bytes { schema } => Some(schema),
             ValueKind::Array { elem, .. } => Some(elem),
             ValueKind::Count | ValueKind::Groups => None,
         };
         if let Some(schema) = schema {
-            valid(schema.0, schemas.schemas.len(), TableKind::Schema, &mut e);
+            valid(
+                schema.0,
+                schemas.schemas.len(),
+                TableKind::Schema,
+                &mut errors,
+            );
         }
     }
-    for pipeline in &d.pipelines {
+    for pipeline in &desc.pipelines {
         valid(
             pipeline.params.0,
             schemas.schemas.len(),
             TableKind::Schema,
-            &mut e,
+            &mut errors,
         );
         if let Some(push) = pipeline.push {
-            valid(push.0, schemas.schemas.len(), TableKind::Schema, &mut e);
+            valid(
+                push.0,
+                schemas.schemas.len(),
+                TableKind::Schema,
+                &mut errors,
+            );
         }
     }
-    for u in &d.uniforms {
-        valid(u.schema.0, schemas.schemas.len(), TableKind::Schema, &mut e);
-        if let Some(v) = u.source.data
-            && valid(v.0, d.values.len(), TableKind::Value, &mut e)
-            && !matches!(d.values[v.0 as usize].kind, ValueKind::Bytes { .. })
+    for uniform in &desc.uniforms {
+        valid(
+            uniform.schema.0,
+            schemas.schemas.len(),
+            TableKind::Schema,
+            &mut errors,
+        );
+        if let Some(value) = uniform.source.data
+            && valid(value.0, desc.values.len(), TableKind::Value, &mut errors)
+            && !matches!(desc.values[value.0 as usize].kind, ValueKind::Bytes { .. })
         {
-            e.push(GraphError::ValueKindMismatch {
-                value: d.values[v.0 as usize].name.clone(),
+            errors.push(GraphError::ValueKindMismatch {
+                value: desc.values[value.0 as usize].name.clone(),
                 expected: "bytes",
-                found: kind(&d.values[v.0 as usize].kind),
+                found: kind(&desc.values[value.0 as usize].kind),
             })
         }
-        check_shape(&u.name, u.schema, &u.source.bindings, schemas, &mut e);
+        check_shape(
+            &uniform.name,
+            uniform.schema,
+            &uniform.source.bindings,
+            schemas,
+            &mut errors,
+        );
     }
-    for up in &d.uploads {
-        let bv = valid(up.buffer.0, d.buffers.len(), TableKind::Buffer, &mut e);
-        let vv = valid(up.value.0, d.values.len(), TableKind::Value, &mut e);
-        if bv && vv {
-            let b = &d.buffers[up.buffer.0 as usize];
-            let v = &d.values[up.value.0 as usize];
-            if !matches!(b.kind, BufferKind::Storage | BufferKind::Immutable) {
-                e.push(GraphError::UploadTargetKind {
-                    upload: up.name.clone(),
-                    kind: match b.kind {
+    for upload in &desc.uploads {
+        let buffer_valid = valid(
+            upload.buffer.0,
+            desc.buffers.len(),
+            TableKind::Buffer,
+            &mut errors,
+        );
+        let value_valid = valid(
+            upload.value.0,
+            desc.values.len(),
+            TableKind::Value,
+            &mut errors,
+        );
+        if buffer_valid && value_valid {
+            let buffer = &desc.buffers[upload.buffer.0 as usize];
+            let value = &desc.values[upload.value.0 as usize];
+            if !matches!(buffer.kind, BufferKind::Storage | BufferKind::Immutable) {
+                errors.push(GraphError::UploadTargetKind {
+                    upload: upload.name.clone(),
+                    kind: match buffer.kind {
                         BufferKind::GpuOnlyFlight => "gpu-only",
                         BufferKind::Singleton => "singleton",
                         _ => "buffer",
                     },
                 })
             }
-            if let ValueKind::Array { max_len, .. } = v.kind {
-                if let Some(cap) = b.capacity
+            if let ValueKind::Array { max_len, .. } = value.kind {
+                if let Some(cap) = buffer.capacity
                     && max_len > cap
                 {
-                    e.push(GraphError::UploadTooLarge {
-                        upload: up.name.clone(),
+                    errors.push(GraphError::UploadTooLarge {
+                        upload: upload.name.clone(),
                         max_len,
                         capacity: cap,
                     })
                 }
             } else {
-                e.push(GraphError::ValueKindMismatch {
-                    value: v.name.clone(),
+                errors.push(GraphError::ValueKindMismatch {
+                    value: value.name.clone(),
                     expected: "array",
-                    found: kind(&v.kind),
+                    found: kind(&value.kind),
                 })
             }
         }
     }
     let mut raster_seen = false;
-    for p in &d.passes {
-        let pname = match p {
-            PassDesc::Leaf(LeafPass::Compute(c)) => &c.name,
-            PassDesc::Leaf(LeafPass::Raster(r)) => &r.name,
+    for pass in &desc.passes {
+        let pass_name = match pass {
+            PassDesc::Leaf(LeafPass::Compute(compute)) => &compute.name,
+            PassDesc::Leaf(LeafPass::Raster(raster)) => &raster.name,
             PassDesc::When { name, .. } | PassDesc::Repeat { name, .. } => name,
         };
         if raster_seen {
-            e.push(GraphError::PassAfterMainRaster {
-                pass: pname.clone(),
+            errors.push(GraphError::PassAfterMainRaster {
+                pass: pass_name.clone(),
             });
         }
-        match p {
+        match pass {
             PassDesc::When { name, value, body } => {
-                if valid(value.0, d.values.len(), TableKind::Value, &mut e)
-                    && !d.values[value.0 as usize].optional
+                if valid(value.0, desc.values.len(), TableKind::Value, &mut errors)
+                    && !desc.values[value.0 as usize].optional
                 {
-                    e.push(GraphError::WhenGateNotOptional { when: name.clone() })
+                    errors.push(GraphError::WhenGateNotOptional { when: name.clone() })
                 }
-                if body.iter().any(|x| matches!(x, LeafPass::Raster(_))) {
-                    e.push(GraphError::UnsupportedInPhase1 {
+                if body.iter().any(|leaf| matches!(leaf, LeafPass::Raster(_))) {
+                    errors.push(GraphError::UnsupportedInPhase1 {
                         feature: UnsupportedFeature::RasterInWhen,
                         at: name.clone(),
                     })
                 }
             }
             PassDesc::Repeat { name, count, body } => {
-                if valid(count.0, d.values.len(), TableKind::Value, &mut e)
-                    && !matches!(d.values[count.0 as usize].kind, ValueKind::Count)
+                if valid(count.0, desc.values.len(), TableKind::Value, &mut errors)
+                    && !matches!(desc.values[count.0 as usize].kind, ValueKind::Count)
                 {
-                    let v = &d.values[count.0 as usize];
-                    e.push(GraphError::ValueKindMismatch {
-                        value: v.name.clone(),
+                    let value = &desc.values[count.0 as usize];
+                    errors.push(GraphError::ValueKindMismatch {
+                        value: value.name.clone(),
                         expected: "count",
-                        found: kind(&v.kind),
+                        found: kind(&value.kind),
                     })
                 }
-                if body.iter().any(|x| matches!(x, LeafPass::Raster(_))) {
-                    e.push(GraphError::RasterInRepeat {
+                if body.iter().any(|leaf| matches!(leaf, LeafPass::Raster(_))) {
+                    errors.push(GraphError::RasterInRepeat {
                         repeat: name.clone(),
                     })
                 }
                 let rotating: Vec<_> = body
                     .iter()
-                    .flat_map(|l| refs(d, l))
-                    .flat_map(|(_, r)| r)
-                    .filter_map(|(_, r)| match r {
-                        ResourceRef::Tex(t, TexAccess::Write) => Some(*t),
+                    .flat_map(|leaf| refs(desc, leaf))
+                    .flat_map(|(_, resource)| resource)
+                    .filter_map(|(_, resource)| match resource {
+                        ResourceRef::Tex(tex, TexAccess::Write) => Some(*tex),
                         _ => None,
                     })
                     .collect();
-                for l in body {
-                    if let LeafPass::Compute(c) = l
-                        && let Some(u) = d.uniforms.get(c.uniform.0 as usize)
+                for leaf in body {
+                    if let LeafPass::Compute(compute) = leaf
+                        && let Some(uniform) = desc.uniforms.get(compute.uniform.0 as usize)
                     {
-                        for (_, r) in &u.source.bindings {
-                            if let ResourceRef::Tex(t, _) = r
-                                && rotating.contains(t)
+                        for (_, resource) in &uniform.source.bindings {
+                            if let ResourceRef::Tex(tex, _) = resource
+                                && rotating.contains(tex)
                             {
-                                e.push(GraphError::RepeatUniformRotatesTexture {
+                                errors.push(GraphError::RepeatUniformRotatesTexture {
                                     repeat: name.clone(),
-                                    uniform: u.name.clone(),
-                                    tex: t.0,
+                                    uniform: uniform.name.clone(),
+                                    tex: tex.0,
                                 })
                             }
                         }
                     }
                 }
             }
-            PassDesc::Leaf(LeafPass::Raster(r)) => {
+            PassDesc::Leaf(LeafPass::Raster(raster)) => {
                 if raster_seen {
-                    e.push(GraphError::UnsupportedInPhase1 {
+                    errors.push(GraphError::UnsupportedInPhase1 {
                         feature: UnsupportedFeature::MultipleRasterPasses,
-                        at: r.name.clone(),
+                        at: raster.name.clone(),
                     })
                 }
                 raster_seen = true;
-                if matches!(r.targets, RasterTargets::Offscreen { .. }) {
-                    e.push(GraphError::UnsupportedInPhase1 {
+                if matches!(raster.targets, RasterTargets::Offscreen { .. }) {
+                    errors.push(GraphError::UnsupportedInPhase1 {
                         feature: UnsupportedFeature::OffscreenTargets,
-                        at: r.name.clone(),
+                        at: raster.name.clone(),
                     })
                 }
             }
             _ => {}
         }
     }
-    let mut phys = vec![1; d.textures.len()];
-    for (_, leaf) in all_leaves(d) {
+    let mut phys = vec![1; desc.textures.len()];
+    for (_, leaf) in all_leaves(desc) {
         let command = match leaf {
-            LeafPass::Compute(c) => c.name.clone(),
-            LeafPass::Raster(r) => r.name.clone(),
+            LeafPass::Compute(compute) => compute.name.clone(),
+            LeafPass::Raster(raster) => raster.name.clone(),
         };
-        let rr: Vec<_> = refs(d, leaf).into_iter().flat_map(|(_, r)| r).collect();
-        for (_, r) in &rr {
-            match r {
-                ResourceRef::Tex(t, a) => {
-                    if valid(t.0, d.textures.len(), TableKind::Texture, &mut e)
-                        && matches!(a, TexAccess::ReadPrevious)
+        let resources: Vec<_> = refs(desc, leaf)
+            .into_iter()
+            .flat_map(|(_, resource)| resource)
+            .collect();
+        for (_, resource) in &resources {
+            match resource {
+                ResourceRef::Tex(tex, access) => {
+                    if valid(tex.0, desc.textures.len(), TableKind::Texture, &mut errors)
+                        && matches!(access, TexAccess::ReadPrevious)
                     {
-                        phys[t.0 as usize] = 2
+                        phys[tex.0 as usize] = 2
                     }
                 }
-                ResourceRef::Buf(b, _) => {
-                    valid(b.buffer.0, d.buffers.len(), TableKind::Buffer, &mut e);
+                ResourceRef::Buf(buffer, _) => {
+                    valid(
+                        buffer.buffer.0,
+                        desc.buffers.len(),
+                        TableKind::Buffer,
+                        &mut errors,
+                    );
                 }
-                ResourceRef::External(i) => {
-                    valid(i.0, d.imports.len(), TableKind::Import, &mut e);
+                ResourceRef::External(import) => {
+                    valid(import.0, desc.imports.len(), TableKind::Import, &mut errors);
                 }
             }
         }
-        let tex = |a| {
-            rr.iter()
-                .filter_map(move |(_, r)| match r {
-                    ResourceRef::Tex(t, x) if *x == a => Some(*t),
+        let tex_ids = |access| {
+            resources
+                .iter()
+                .filter_map(move |(_, resource)| match resource {
+                    ResourceRef::Tex(tex, tex_access) if *tex_access == access => Some(*tex),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
         };
-        let reads = tex(TexAccess::Read);
-        let prev = tex(TexAccess::ReadPrevious);
-        let writes = tex(TexAccess::Write);
-        let muts = tex(TexAccess::Mutate);
-        for (i, t) in writes.iter().enumerate() {
-            if writes[i + 1..].contains(t) {
-                e.push(GraphError::DuplicateWrite {
+        let reads = tex_ids(TexAccess::Read);
+        let prev_reads = tex_ids(TexAccess::ReadPrevious);
+        let writes = tex_ids(TexAccess::Write);
+        let mutates = tex_ids(TexAccess::Mutate);
+        for (i, tex) in writes.iter().enumerate() {
+            if writes[i + 1..].contains(tex) {
+                errors.push(GraphError::DuplicateWrite {
                     command: command.clone(),
-                    tex: t.0,
+                    tex: tex.0,
                 })
             }
-            if reads.contains(t) && (t.0 as usize) < phys.len() {
-                phys[t.0 as usize] = 2
+            if reads.contains(tex) && (tex.0 as usize) < phys.len() {
+                phys[tex.0 as usize] = 2
             }
-            if prev.contains(t) {
-                e.push(GraphError::WriteAndPrevRead {
+            if prev_reads.contains(tex) {
+                errors.push(GraphError::WriteAndPrevRead {
                     command: command.clone(),
-                    tex: t.0,
+                    tex: tex.0,
                 })
             }
         }
-        for t in muts {
-            if reads.contains(&t) {
-                e.push(GraphError::MutateAndRead {
+        for tex in mutates {
+            if reads.contains(&tex) {
+                errors.push(GraphError::MutateAndRead {
                     command: command.clone(),
-                    tex: t.0,
+                    tex: tex.0,
                 })
             }
-            if writes.contains(&t) {
-                e.push(GraphError::MutateAndWrite {
+            if writes.contains(&tex) {
+                errors.push(GraphError::MutateAndWrite {
                     command: command.clone(),
-                    tex: t.0,
+                    tex: tex.0,
                 })
             }
         }
         match leaf {
-            LeafPass::Compute(c) => {
-                if let GroupSource::Value(v) = c.groups {
-                    if valid(v.0, d.values.len(), TableKind::Value, &mut e)
-                        && !matches!(d.values[v.0 as usize].kind, ValueKind::Groups)
+            LeafPass::Compute(compute) => {
+                if let GroupSource::Value(value) = compute.groups {
+                    if valid(value.0, desc.values.len(), TableKind::Value, &mut errors)
+                        && !matches!(desc.values[value.0 as usize].kind, ValueKind::Groups)
                     {
-                        let value = &d.values[v.0 as usize];
-                        e.push(GraphError::ValueKindMismatch {
+                        let value = &desc.values[value.0 as usize];
+                        errors.push(GraphError::ValueKindMismatch {
                             value: value.name.clone(),
                             expected: "groups",
                             found: kind(&value.kind),
                         });
                     }
-                    e.push(GraphError::UnsupportedInPhase1 {
+                    errors.push(GraphError::UnsupportedInPhase1 {
                         feature: UnsupportedFeature::GroupSourceValue,
-                        at: c.name.clone(),
+                        at: compute.name.clone(),
                     })
                 }
-                if valid(c.pipeline.0, d.pipelines.len(), TableKind::Pipeline, &mut e)
-                    && d.pipelines[c.pipeline.0 as usize].kind != PipelineKind::Compute
+                if valid(
+                    compute.pipeline.0,
+                    desc.pipelines.len(),
+                    TableKind::Pipeline,
+                    &mut errors,
+                ) && desc.pipelines[compute.pipeline.0 as usize].kind != PipelineKind::Compute
                 {
-                    e.push(GraphError::PipelineKindMismatch {
-                        command: c.name.clone(),
+                    errors.push(GraphError::PipelineKindMismatch {
+                        command: compute.name.clone(),
                         expected: PipelineKind::Compute,
                     })
                 }
-                valid(c.uniform.0, d.uniforms.len(), TableKind::Uniform, &mut e);
-                if let Some(p) = &c.push {
-                    valid(p.schema.0, schemas.schemas.len(), TableKind::Schema, &mut e);
-                    if let Some(value) = p.data
-                        && valid(value.0, d.values.len(), TableKind::Value, &mut e)
-                        && !matches!(d.values[value.0 as usize].kind, ValueKind::Bytes { .. })
+                valid(
+                    compute.uniform.0,
+                    desc.uniforms.len(),
+                    TableKind::Uniform,
+                    &mut errors,
+                );
+                if let Some(push) = &compute.push {
+                    valid(
+                        push.schema.0,
+                        schemas.schemas.len(),
+                        TableKind::Schema,
+                        &mut errors,
+                    );
+                    if let Some(value) = push.data
+                        && valid(value.0, desc.values.len(), TableKind::Value, &mut errors)
+                        && !matches!(desc.values[value.0 as usize].kind, ValueKind::Bytes { .. })
                     {
-                        let value = &d.values[value.0 as usize];
-                        e.push(GraphError::ValueKindMismatch {
+                        let value = &desc.values[value.0 as usize];
+                        errors.push(GraphError::ValueKindMismatch {
                             value: value.name.clone(),
                             expected: "bytes",
                             found: kind(&value.kind),
                         });
                     }
-                    check_shape(&c.name, p.schema, &p.bindings, schemas, &mut e)
+                    check_shape(
+                        &compute.name,
+                        push.schema,
+                        &push.bindings,
+                        schemas,
+                        &mut errors,
+                    )
                 }
             }
-            LeafPass::Raster(r) => {
-                for draw in &r.draws {
-                    if writes.len()
-                        + rr.iter()
-                            .filter(|(_, x)| matches!(x, ResourceRef::Tex(_, TexAccess::Mutate)))
+            LeafPass::Raster(raster) => {
+                for draw in &raster.draws {
+                    let draw_writes_texture = writes.len()
+                        + resources
+                            .iter()
+                            .filter(|(_, resource)| {
+                                matches!(resource, ResourceRef::Tex(_, TexAccess::Mutate))
+                            })
                             .count()
-                        > 0
-                        && let Some(t) = writes.first()
-                    {
-                        e.push(GraphError::DrawWritesTexture {
+                        > 0;
+                    if draw_writes_texture && let Some(tex) = writes.first() {
+                        errors.push(GraphError::DrawWritesTexture {
                             draw: draw.name.clone(),
-                            tex: t.0,
+                            tex: tex.0,
                         })
                     }
                     if valid(
                         draw.pipeline.0,
-                        d.pipelines.len(),
+                        desc.pipelines.len(),
                         TableKind::Pipeline,
-                        &mut e,
-                    ) && d.pipelines[draw.pipeline.0 as usize].kind != PipelineKind::Graphics
+                        &mut errors,
+                    ) && desc.pipelines[draw.pipeline.0 as usize].kind != PipelineKind::Graphics
                     {
-                        e.push(GraphError::PipelineKindMismatch {
+                        errors.push(GraphError::PipelineKindMismatch {
                             command: draw.name.clone(),
                             expected: PipelineKind::Graphics,
                         })
                     }
-                    valid(draw.uniform.0, d.uniforms.len(), TableKind::Uniform, &mut e);
+                    valid(
+                        draw.uniform.0,
+                        desc.uniforms.len(),
+                        TableKind::Uniform,
+                        &mut errors,
+                    );
                     if let Some(push) = &draw.push {
                         valid(
                             push.schema.0,
                             schemas.schemas.len(),
                             TableKind::Schema,
-                            &mut e,
+                            &mut errors,
                         );
-                        check_shape(&draw.name, push.schema, &push.bindings, schemas, &mut e);
+                        check_shape(
+                            &draw.name,
+                            push.schema,
+                            &push.bindings,
+                            schemas,
+                            &mut errors,
+                        );
                     }
                     if let DrawCall::IndexedIndirect { args, .. } = &draw.call
-                        && valid(args.buffer.0, d.buffers.len(), TableKind::Buffer, &mut e)
-                        && d.buffers[args.buffer.0 as usize].kind != BufferKind::Immutable
+                        && valid(
+                            args.buffer.0,
+                            desc.buffers.len(),
+                            TableKind::Buffer,
+                            &mut errors,
+                        )
+                        && desc.buffers[args.buffer.0 as usize].kind != BufferKind::Immutable
                     {
-                        e.push(GraphError::IndirectArgsNotImmutable {
+                        errors.push(GraphError::IndirectArgsNotImmutable {
                             draw: draw.name.clone(),
                         })
                     }
@@ -644,9 +745,10 @@ pub(crate) fn validate(d: &GraphDesc, schemas: &SchemaTable) -> Result<Analysis,
             }
         }
     }
-    if e.is_empty() {
+
+    if errors.is_empty() {
         Ok(Analysis { tex_phys: phys })
     } else {
-        Err(e)
+        Err(errors)
     }
 }

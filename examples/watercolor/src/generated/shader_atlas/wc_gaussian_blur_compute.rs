@@ -64,10 +64,14 @@ impl GraphShaderParams for BlurDispatch {
     type Data = BlurDispatchData;
     type Bindings = BlurDispatchBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            input_tex: r.sampled_tex(bindings.input_tex),
-            output_tex: r.storage_tex(bindings.output_tex),
+            input_tex: resolver.sampled_tex(bindings.input_tex),
+            output_tex: resolver.storage_tex(bindings.output_tex),
             direction: data.direction,
         }
     }
@@ -84,7 +88,11 @@ impl GraphShaderParams for Params {
     type Data = Self;
     type Bindings = ();
 
-    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        _bindings: &Self::Bindings,
+        _resolver: &BindingResolver<'_>,
+    ) -> Self {
         *data
     }
 }

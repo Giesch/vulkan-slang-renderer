@@ -160,9 +160,13 @@ impl GraphShaderParams for MultiDraw {
     type Data = ();
     type Bindings = MultiDrawBindings;
 
-    fn assemble(_data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        _data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            individual_draws: r.immutable_buf(bindings.individual_draws),
+            individual_draws: resolver.immutable_buf(bindings.individual_draws),
         }
     }
 }
@@ -177,7 +181,11 @@ impl GraphShaderParams for ToonLinkParams {
     type Data = Self;
     type Bindings = ();
 
-    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        _bindings: &Self::Bindings,
+        _resolver: &BindingResolver<'_>,
+    ) -> Self {
         *data
     }
 }

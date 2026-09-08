@@ -108,9 +108,13 @@ impl GraphShaderParams for SerenityCRTParams {
     type Data = SerenityCRTParamsData;
     type Bindings = SerenityCRTParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            tex: r.sampled_tex(bindings.tex),
+            tex: resolver.sampled_tex(bindings.tex),
             resolution: data.resolution,
             scanline_intensity: data.scanline_intensity,
             scanline_count: data.scanline_count,

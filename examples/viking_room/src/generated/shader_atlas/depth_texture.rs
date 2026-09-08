@@ -63,10 +63,14 @@ impl GraphShaderParams for DepthTextureParams {
     type Data = DepthTextureParamsData;
     type Bindings = DepthTextureParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
             mvp: data.mvp,
-            texture: r.sampled_tex(bindings.texture),
+            texture: resolver.sampled_tex(bindings.texture),
             _padding_0: Default::default(),
         }
     }

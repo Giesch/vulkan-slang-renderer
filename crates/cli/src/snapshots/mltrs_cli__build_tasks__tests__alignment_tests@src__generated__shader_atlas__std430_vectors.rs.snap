@@ -68,9 +68,13 @@ impl GraphShaderParams for Params {
     type Data = ();
     type Bindings = ParamsBindings;
 
-    fn assemble(_data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        _data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
-            data: r.buf(bindings.data),
+            data: resolver.buf(bindings.data),
             _padding_0: Default::default(),
         }
     }
@@ -86,7 +90,11 @@ impl GraphShaderParams for VectorData {
     type Data = Self;
     type Bindings = ();
 
-    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        _bindings: &Self::Bindings,
+        _resolver: &BindingResolver<'_>,
+    ) -> Self {
         *data
     }
 }

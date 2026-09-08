@@ -53,11 +53,15 @@ impl GraphShaderParams for RenderParams {
     type Data = RenderParamsData;
     type Bindings = RenderParamsBindings;
 
-    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
         Self {
             particle_count: data.particle_count,
             _padding_0: Default::default(),
-            particles: r.read_buf(bindings.particles),
+            particles: resolver.read_buf(bindings.particles),
         }
     }
 }
