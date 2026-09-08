@@ -11,6 +11,12 @@ pub struct UniformBufferHandle<T> {
     _phantom_data: PhantomData<T>,
 }
 
+impl<T> UniformBufferHandle<T> {
+    pub(super) fn index(&self) -> usize {
+        self.index
+    }
+}
+
 pub(super) struct RawUniformBuffer {
     pub(super) buffer: vk::Buffer,
     pub(super) allocation: vk_mem::Allocation,
@@ -56,6 +62,10 @@ impl UniformBufferStorage {
         let raw_uniform_buffer = &mut self.0[handle.index].as_mut().unwrap()[frame];
         let mut_ptr = raw_uniform_buffer.mapped_mem as *mut T;
         unsafe { &mut *mut_ptr }
+    }
+
+    pub(super) fn mapped_mem_by_index(&mut self, index: usize, frame: usize) -> *mut c_void {
+        self.0[index].as_mut().unwrap()[frame].mapped_mem
     }
 
     pub fn take<T>(

@@ -53,6 +53,9 @@ pub use storage_texture::*;
 pub mod pipeline;
 pub use pipeline::*;
 
+pub mod render_graph;
+pub use render_graph::*;
+
 pub mod egui;
 pub use egui::EguiIntegration;
 
@@ -5866,6 +5869,18 @@ impl<'f> FrameRenderer<'f> {
         group_count: [u32; 3],
         push_constants: Option<PushConstantBytes>,
     ) {
+        self.queue_dispatch_raw(pipeline.index(), group_count, push_constants);
+    }
+
+    /// The index-level dispatch queue shared with the render graph. Keeps the
+    /// positional barrier rule: a dispatch directly after a dispatch gets a
+    /// global compute-to-compute barrier between them.
+    fn queue_dispatch_raw(
+        &mut self,
+        pipeline_index: ComputePipelineIndex,
+        group_count: [u32; 3],
+        push_constants: Option<PushConstantBytes>,
+    ) {
         match self.pending_compute.last() {
             Some(PendingComputeCommand::Dispatch { .. }) => {
                 self.push_compute_barrier();
@@ -5875,7 +5890,7 @@ impl<'f> FrameRenderer<'f> {
         }
 
         self.pending_compute.push(PendingComputeCommand::Dispatch {
-            pipeline_index: pipeline.index(),
+            pipeline_index,
             group_count,
             push_constants,
         });
