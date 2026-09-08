@@ -26,6 +26,10 @@ migration. The findings below are the deviations.
 
 ## 1. Behavior regression: blur H reads one version too far back
 
+RESOLVED (2026-09-08). `examples/watercolor/src/main.rs:551` binds
+`wet_mask.read()`. `07_graph_api_plan.md` carries the correction. The
+finding as written:
+
 `examples/watercolor/src/main.rs:551` — node 6 (Gaussian blur H) binds
 `wet_mask.read_previous()`. The correct access is `wet_mask.read()`.
 
@@ -273,11 +277,10 @@ them in 3a.
 
 ## Priority
 
-1. Fix `main.rs:551` (`read_previous` → `read`) — visible rendering
-   regression (§1).
-2. Fix the mutate-only draw hole and per-draw check granularity (§3a, §3b).
-3. Land the test inventory (§2); it pins 1 and 2 and decides §6's
-   keep-or-delete.
-4. Fix or delete the unreachable merge path and its orphan rows (§3c).
-5. Reconcile `docs/render_graph.md` and annotate 07/phase_1 with what landed
+1. Fix the mutate-only draw hole and per-draw check granularity (§3a, §3b).
+2. Land the test inventory (§2); it pins 1 and decides §6's keep-or-delete.
+3. Fix or delete the unreachable merge path and its orphan rows (§3c).
+4. Reconcile `docs/render_graph.md` and annotate 07/phase_1 with what landed
    (§7).
+
+§1 is fixed.

@@ -13,12 +13,24 @@ structs.
 Deviations found during implementation:
 
 - **`read_previous()` was added to the access vocabulary.** Watercolor has
-  three deliberate one-version-stale reads (advect samples the pre-update
-  velocity; blur H and the display sample the pre-capillary wet mask).
+  two deliberate one-version-stale reads: advect samples the pre-update
+  velocity, and the display samples the pre-capillary wet mask.
   "Read sees the latest write" cannot express them; "the version before the
-  most recent write" reproduces all three exactly. A `read_previous` forces
+  most recent write" reproduces both exactly. A `read_previous` forces
   two physical images; combining it with a write of the same texture in one
   node is a build error.
+
+  Position relative to the version-producing write decides the access mode.
+  A node that runs before that write uses `read()`; only a node after it
+  uses `read_previous()`. Both watercolor stale reads are post-write.
+
+  > CORRECTION (2026-09-08): this bullet listed three stale reads and counted
+  > blur H among them, on the grounds that blur H "samples the pre-capillary
+  > wet mask". Blur H runs before the capillary write, so its pre-capillary
+  > version is the current version and the correct access is `read()`. The
+  > watercolor migration followed the wrong prose and shipped
+  > `wet_mask.read_previous()` at the blur H node. See
+  > `08_plain_data_graph/01_review.md` §1.
 - The draw forms consolidated into one `DrawNode<S, P: GraphPush>` behind
   per-form constructors, instead of one struct per form.
 - A repeat-body node's uniform value appears once in the params tuple but is

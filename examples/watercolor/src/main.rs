@@ -548,7 +548,7 @@ impl Game for Watercolor {
                     workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
                     (),
                     wc_gaussian_blur_compute::BlurDispatchBindings {
-                        input_tex: wet_mask.read_previous(),
+                        input_tex: wet_mask.read(),
                         output_tex: blur_temp.write(),
                     },
                     wc_gaussian_blur_compute::BlurDispatchData {
