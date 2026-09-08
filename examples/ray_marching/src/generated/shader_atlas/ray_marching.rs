@@ -92,6 +92,46 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<RayMarchingParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RayMarchingParamsData {
+    pub camera: RayMarchCamera,
+    pub light_position: glam::Vec3,
+    pub sphere_count: u32,
+    pub box_count: u32,
+    pub resolution: glam::Vec2,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RayMarchingParamsBindings {
+    pub spheres: ReadBufferBinding<Sphere>,
+    pub boxes: ReadBufferBinding<BoxRect>,
+}
+
+impl GraphShaderParams for RayMarchingParams {
+    type Data = RayMarchingParamsData;
+    type Bindings = RayMarchingParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            camera: data.camera,
+            light_position: data.light_position,
+            sphere_count: data.sphere_count,
+            box_count: data.box_count,
+            _padding_0: Default::default(),
+            resolution: data.resolution,
+            spheres: r.read_buf(bindings.spheres),
+            boxes: r.read_buf(bindings.boxes),
+        }
+    }
+}
+
+impl GraphBindingSet for RayMarchingParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.spheres.erased()));
+        f(GraphBinding::Buffer(self.boxes.erased()));
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

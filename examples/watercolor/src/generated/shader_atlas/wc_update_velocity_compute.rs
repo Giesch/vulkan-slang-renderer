@@ -68,6 +68,63 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsData {
+    pub grid_size: glam::Vec2,
+    pub texel_size: glam::Vec2,
+    pub dt: f32,
+    pub mu: f32,
+    pub kappa: f32,
+    pub slope_strength: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsBindings {
+    pub u_in: SampledTexBinding,
+    pub v_in: SampledTexBinding,
+    pub pressure: SampledTexBinding,
+    pub wet_mask: SampledTexBinding,
+    pub u_out: StorageTexBinding,
+    pub v_out: StorageTexBinding,
+    pub paper_height: SampledTexBinding,
+}
+
+impl GraphShaderParams for Params {
+    type Data = ParamsData;
+    type Bindings = ParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            u_in: r.sampled_tex(bindings.u_in),
+            v_in: r.sampled_tex(bindings.v_in),
+            pressure: r.sampled_tex(bindings.pressure),
+            wet_mask: r.sampled_tex(bindings.wet_mask),
+            u_out: r.storage_tex(bindings.u_out),
+            v_out: r.storage_tex(bindings.v_out),
+            paper_height: r.sampled_tex(bindings.paper_height),
+            grid_size: data.grid_size,
+            texel_size: data.texel_size,
+            dt: data.dt,
+            mu: data.mu,
+            kappa: data.kappa,
+            slope_strength: data.slope_strength,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.u_in));
+        f(GraphBinding::SampledTex(self.v_in));
+        f(GraphBinding::SampledTex(self.pressure));
+        f(GraphBinding::SampledTex(self.wet_mask));
+        f(GraphBinding::StorageTex(self.u_out));
+        f(GraphBinding::StorageTex(self.v_out));
+        f(GraphBinding::SampledTex(self.paper_height));
+    }
+}
+
 pub const WORKGROUP_SIZE: [u32; 3] = [16, 16, 1];
 
 #[derive(Clone)]

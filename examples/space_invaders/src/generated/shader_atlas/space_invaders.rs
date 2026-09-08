@@ -100,6 +100,41 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<SpaceInvadersParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SpaceInvadersParamsData {
+    pub projection: Projection,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SpaceInvadersParamsBindings {
+    pub sprites: ReadBufferBinding<Sprite>,
+    pub debug_boxes: ReadBufferBinding<DebugBox>,
+    pub sprite_sheet: SampledTexBinding,
+}
+
+impl GraphShaderParams for SpaceInvadersParams {
+    type Data = SpaceInvadersParamsData;
+    type Bindings = SpaceInvadersParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            projection: data.projection,
+            sprites: r.read_buf(bindings.sprites),
+            debug_boxes: r.read_buf(bindings.debug_boxes),
+            sprite_sheet: r.sampled_tex(bindings.sprite_sheet),
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for SpaceInvadersParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.sprites.erased()));
+        f(GraphBinding::Buffer(self.debug_boxes.erased()));
+        f(GraphBinding::SampledTex(self.sprite_sheet));
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

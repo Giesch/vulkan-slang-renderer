@@ -38,6 +38,15 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<DragonParams>,
 }
 
+impl GraphShaderParams for DragonParams {
+    type Data = Self;
+    type Bindings = ();
+
+    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: &BindingResolver<'_>) -> Self {
+        *data
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

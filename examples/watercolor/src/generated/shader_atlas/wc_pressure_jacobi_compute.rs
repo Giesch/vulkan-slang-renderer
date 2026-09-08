@@ -48,6 +48,59 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct JacobiDispatchBindings {
+    pub pressure_in: SampledTexBinding,
+    pub pressure_out: StorageTexBinding,
+}
+
+impl GraphShaderParams for JacobiDispatch {
+    type Data = ();
+    type Bindings = JacobiDispatchBindings;
+
+    fn assemble(_data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            pressure_in: r.sampled_tex(bindings.pressure_in),
+            pressure_out: r.storage_tex(bindings.pressure_out),
+        }
+    }
+}
+
+impl GraphBindingSet for JacobiDispatchBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.pressure_in));
+        f(GraphBinding::StorageTex(self.pressure_out));
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsData {
+    pub grid_size: glam::Vec2,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsBindings {
+    pub divergence: SampledTexBinding,
+}
+
+impl GraphShaderParams for Params {
+    type Data = ParamsData;
+    type Bindings = ParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            divergence: r.sampled_tex(bindings.divergence),
+            grid_size: data.grid_size,
+        }
+    }
+}
+
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.divergence));
+    }
+}
+
 impl mltrs::renderer::gpu_write::PushConstantBlock for JacobiDispatch {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<JacobiDispatch>() <= 128);

@@ -80,6 +80,63 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<SerenityCRTParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SerenityCRTParamsData {
+    pub resolution: glam::Vec2,
+    pub scanline_intensity: f32,
+    pub scanline_count: f32,
+    pub time: f32,
+    pub y_offset: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub bloom_intensity: f32,
+    pub bloom_threshold: f32,
+    pub rgb_shift: f32,
+    pub adaptive_intensity: f32,
+    pub vignette_strength: f32,
+    pub curvature: f32,
+    pub flicker_strength: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SerenityCRTParamsBindings {
+    pub tex: SampledTexBinding,
+}
+
+impl GraphShaderParams for SerenityCRTParams {
+    type Data = SerenityCRTParamsData;
+    type Bindings = SerenityCRTParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            tex: r.sampled_tex(bindings.tex),
+            resolution: data.resolution,
+            scanline_intensity: data.scanline_intensity,
+            scanline_count: data.scanline_count,
+            time: data.time,
+            y_offset: data.y_offset,
+            brightness: data.brightness,
+            contrast: data.contrast,
+            saturation: data.saturation,
+            bloom_intensity: data.bloom_intensity,
+            bloom_threshold: data.bloom_threshold,
+            rgb_shift: data.rgb_shift,
+            adaptive_intensity: data.adaptive_intensity,
+            vignette_strength: data.vignette_strength,
+            curvature: data.curvature,
+            flicker_strength: data.flicker_strength,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for SerenityCRTParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.tex));
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

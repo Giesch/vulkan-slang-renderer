@@ -139,6 +139,107 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsData {
+    pub grid_size: glam::Vec2,
+    pub dt: f32,
+    pub transfer_rate: f32,
+    pub pigment0: PigmentProperties,
+    pub pigment1: PigmentProperties,
+    pub pigment2: PigmentProperties,
+    pub pigment3: PigmentProperties,
+    pub pigment4: PigmentProperties,
+    pub pigment5: PigmentProperties,
+    pub pigment6: PigmentProperties,
+    pub pigment7: PigmentProperties,
+    pub pigment8: PigmentProperties,
+    pub pigment9: PigmentProperties,
+    pub pigment10: PigmentProperties,
+    pub pigment11: PigmentProperties,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsBindings {
+    pub pigment_in_0_3: SampledTexBinding,
+    pub pigment_in_4_7: SampledTexBinding,
+    pub pigment_in_8_11: SampledTexBinding,
+    pub u_in: SampledTexBinding,
+    pub v_in: SampledTexBinding,
+    pub wet_mask: SampledTexBinding,
+    pub pigment_out_0_3: StorageTexBinding,
+    pub pigment_out_4_7: StorageTexBinding,
+    pub pigment_out_8_11: StorageTexBinding,
+    pub deposit_in_0_3: SampledTexBinding,
+    pub deposit_in_4_7: SampledTexBinding,
+    pub deposit_in_8_11: SampledTexBinding,
+    pub deposit_out_0_3: StorageTexBinding,
+    pub deposit_out_4_7: StorageTexBinding,
+    pub deposit_out_8_11: StorageTexBinding,
+    pub paper_height: SampledTexBinding,
+}
+
+impl GraphShaderParams for Params {
+    type Data = ParamsData;
+    type Bindings = ParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            pigment_in_0_3: r.sampled_tex(bindings.pigment_in_0_3),
+            pigment_in_4_7: r.sampled_tex(bindings.pigment_in_4_7),
+            pigment_in_8_11: r.sampled_tex(bindings.pigment_in_8_11),
+            u_in: r.sampled_tex(bindings.u_in),
+            v_in: r.sampled_tex(bindings.v_in),
+            wet_mask: r.sampled_tex(bindings.wet_mask),
+            pigment_out_0_3: r.storage_tex(bindings.pigment_out_0_3),
+            pigment_out_4_7: r.storage_tex(bindings.pigment_out_4_7),
+            pigment_out_8_11: r.storage_tex(bindings.pigment_out_8_11),
+            deposit_in_0_3: r.sampled_tex(bindings.deposit_in_0_3),
+            deposit_in_4_7: r.sampled_tex(bindings.deposit_in_4_7),
+            deposit_in_8_11: r.sampled_tex(bindings.deposit_in_8_11),
+            deposit_out_0_3: r.storage_tex(bindings.deposit_out_0_3),
+            deposit_out_4_7: r.storage_tex(bindings.deposit_out_4_7),
+            deposit_out_8_11: r.storage_tex(bindings.deposit_out_8_11),
+            paper_height: r.sampled_tex(bindings.paper_height),
+            grid_size: data.grid_size,
+            dt: data.dt,
+            transfer_rate: data.transfer_rate,
+            pigment0: data.pigment0,
+            pigment1: data.pigment1,
+            pigment2: data.pigment2,
+            pigment3: data.pigment3,
+            pigment4: data.pigment4,
+            pigment5: data.pigment5,
+            pigment6: data.pigment6,
+            pigment7: data.pigment7,
+            pigment8: data.pigment8,
+            pigment9: data.pigment9,
+            pigment10: data.pigment10,
+            pigment11: data.pigment11,
+        }
+    }
+}
+
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.pigment_in_0_3));
+        f(GraphBinding::SampledTex(self.pigment_in_4_7));
+        f(GraphBinding::SampledTex(self.pigment_in_8_11));
+        f(GraphBinding::SampledTex(self.u_in));
+        f(GraphBinding::SampledTex(self.v_in));
+        f(GraphBinding::SampledTex(self.wet_mask));
+        f(GraphBinding::StorageTex(self.pigment_out_0_3));
+        f(GraphBinding::StorageTex(self.pigment_out_4_7));
+        f(GraphBinding::StorageTex(self.pigment_out_8_11));
+        f(GraphBinding::SampledTex(self.deposit_in_0_3));
+        f(GraphBinding::SampledTex(self.deposit_in_4_7));
+        f(GraphBinding::SampledTex(self.deposit_in_8_11));
+        f(GraphBinding::StorageTex(self.deposit_out_0_3));
+        f(GraphBinding::StorageTex(self.deposit_out_4_7));
+        f(GraphBinding::StorageTex(self.deposit_out_8_11));
+        f(GraphBinding::SampledTex(self.paper_height));
+    }
+}
+
 pub const WORKGROUP_SIZE: [u32; 3] = [16, 16, 1];
 
 #[derive(Clone)]

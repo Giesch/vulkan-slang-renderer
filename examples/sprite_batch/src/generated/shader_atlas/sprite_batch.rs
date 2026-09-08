@@ -78,6 +78,39 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<SpriteBatchParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SpriteBatchParamsData {
+    pub projection: Projection,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SpriteBatchParamsBindings {
+    pub sprites: ImmutableBufferBinding<Sprite>,
+    pub texture: SampledTexBinding,
+}
+
+impl GraphShaderParams for SpriteBatchParams {
+    type Data = SpriteBatchParamsData;
+    type Bindings = SpriteBatchParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            sprites: r.immutable_buf(bindings.sprites),
+            _padding_0: Default::default(),
+            projection: data.projection,
+            texture: r.sampled_tex(bindings.texture),
+            _padding_1: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for SpriteBatchParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.sprites.erased()));
+        f(GraphBinding::SampledTex(self.texture));
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

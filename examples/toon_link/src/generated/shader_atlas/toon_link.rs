@@ -151,6 +151,37 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<ToonLinkParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct MultiDrawBindings {
+    pub individual_draws: ImmutableBufferBinding<IndividualDraw>,
+}
+
+impl GraphShaderParams for MultiDraw {
+    type Data = ();
+    type Bindings = MultiDrawBindings;
+
+    fn assemble(_data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            individual_draws: r.immutable_buf(bindings.individual_draws),
+        }
+    }
+}
+
+impl GraphBindingSet for MultiDrawBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.individual_draws.erased()));
+    }
+}
+
+impl GraphShaderParams for ToonLinkParams {
+    type Data = Self;
+    type Bindings = ();
+
+    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: &BindingResolver<'_>) -> Self {
+        *data
+    }
+}
+
 impl mltrs::renderer::gpu_write::PushConstantBlock for MultiDraw {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<MultiDraw>() <= 128);

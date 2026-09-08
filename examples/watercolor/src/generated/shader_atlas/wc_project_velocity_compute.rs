@@ -44,6 +44,44 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsData {
+    pub grid_size: glam::Vec2,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsBindings {
+    pub u: StorageTexBinding,
+    pub v: StorageTexBinding,
+    pub wet_mask: SampledTexBinding,
+    pub pressure: SampledTexBinding,
+}
+
+impl GraphShaderParams for Params {
+    type Data = ParamsData;
+    type Bindings = ParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            u: r.storage_tex(bindings.u),
+            v: r.storage_tex(bindings.v),
+            wet_mask: r.sampled_tex(bindings.wet_mask),
+            pressure: r.sampled_tex(bindings.pressure),
+            grid_size: data.grid_size,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::StorageTex(self.u));
+        f(GraphBinding::StorageTex(self.v));
+        f(GraphBinding::SampledTex(self.wet_mask));
+        f(GraphBinding::SampledTex(self.pressure));
+    }
+}
+
 pub const WORKGROUP_SIZE: [u32; 3] = [16, 16, 1];
 
 #[derive(Clone)]

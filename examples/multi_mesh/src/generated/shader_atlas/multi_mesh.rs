@@ -52,6 +52,37 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<MultiMeshParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct MultiMeshParamsData {
+    pub mvp: MVPMatrices,
+    pub tint: glam::Vec4,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MultiMeshParamsBindings {
+    pub texture: SampledTexBinding,
+}
+
+impl GraphShaderParams for MultiMeshParams {
+    type Data = MultiMeshParamsData;
+    type Bindings = MultiMeshParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            mvp: data.mvp,
+            tint: data.tint,
+            texture: r.sampled_tex(bindings.texture),
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for MultiMeshParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.texture));
+    }
+}
+
 impl VertexDescription for Vertex {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
         let binding_description = ash::vk::VertexInputBindingDescription::default()

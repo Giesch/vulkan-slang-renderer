@@ -47,6 +47,15 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<VectorData>,
 }
 
+impl GraphShaderParams for VectorData {
+    type Data = Self;
+    type Bindings = ();
+
+    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: &BindingResolver<'_>) -> Self {
+        *data
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

@@ -47,6 +47,46 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsData {
+    pub grid_size: glam::Vec2,
+    pub eta: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsBindings {
+    pub wet_mask: SampledTexBinding,
+    pub saturation: StorageTexBinding,
+    pub blurred_mask: SampledTexBinding,
+    pub pressure: StorageTexBinding,
+}
+
+impl GraphShaderParams for Params {
+    type Data = ParamsData;
+    type Bindings = ParamsBindings;
+
+    fn assemble(data: &Self::Data, bindings: &Self::Bindings, r: &BindingResolver<'_>) -> Self {
+        Self {
+            wet_mask: r.sampled_tex(bindings.wet_mask),
+            saturation: r.storage_tex(bindings.saturation),
+            blurred_mask: r.sampled_tex(bindings.blurred_mask),
+            pressure: r.storage_tex(bindings.pressure),
+            grid_size: data.grid_size,
+            eta: data.eta,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.wet_mask));
+        f(GraphBinding::StorageTex(self.saturation));
+        f(GraphBinding::SampledTex(self.blurred_mask));
+        f(GraphBinding::StorageTex(self.pressure));
+    }
+}
+
 pub const WORKGROUP_SIZE: [u32; 3] = [16, 16, 1];
 
 #[derive(Clone)]

@@ -159,6 +159,17 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
 
         let shared_modules = collect_shared_modules(&all_shader_defs);
 
+        let params_types: BTreeSet<String> = graphics_data
+            .iter()
+            .flat_map(|d| d.params_type_names.iter().cloned())
+            .chain(
+                compute_data
+                    .iter()
+                    .flat_map(|d| d.params_type_names.iter().cloned()),
+            )
+            .collect();
+        let resource_bearing = resource_bearing_types(&all_shader_defs);
+
         for (module_name, module) in &shared_modules {
             let cross_imports = cross_module_imports(module_name, module, &shared_modules);
 
@@ -170,6 +181,11 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
                 cross_module_imports: cross_imports,
                 enum_defs: module.enum_defs.clone(),
                 struct_defs: module.struct_defs.clone(),
+                graph_split_defs: graph_split_defs(
+                    &module.struct_defs,
+                    &params_types,
+                    &resource_bearing,
+                ),
             };
 
             let file_name = format!("{module_name}.rs");
@@ -180,12 +196,24 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         }
 
         for data in &graphics_data {
-            let file = render_graphics_shader_file(data, &shared_modules, &config.import_root);
+            let file = render_graphics_shader_file(
+                data,
+                &shared_modules,
+                &config.import_root,
+                &params_types,
+                &resource_bearing,
+            );
             generated_source_files.push(file);
         }
 
         for data in &compute_data {
-            let file = render_compute_shader_file(data, &shared_modules, &config.import_root);
+            let file = render_compute_shader_file(
+                data,
+                &shared_modules,
+                &config.import_root,
+                &params_types,
+                &resource_bearing,
+            );
             generated_source_files.push(file);
         }
 
@@ -286,6 +314,9 @@ struct GraphicsShaderData {
     vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
     source_file_name: String,
+    /// uniform-block element types plus the push block: the types that get a
+    /// render-graph split
+    params_type_names: Vec<String>,
 }
 
 /// Collect struct definitions and template data from a graphics shader (without rendering)
@@ -384,19 +415,22 @@ fn collect_graphics_shader_data(
     let mut resources_texture_fields: Vec<String> = vec![];
     let mut resources_uniform_buffer_fields: Vec<String> = vec![];
     let mut resources_storage_texture_fields: Vec<String> = vec![];
+    let mut params_type_names: Vec<String> = vec![];
     for res in &required_resources {
-        match res.resource_type {
+        match &res.resource_type {
             RequiredResourceType::Texture => {
                 resources_texture_fields.push(res.field_name.clone());
             }
-            RequiredResourceType::UniformBuffer(_) => {
+            RequiredResourceType::UniformBuffer(element_type_name) => {
                 resources_uniform_buffer_fields.push(res.field_name.clone());
+                params_type_names.push(element_type_name.clone());
             }
             RequiredResourceType::StorageTexture2D => {
                 resources_storage_texture_fields.push(res.field_name.clone());
             }
         }
     }
+    params_type_names.extend(push_constant_type_name.clone());
 
     let shader_impl = GeneratedShaderImpl {
         shader_name: shader_name.clone(),
@@ -417,6 +451,7 @@ fn collect_graphics_shader_data(
         vertex_impl_blocks,
         shader_impl,
         source_file_name: reflection_json.source_file_name.clone(),
+        params_type_names,
     }
 }
 
@@ -425,6 +460,8 @@ fn render_graphics_shader_file(
     data: &GraphicsShaderData,
     shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
     import_root: &str,
+    params_types: &BTreeSet<String>,
+    resource_bearing: &BTreeSet<String>,
 ) -> GeneratedFile {
     let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
@@ -436,12 +473,15 @@ fn render_graphics_shader_file(
         data.source_file_name
     )];
 
+    let graph_split_defs = graph_split_defs(&local.struct_defs, params_types, resource_bearing);
+
     let content = ShaderAtlasEntryModule {
         import_root: import_root.to_string(),
         module_doc_lines,
         shared_module_imports,
         enum_defs: local.enum_defs,
         struct_defs: local.struct_defs,
+        graph_split_defs,
         vertex_impl_blocks: data.vertex_impl_blocks.clone(),
         shader_impl: data.shader_impl.clone(),
         push_constant_budget: MAX_PUSH_CONSTANT_BYTES,
@@ -503,6 +543,7 @@ struct ShaderAtlasEntryModule {
     shared_module_imports: Vec<SharedModuleImport>,
     enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
+    graph_split_defs: Vec<GraphSplitDef>,
     vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
     push_constant_budget: usize,
@@ -516,6 +557,7 @@ struct ShaderComputeEntryModule {
     shared_module_imports: Vec<SharedModuleImport>,
     enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
+    graph_split_defs: Vec<GraphSplitDef>,
     shader_impl: GeneratedComputeShaderImpl,
     push_constant_budget: usize,
 }
@@ -610,6 +652,9 @@ struct ComputeShaderData {
     defs: GeneratedTypeDefs,
     shader_impl: GeneratedComputeShaderImpl,
     source_file_name: String,
+    /// uniform-block element types plus the push block: the types that get a
+    /// render-graph split
+    params_type_names: Vec<String>,
 }
 
 /// Collect struct definitions and template data from a compute shader (without rendering)
@@ -650,19 +695,22 @@ fn collect_compute_shader_data(
     let mut resources_texture_fields: Vec<String> = vec![];
     let mut resources_uniform_buffer_fields: Vec<String> = vec![];
     let mut resources_storage_texture_fields: Vec<String> = vec![];
+    let mut params_type_names: Vec<String> = vec![];
     for res in &required_resources {
-        match res.resource_type {
+        match &res.resource_type {
             RequiredResourceType::Texture => {
                 resources_texture_fields.push(res.field_name.clone());
             }
-            RequiredResourceType::UniformBuffer(_) => {
+            RequiredResourceType::UniformBuffer(element_type_name) => {
                 resources_uniform_buffer_fields.push(res.field_name.clone());
+                params_type_names.push(element_type_name.clone());
             }
             RequiredResourceType::StorageTexture2D => {
                 resources_storage_texture_fields.push(res.field_name.clone());
             }
         }
     }
+    params_type_names.extend(push_constant_type_name.clone());
 
     let shader_impl = GeneratedComputeShaderImpl {
         shader_name: shader_name.clone(),
@@ -682,6 +730,7 @@ fn collect_compute_shader_data(
         defs,
         shader_impl,
         source_file_name: reflection_json.source_file_name.clone(),
+        params_type_names,
     }
 }
 
@@ -690,6 +739,8 @@ fn render_compute_shader_file(
     data: &ComputeShaderData,
     shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
     import_root: &str,
+    params_types: &BTreeSet<String>,
+    resource_bearing: &BTreeSet<String>,
 ) -> GeneratedFile {
     let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
@@ -700,12 +751,15 @@ fn render_compute_shader_file(
         data.source_file_name
     )];
 
+    let graph_split_defs = graph_split_defs(&local.struct_defs, params_types, resource_bearing);
+
     let content = ShaderComputeEntryModule {
         import_root: import_root.to_string(),
         module_doc_lines,
         shared_module_imports,
         enum_defs: local.enum_defs,
         struct_defs: local.struct_defs,
+        graph_split_defs,
         shader_impl: data.shader_impl.clone(),
         push_constant_budget: MAX_PUSH_CONSTANT_BYTES,
     }
@@ -1366,6 +1420,216 @@ impl GeneratedStructFieldDefinition {
     }
 }
 
+/// How one field of a params/push struct participates in the render-graph
+/// split: GPU-layout padding, per-frame data, or a build-time resource binding.
+enum GraphFieldClass {
+    Padding,
+    Data,
+    Binding {
+        binding_type: String,
+        resolver_method: &'static str,
+        visit_line: String,
+    },
+}
+
+fn classify_graph_field(field: &GeneratedStructFieldDefinition) -> GraphFieldClass {
+    let name = &field.field_name;
+    if name.starts_with("_padding_") {
+        return GraphFieldClass::Padding;
+    }
+
+    match field.type_name.as_str() {
+        "BindlessHandle<Sampler2D>" => {
+            return GraphFieldClass::Binding {
+                binding_type: "SampledTexBinding".to_string(),
+                resolver_method: "sampled_tex",
+                visit_line: format!("f(GraphBinding::SampledTex(self.{name}));"),
+            };
+        }
+        "BindlessHandle<RwTexture2D>" => {
+            return GraphFieldClass::Binding {
+                binding_type: "StorageTexBinding".to_string(),
+                resolver_method: "storage_tex",
+                visit_line: format!("f(GraphBinding::StorageTex(self.{name}));"),
+            };
+        }
+        _ => {}
+    }
+
+    for (addr_prefix, binding_type, resolver_method) in [
+        ("Addr<", "BufferBinding", "buf"),
+        ("ReadAddr<", "ReadBufferBinding", "read_buf"),
+        ("ImmutableAddr<", "ImmutableBufferBinding", "immutable_buf"),
+    ] {
+        if let Some(rest) = field.type_name.strip_prefix(addr_prefix) {
+            let pointee = rest
+                .strip_suffix('>')
+                .expect("addr-typed field name ends with '>'");
+            return GraphFieldClass::Binding {
+                binding_type: format!("{binding_type}<{pointee}>"),
+                resolver_method,
+                visit_line: format!("f(GraphBinding::Buffer(self.{name}.erased()));"),
+            };
+        }
+    }
+
+    GraphFieldClass::Data
+}
+
+/// The render-graph split of one params or push-constant struct, rendered as
+/// finished source lines so the emitted block stays rustfmt-clean.
+struct GraphSplitDef {
+    lines: Vec<String>,
+}
+
+impl GraphSplitDef {
+    fn block(&self) -> String {
+        self.lines.join("\n")
+    }
+}
+
+fn graph_split_def(
+    def: &GeneratedStructDefinition,
+    resource_bearing: &BTreeSet<String>,
+) -> GraphSplitDef {
+    let params_type = &def.type_name;
+
+    let mut data_fields: Vec<&GeneratedStructFieldDefinition> = vec![];
+    let mut binding_fields: Vec<(&GeneratedStructFieldDefinition, String)> = vec![];
+    let mut assemble_lines: Vec<String> = vec![];
+    let mut visit_lines: Vec<String> = vec![];
+
+    for field in &def.fields {
+        let name = &field.field_name;
+        match classify_graph_field(field) {
+            GraphFieldClass::Padding => {
+                assemble_lines.push(format!("            {name}: Default::default(),"));
+            }
+            GraphFieldClass::Data => {
+                assert!(
+                    !resource_bearing.contains(&field.type_name),
+                    "render-graph split of '{params_type}': field '{name}' nests resource \
+                    fields through '{}'; flatten them into the parameter block",
+                    field.type_name,
+                );
+                data_fields.push(field);
+                assemble_lines.push(format!("            {name}: data.{name},"));
+            }
+            GraphFieldClass::Binding {
+                binding_type,
+                resolver_method,
+                visit_line,
+            } => {
+                assemble_lines.push(format!(
+                    "            {name}: r.{resolver_method}(bindings.{name}),"
+                ));
+                visit_lines.push(format!("        {visit_line}"));
+                binding_fields.push((field, binding_type));
+            }
+        }
+    }
+
+    let mut lines: Vec<String> = vec![];
+
+    // no resource fields: the params struct is its own per-frame data
+    if binding_fields.is_empty() {
+        lines.push(format!("impl GraphShaderParams for {params_type} {{"));
+        lines.push("    type Data = Self;".to_string());
+        lines.push("    type Bindings = ();".to_string());
+        lines.push(String::new());
+        lines.push(
+            "    fn assemble(data: &Self::Data, _bindings: &Self::Bindings, _r: \
+             &BindingResolver<'_>) -> Self {"
+                .to_string(),
+        );
+        lines.push("        *data".to_string());
+        lines.push("    }".to_string());
+        lines.push("}".to_string());
+        return GraphSplitDef { lines };
+    }
+
+    let bindings_type = format!("{params_type}Bindings");
+    let data_assoc = if data_fields.is_empty() {
+        "()".to_string()
+    } else {
+        let data_type = format!("{params_type}Data");
+        lines.push("#[derive(Debug, Clone, Copy)]".to_string());
+        lines.push(format!("pub struct {data_type} {{"));
+        for field in &data_fields {
+            lines.push(format!(
+                "    pub {}: {},",
+                field.field_name, field.type_name
+            ));
+        }
+        lines.push("}".to_string());
+        lines.push(String::new());
+        data_type
+    };
+
+    lines.push("#[derive(Debug, Clone, Copy)]".to_string());
+    lines.push(format!("pub struct {bindings_type} {{"));
+    for (field, binding_type) in &binding_fields {
+        lines.push(format!("    pub {}: {binding_type},", field.field_name));
+    }
+    lines.push("}".to_string());
+    lines.push(String::new());
+
+    let data_param = if data_fields.is_empty() {
+        "_data"
+    } else {
+        "data"
+    };
+    lines.push(format!("impl GraphShaderParams for {params_type} {{"));
+    lines.push(format!("    type Data = {data_assoc};"));
+    lines.push(format!("    type Bindings = {bindings_type};"));
+    lines.push(String::new());
+    lines.push(format!(
+        "    fn assemble({data_param}: &Self::Data, bindings: &Self::Bindings, r: \
+         &BindingResolver<'_>) -> Self {{"
+    ));
+    lines.push("        Self {".to_string());
+    lines.extend(assemble_lines);
+    lines.push("        }".to_string());
+    lines.push("    }".to_string());
+    lines.push("}".to_string());
+    lines.push(String::new());
+
+    lines.push(format!("impl GraphBindingSet for {bindings_type} {{"));
+    lines.push("    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {".to_string());
+    lines.extend(visit_lines);
+    lines.push("    }".to_string());
+    lines.push("}".to_string());
+
+    GraphSplitDef { lines }
+}
+
+/// Split defs for the params/push types among `struct_defs`, in definition order.
+fn graph_split_defs(
+    struct_defs: &[GeneratedStructDefinition],
+    params_types: &BTreeSet<String>,
+    resource_bearing: &BTreeSet<String>,
+) -> Vec<GraphSplitDef> {
+    struct_defs
+        .iter()
+        .filter(|def| params_types.contains(&def.type_name))
+        .map(|def| graph_split_def(def, resource_bearing))
+        .collect()
+}
+
+/// The GPU struct names whose fields include at least one resource binding.
+fn resource_bearing_types(all_defs: &[(String, GeneratedTypeDefs)]) -> BTreeSet<String> {
+    all_defs
+        .iter()
+        .flat_map(|(_, defs)| &defs.struct_defs)
+        .filter(|def| {
+            def.fields
+                .iter()
+                .any(|f| matches!(classify_graph_field(f), GraphFieldClass::Binding { .. }))
+        })
+        .map(|def| def.type_name.clone())
+        .collect()
+}
+
 struct GeneratedFile {
     /// the path relative to the rust 'src' dir
     relative_path: PathBuf,
@@ -1887,6 +2151,7 @@ struct SharedModuleTemplate {
     cross_module_imports: Vec<SharedModuleImport>,
     enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
+    graph_split_defs: Vec<GraphSplitDef>,
 }
 
 #[cfg(test)]
