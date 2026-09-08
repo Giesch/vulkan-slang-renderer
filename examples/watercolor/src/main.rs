@@ -13,9 +13,10 @@ use glam::{Vec2, Vec3, Vec4};
 use mltrs::editor::{Label, Slider};
 use mltrs::game::*;
 use mltrs::renderer::{
-    BindlessHandle, Compute, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, PushBlock,
-    Renderer, RwTexture2D, Sampler2D, StorageBufferHandle, StorageTextureHandle, TextureHandle,
-    UniformBufferHandle,
+    ComputeNode, ComputeNodeWithPush, DrawError, DrawVertexCountNode, FrameRenderer, GraphFormat,
+    GraphResources, LoopCount, OptionalNode, RenderGraph, Renderer, RepeatNode,
+    StorageBufferHandle, StorageSlot, StorageTextureHandle, TextureHandle, UniformBufferHandle,
+    UploadNode, dispatch, dispatch_with_push, draw_vertex_count, optional, repeat, upload,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -49,9 +50,7 @@ const CANVAS_HEIGHT: u32 = 1536;
 const MAX_STROKE_POINTS_PER_FRAME: u32 = 256;
 /// The number of times to dispatch the water pressure compute shader
 /// higher = less divergence & more accurate water pressure
-/// must be even for correctness when reading pressure in later stages
 const JACOBI_ITERATIONS: u32 = 2;
-const _: () = assert!(JACOBI_ITERATIONS.is_multiple_of(2));
 
 // Simulation parameters
 const DT: f32 = 0.5;
@@ -66,112 +65,50 @@ const CAPILLARY_CAPACITY: f32 = 1.0;
 const CAPILLARY_SIGMA: f32 = 0.3;
 const DRY_THRESHOLD: f32 = 0.05;
 
-/// Ping-pong pair: two storage textures + two sampled aliases
-struct PingPong {
-    storage: [StorageTextureHandle; 2],
-    sampled: [TextureHandle; 2],
-}
-
-impl PingPong {
-    fn read_sampled(&self, parity: bool) -> BindlessHandle<Sampler2D> {
-        self.sampled[parity as usize].bindless_handle()
-    }
-
-    fn write_storage(&self, parity: bool) -> BindlessHandle<RwTexture2D> {
-        self.storage[!parity as usize].bindless_handle()
-    }
-
-    fn read_storage(&self, parity: bool) -> BindlessHandle<RwTexture2D> {
-        self.storage[parity as usize].bindless_handle()
-    }
-}
-
-fn create_ping_pong(renderer: &mut Renderer, format: vk::Format) -> anyhow::Result<PingPong> {
-    let storage_0 = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, format)?;
-    let storage_1 = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, format)?;
-
-    renderer.clear_storage_texture(&storage_0)?;
-    renderer.clear_storage_texture(&storage_1)?;
-
-    let sampled_0 = renderer.storage_texture_as_sampled(&storage_0)?;
-    let sampled_1 = renderer.storage_texture_as_sampled(&storage_1)?;
-
-    Ok(PingPong {
-        storage: [storage_0, storage_1],
-        sampled: [sampled_0, sampled_1],
-    })
-}
-
-fn create_deposit_texture(
-    renderer: &mut Renderer,
-) -> anyhow::Result<(StorageTextureHandle, TextureHandle)> {
-    let signed_rgba = vk::Format::R32G32B32A32_SFLOAT;
-    let storage = renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, signed_rgba)?;
-
-    renderer.clear_storage_texture(&storage)?;
-
-    let sampled = renderer.storage_texture_as_sampled(&storage)?;
-
-    Ok((storage, sampled))
-}
+type WcGraph = RenderGraph<(
+    OptionalNode<(
+        UploadNode<paint_brush_compute::StrokePoint>,
+        ComputeNode<paint_brush_compute::BrushParams>,
+    )>,
+    ComputeNode<wc_update_velocity_compute::Params>,
+    ComputeNode<wc_divergence_compute::Params>,
+    RepeatNode<(
+        ComputeNodeWithPush<
+            wc_pressure_jacobi_compute::Params,
+            wc_pressure_jacobi_compute::JacobiDispatch,
+        >,
+    )>,
+    ComputeNode<wc_project_velocity_compute::Params>,
+    ComputeNodeWithPush<wc_gaussian_blur_compute::Params, wc_gaussian_blur_compute::BlurDispatch>,
+    ComputeNodeWithPush<wc_gaussian_blur_compute::Params, wc_gaussian_blur_compute::BlurDispatch>,
+    ComputeNode<wc_flow_outward_compute::Params>,
+    ComputeNode<wc_advect_and_transfer_pigment_compute::Params>,
+    ComputeNode<wc_capillary_flow_compute::Params>,
+    DrawVertexCountNode<paint_display::DisplayParams>,
+)>;
 
 struct Watercolor {
-    // Simulation textures (kept alive for GPU; not read on CPU)
-    velocity_u: PingPong,
-    velocity_v: PingPong,
-    pressure: PingPong,
-    pigment_0_3: PingPong,
-    pigment_4_7: PingPong,
-    pigment_8_11: PingPong,
-    saturation: PingPong,
-    wet_mask: PingPong,
-    deposit_0_3: [StorageTextureHandle; 2],
-    deposit_4_7: [StorageTextureHandle; 2],
-    deposit_8_11: [StorageTextureHandle; 2],
-    divergence: StorageTextureHandle,
-    blur_temp: StorageTextureHandle,
-    blurred_mask: StorageTextureHandle,
+    graph: WcGraph,
 
-    // Sampled aliases. Used as bindless handles.
-    blur_temp_sampled: TextureHandle,
-    blurred_mask_sampled: TextureHandle,
-    deposit_0_3_sampled: [TextureHandle; 2],
-    deposit_4_7_sampled: [TextureHandle; 2],
-    deposit_8_11_sampled: [TextureHandle; 2],
-    divergence_sampled: TextureHandle,
-    paper_height_sampled: TextureHandle,
+    // Paper height is game-owned: written once at setup, bound externally.
+    _paper_height: StorageTextureHandle,
+    _paper_height_sampled: TextureHandle,
 
-    // Pipelines
-    brush_pipeline: PipelineHandle<Compute>,
-    update_velocity_pipeline: PipelineHandle<Compute>,
-    divergence_pipeline: PipelineHandle<Compute>,
-    pressure_jacobi_pipeline:
-        PipelineHandle<Compute, PushBlock<wc_pressure_jacobi_compute::JacobiDispatch>>,
-    project_velocity_pipeline: PipelineHandle<Compute>,
-    blur_pipeline: PipelineHandle<Compute, PushBlock<wc_gaussian_blur_compute::BlurDispatch>>,
-    flow_outward_pipeline: PipelineHandle<Compute>,
-    advect_and_transfer_pipeline: PipelineHandle<Compute>,
-    capillary_flow_pipeline: PipelineHandle<Compute>,
-    display_pipeline: PipelineHandle<DrawVertexCount>,
-
-    // Buffers
-    stroke_points_buffer: StorageBufferHandle<paint_brush_compute::StrokePoint>,
-    brush_params_buffer: UniformBufferHandle<paint_brush_compute::BrushParams>,
-    display_params_buffer: UniformBufferHandle<paint_display::DisplayParams>,
-    update_vel_params_buffer: UniformBufferHandle<wc_update_velocity_compute::Params>,
-    divergence_params_buffer: UniformBufferHandle<wc_divergence_compute::Params>,
-    pressure_jacobi_params_buffer: UniformBufferHandle<wc_pressure_jacobi_compute::Params>,
-    project_vel_params_buffer: UniformBufferHandle<wc_project_velocity_compute::Params>,
-    blur_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
-    flow_outward_params_buffer: UniformBufferHandle<wc_flow_outward_compute::Params>,
-    advect_and_transfer_params_buffer:
+    // The graph holds slots into these buffers; the handles stay here for
+    // eventual cleanup.
+    _stroke_points_buffer: StorageBufferHandle<paint_brush_compute::StrokePoint>,
+    _brush_params_buffer: UniformBufferHandle<paint_brush_compute::BrushParams>,
+    _display_params_buffer: UniformBufferHandle<paint_display::DisplayParams>,
+    _update_vel_params_buffer: UniformBufferHandle<wc_update_velocity_compute::Params>,
+    _divergence_params_buffer: UniformBufferHandle<wc_divergence_compute::Params>,
+    _pressure_jacobi_params_buffer: UniformBufferHandle<wc_pressure_jacobi_compute::Params>,
+    _project_vel_params_buffer: UniformBufferHandle<wc_project_velocity_compute::Params>,
+    _blur_h_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
+    _blur_v_params_buffer: UniformBufferHandle<wc_gaussian_blur_compute::Params>,
+    _flow_outward_params_buffer: UniformBufferHandle<wc_flow_outward_compute::Params>,
+    _advect_and_transfer_params_buffer:
         UniformBufferHandle<wc_advect_and_transfer_pigment_compute::Params>,
-    capillary_flow_params_buffer: UniformBufferHandle<wc_capillary_flow_compute::Params>,
-
-    // Parity tracking
-    pressure_parity: bool, // flips once per Jacobi iteration (net 0 per frame)
-    sim_parity: bool,      // pigment + wet_mask + saturation (all flip 1x per frame)
-    deposit_parity: bool,  // deposit double-buffer parity (flips 1x per frame)
+    _capillary_flow_params_buffer: UniformBufferHandle<wc_capillary_flow_compute::Params>,
 
     // Input state
     painting: bool,
@@ -391,44 +328,25 @@ impl Game for Watercolor {
     }
 
     fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
-        // Create all ping-pong textures
-        let velocity_u = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
-        let velocity_v = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
-        let pressure = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
-        let pigment_0_3 = create_ping_pong(renderer, vk::Format::R32G32B32A32_SFLOAT)?;
-        let pigment_4_7 = create_ping_pong(renderer, vk::Format::R32G32B32A32_SFLOAT)?;
-        let pigment_8_11 = create_ping_pong(renderer, vk::Format::R32G32B32A32_SFLOAT)?;
-        let saturation = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
-        let wet_mask = create_ping_pong(renderer, vk::Format::R32_SFLOAT)?;
-
-        // Deposit textures (3 groups × 2 for double-buffering)
-        let (deposit_0_3_a, deposit_0_3_a_sampled) = create_deposit_texture(renderer)?;
-        let (deposit_0_3_b, deposit_0_3_b_sampled) = create_deposit_texture(renderer)?;
-        let (deposit_4_7_a, deposit_4_7_a_sampled) = create_deposit_texture(renderer)?;
-        let (deposit_4_7_b, deposit_4_7_b_sampled) = create_deposit_texture(renderer)?;
-        let (deposit_8_11_a, deposit_8_11_a_sampled) = create_deposit_texture(renderer)?;
-        let (deposit_8_11_b, deposit_8_11_b_sampled) = create_deposit_texture(renderer)?;
-        let deposit_0_3_storage = [deposit_0_3_a, deposit_0_3_b];
-        let deposit_0_3_sampled = [deposit_0_3_a_sampled, deposit_0_3_b_sampled];
-        let deposit_4_7_storage = [deposit_4_7_a, deposit_4_7_b];
-        let deposit_4_7_sampled = [deposit_4_7_a_sampled, deposit_4_7_b_sampled];
-        let deposit_8_11_storage = [deposit_8_11_a, deposit_8_11_b];
-        let deposit_8_11_sampled = [deposit_8_11_a_sampled, deposit_8_11_b_sampled];
-
-        let divergence =
-            renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
-        renderer.clear_storage_texture(&divergence)?;
-        let divergence_sampled = renderer.storage_texture_as_sampled(&divergence)?;
-
-        let blur_temp =
-            renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
-        renderer.clear_storage_texture(&blur_temp)?;
-        let blur_temp_sampled = renderer.storage_texture_as_sampled(&blur_temp)?;
-
-        let blurred_mask =
-            renderer.create_storage_texture(CANVAS_WIDTH, CANVAS_HEIGHT, vk::Format::R32_SFLOAT)?;
-        renderer.clear_storage_texture(&blurred_mask)?;
-        let blurred_mask_sampled = renderer.storage_texture_as_sampled(&blurred_mask)?;
+        // Logical simulation textures; the graph derives which ones need two
+        // physical images and rotates them itself
+        let mut res = GraphResources::new();
+        let r32 = GraphFormat::R32Float;
+        let rgba32 = GraphFormat::Rgba32Float;
+        let velocity_u = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let velocity_v = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let pressure = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let pigment_0_3 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let pigment_4_7 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let pigment_8_11 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let saturation = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let wet_mask = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let deposit_0_3 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let deposit_4_7 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let deposit_8_11 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let divergence = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let blur_temp = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let blurred_mask = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
 
         // Paper height map
         let paper_height =
@@ -454,7 +372,9 @@ impl Game for Watercolor {
             renderer.create_uniform_buffer::<wc_pressure_jacobi_compute::Params>()?;
         let project_vel_params_buffer =
             renderer.create_uniform_buffer::<wc_project_velocity_compute::Params>()?;
-        let blur_params_buffer =
+        let blur_h_params_buffer =
+            renderer.create_uniform_buffer::<wc_gaussian_blur_compute::Params>()?;
+        let blur_v_params_buffer =
             renderer.create_uniform_buffer::<wc_gaussian_blur_compute::Params>()?;
         let flow_outward_params_buffer =
             renderer.create_uniform_buffer::<wc_flow_outward_compute::Params>()?;
@@ -502,10 +422,16 @@ impl Game for Watercolor {
             ),
         )?;
 
-        let blur_pipeline =
+        let blur_h_pipeline =
             renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
                 wc_gaussian_blur_compute::Resources {
-                    params_buffer: &blur_params_buffer,
+                    params_buffer: &blur_h_params_buffer,
+                },
+            ))?;
+        let blur_v_pipeline =
+            renderer.create_compute_pipeline(shaders.wc_gaussian_blur_compute.pipeline_config(
+                wc_gaussian_blur_compute::Resources {
+                    params_buffer: &blur_v_params_buffer,
                 },
             ))?;
 
@@ -537,56 +463,197 @@ impl Game for Watercolor {
             },
         ))?;
 
+        let paper = paper_height_sampled.bindless_handle();
+        let stroke_points = StorageSlot::from(&stroke_points_buffer);
+
+        let graph = RenderGraph::new(
+            renderer,
+            res,
+            (
+                // 1. Brush input: in-place stamps into the current versions
+                optional((
+                    upload(&stroke_points_buffer),
+                    dispatch(
+                        &brush_pipeline,
+                        &brush_params_buffer,
+                        workgroups(paint_brush_compute::WORKGROUP_SIZE),
+                        paint_brush_compute::BrushParamsBindings {
+                            wet_mask: wet_mask.mutate(),
+                            pressure: pressure.mutate(),
+                            pigment_0_3: pigment_0_3.mutate(),
+                            pigment_4_7: pigment_4_7.mutate(),
+                            pigment_8_11: pigment_8_11.mutate(),
+                            saturation: saturation.mutate(),
+                            stroke_points: stroke_points.read_addr(),
+                        },
+                    ),
+                )),
+                // 2. Update velocity (advection + forces)
+                dispatch(
+                    &update_velocity_pipeline,
+                    &update_vel_params_buffer,
+                    workgroups(wc_update_velocity_compute::WORKGROUP_SIZE),
+                    wc_update_velocity_compute::ParamsBindings {
+                        u_in: velocity_u.read(),
+                        v_in: velocity_v.read(),
+                        pressure: pressure.read(),
+                        wet_mask: wet_mask.read(),
+                        u_out: velocity_u.write(),
+                        v_out: velocity_v.write(),
+                        paper_height: paper.into(),
+                    },
+                ),
+                // 3. Divergence of the updated velocity
+                dispatch(
+                    &divergence_pipeline,
+                    &divergence_params_buffer,
+                    workgroups(wc_divergence_compute::WORKGROUP_SIZE),
+                    wc_divergence_compute::ParamsBindings {
+                        u_in: velocity_u.read(),
+                        v_in: velocity_v.read(),
+                        divergence: divergence.write(),
+                    },
+                ),
+                // 4. Pressure Jacobi iterations; the push block rotates
+                //    pressure per iteration, so odd trip counts are legal
+                repeat((dispatch_with_push(
+                    &pressure_jacobi_pipeline,
+                    &pressure_jacobi_params_buffer,
+                    workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE),
+                    wc_pressure_jacobi_compute::ParamsBindings {
+                        divergence: divergence.read(),
+                    },
+                    wc_pressure_jacobi_compute::JacobiDispatchBindings {
+                        pressure_in: pressure.read(),
+                        pressure_out: pressure.write(),
+                    },
+                    (),
+                ),)),
+                // 5. Project velocity in place
+                dispatch(
+                    &project_velocity_pipeline,
+                    &project_vel_params_buffer,
+                    workgroups(wc_project_velocity_compute::WORKGROUP_SIZE),
+                    wc_project_velocity_compute::ParamsBindings {
+                        u: velocity_u.mutate(),
+                        v: velocity_v.mutate(),
+                        wet_mask: wet_mask.read(),
+                        pressure: pressure.read(),
+                    },
+                ),
+                // 6. Gaussian blur H (pre-capillary wet mask -> blur_temp)
+                dispatch_with_push(
+                    &blur_h_pipeline,
+                    &blur_h_params_buffer,
+                    workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
+                    (),
+                    wc_gaussian_blur_compute::BlurDispatchBindings {
+                        input_tex: wet_mask.read_previous(),
+                        output_tex: blur_temp.write(),
+                    },
+                    wc_gaussian_blur_compute::BlurDispatchData {
+                        direction: Vec2::new(1.0, 0.0),
+                    },
+                ),
+                // 7. Gaussian blur V (blur_temp -> blurred_mask)
+                dispatch_with_push(
+                    &blur_v_pipeline,
+                    &blur_v_params_buffer,
+                    workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
+                    (),
+                    wc_gaussian_blur_compute::BlurDispatchBindings {
+                        input_tex: blur_temp.read(),
+                        output_tex: blurred_mask.write(),
+                    },
+                    wc_gaussian_blur_compute::BlurDispatchData {
+                        direction: Vec2::new(0.0, 1.0),
+                    },
+                ),
+                // 8. Flow outward (blurred_mask -> flow formula into pressure
+                //    + saturation, in place)
+                dispatch(
+                    &flow_outward_pipeline,
+                    &flow_outward_params_buffer,
+                    workgroups(wc_flow_outward_compute::WORKGROUP_SIZE),
+                    wc_flow_outward_compute::ParamsBindings {
+                        wet_mask: wet_mask.read(),
+                        saturation: saturation.mutate(),
+                        blurred_mask: blurred_mask.read(),
+                        pressure: pressure.mutate(),
+                    },
+                ),
+                // 9. Advect + transfer pigment; advects by the pre-update
+                //    velocity, exactly as the parity code did
+                dispatch(
+                    &advect_and_transfer_pipeline,
+                    &advect_and_transfer_params_buffer,
+                    workgroups(wc_advect_and_transfer_pigment_compute::WORKGROUP_SIZE),
+                    wc_advect_and_transfer_pigment_compute::ParamsBindings {
+                        pigment_in_0_3: pigment_0_3.read(),
+                        pigment_in_4_7: pigment_4_7.read(),
+                        pigment_in_8_11: pigment_8_11.read(),
+                        u_in: velocity_u.read_previous(),
+                        v_in: velocity_v.read_previous(),
+                        wet_mask: wet_mask.read(),
+                        pigment_out_0_3: pigment_0_3.write(),
+                        pigment_out_4_7: pigment_4_7.write(),
+                        pigment_out_8_11: pigment_8_11.write(),
+                        deposit_in_0_3: deposit_0_3.read(),
+                        deposit_in_4_7: deposit_4_7.read(),
+                        deposit_in_8_11: deposit_8_11.read(),
+                        deposit_out_0_3: deposit_0_3.write(),
+                        deposit_out_4_7: deposit_4_7.write(),
+                        deposit_out_8_11: deposit_8_11.write(),
+                        paper_height: paper.into(),
+                    },
+                ),
+                // 10. Capillary flow (saturation + wet_mask -> next versions)
+                dispatch(
+                    &capillary_flow_pipeline,
+                    &capillary_flow_params_buffer,
+                    workgroups(wc_capillary_flow_compute::WORKGROUP_SIZE),
+                    wc_capillary_flow_compute::ParamsBindings {
+                        saturation_in: saturation.read(),
+                        wet_mask_in: wet_mask.read(),
+                        saturation_out: saturation.write(),
+                        wet_mask_out: wet_mask.write(),
+                    },
+                ),
+                // 11. Display; the wet mask is shown pre-capillary, exactly
+                //     as the parity code did
+                draw_vertex_count(
+                    &display_pipeline,
+                    &display_params_buffer,
+                    3,
+                    paint_display::DisplayParamsBindings {
+                        deposit_0_3: deposit_0_3.read(),
+                        deposit_4_7: deposit_4_7.read(),
+                        deposit_8_11: deposit_8_11.read(),
+                        paper_height: paper.into(),
+                        wet_mask: wet_mask.read_previous(),
+                    },
+                ),
+            ),
+        )?;
+
         Ok(Self {
-            velocity_u,
-            velocity_v,
-            pressure,
-            pigment_0_3,
-            pigment_4_7,
-            pigment_8_11,
-            saturation,
-            wet_mask,
-            deposit_0_3: deposit_0_3_storage,
-            deposit_4_7: deposit_4_7_storage,
-            deposit_8_11: deposit_8_11_storage,
-            divergence,
-            blur_temp,
-            blurred_mask,
+            graph,
 
-            blur_temp_sampled,
-            blurred_mask_sampled,
-            deposit_0_3_sampled,
-            deposit_4_7_sampled,
-            deposit_8_11_sampled,
-            divergence_sampled,
-            paper_height_sampled,
+            _paper_height: paper_height,
+            _paper_height_sampled: paper_height_sampled,
 
-            brush_pipeline,
-            update_velocity_pipeline,
-            divergence_pipeline,
-            project_velocity_pipeline,
-            pressure_jacobi_pipeline,
-            blur_pipeline,
-            flow_outward_pipeline,
-            advect_and_transfer_pipeline,
-            capillary_flow_pipeline,
-            display_pipeline,
-
-            stroke_points_buffer,
-            brush_params_buffer,
-            display_params_buffer,
-            update_vel_params_buffer,
-            divergence_params_buffer,
-            pressure_jacobi_params_buffer,
-            project_vel_params_buffer,
-            blur_params_buffer,
-            flow_outward_params_buffer,
-            advect_and_transfer_params_buffer,
-            capillary_flow_params_buffer,
-
-            pressure_parity: false,
-            sim_parity: false,
-            deposit_parity: false,
+            _stroke_points_buffer: stroke_points_buffer,
+            _brush_params_buffer: brush_params_buffer,
+            _display_params_buffer: display_params_buffer,
+            _update_vel_params_buffer: update_vel_params_buffer,
+            _divergence_params_buffer: divergence_params_buffer,
+            _pressure_jacobi_params_buffer: pressure_jacobi_params_buffer,
+            _project_vel_params_buffer: project_vel_params_buffer,
+            _blur_h_params_buffer: blur_h_params_buffer,
+            _blur_v_params_buffer: blur_v_params_buffer,
+            _flow_outward_params_buffer: flow_outward_params_buffer,
+            _advect_and_transfer_params_buffer: advect_and_transfer_params_buffer,
+            _capillary_flow_params_buffer: capillary_flow_params_buffer,
 
             painting: false,
             stroke_points: Vec::new(),
@@ -689,292 +756,83 @@ impl Game for Watercolor {
         }
     }
 
-    fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let stroke_points = std::mem::take(&mut self.stroke_points);
         let point_count = stroke_points
             .len()
             .min(MAX_STROKE_POINTS_PER_FRAME as usize) as u32;
 
-        // 1. Brush input
-        if point_count > 0 {
-            renderer.dispatch(
-                &self.brush_pipeline,
-                workgroups(paint_brush_compute::WORKGROUP_SIZE),
-            );
-        }
-
-        // 2. Update velocity (advection + forces)
-        renderer.dispatch(
-            &self.update_velocity_pipeline,
-            workgroups(wc_update_velocity_compute::WORKGROUP_SIZE),
-        );
-
-        // 3. Divergence (reads velocity after update)
-        renderer.dispatch(
-            &self.divergence_pipeline,
-            workgroups(wc_divergence_compute::WORKGROUP_SIZE),
-        );
-
-        // 4. Pressure Jacobi iterations (ping-pong pressure)
-        for _ in 0..JACOBI_ITERATIONS {
-            let parity = self.pressure_parity;
-            renderer.dispatch_with_push_constants(
-                &self.pressure_jacobi_pipeline,
-                workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE),
-                &wc_pressure_jacobi_compute::JacobiDispatch {
-                    pressure_in: self.pressure.read_sampled(parity),
-                    pressure_out: self.pressure.write_storage(parity),
-                },
-            );
-            self.pressure_parity = !self.pressure_parity;
-        }
-
-        // 5. Project velocity
-        //
-        // The one edge the automatic barrier over-synchronizes: project
-        // velocity writes u/v, blur H reads wet_mask, so the two could run in
-        // parallel. Nothing expresses that yet.
-        renderer.dispatch(
-            &self.project_velocity_pipeline,
-            workgroups(wc_project_velocity_compute::WORKGROUP_SIZE),
-        );
-
-        // 6. Gaussian blur H (wet_mask → blur_temp)
-        renderer.dispatch_with_push_constants(
-            &self.blur_pipeline,
-            workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
-            &wc_gaussian_blur_compute::BlurDispatch {
-                // the side capillary flow writes: sim_parity flips below,
-                // and the uniform write this replaces ran after that flip
-                input_tex: self.wet_mask.read_sampled(!self.sim_parity),
-                output_tex: self.blur_temp.bindless_handle(),
-                direction: Vec2::new(1.0, 0.0),
-            },
-        );
-
-        // 7. Gaussian blur V (blur_temp → blurred_mask)
-        renderer.dispatch_with_push_constants(
-            &self.blur_pipeline,
-            workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
-            &wc_gaussian_blur_compute::BlurDispatch {
-                input_tex: self.blur_temp_sampled.bindless_handle(),
-                output_tex: self.blurred_mask.bindless_handle(),
-                direction: Vec2::new(0.0, 1.0),
-            },
-        );
-
-        // 8. Flow outward (blurred_mask → flow formula into pressure + saturation)
-        renderer.dispatch(
-            &self.flow_outward_pipeline,
-            workgroups(wc_flow_outward_compute::WORKGROUP_SIZE),
-        );
-
-        // 9. Advect + transfer pigment (combined)
-        renderer.dispatch(
-            &self.advect_and_transfer_pipeline,
-            workgroups(wc_advect_and_transfer_pigment_compute::WORKGROUP_SIZE),
-        );
-
-        // 10. Capillary flow (saturation + wet_mask at sim → writes to !sim)
-        renderer.dispatch(
-            &self.capillary_flow_pipeline,
-            workgroups(wc_capillary_flow_compute::WORKGROUP_SIZE),
-        );
-
-        // Flip simulation parity
-        self.sim_parity = !self.sim_parity;
-        // the side advect just wrote: what display reads, and what the next
-        // frame's advect reads from
-        let deposit_written = self.deposit_parity as usize;
-        let deposit_previous = 1 - deposit_written;
-        self.deposit_parity = !self.deposit_parity;
-
-        // 11. Display
         let grid_size = Vec2::new(CANVAS_WIDTH as f32, CANVAS_HEIGHT as f32);
         let texel_size = Vec2::new(1.0 / CANVAS_WIDTH as f32, 1.0 / CANVAS_HEIGHT as f32);
         let window_size = renderer.window_resolution();
 
-        let active_pigment = self.active_pigment;
-        let brush_radius = self.brush_radius;
-        let brush_opacity = self.brush_opacity;
-
-        let display_params = paint_display::DisplayParams {
-            // post-flip parity: display reads what the passes above wrote
-            deposit_0_3: self.deposit_0_3_sampled[deposit_written].bindless_handle(),
-            deposit_4_7: self.deposit_4_7_sampled[deposit_written].bindless_handle(),
-            deposit_8_11: self.deposit_8_11_sampled[deposit_written].bindless_handle(),
-            paper_height: self.paper_height_sampled.bindless_handle(),
-            wet_mask: self.wet_mask.read_sampled(self.sim_parity),
-            texel_size,
-            debug_view: self.edit_state.debug_view,
-            canvas_aspect: grid_size.x / grid_size.y,
-            window_aspect: window_size.x / window_size.y,
-            _padding_0: Default::default(),
-            pigment0: Pigment::QuinacridoneRose.km(),
-            pigment1: Pigment::IndianRed.km(),
-            pigment2: Pigment::CadmiumYellow.km(),
-            pigment3: Pigment::HookersGreen.km(),
-            pigment4: Pigment::CeruleanBlue.km(),
-            pigment5: Pigment::BurntUmber.km(),
-            pigment6: Pigment::CadmiumRed.km(),
-            pigment7: Pigment::BrilliantOrange.km(),
-            pigment8: Pigment::HansaYellow.km(),
-            pigment9: Pigment::PhthaloGreen.km(),
-            pigment10: Pigment::FrenchUltramarine.km(),
-            pigment11: Pigment::InterferenceLilac.km(),
-        };
-
-        let brush_params_buffer = &mut self.brush_params_buffer;
-        let stroke_points_buffer = &mut self.stroke_points_buffer;
-        let display_params_buffer = &mut self.display_params_buffer;
-        let update_vel_params_buffer = &mut self.update_vel_params_buffer;
-        let divergence_params_buffer = &mut self.divergence_params_buffer;
-        let pressure_jacobi_params_buffer = &mut self.pressure_jacobi_params_buffer;
-        let project_vel_params_buffer = &mut self.project_vel_params_buffer;
-        let blur_params_buffer = &mut self.blur_params_buffer;
-        let flow_outward_params_buffer = &mut self.flow_outward_params_buffer;
-        let advect_and_transfer_params_buffer = &mut self.advect_and_transfer_params_buffer;
-        let capillary_flow_params_buffer = &mut self.capillary_flow_params_buffer;
-
-        renderer.draw_vertex_count(&self.display_pipeline, 3, |gpu| {
-            // Upload stroke points
-            if point_count > 0 {
-                let gpu_points: Vec<paint_brush_compute::StrokePoint> = stroke_points
-                    [..point_count as usize]
-                    .iter()
-                    .map(|&position| paint_brush_compute::StrokePoint {
-                        position: window_to_canvas(position, window_size, grid_size),
-                    })
-                    .collect();
-
-                gpu.write_storage(stroke_points_buffer, &gpu_points);
-            }
+        let brush = (point_count > 0).then(|| {
+            let gpu_points: Vec<paint_brush_compute::StrokePoint> = stroke_points
+                [..point_count as usize]
+                .iter()
+                .map(|&position| paint_brush_compute::StrokePoint {
+                    position: window_to_canvas(position, window_size, grid_size),
+                })
+                .collect();
 
             // Pigment color: concentration in the active group/channel
             let mut pigment_color_0_3 = Vec4::ZERO;
             let mut pigment_color_4_7 = Vec4::ZERO;
             let mut pigment_color_8_11 = Vec4::ZERO;
-            let c = self.edit_state.brush_concentration.value;
             let group_colors = [
                 &mut pigment_color_0_3,
                 &mut pigment_color_4_7,
                 &mut pigment_color_8_11,
             ];
-            group_colors[active_pigment.group_index()][active_pigment.channel_index()] = c;
+            group_colors[self.active_pigment.group_index()][self.active_pigment.channel_index()] =
+                self.edit_state.brush_concentration.value;
 
-            gpu.write_uniform(
-                brush_params_buffer,
-                paint_brush_compute::BrushParams {
-                    wet_mask: self.wet_mask.read_storage(self.sim_parity),
-                    pressure: self.pressure.read_storage(false),
-                    pigment_0_3: self.pigment_0_3.read_storage(self.sim_parity),
-                    pigment_4_7: self.pigment_4_7.read_storage(self.sim_parity),
-                    pigment_8_11: self.pigment_8_11.read_storage(self.sim_parity),
-                    saturation: self.saturation.read_storage(self.sim_parity),
+            (
+                gpu_points,
+                paint_brush_compute::BrushParamsData {
                     point_count,
-                    brush_radius,
-                    brush_opacity,
+                    brush_radius: self.brush_radius,
+                    brush_opacity: self.brush_opacity,
                     brush_pressure: BRUSH_PRESSURE,
                     pigment_color_0_3,
                     pigment_color_4_7,
                     pigment_color_8_11,
                     canvas_size: grid_size,
-                    stroke_points: gpu.addr(stroke_points_buffer).into(),
                 },
-            );
+            )
+        });
 
-            gpu.write_uniform(
-                update_vel_params_buffer,
-                wc_update_velocity_compute::Params {
-                    u_in: self.velocity_u.read_sampled(self.sim_parity),
-                    v_in: self.velocity_v.read_sampled(self.sim_parity),
-                    pressure: self.pressure.read_sampled(false),
-                    wet_mask: self.wet_mask.read_sampled(self.sim_parity),
-                    u_out: self.velocity_u.write_storage(self.sim_parity),
-                    v_out: self.velocity_v.write_storage(self.sim_parity),
-                    paper_height: self.paper_height_sampled.bindless_handle(),
+        self.graph.execute(
+            renderer,
+            &(
+                brush,
+                wc_update_velocity_compute::ParamsData {
                     grid_size,
                     texel_size,
                     dt: DT,
                     mu: MU,
                     kappa: KAPPA,
                     slope_strength: SLOPE_STRENGTH,
-                    _padding_0: Default::default(),
                 },
-            );
-
-            gpu.write_uniform(
-                divergence_params_buffer,
-                wc_divergence_compute::Params {
-                    // `sim` is the pre-flip parity. `update_velocity` wrote
-                    // the other side, and divergence reads what it wrote.
-                    u_in: self.velocity_u.read_sampled(!self.sim_parity),
-                    v_in: self.velocity_v.read_sampled(!self.sim_parity),
-                    divergence: self.divergence.bindless_handle(),
-                    grid_size,
-                },
-            );
-
-            gpu.write_uniform(
-                pressure_jacobi_params_buffer,
-                wc_pressure_jacobi_compute::Params {
-                    divergence: self.divergence_sampled.bindless_handle(),
-                    grid_size,
-                },
-            );
-
-            gpu.write_uniform(
-                project_vel_params_buffer,
-                wc_project_velocity_compute::Params {
-                    u: self.velocity_u.read_storage(!self.sim_parity),
-                    v: self.velocity_v.read_storage(!self.sim_parity),
-                    wet_mask: self.wet_mask.read_sampled(self.sim_parity),
-                    pressure: self.pressure.read_sampled(false),
-                    grid_size,
-                    _padding_0: Default::default(),
-                },
-            );
-
-            gpu.write_uniform(
-                blur_params_buffer,
+                wc_divergence_compute::ParamsData { grid_size },
+                (
+                    LoopCount(JACOBI_ITERATIONS),
+                    (wc_pressure_jacobi_compute::ParamsData { grid_size },),
+                ),
+                wc_project_velocity_compute::ParamsData { grid_size },
                 wc_gaussian_blur_compute::Params {
                     grid_size,
                     _padding_0: Default::default(),
                 },
-            );
-
-            gpu.write_uniform(
-                flow_outward_params_buffer,
-                wc_flow_outward_compute::Params {
-                    wet_mask: self.wet_mask.read_sampled(self.sim_parity),
-                    saturation: self.saturation.read_storage(self.sim_parity),
-                    blurred_mask: self.blurred_mask_sampled.bindless_handle(),
-                    pressure: self.pressure.read_storage(false),
+                wc_gaussian_blur_compute::Params {
                     grid_size,
-                    eta: ETA,
                     _padding_0: Default::default(),
                 },
-            );
-
-            gpu.write_uniform(
-                advect_and_transfer_params_buffer,
-                wc_advect_and_transfer_pigment_compute::Params {
-                    pigment_in_0_3: self.pigment_0_3.read_sampled(self.sim_parity),
-                    pigment_in_4_7: self.pigment_4_7.read_sampled(self.sim_parity),
-                    pigment_in_8_11: self.pigment_8_11.read_sampled(self.sim_parity),
-                    u_in: self.velocity_u.read_sampled(self.sim_parity),
-                    v_in: self.velocity_v.read_sampled(self.sim_parity),
-                    wet_mask: self.wet_mask.read_sampled(self.sim_parity),
-                    pigment_out_0_3: self.pigment_0_3.write_storage(self.sim_parity),
-                    pigment_out_4_7: self.pigment_4_7.write_storage(self.sim_parity),
-                    pigment_out_8_11: self.pigment_8_11.write_storage(self.sim_parity),
-                    deposit_in_0_3: self.deposit_0_3_sampled[deposit_previous].bindless_handle(),
-                    deposit_in_4_7: self.deposit_4_7_sampled[deposit_previous].bindless_handle(),
-                    deposit_in_8_11: self.deposit_8_11_sampled[deposit_previous].bindless_handle(),
-                    deposit_out_0_3: self.deposit_0_3[deposit_written].bindless_handle(),
-                    deposit_out_4_7: self.deposit_4_7[deposit_written].bindless_handle(),
-                    deposit_out_8_11: self.deposit_8_11[deposit_written].bindless_handle(),
-                    paper_height: self.paper_height_sampled.bindless_handle(),
+                wc_flow_outward_compute::ParamsData {
+                    grid_size,
+                    eta: ETA,
+                },
+                wc_advect_and_transfer_pigment_compute::ParamsData {
                     grid_size,
                     dt: DT,
                     transfer_rate: TRANSFER_RATE,
@@ -991,28 +849,33 @@ impl Game for Watercolor {
                     pigment10: Pigment::FrenchUltramarine.properties(),
                     pigment11: Pigment::InterferenceLilac.properties(),
                 },
-            );
-
-            gpu.write_uniform(
-                capillary_flow_params_buffer,
-                wc_capillary_flow_compute::Params {
-                    saturation_in: self.saturation.read_sampled(self.sim_parity),
-                    wet_mask_in: self.wet_mask.read_sampled(self.sim_parity),
-                    saturation_out: self.saturation.write_storage(self.sim_parity),
-                    wet_mask_out: self.wet_mask.write_storage(self.sim_parity),
+                wc_capillary_flow_compute::ParamsData {
                     grid_size,
                     diffuse_rate: DIFFUSE_RATE,
                     capacity: CAPILLARY_CAPACITY,
                     sigma: CAPILLARY_SIGMA,
                     dry_threshold: DRY_THRESHOLD,
-                    _padding_0: Default::default(),
                 },
-            );
-
-            gpu.write_uniform(display_params_buffer, display_params);
-        })?;
-
-        Ok(())
+                paint_display::DisplayParamsData {
+                    texel_size,
+                    debug_view: self.edit_state.debug_view,
+                    canvas_aspect: grid_size.x / grid_size.y,
+                    window_aspect: window_size.x / window_size.y,
+                    pigment0: Pigment::QuinacridoneRose.km(),
+                    pigment1: Pigment::IndianRed.km(),
+                    pigment2: Pigment::CadmiumYellow.km(),
+                    pigment3: Pigment::HookersGreen.km(),
+                    pigment4: Pigment::CeruleanBlue.km(),
+                    pigment5: Pigment::BurntUmber.km(),
+                    pigment6: Pigment::CadmiumRed.km(),
+                    pigment7: Pigment::BrilliantOrange.km(),
+                    pigment8: Pigment::HansaYellow.km(),
+                    pigment9: Pigment::PhthaloGreen.km(),
+                    pigment10: Pigment::FrenchUltramarine.km(),
+                    pigment11: Pigment::InterferenceLilac.km(),
+                },
+            ),
+        )
     }
 }
 

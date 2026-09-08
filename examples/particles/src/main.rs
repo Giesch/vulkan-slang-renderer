@@ -6,8 +6,8 @@ use glam::{Vec2, Vec4};
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    Compute, DrawError, DrawVertexCount, FrameRenderer, GpuOnlyBufferHandle, PipelineHandle,
-    Renderer, UniformBufferHandle,
+    ComputeNode, DrawError, DrawVertexCountNode, FrameRenderer, GpuOnlyBufferHandle, GpuOnlySlot,
+    GraphResources, RenderGraph, Renderer, UniformBufferHandle, dispatch, draw_vertex_count,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -21,13 +21,17 @@ fn main() -> Result<(), anyhow::Error> {
 
 const NUM_PARTICLES: u32 = 4096;
 
+type ParticlesGraph = RenderGraph<(
+    ComputeNode<particles_compute::SimParams>,
+    DrawVertexCountNode<particle_render::RenderParams>,
+)>;
+
 struct Particles {
     last_frame: Instant,
-    compute_pipeline: PipelineHandle<Compute>,
-    render_pipeline: PipelineHandle<DrawVertexCount>,
-    particle_buffer: GpuOnlyBufferHandle<particle::Particle>,
-    sim_params_buffer: UniformBufferHandle<particles_compute::SimParams>,
-    render_params_buffer: UniformBufferHandle<particle_render::RenderParams>,
+    graph: ParticlesGraph,
+    _particle_buffer: GpuOnlyBufferHandle<particle::Particle>,
+    _sim_params_buffer: UniformBufferHandle<particles_compute::SimParams>,
+    _render_params_buffer: UniformBufferHandle<particle_render::RenderParams>,
 }
 
 impl Game for Particles {
@@ -70,51 +74,60 @@ impl Game for Particles {
         let render_config = shaders.particle_render.pipeline_config(render_resources);
         let render_pipeline = renderer.create_pipeline(render_config)?;
 
+        let workgroup_size = particles_compute::WORKGROUP_SIZE[0];
+        let workgroup_count = NUM_PARTICLES.div_ceil(workgroup_size);
+        let vertex_count = NUM_PARTICLES * 6; // 6 vertices per particle quad
+
+        let particles = GpuOnlySlot::from(&particle_buffer);
+        let graph = RenderGraph::new(
+            renderer,
+            GraphResources::new(),
+            (
+                dispatch(
+                    &compute_pipeline,
+                    &sim_params_buffer,
+                    [workgroup_count, 1, 1],
+                    particles_compute::SimParamsBindings {
+                        particles_in: particles.previous(),
+                        particles_out: particles.current(),
+                    },
+                ),
+                draw_vertex_count(
+                    &render_pipeline,
+                    &render_params_buffer,
+                    vertex_count,
+                    particle_render::RenderParamsBindings {
+                        particles: particles.current().into(),
+                    },
+                ),
+            ),
+        )?;
+
         let last_frame = Instant::now();
 
         Ok(Self {
             last_frame,
-            compute_pipeline,
-            render_pipeline,
-            particle_buffer,
-            sim_params_buffer,
-            render_params_buffer,
+            graph,
+            _particle_buffer: particle_buffer,
+            _sim_params_buffer: sim_params_buffer,
+            _render_params_buffer: render_params_buffer,
         })
     }
 
-    fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let now = Instant::now();
         let delta_time = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
 
-        let workgroup_size = particles_compute::WORKGROUP_SIZE[0];
-        let workgroup_count = NUM_PARTICLES.div_ceil(workgroup_size);
-
-        renderer.dispatch(&self.compute_pipeline, [workgroup_count, 1, 1]);
-
-        let vertex_count = NUM_PARTICLES * 6; // 6 vertices per particle quad
-        renderer.draw_vertex_count(&self.render_pipeline, vertex_count, |gpu| {
-            gpu.write_uniform(
-                &mut self.sim_params_buffer,
-                particles_compute::SimParams {
-                    particles_in: gpu.previous_addr(&self.particle_buffer),
-                    particles_out: gpu.current_addr(&self.particle_buffer),
-                    delta_time,
-                    _padding_0: Default::default(),
-                },
-            );
-
-            gpu.write_uniform(
-                &mut self.render_params_buffer,
-                particle_render::RenderParams {
+        self.graph.execute(
+            renderer,
+            &(
+                particles_compute::SimParamsData { delta_time },
+                particle_render::RenderParamsData {
                     particle_count: NUM_PARTICLES,
-                    _padding_0: Default::default(),
-                    particles: gpu.current_addr(&self.particle_buffer).into(),
                 },
-            );
-        })?;
-
-        Ok(())
+            ),
+        )
     }
 }
 
