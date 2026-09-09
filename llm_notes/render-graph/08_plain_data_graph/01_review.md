@@ -168,6 +168,12 @@ no error. The validator holds the full access set and can reject
 
 ### 3f. Unconsumed uniform sources skip ID-range checks
 
+RESOLVED (2026-09-08). Resource ids are bounds-checked on the declaration
+that carries them: uniform sources (consumed or not), push blocks, and
+`Offscreen` target lists. A source shared by several commands reports once.
+The `OffscreenTargets` rejection runs in the leaf walk, so raster leaves
+inside `When`/`Repeat` bodies are covered. The finding as written:
+
 `validate.rs:386-410` shape-checks every `UniformDecl`, but the
 `TexId`/`BufferId`/`ImportId` bounds checks run only in the leaf walk. An
 out-of-range ID inside a zero-consumer source is not reported. Review item 5
@@ -337,7 +343,7 @@ them in 3a.
 4. Reconcile `docs/render_graph.md` and annotate 07/phase_1 with what landed
    (§7).
 
-§1, §2, §3a, §3b, and §3c are fixed. §6's keep-or-delete resolved as keep: the
+§1, §2, and §3 are fixed. §6's keep-or-delete resolved as keep: the
 inventory reaches every item of `compile.rs`, `expand.rs`, and lowering's side
-tables, so each is verified rather than merely compiled. Items 3d–3g, 4, 5, and
-7 stand.
+tables, so each is verified rather than merely compiled. Items 4, 5, and 7
+stand.

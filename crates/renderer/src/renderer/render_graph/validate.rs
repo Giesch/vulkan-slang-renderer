@@ -467,6 +467,28 @@ pub(crate) fn validate(
             true
         }
     };
+    // Resource ids are checked on the declaration that carries them: a
+    // zero-consumer source is still checked, a shared source reports once.
+    let valid_bindings = |bindings: &[(FieldKey, ResourceRef)], errors: &mut Vec<GraphError>| {
+        for (_, resource) in bindings {
+            match resource {
+                ResourceRef::Tex(tex, _) => {
+                    valid(tex.0, desc.textures.len(), TableKind::Texture, errors);
+                }
+                ResourceRef::Buf(buffer, _) => {
+                    valid(
+                        buffer.buffer.0,
+                        desc.buffers.len(),
+                        TableKind::Buffer,
+                        errors,
+                    );
+                }
+                ResourceRef::External(import) => {
+                    valid(import.0, desc.imports.len(), TableKind::Import, errors);
+                }
+            }
+        }
+    };
     for tex in &desc.textures {
         match tex.size {
             SizeClass::Window | SizeClass::WindowDiv(_) => {
@@ -544,6 +566,7 @@ pub(crate) fn validate(
                 found: kind(&desc.values[value.0 as usize].kind),
             })
         }
+        valid_bindings(&uniform.source.bindings, &mut errors);
         check_shape(
             &uniform.name,
             uniform.schema,
@@ -674,12 +697,6 @@ pub(crate) fn validate(
                     })
                 }
                 raster_seen = true;
-                if matches!(raster.targets, RasterTargets::Offscreen { .. }) {
-                    errors.push(GraphError::UnsupportedInPhase1 {
-                        feature: UnsupportedFeature::OffscreenTargets,
-                        at: raster.name.clone(),
-                    })
-                }
             }
             _ => {}
         }
@@ -690,25 +707,10 @@ pub(crate) fn validate(
     for (_, leaf) in all_leaves(desc) {
         for (command, resources) in commands(desc, leaf) {
             for (_, resource) in &resources {
-                match resource {
-                    ResourceRef::Tex(tex, access) => {
-                        if valid(tex.0, desc.textures.len(), TableKind::Texture, &mut errors)
-                            && matches!(access, TexAccess::ReadPrevious)
-                        {
-                            phys[tex.0 as usize] = 2
-                        }
-                    }
-                    ResourceRef::Buf(buffer, _) => {
-                        valid(
-                            buffer.buffer.0,
-                            desc.buffers.len(),
-                            TableKind::Buffer,
-                            &mut errors,
-                        );
-                    }
-                    ResourceRef::External(import) => {
-                        valid(import.0, desc.imports.len(), TableKind::Import, &mut errors);
-                    }
+                if let ResourceRef::Tex(tex, TexAccess::ReadPrevious) = resource
+                    && (tex.0 as usize) < phys.len()
+                {
+                    phys[tex.0 as usize] = 2
                 }
             }
             let tex_ids = |access| {
@@ -818,6 +820,7 @@ pub(crate) fn validate(
                             found: kind(&value.kind),
                         });
                     }
+                    valid_bindings(&push.bindings, &mut errors);
                     check_shape(
                         &compute.name,
                         push.schema,
@@ -828,6 +831,15 @@ pub(crate) fn validate(
                 }
             }
             LeafPass::Raster(raster) => {
+                if let RasterTargets::Offscreen { color, depth } = &raster.targets {
+                    errors.push(GraphError::UnsupportedInPhase1 {
+                        feature: UnsupportedFeature::OffscreenTargets,
+                        at: raster.name.clone(),
+                    });
+                    for tex in color.iter().chain(depth.iter()) {
+                        valid(tex.0, desc.textures.len(), TableKind::Texture, &mut errors);
+                    }
+                }
                 for draw in &raster.draws {
                     let mut written: Vec<TexId> = vec![];
                     for (_, resource) in command_bindings(desc, draw.uniform, draw.push.as_ref()) {
@@ -871,6 +883,7 @@ pub(crate) fn validate(
                             TableKind::Schema,
                             &mut errors,
                         );
+                        valid_bindings(&push.bindings, &mut errors);
                         check_shape(
                             &draw.name,
                             push.schema,
@@ -1583,6 +1596,120 @@ mod tests {
                     tex: "tex0".into(),
                 })
         );
+    }
+
+    #[test]
+    fn unconsumed_uniform_ids_are_bounds_checked() {
+        let mut builder = DescBuilder::new(1);
+        builder.uniform(&[read(5)]);
+
+        assert!(builder.errors().contains(&GraphError::IdOutOfRange {
+            table: TableKind::Texture,
+            id: 5,
+        }));
+    }
+
+    #[test]
+    fn consumed_uniform_ids_report_once() {
+        let mut builder = DescBuilder::new(1);
+        let shared = builder.uniform(&[read(9)]);
+        let mut first = builder.dispatch("d0", &[]);
+        first.uniform = shared;
+        let mut second = builder.dispatch("d1", &[]);
+        second.uniform = shared;
+        builder.leaf(first);
+        builder.leaf(second);
+
+        let out_of_range = builder
+            .errors()
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    GraphError::IdOutOfRange {
+                        table: TableKind::Texture,
+                        id: 9,
+                    }
+                )
+            })
+            .count();
+        assert_eq!(out_of_range, 1);
+    }
+
+    #[test]
+    fn push_binding_ids_are_bounds_checked() {
+        let mut builder = DescBuilder::new(1);
+        let dispatch = builder.dispatch_with_push("d0", &[], &[read(3)]);
+        builder.leaf(dispatch);
+
+        let out_of_range = builder
+            .errors()
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    GraphError::IdOutOfRange {
+                        table: TableKind::Texture,
+                        id: 3,
+                    }
+                )
+            })
+            .count();
+        assert_eq!(out_of_range, 1);
+    }
+
+    #[test]
+    fn offscreen_target_ids_are_bounds_checked() {
+        let mut builder = DescBuilder::new(1);
+        let draw = builder.draw("draw0", &[read(0)]);
+        let mut pass = raster("main", vec![draw]);
+        pass.targets = RasterTargets::Offscreen {
+            color: vec![TexId(7)],
+            depth: Some(TexId(8)),
+        };
+        builder.leaf_raster(pass);
+
+        let errors = builder.errors();
+        for id in [7, 8] {
+            assert!(errors.contains(&GraphError::IdOutOfRange {
+                table: TableKind::Texture,
+                id,
+            }));
+        }
+    }
+
+    #[test]
+    fn offscreen_targets_in_when_body_rejected() {
+        let mut builder = DescBuilder::new(1);
+        let draw = builder.draw("draw0", &[read(0)]);
+        let mut pass = raster("main", vec![draw]);
+        pass.targets = RasterTargets::Offscreen {
+            color: vec![TexId(0)],
+            depth: None,
+        };
+        builder.when("when0", vec![LeafPass::Raster(pass)]);
+
+        assert!(builder.errors().contains(&GraphError::UnsupportedInPhase1 {
+            feature: UnsupportedFeature::OffscreenTargets,
+            at: "main".into(),
+        }));
+    }
+
+    #[test]
+    fn offscreen_targets_in_repeat_body_rejected() {
+        let mut builder = DescBuilder::new(1);
+        let draw = builder.draw("draw0", &[read(0)]);
+        let mut pass = raster("main", vec![draw]);
+        pass.targets = RasterTargets::Offscreen {
+            color: vec![TexId(0)],
+            depth: None,
+        };
+        builder.repeat("repeat0", vec![LeafPass::Raster(pass)]);
+
+        assert!(builder.errors().contains(&GraphError::UnsupportedInPhase1 {
+            feature: UnsupportedFeature::OffscreenTargets,
+            at: "main".into(),
+        }));
     }
 
     /// a second raster pass is one defect with one diagnostic

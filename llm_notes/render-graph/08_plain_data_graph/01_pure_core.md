@@ -418,6 +418,22 @@ version", "mutates and reads", "more than once", "undeclared", "push block",
 "repeat", "precede", "only read", "at most one", "at least one draw") so
 diagnostics do not regress. Variants carry plain indices and strings.
 
+ANNOTATION (2026-09-08, review §3d–§3g): the implementation differs from
+this section in five ways.
+
+- The texture-hazard variants (`DuplicateWrite`, `MutateAndRead`,
+  `MutateAndWrite`, `WriteAndPrevRead`, `RepeatUniformRotatesTexture`,
+  `DrawWritesTexture`) carry `tex: String` — the decl name, which embeds the
+  `res.texture(...)` call site — not `tex: u32`.
+- `validate()` also emits `TextureExtentZero { texture, width, height }` and
+  `PrevReadWithoutWrite { command, tex }`.
+- `RenderGraph::new` emits
+  `TextureExtentTooLarge { texture, width, height, max }` through
+  `extent_limit_errors`, checked against the device's `maxImageDimension2D`.
+- `Display` has no `render graph: ` prefix. The `validation_message` header
+  identifies the source; a prefix on every bullet would repeat it.
+- `TableKind` implements `Display` with lowercase table names.
+
 Emitted by `validate()` (ported `BuildCtx` check in parentheses; the 15
 checks are the complete list in `schedule.rs:50-207`):
 
