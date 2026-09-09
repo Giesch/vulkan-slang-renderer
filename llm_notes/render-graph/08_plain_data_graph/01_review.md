@@ -222,6 +222,16 @@ The finding as written:
 
 ## 4. Other unhandled edge and error cases
 
+RESOLVED (2026-09-09). Upload overflow returns an error; execution validates all
+captured buffer slots before resolving addresses; the external storage-handle
+conversion was removed; picking declares its cursor value so optional picking
+lowers successfully; staged bytes use `MaybeUninit<u8>`. Repeat expansion now
+has a configurable aggregate limit (65,536 iterations per frame by default).
+Texture cursors commit through a callback immediately after successful queue
+submission, including when subsequent presentation fails. The last two changes
+bring the runtime protections forward from phase 3a; the pure `expand` path
+remains unwired. The findings as written:
+
 - `render_graph.rs:1456-1462`: `stage_storage` uses `assert!` on upload
   length. An oversized frame `Vec<T>` aborts the process mid-frame.
   `GraphNode::plan` already returns `anyhow::Result` and can carry the error.
@@ -251,6 +261,15 @@ The finding as written:
   frame swaps `read`/`read_previous` content.
 
 ## 5. Codegen edge cases (`crates/cli/src/build_tasks.rs`)
+
+RESOLVED (2026-09-09). Parameter selection and resource analysis use shader-local
+reflection; shared types select their declaring module within a shader context.
+Resource-bearing types are a transitive closure, including arrays. Generated
+names are checked against visible structs/enums and earlier generated names.
+Padding carries an explicit synthetic flag. Unknown handle types and nested
+resources return source-qualified errors rather than panics. Regression tests
+cover these cases; six alignment snapshots drop accidental cross-shader trait
+implementations. The findings as written:
 
 - `params_types` (`:162`) and `resource_bearing` (`:171`,
   `resource_bearing_types` at `:1621`) are global bare-name sets. Shader B's

@@ -30,7 +30,11 @@ Codegen splits every params and push-constant struct by field type:
   element is `()`.
 
 The graph reassembles the full struct at execute time from the data value
-and the resolved bindings.
+and the resolved bindings. Type analysis is scoped to each shader. Nested
+resource fields (including resources inside arrays) must be flattened into the
+parameter block. Unknown handle marker types and generated `Data`/`Bindings`
+name collisions produce errors naming the source shader. User fields with an
+`_padding_` prefix remain data; only generated padding is zero-filled.
 
 ## Logical textures
 
@@ -59,19 +63,25 @@ move it.
 The graph derives the physical image count per texture: 2 when a node reads
 a texture it also writes (or any node uses `read_previous`), otherwise 1.
 Physical images are created cleared. Rotation, including across the frame
-boundary, is graph-internal; odd loop trip counts are legal.
+boundary, is graph-internal; odd loop trip counts are legal. Version cursors
+commit after successful GPU submission. A frame skipped during swapchain image
+acquisition preserves the previous cursors; a presentation failure after
+submission keeps the committed versions.
 
 A sampled texture the game creates itself (for example a storage texture
 filled with `write_storage_texture` at setup and then exposed through
 `storage_texture_as_sampled`) binds via `handle.bindless_handle().into()`.
 External sampled textures take no part in version tracking. Mutable external
-storage textures are rejected when the graph is built; use a logical graph
+storage textures cannot convert to graph storage bindings; use a logical graph
 texture for storage writes.
 
 ## Buffers
 
 Buffer handles are affine; the graph captures `Copy` slot keys from them at
-build time. The game keeps the handles.
+build time. The game keeps the handles. `execute` checks every captured buffer
+slot before planning and returns an error identifying any dropped buffer.
+Keep these handles alive for the graph's lifetime, including buffers in skipped
+optional nodes.
 
 ```rust
 let points = StorageSlot::from(&stroke_points_buffer);
@@ -87,7 +97,8 @@ table.addr_at(i)     // ImmutableAddr<T> of element i; bounds-checked here
 ```
 
 `upload(&buffer)` is a node that copies a `Vec<T>` from the params tuple
-into the buffer each frame.
+into the buffer each frame. An oversized vector returns an error identifying
+the storage slot and capacity, before any staged writes reach GPU memory.
 
 ## Nodes
 
@@ -113,6 +124,11 @@ Every draw form has a `_with_push` variant taking
 `push_values::<B>(bindings, data)`. A push block resolves per dispatch, so
 inside a `repeat` its texture references rotate per iteration. The push
 block's data half is fixed at build time.
+
+The total number of repeat iterations per frame defaults to a limit of 65,536.
+Use `graph.set_max_loop_iterations(limit)` to change it. Exceeding the limit
+returns an error before GPU writes or submission. This bounds repeat expansion;
+it is not a general byte limit on frame data or GPU allocations.
 
 ## Build-time validation
 
@@ -144,7 +160,7 @@ The validator enforces these rules:
   contain compute and upload nodes, but no draw. `repeat` and `optional`
   scopes cannot nest in either combination.
 - An `optional` scope must contain a frame value and use an optional value as
-  its gate. In particular, `optional(picking(...))` by itself is empty.
+  its gate. `optional(picking(...))` uses its cursor value and is supported.
 - A graph can contain at most one picking node, and picking requires at least
   one draw.
 - A reused uniform-buffer slot must resolve to the same data size and resource

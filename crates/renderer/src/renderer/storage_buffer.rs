@@ -124,6 +124,10 @@ pub(super) struct RawStorageBuffer {
 pub(super) struct StorageBufferStorage(Vec<Option<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]>>);
 
 impl StorageBufferStorage {
+    pub(super) fn contains(&self, index: usize) -> bool {
+        self.0.get(index).is_some_and(Option::is_some)
+    }
+
     pub fn new() -> Self {
         Self(Default::default())
     }
@@ -324,6 +328,10 @@ impl StorageBufferStorage {
 pub(super) struct SingletonBufferStorage(Vec<Option<RawStorageBuffer>>);
 
 impl SingletonBufferStorage {
+    pub(super) fn contains(&self, index: usize) -> bool {
+        self.0.get(index).is_some_and(Option::is_some)
+    }
+
     pub fn new() -> Self {
         Self(Default::default())
     }

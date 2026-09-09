@@ -571,6 +571,8 @@ impl LowerCtx {
     }
 
     pub(crate) fn picking(&mut self, index: usize) {
+        let schema = self.schema("picking.cursor".into(), 8, vec![]);
+        self.value("picking.cursor".into(), ValueKind::Bytes { schema });
         if self.picking.replace(index).is_some() {
             self.errors.push(GraphError::MultiplePickingNodes)
         }
@@ -651,9 +653,11 @@ mod tests {
     }
 
     fn external_storage(slot: u32) -> GraphBinding {
-        GraphBinding::StorageTex(
-            BindlessHandle::<RwTexture2D>::from_slot(BindlessIndex::from_raw(slot)).into(),
-        )
+        GraphBinding::StorageTex(super::super::StorageTexBinding {
+            inner: super::StorageRef::External(BindlessHandle::<RwTexture2D>::from_slot(
+                BindlessIndex::from_raw(slot),
+            )),
+        })
     }
 
     fn uni(slot: usize, bindings: Vec<GraphBinding>) -> UniformInput {
@@ -851,6 +855,27 @@ mod tests {
             outer: "optional",
             inner: "optional",
         }));
+    }
+
+    #[test]
+    fn optional_picking_has_an_optional_cursor_value() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.draw(0, LowerDrawCall::VertexCount(3), uni(0, vec![]), None);
+        cx.begin_optional();
+        cx.picking(1);
+        cx.end_optional();
+        let out = cx.finish();
+
+        assert!(out.errors.is_empty(), "{:?}", out.errors);
+        assert!(validate(&out.desc, &out.schemas).is_ok());
+        let cursor = out
+            .desc
+            .values
+            .iter()
+            .find(|value| value.name == "picking.cursor")
+            .unwrap();
+        assert!(cursor.optional);
+        assert!(matches!(cursor.kind, ValueKind::Bytes { .. }));
     }
 
     #[test]

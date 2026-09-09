@@ -29,6 +29,10 @@ pub(super) struct RawUniformBuffer {
 pub(super) struct UniformBufferStorage(Vec<Option<[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]>>);
 
 impl UniformBufferStorage {
+    pub(super) fn contains(&self, index: usize) -> bool {
+        self.0.get(index).is_some_and(Option::is_some)
+    }
+
     pub fn new() -> Self {
         Self(Default::default())
     }

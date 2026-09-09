@@ -101,19 +101,6 @@ impl GraphBindingSet for ParamsBindings {
     }
 }
 
-impl GraphShaderParams for OuterData {
-    type Data = Self;
-    type Bindings = ();
-
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
-    }
-}
-
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

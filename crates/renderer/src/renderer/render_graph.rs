@@ -188,15 +188,9 @@ pub struct StorageTexBinding {
 #[derive(Debug, Clone, Copy)]
 enum StorageRef {
     Graph(GraphTex, StorageTexAccess),
+    // Kept for defensive lowering tests; no public constructor accepts this.
+    #[cfg_attr(not(test), expect(dead_code))]
     External(BindlessHandle<RwTexture2D>),
-}
-
-impl From<BindlessHandle<RwTexture2D>> for StorageTexBinding {
-    fn from(handle: BindlessHandle<RwTexture2D>) -> Self {
-        Self {
-            inner: StorageRef::External(handle),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1192,7 +1186,7 @@ impl<T: GPUWrite> GraphNode for UploadNode<T> {
     }
 
     fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
-        cx.stage_storage(self.slot, frame_data);
+        cx.staged.stage_storage(self.slot, frame_data)?;
 
         Ok(())
     }
@@ -1218,6 +1212,7 @@ impl<B: GraphNode> GraphNode for RepeatNode<B> {
     }
 
     fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+        cx.iterations.reserve(frame_data.0.0)?;
         for _ in 0..frame_data.0.0 {
             self.body.plan(&frame_data.1, cx)?;
         }
@@ -1359,7 +1354,7 @@ struct PhysTex {
 
 #[derive(Default)]
 struct StagedWrites {
-    bytes: Vec<u8>,
+    bytes: Vec<std::mem::MaybeUninit<u8>>,
     targets: Vec<StagedTarget>,
 }
 
@@ -1375,15 +1370,36 @@ enum StagedTarget {
 }
 
 impl StagedWrites {
-    fn stage(&mut self, src: *const u8, len: usize) -> std::ops::Range<usize> {
+    fn stage<T>(&mut self, values: &[T]) -> std::ops::Range<usize> {
+        let len = std::mem::size_of_val(values);
+        let src = values.as_ptr().cast::<std::mem::MaybeUninit<u8>>();
         let start = self.bytes.len();
         self.bytes.reserve(len);
+        // The source may have uninitialized padding. Copy and retain it as
+        // MaybeUninit bytes; never observe padding as an initialized u8.
         unsafe {
             std::ptr::copy_nonoverlapping(src, self.bytes.as_mut_ptr().add(start), len);
             self.bytes.set_len(start + len);
         }
 
         start..start + len
+    }
+
+    fn stage_storage<T>(&mut self, slot: StorageSlot<T>, data: &[T]) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            data.len() <= slot.len as usize,
+            "render graph: upload to storage buffer {} has {} elements; capacity is {}",
+            slot.index,
+            data.len(),
+            slot.len,
+        );
+        let byte_range = self.stage(data);
+        self.targets.push(StagedTarget::Storage {
+            buffer_index: slot.index,
+            byte_range,
+        });
+
+        Ok(())
     }
 
     /// Runs inside the terminal submit's update step, after the flight-slot
@@ -1410,9 +1426,26 @@ impl StagedWrites {
             };
             let src = &self.bytes[byte_range.clone()];
             unsafe {
-                std::ptr::copy_nonoverlapping(src.as_ptr(), dst.cast::<u8>(), src.len());
+                std::ptr::copy_nonoverlapping(
+                    src.as_ptr(),
+                    dst.cast::<std::mem::MaybeUninit<u8>>(),
+                    src.len(),
+                );
             }
         }
+    }
+}
+
+struct IterationBudget(u32);
+
+impl IterationBudget {
+    fn reserve(&mut self, count: u32) -> anyhow::Result<()> {
+        self.0 = self.0.checked_sub(count).ok_or_else(|| anyhow::anyhow!(
+            "render graph: repeat requests {count} iterations with only {} remaining in the frame budget",
+            self.0,
+        ))?;
+
+        Ok(())
     }
 }
 
@@ -1426,6 +1459,7 @@ pub struct PlanCtx<'a> {
     draws: Vec<PendingDrawCommand>,
     staged: StagedWrites,
     picking: Option<PickingDrawConfig>,
+    iterations: IterationBudget,
 }
 
 impl PlanCtx<'_> {
@@ -1464,26 +1498,8 @@ impl PlanCtx<'_> {
     }
 
     fn stage_uniform<S>(&mut self, slot: UniformSlot<S>, value: &S) {
-        let byte_range = self
-            .staged
-            .stage((value as *const S).cast::<u8>(), std::mem::size_of::<S>());
+        let byte_range = self.staged.stage(std::slice::from_ref(value));
         self.staged.targets.push(StagedTarget::Uniform {
-            buffer_index: slot.index,
-            byte_range,
-        });
-    }
-
-    fn stage_storage<T>(&mut self, slot: StorageSlot<T>, data: &[T]) {
-        assert!(
-            data.len() <= slot.len as usize,
-            "render graph: upload of {} elements into a buffer of {}",
-            data.len(),
-            slot.len,
-        );
-        let byte_range = self
-            .staged
-            .stage(data.as_ptr().cast::<u8>(), std::mem::size_of_val(data));
-        self.staged.targets.push(StagedTarget::Storage {
             buffer_index: slot.index,
             byte_range,
         });
@@ -1495,6 +1511,9 @@ impl PlanCtx<'_> {
 /// buffer write itself, and submits the frame.
 pub struct RenderGraph<N: GraphNode> {
     nodes: N,
+    max_loop_iterations: u32,
+    uniform_slots: Vec<usize>,
+    buffer_slots: Vec<(desc::BufferKind, usize, String)>,
     tex: Vec<TexRunState>,
     phys: Vec<PhysTex>,
     /// the physical images and sampled aliases backing the logical textures
@@ -1557,10 +1576,51 @@ impl<N: GraphNode> RenderGraph<N> {
 
         Ok(Self {
             nodes,
+            max_loop_iterations: 65_536,
+            uniform_slots: lowered.uniform_slots,
+            buffer_slots: lowered
+                .desc
+                .buffers
+                .into_iter()
+                .zip(lowered.buffer_indices)
+                .map(|(decl, index)| (decl.kind, index, decl.name))
+                .collect(),
             tex,
             phys,
             _keep_alive: keep_alive,
         })
+    }
+
+    /// Maximum total repeat iterations planned per frame (default: 65,536).
+    /// Exceeding the limit returns an error before any frame writes or submission.
+    pub fn set_max_loop_iterations(&mut self, limit: u32) {
+        self.max_loop_iterations = limit;
+    }
+
+    fn validate_buffers(
+        &self,
+        uniforms: &super::uniform_buffer::UniformBufferStorage,
+        storage: &super::storage_buffer::StorageBufferStorage,
+        singletons: &super::storage_buffer::SingletonBufferStorage,
+    ) -> anyhow::Result<()> {
+        for index in &self.uniform_slots {
+            anyhow::ensure!(
+                uniforms.contains(*index),
+                "render graph: uniform buffer slot {index} was dropped"
+            );
+        }
+        for (kind, index, name) in &self.buffer_slots {
+            let live = match kind {
+                desc::BufferKind::Singleton => singletons.contains(*index),
+                _ => storage.contains(*index),
+            };
+            anyhow::ensure!(
+                live,
+                "render graph: {name} ({kind:?}, slot {index}) was dropped"
+            );
+        }
+
+        Ok(())
     }
 
     pub fn execute(
@@ -1568,6 +1628,12 @@ impl<N: GraphNode> RenderGraph<N> {
         frame: FrameRenderer<'_>,
         params: &N::Frame,
     ) -> Result<(), DrawError> {
+        self.validate_buffers(
+            &frame.renderer.uniform_buffers,
+            &frame.renderer.storage_buffers,
+            &frame.renderer.singleton_buffers,
+        )
+        .map_err(DrawError::DrawError)?;
         let mut cx = PlanCtx {
             tex: self.tex.clone(),
             phys: &self.phys,
@@ -1576,6 +1642,7 @@ impl<N: GraphNode> RenderGraph<N> {
             draws: vec![],
             staged: StagedWrites::default(),
             picking: None,
+            iterations: IterationBudget(self.max_loop_iterations),
         };
         self.nodes
             .plan(params, &mut cx)
@@ -1589,24 +1656,123 @@ impl<N: GraphNode> RenderGraph<N> {
             ..
         } = cx;
 
-        // committed before submission: a frame aborted by swapchain
-        // recreation still advances versions, exactly as the hand-rolled
-        // parity bools flipped before the terminal draw call
-        self.tex = tex;
-
         let mut frame = frame;
         for (pipeline_index, group_count, push_constants) in dispatches {
             frame.queue_dispatch_raw(pipeline_index, group_count, push_constants);
         }
         frame.pending_draws.extend(draws);
 
-        frame.draw_frame(picking, |gpu| staged.apply(gpu))
+        frame.draw_frame_with_submission(picking, |gpu| staged.apply(gpu), || self.tex = tex)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{GraphFormat, GraphResources};
+
+    #[test]
+    fn missing_captured_buffer_slots_return_named_errors() {
+        let mut graph = super::RenderGraph {
+            nodes: (super::UploadNode::<u32> {
+                slot: super::StorageSlot {
+                    index: 42,
+                    len: 1,
+                    _elem: std::marker::PhantomData,
+                },
+            },),
+            max_loop_iterations: 10,
+            uniform_slots: vec![42],
+            buffer_slots: vec![],
+            tex: vec![],
+            phys: vec![],
+            _keep_alive: vec![],
+        };
+        let uniforms = crate::renderer::uniform_buffer::UniformBufferStorage::new();
+        let storage = crate::renderer::storage_buffer::StorageBufferStorage::new();
+        let singletons = crate::renderer::storage_buffer::SingletonBufferStorage::new();
+        let error = graph
+            .validate_buffers(&uniforms, &storage, &singletons)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("uniform buffer slot 42"), "{error}");
+        graph.uniform_slots.clear();
+        for kind in [
+            super::desc::BufferKind::Storage,
+            super::desc::BufferKind::Immutable,
+            super::desc::BufferKind::GpuOnlyFlight,
+            super::desc::BufferKind::Singleton,
+        ] {
+            graph.buffer_slots = vec![(kind, 42, "captured buffer".into())];
+            let error = graph
+                .validate_buffers(&uniforms, &storage, &singletons)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("captured buffer") && error.contains("slot 42"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_upload_returns_error_without_staging_writes() {
+        let slot = super::StorageSlot::<u32> {
+            index: 42,
+            len: 2,
+            _elem: std::marker::PhantomData,
+        };
+        let mut staged = super::StagedWrites::default();
+        let error = staged
+            .stage_storage(slot, &[1, 2, 3])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("buffer 42") && error.contains("capacity is 2"),
+            "{error}"
+        );
+        assert!(staged.bytes.is_empty() && staged.targets.is_empty());
+        staged.stage_storage(slot, &[]).unwrap();
+        staged.stage_storage(slot, &[1, 2]).unwrap();
+        assert_eq!(staged.bytes.len(), 8);
+    }
+
+    #[test]
+    fn staging_preserves_fields_of_a_type_with_interior_padding() {
+        #[repr(C)]
+        struct Padded {
+            small: u8,
+            large: u32,
+        }
+        let source = Padded {
+            small: 7,
+            large: 123456,
+        };
+        let mut staged = super::StagedWrites::default();
+        let range = staged.stage(std::slice::from_ref(&source));
+        // Force growth before copying back, so padding survives arena relocation too.
+        staged.stage(&[0u32; 1024]);
+        let mut destination = std::mem::MaybeUninit::<Padded>::uninit();
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                staged.bytes[range].as_ptr(),
+                destination.as_mut_ptr().cast::<std::mem::MaybeUninit<u8>>(),
+                std::mem::size_of::<Padded>(),
+            );
+            let destination = destination.assume_init();
+            assert_eq!(destination.small, 7);
+            assert_eq!(destination.large, 123456);
+        }
+    }
+
+    #[test]
+    fn iteration_budget_is_shared_by_repeats_and_rejects_unbounded_counts() {
+        let mut budget = super::IterationBudget(5);
+        budget.reserve(0).unwrap();
+        budget.reserve(3).unwrap();
+        assert!(budget.reserve(u32::MAX).is_err());
+        budget.reserve(2).unwrap();
+        assert!(budget.reserve(1).is_err());
+    }
 
     #[test]
     fn texture_names_carry_the_call_site() {
