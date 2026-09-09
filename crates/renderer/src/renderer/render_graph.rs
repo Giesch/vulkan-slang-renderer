@@ -1516,6 +1516,14 @@ impl<N: GraphNode> RenderGraph<N> {
                 validate::Analysis { tex_phys: vec![] }
             }
         };
+        let max = renderer
+            .physical_device_properties
+            .limits
+            .max_image_dimension2_d;
+        errors.append(&mut validate::extent_limit_errors(
+            &lowered.desc.textures,
+            max,
+        ));
         if !errors.is_empty() {
             let message = errors
                 .iter()

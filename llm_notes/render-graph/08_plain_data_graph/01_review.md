@@ -140,6 +140,11 @@ The finding as written:
 
 ### 3d. Texture extents are not validated
 
+RESOLVED (2026-09-08). `validate` rejects a zero `Fixed` extent with
+`TextureExtentZero`. `RenderGraph::new` checks `Fixed` extents against
+`maxImageDimension2D` through `extent_limit_errors` and reports
+`TextureExtentTooLarge`. Both errors name the texture. The finding as written:
+
 `render_graph.rs:111` accepts any `u32` pair. `validate.rs` checks the size
 class, not the `Fixed(w, h)` values. `res.texture(0, 0, ...)` reaches
 `vkCreateImage` and fails as an opaque allocator error instead of a

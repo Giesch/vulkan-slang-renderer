@@ -62,6 +62,17 @@ pub(crate) enum GraphError {
         draw: String,
         tex: u32,
     },
+    TextureExtentZero {
+        texture: String,
+        width: u32,
+        height: u32,
+    },
+    TextureExtentTooLarge {
+        texture: String,
+        width: u32,
+        height: u32,
+        max: u32,
+    },
     PipelineKindMismatch {
         command: String,
         expected: PipelineKind,
@@ -151,6 +162,20 @@ impl fmt::Display for GraphError {
                 f,
                 "draw {draw} can only read graph textures (texture {tex})"
             ),
+            Self::TextureExtentZero {
+                texture,
+                width,
+                height,
+            } => write!(f, "texture {texture} has a zero extent: {width}x{height}"),
+            Self::TextureExtentTooLarge {
+                texture,
+                width,
+                height,
+                max,
+            } => write!(
+                f,
+                "texture {texture} extent {width}x{height} exceeds the device maximum {max}"
+            ),
             Self::PipelineKindMismatch { command, expected } => write!(
                 f,
                 "{command} uses the wrong pipeline kind; expected {expected:?}"
@@ -206,6 +231,28 @@ impl fmt::Display for GraphError {
 }
 
 impl std::error::Error for GraphError {}
+
+
+
+/// `max` is the device's `maxImageDimension2D`; device-dependent checks stay
+/// out of [`validate`].
+pub(crate) fn extent_limit_errors(textures: &[TexDecl], max: u32) -> Vec<GraphError> {
+    let mut errors = vec![];
+    for tex in textures {
+        if let SizeClass::Fixed(width, height) = tex.size
+            && (width > max || height > max)
+        {
+            errors.push(GraphError::TextureExtentTooLarge {
+                texture: tex.name.clone(),
+                width,
+                height,
+                max,
+            })
+        }
+    }
+
+    errors
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Analysis {
@@ -376,6 +423,13 @@ pub(crate) fn validate(
                 errors.push(GraphError::UnsupportedInPhase1 {
                     feature: UnsupportedFeature::WindowSizeClass,
                     at: tex.name.clone(),
+                })
+            }
+            SizeClass::Fixed(width, height) if width == 0 || height == 0 => {
+                errors.push(GraphError::TextureExtentZero {
+                    texture: tex.name.clone(),
+                    width,
+                    height,
                 })
             }
             _ => {}
@@ -800,7 +854,7 @@ mod tests {
     use super::super::test_desc::{
         DescBuilder, bindings, mutate, raster, read, read_previous, write,
     };
-    use super::{GraphError, TableKind, UnsupportedFeature};
+    use super::{GraphError, TableKind, UnsupportedFeature, extent_limit_errors};
 
     /// one command reading and writing a texture cannot alias the two, so the
     /// texture needs a second physical image
@@ -1358,4 +1412,33 @@ mod tests {
         );
         let _ = (TexAccess::Read, UniformId(0));
     }
+
+    #[test]
+    fn zero_extent_texture_is_an_error() {
+        let mut builder = DescBuilder::new(1);
+        builder.desc.textures[0].size = SizeClass::Fixed(0, 8);
+
+        assert!(builder.errors().contains(&GraphError::TextureExtentZero {
+            texture: "tex0".into(),
+            width: 0,
+            height: 8,
+        }));
+    }
+
+    #[test]
+    fn extent_over_device_limit_is_an_error() {
+        let builder = DescBuilder::new(1);
+
+        assert!(extent_limit_errors(&builder.desc.textures, 8).is_empty());
+        assert_eq!(
+            extent_limit_errors(&builder.desc.textures, 4),
+            vec![GraphError::TextureExtentTooLarge {
+                texture: "tex0".into(),
+                width: 8,
+                height: 8,
+                max: 4,
+            }]
+        );
+    }
+
 }

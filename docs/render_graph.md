@@ -156,6 +156,8 @@ recreation, matching the manual API's behavior.
 
 - Tuple arity is 12 per nesting level.
 - `repeat` does not nest, and holds compute nodes only.
+- Texture dimensions are at least 1 and at most the device's
+  `maxImageDimension2D`.
 - Draw order is declaration order inside one render pass; there are no
   offscreen passes.
 - Dispatch group counts, index ranges, indirect command ranges, and push
