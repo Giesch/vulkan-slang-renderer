@@ -225,11 +225,12 @@ The finding as written:
 RESOLVED (2026-09-09). Upload overflow returns an error; execution validates all
 captured buffer slots before resolving addresses; the external storage-handle
 conversion was removed; picking declares its cursor value so optional picking
-lowers successfully; staged bytes use `MaybeUninit<u8>`. Repeat expansion now
-has a configurable aggregate limit (65,536 iterations per frame by default).
+lowers successfully; staged bytes use `MaybeUninit<u8>`. Repeat counts and
+expansion budgets remain the application's responsibility, as specified by the
+parent plan; the aggregate iteration limit was removed.
 Texture cursors commit through a callback immediately after successful queue
-submission, including when subsequent presentation fails. The last two changes
-bring the runtime protections forward from phase 3a; the pure `expand` path
+submission, including when subsequent presentation fails. This cursor-commit
+protection was brought forward from phase 3a; the pure `expand` path
 remains unwired. The findings as written:
 
 - `render_graph.rs:1456-1462`: `stage_storage` uses `assert!` on upload
@@ -250,8 +251,8 @@ remains unwired. The findings as written:
   `OptionalNode<PickingNode<C>>::Frame = Option<C>` is well-formed.
 - `render_graph.rs:1200-1206`: `LoopCount` is unbounded per-frame input. Each
   iteration allocates ~148 bytes of pending-dispatch state plus the staged
-  uniform bytes. The parent document defers expansion budgets (review item 7),
-  so this is accepted scope, recorded here for phase 3a.
+  uniform bytes. The parent document leaves repeat-related decisions to the
+  application (review item 7), so no graph-level expansion budget is imposed.
 - `render_graph.rs:1358-1367`: `StagedWrites::stage` copies `size_of::<S>()`
   bytes through a `*const u8`, which reads interior padding as initialized
   `u8`. Prefer `MaybeUninit<u8>` or a bytemuck-style bound.

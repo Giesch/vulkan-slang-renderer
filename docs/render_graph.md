@@ -125,10 +125,8 @@ Every draw form has a `_with_push` variant taking
 inside a `repeat` its texture references rotate per iteration. The push
 block's data half is fixed at build time.
 
-The total number of repeat iterations per frame defaults to a limit of 65,536.
-Use `graph.set_max_loop_iterations(limit)` to change it. Exceeding the limit
-returns an error before GPU writes or submission. This bounds repeat expansion;
-it is not a general byte limit on frame data or GPU allocations.
+Repeat counts and expansion budgets are the application's responsibility. The
+render graph executes the supplied `LoopCount` without an aggregate iteration limit.
 
 ## Build-time validation
 

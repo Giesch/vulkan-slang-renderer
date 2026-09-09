@@ -1212,7 +1212,6 @@ impl<B: GraphNode> GraphNode for RepeatNode<B> {
     }
 
     fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
-        cx.iterations.reserve(frame_data.0.0)?;
         for _ in 0..frame_data.0.0 {
             self.body.plan(&frame_data.1, cx)?;
         }
@@ -1436,19 +1435,6 @@ impl StagedWrites {
     }
 }
 
-struct IterationBudget(u32);
-
-impl IterationBudget {
-    fn reserve(&mut self, count: u32) -> anyhow::Result<()> {
-        self.0 = self.0.checked_sub(count).ok_or_else(|| anyhow::anyhow!(
-            "render graph: repeat requests {count} iterations with only {} remaining in the frame budget",
-            self.0,
-        ))?;
-
-        Ok(())
-    }
-}
-
 /// Execute-time planning state: the working texture cursors and the command,
 /// draw, and CPU-write plans accumulated by the node walk.
 pub struct PlanCtx<'a> {
@@ -1459,7 +1445,6 @@ pub struct PlanCtx<'a> {
     draws: Vec<PendingDrawCommand>,
     staged: StagedWrites,
     picking: Option<PickingDrawConfig>,
-    iterations: IterationBudget,
 }
 
 impl PlanCtx<'_> {
@@ -1511,7 +1496,6 @@ impl PlanCtx<'_> {
 /// buffer write itself, and submits the frame.
 pub struct RenderGraph<N: GraphNode> {
     nodes: N,
-    max_loop_iterations: u32,
     uniform_slots: Vec<usize>,
     buffer_slots: Vec<(desc::BufferKind, usize, String)>,
     tex: Vec<TexRunState>,
@@ -1576,7 +1560,6 @@ impl<N: GraphNode> RenderGraph<N> {
 
         Ok(Self {
             nodes,
-            max_loop_iterations: 65_536,
             uniform_slots: lowered.uniform_slots,
             buffer_slots: lowered
                 .desc
@@ -1589,12 +1572,6 @@ impl<N: GraphNode> RenderGraph<N> {
             phys,
             _keep_alive: keep_alive,
         })
-    }
-
-    /// Maximum total repeat iterations planned per frame (default: 65,536).
-    /// Exceeding the limit returns an error before any frame writes or submission.
-    pub fn set_max_loop_iterations(&mut self, limit: u32) {
-        self.max_loop_iterations = limit;
     }
 
     fn validate_buffers(
@@ -1642,7 +1619,6 @@ impl<N: GraphNode> RenderGraph<N> {
             draws: vec![],
             staged: StagedWrites::default(),
             picking: None,
-            iterations: IterationBudget(self.max_loop_iterations),
         };
         self.nodes
             .plan(params, &mut cx)
@@ -1680,7 +1656,6 @@ mod tests {
                     _elem: std::marker::PhantomData,
                 },
             },),
-            max_loop_iterations: 10,
             uniform_slots: vec![42],
             buffer_slots: vec![],
             tex: vec![],
@@ -1762,16 +1737,6 @@ mod tests {
             assert_eq!(destination.small, 7);
             assert_eq!(destination.large, 123456);
         }
-    }
-
-    #[test]
-    fn iteration_budget_is_shared_by_repeats_and_rejects_unbounded_counts() {
-        let mut budget = super::IterationBudget(5);
-        budget.reserve(0).unwrap();
-        budget.reserve(3).unwrap();
-        assert!(budget.reserve(u32::MAX).is_err());
-        budget.reserve(2).unwrap();
-        assert!(budget.reserve(1).is_err());
     }
 
     #[test]
