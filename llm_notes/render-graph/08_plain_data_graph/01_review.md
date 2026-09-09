@@ -153,6 +153,13 @@ class, not the `Fixed(w, h)` values. `res.texture(0, 0, ...)` reaches
 
 ### 3e. `read_previous` on a never-written texture reads a cleared image
 
+RESOLVED (2026-09-08). `validate` rejects `ReadPrevious` on a texture no
+command writes with `PrevReadWithoutWrite`, blamed on the first reader. A
+`Mutate` does not satisfy the rule, because only a `Write` advances the
+cursor. A `Write` inside a zero-consumer uniform source does not satisfy it
+either. A `Write` later in pass order does: frame N's write is frame N+1's
+previous version. The finding as written:
+
 `ReadPrevious` sets `tex_phys` to 2, but the cursor only advances on
 `commit_write`. If every producer uses `Mutate`, `prev_phys()` selects the
 image that nothing ever writes. The consumer samples black on every frame with

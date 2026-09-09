@@ -158,6 +158,8 @@ recreation, matching the manual API's behavior.
 - `repeat` does not nest, and holds compute nodes only.
 - Texture dimensions are at least 1 and at most the device's
   `maxImageDimension2D`.
+- `read_previous` requires that some node `write()` the texture. A mutate
+  edits the current version in place, so mutate-only producers are rejected.
 - Draw order is declaration order inside one render pass; there are no
   offscreen passes.
 - Dispatch group counts, index ranges, indirect command ranges, and push

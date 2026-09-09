@@ -75,6 +75,10 @@ pub(crate) enum GraphError {
         command: String,
         tex: String,
     },
+    PrevReadWithoutWrite {
+        command: String,
+        tex: String,
+    },
     RepeatUniformRotatesTexture {
         repeat: String,
         uniform: String,
@@ -170,6 +174,10 @@ impl fmt::Display for GraphError {
             Self::WriteAndPrevRead { command, tex } => write!(
                 f,
                 "{command} writes texture {tex} and reads its previous version"
+            ),
+            Self::PrevReadWithoutWrite { command, tex } => write!(
+                f,
+                "{command} reads texture {tex}'s previous version, but no command writes {tex}"
             ),
             Self::RepeatUniformRotatesTexture {
                 repeat,
@@ -677,6 +685,8 @@ pub(crate) fn validate(
         }
     }
     let mut phys = vec![1; desc.textures.len()];
+    let mut prev_readers: Vec<(TexId, String)> = vec![];
+    let mut written_anywhere: Vec<TexId> = vec![];
     for (_, leaf) in all_leaves(desc) {
         for (command, resources) in commands(desc, leaf) {
             for (_, resource) in &resources {
@@ -714,7 +724,15 @@ pub(crate) fn validate(
             let prev_reads = tex_ids(TexAccess::ReadPrevious);
             let writes = tex_ids(TexAccess::Write);
             let mutates = tex_ids(TexAccess::Mutate);
+            for tex in &prev_reads {
+                if (tex.0 as usize) < phys.len() && !prev_readers.iter().any(|(t, _)| t == tex) {
+                    prev_readers.push((*tex, command.into()))
+                }
+            }
             for (i, tex) in writes.iter().enumerate() {
+                if !written_anywhere.contains(tex) {
+                    written_anywhere.push(*tex)
+                }
                 if writes[i + 1..].contains(tex) {
                     errors.push(GraphError::DuplicateWrite {
                         command: command.into(),
@@ -878,6 +896,16 @@ pub(crate) fn validate(
             }
         }
     }
+    // Only a `Write` advances the run-state cursor, so a previous version
+    // exists only for a texture some command writes; a mutate edits in place.
+    for (tex, command) in prev_readers {
+        if !written_anywhere.contains(&tex) {
+            errors.push(GraphError::PrevReadWithoutWrite {
+                command,
+                tex: tex_name(desc, tex),
+            })
+        }
+    }
 
     if errors.is_empty() {
         Ok(Analysis { tex_phys: phys })
@@ -937,6 +965,8 @@ mod tests {
         let mut builder = DescBuilder::new(1);
         let dispatch = builder.dispatch("d0", &[read_previous(0)]);
         builder.leaf(dispatch);
+        let writer = builder.dispatch("d1", &[write(0)]);
+        builder.leaf(writer);
 
         assert_eq!(builder.tex_phys(), vec![2]);
     }
@@ -962,6 +992,8 @@ mod tests {
         let mut builder = DescBuilder::new(1);
         let dispatch = builder.dispatch("d0", &[read_previous(0), mutate(0)]);
         builder.leaf(dispatch);
+        let writer = builder.dispatch("d1", &[write(0)]);
+        builder.leaf(writer);
 
         assert_eq!(builder.tex_phys(), vec![2]);
     }
@@ -1134,6 +1166,8 @@ mod tests {
     #[test]
     fn independent_draws_in_one_pass_do_not_merge_accesses() {
         let mut builder = DescBuilder::new(1);
+        let writer = builder.dispatch("d0", &[write(0)]);
+        builder.leaf(writer);
         let reader = builder.draw("draw0", &[read(0)]);
         let prev_reader = builder.draw("draw1", &[read_previous(0)]);
         let pass = raster("main", vec![reader, prev_reader]);
@@ -1481,6 +1515,73 @@ mod tests {
                 height: 8,
                 max: 4,
             }]
+        );
+    }
+
+    #[test]
+    fn prev_read_without_any_write_is_an_error() {
+        let mut builder = DescBuilder::new(1);
+        let dispatch = builder.dispatch("d0", &[read_previous(0)]);
+        builder.leaf(dispatch);
+
+        assert!(
+            builder
+                .errors()
+                .contains(&GraphError::PrevReadWithoutWrite {
+                    command: "d0".into(),
+                    tex: "tex0".into(),
+                })
+        );
+    }
+
+    /// a mutate edits in place and never advances the cursor, so it cannot
+    /// produce a previous version
+    #[test]
+    fn prev_read_with_mutate_only_is_an_error() {
+        let mut builder = DescBuilder::new(1);
+        let producer = builder.dispatch("d0", &[mutate(0)]);
+        builder.leaf(producer);
+        let reader = builder.dispatch("d1", &[read_previous(0)]);
+        builder.leaf(reader);
+
+        assert!(
+            builder
+                .errors()
+                .contains(&GraphError::PrevReadWithoutWrite {
+                    command: "d1".into(),
+                    tex: "tex0".into(),
+                })
+        );
+    }
+
+    /// frame N's write is frame N+1's previous version, so the write may
+    /// follow the read in pass order
+    #[test]
+    fn prev_read_before_the_write_is_allowed() {
+        let mut builder = DescBuilder::new(1);
+        let reader = builder.dispatch("d0", &[read_previous(0)]);
+        builder.leaf(reader);
+        let writer = builder.dispatch("d1", &[write(0)]);
+        builder.leaf(writer);
+
+        assert_eq!(builder.tex_phys(), vec![2]);
+    }
+
+    /// an orphan uniform never executes, so its write produces no version
+    #[test]
+    fn orphan_uniform_write_does_not_satisfy_prev_read() {
+        let mut builder = DescBuilder::new(1);
+        builder.uniform(&[write(0)]);
+        let reader = builder.dispatch("d0", &[read_previous(0)]);
+        builder.leaf(reader);
+
+        assert!(
+            builder
+                .errors()
+                .contains(&GraphError::PrevReadWithoutWrite {
+                    command: "d0".into(),
+                    tex: "tex0".into(),
+                })
         );
     }
 
