@@ -199,7 +199,7 @@ RESOLVED (2026-09-08). One diagnostic per defect:
 - `UnsupportedFeature` and `TableKind` implement `Display`.
   `UnsupportedFeature` prints a description and the owning phase/ledger row.
 - `RenderGraph::new` reports through `validation_message`: a
-  `render graph validation failed:` header and one `  - ` bullet per error.
+  `render graph validation failed:` header and one ` -` bullet per error.
   The per-error `render graph: ` prefix is gone.
 
 The finding as written:
@@ -218,7 +218,7 @@ The finding as written:
 - `UnsupportedFeature` prints the Debug variant name and "phase 1". phase_1.md
   requires a description and the owning phase/ledger row.
 - `RenderGraph::new` joins errors with newlines. phase_1.md specifies a
-  `render graph validation failed:` header and one `  - ` bullet per error.
+  `render graph validation failed:` header and one ` -` bullet per error.
 
 ## 4. Other unhandled edge and error cases
 
@@ -301,69 +301,121 @@ implementations. The findings as written:
 
 ## 6. Unneeded complexity
 
-- `compile.rs` and `expand()` implement a second version of the model the
-  live `PlanCtx` path implements, with no test that the two agree (~460
-  lines). Inside them: `SchemaDesc::layout` is always `None`
-  (`lower.rs:121-128` is the only constructor), so the assembly IR
-  (`SchemaLayout`, `AssemblyStep`, `AssemblySrc`) can only produce
-  `Deferred`; `SchemaDesc::size` is written everywhere and read nowhere;
-  `PushDesc::data` is always `None`.
-- `LowerOutput` side tables (`picking`, `uniform_slots`, `buffer_indices`,
-  `pipeline_indices`, `import_handles`) have no consumer.
-  `RenderGraph::new` reads only `desc`, `schemas`, and `errors`. The interner
-  bookkeeping that maintains them serves nothing until 3a.
-- 3 derivations of the same access partition: `collect_access` (live),
-  `refs` + `tex_ids` (validate), `access` (compile). `NodeAccess` and
-  `LeafAccess` are the same 4-`Vec` struct at different index types.
-- `GraphNode::plan` returns `anyhow::Result<()>`; every impl returns
-  `Ok(())`. The 2 conditions that should use it are an `assert!` (§4) and a
-  `debug_assert!`. `GraphPush::access` is declared, implemented twice, and
-  never called; it is the hook that finding 3a needs.
-- Desc vocabulary with no construction site: `SizeClass::Window`/`WindowDiv`,
-  `TexUsage::Color`/`Depth`, `RasterTargets::Offscreen`,
-  `GroupSource::Value`, `ValueKind::Groups`. 5 of 7 `UnsupportedFeature`
-  arms are dead diagnostics until phase 5.
-- `BufAccess`, `SlotSel`, and `BufferRef::range` are computed and never
-  consumed. `refs` and `all_leaves` return names every caller discards.
-- `graph_split_def` builds ~125 lines of output through
-  `lines.push(format!(...))` while every other generated shape uses an
-  askama template. `classify_graph_field` returns a pre-rendered
-  `visit_line: String`, mixing classification with rendering.
+Updated (2026-09-09): the phase-1 inventory now tests the pure core and
+lowering side tables. Test coverage justifies keeping migration scaffolding;
+it does not make that scaffolding part of production execution.
 
-Keep-or-delete is one decision: either land the phase-1 test inventory that
-makes `compile`/`expand`/side-tables live, or delete them and reintroduce
-them in 3a.
+### Leaving for phase 3
+
+- **Leaving for phase 3 (3a–3c):** `compile.rs` and `expand()` still implement
+  a second version of the model the live `PlanCtx` path implements. The pure
+  path now has tests, but production execution still uses `PlanCtx`.
+  Real lowering supplies `SchemaDesc::layout: None`, so its assembly programs
+  remain `Deferred`; `SchemaDesc::size` has no production reader and
+  `PushDesc::data` is always `None`. Phase 2 supplies layout metadata; 3a/3b
+  wire lowering, assembly, and expansion into execution. Phase 3c must remove
+  obsolete scheduling/recording adapters after parity tests pass.
+- **Leaving for phase 3 (3a/3b):** `LowerOutput` retains live-resource side
+  tables for the new executor. The original no-consumer finding is partly
+  obsolete: `RenderGraph::new` now consumes `uniform_slots` and
+  `buffer_indices` for runtime buffer validation. `pipeline_indices` and
+  `import_handles` still await executor wiring. Preserve legacy picking
+  compatibility and either consume or remove the redundant `picking` table
+  during cleanup.
+- **Leaving for phase 3 (3c):** 3 derivations of the same access partition
+  remain: `collect_access` (live), `refs` + `tex_ids` (validate), and `access`
+  (compile). `NodeAccess` and `LeafAccess` are the same 4-`Vec` struct at
+  different index types. Remove the obsolete live-path derivation when the
+  new executor replaces `PlanCtx`; reassess remaining duplication afterward.
+- **Leaving for phase 3 (3a–3c):** buffer slot/range metadata is scaffolding
+  for compiled address resolution and validation. Wire the metadata needed
+  by the executor and remove fields that still have no consumer. Buffer
+  access tracking also serves later indirect/table accesses (phase 4) and
+  derived synchronization (phase 6); phase 3 does not finish those features.
+
+### Remaining items to address
+
+- `GraphPush::access` is declared, implemented twice, and never called.
+  Finding 3a was fixed in validation without this hook. Remove it unless
+  executor work establishes a concrete need for it.
+- `refs` and `all_leaves` return names every caller discards. Remove the
+  unused return values or identify a diagnostic consumer.
+- `GroupSource::Value` and `ValueKind::Groups` have test construction sites
+  but no production lowering path. Identify the intended typed input and
+  its owning phase, or remove this vocabulary until it has a consumer.
+- **Done:** `graph_split_def` now renders its structs and trait implementations
+  through `graph_split.rs.askama`. Existing output snapshots and all 51 CLI
+  tests pass.
+- `classify_graph_field` still returns a pre-rendered
+  `visit_line: String`, mixing classification with rendering. Executor
+  migration does not resolve this codegen maintainability concern.
+
+### Leaving for later phases
+
+- `SizeClass::Window`/`WindowDiv`, `TexUsage::Color`/`Depth`, and
+  `RasterTargets::Offscreen` have no production construction sites.
+  Their support and removal of the corresponding temporary
+  `UnsupportedFeature` diagnostics belong to phase 5, not phase 3.
+
+### Resolved
+
+- `GraphNode::plan` returning `anyhow::Result<()>` now has a real purpose:
+  `UploadNode::plan` propagates staging validation errors. The original
+  claim that every implementation only returns `Ok(())` is obsolete.
+- Keep-or-delete is resolved as keep for the tested compiler, expander,
+  and migration side tables. Phase 3 completion still requires production
+  integration and removal of obsolete adapters; tests alone do not close
+  that work.
 
 ## 7. Documentation deviations
 
-- `docs/render_graph.md:42` shows `res.texture(W, H, vk::Format::R32_SFLOAT)`.
-  The API takes `GraphFormat` (`render_graph.rs:111`), which has 2 variants.
-  The snippet does not compile. The format restriction is absent from
-  "Limits".
-- The doc's validation-error list contains only the 10 legacy rules.
-  `UniformSourceConflict` (the rule that forced the blur split),
-  `NestedControlFlow` for `optional`, `MutableExternalImport`,
-  `EmptyOptionalScope`, the upload rules, and the `UnsupportedInPhase1`
-  matrix are undocumented. phase_1.md requires the new strictness
-  "documented rather than hidden".
-- The doc says external textures bind via `handle.bindless_handle().into()`
-  without distinguishing sampled (works) from storage (always rejected, §4).
-- phase_1.md's invariant "no `crates/cli` changes" and its gate exemption for
-  `just test` do not hold for this branch, because the 07 codegen phase landed
-  in the same change. phase_1.md carries no annotation recording the merge.
-- A shader whose parameter block has no uniform fields gets no
-  `GraphShaderParams` impl and cannot be a graph node. The limit is real and
-  absent from `docs/render_graph.md` "Limits".
+Updated (2026-09-09): four original findings are resolved. Plan annotations
+and one contradictory synchronization paragraph remain open.
+
+### Remaining items to address
+
+- `01_pure_core.md` still requires no `crates/cli` changes and exempts
+  `just test`, although the 07 codegen implementation landed with phase 1.
+  It also says `PlanCtx`/`plan()` stays byte-for-byte unchanged until 3a,
+  which no longer reflects the §4 fixes. Annotate the implemented scope,
+  applicable verification gates, and submission-aware cursor commits brought
+  forward from 3a. The 07 plan still names the nonexistent `schedule.rs`;
+  update its implementation references and record the combined landing.
+- `docs/render_graph.md` under "Barriers and synchronization" still says
+  version cursors advance when submission aborts on swapchain recreation.
+  This contradicts its updated "Logical textures" section and the current
+  submission callback. Replace the stale paragraph: acquisition skips retain
+  cursors; successful submission commits them even if presentation fails.
+
+### Resolved
+
+- The texture example now uses `GraphFormat::R32Float`. Both supported
+  formats are documented under "Logical textures" and "Limits".
+- "Build-time validation" now documents shared-uniform conflicts, nested
+  control restrictions, optional gates, upload rules, declaration checks,
+  and the temporary unsupported-feature list. External storage restrictions
+  are documented under "Logical textures".
+- External sampled imports and unsupported mutable external storage bindings
+  are now distinguished, matching removal of the storage-handle conversion.
+- "Limits" now states that graph shaders require a reflected uniform
+  parameter block for `GraphShaderParams` generation.
 
 ## Priority
 
-1. Fix the mutate-only draw hole and per-draw check granularity (§3a, §3b).
-2. Land the test inventory (§2); it pins 1 and decides §6's keep-or-delete.
-3. Fix or delete the unreachable merge path and its orphan rows (§3c).
-4. Reconcile `docs/render_graph.md` and annotate 07/phase_1 with what landed
-   (§7).
+Updated (2026-09-09): §§1–5 are resolved. The phase-1 test inventory is in
+place, and §6's keep-or-delete decision is keep for tested migration
+scaffolding. This does not imply that the pure compiler and expander are
+wired into production execution.
 
-§1, §2, and §3 are fixed. §6's keep-or-delete resolved as keep: the
-inventory reaches every item of `compile.rs`, `expand.rs`, and lowering's side
-tables, so each is verified rather than merely compiled. Items 4, 5, and 7
-stand.
+1. Reconcile the remaining documentation discrepancies (§7): correct the
+   stale cursor paragraph and annotate 07/phase 1 with the implemented scope
+   and verification requirements.
+2. Address §6's "Remaining items to address": the unused push-access hook,
+   discarded names, runtime dispatch-group vocabulary ownership, and codegen
+   classification/rendering separation.
+3. During phase 3, integrate the pure compiler, assembly, expansion, and
+   required side tables; remove obsolete adapters after parity tests pass
+   (§6, "Leaving for phase 3").
+4. Keep later feature scaffolding assigned to its owning phases (§6,
+   "Leaving for later phases"). Unsupported phase-5 vocabulary is not a
+   phase-3 completion blocker.

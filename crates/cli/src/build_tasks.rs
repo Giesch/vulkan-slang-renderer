@@ -1510,15 +1510,25 @@ fn classify_graph_field(field: &GeneratedStructFieldDefinition) -> anyhow::Resul
 }
 
 /// The render-graph split of one params or push-constant struct, rendered as
-/// finished source lines so the emitted block stays rustfmt-clean.
+/// finished source rendered by the graph split template.
 struct GraphSplitDef {
-    lines: Vec<String>,
+    source: String,
 }
 
 impl GraphSplitDef {
-    fn block(&self) -> String {
-        self.lines.join("\n")
+    fn block(&self) -> &str {
+        &self.source
     }
+}
+
+#[derive(Template)]
+#[template(path = "graph_split.rs.askama", escape = "none")]
+struct GraphSplitTemplate<'a> {
+    params_type: &'a str,
+    data_fields: Vec<&'a GeneratedStructFieldDefinition>,
+    binding_fields: Vec<(&'a GeneratedStructFieldDefinition, String)>,
+    assemble_lines: Vec<String>,
+    visit_lines: Vec<String>,
 }
 
 fn graph_split_def(
@@ -1563,79 +1573,16 @@ fn graph_split_def(
         }
     }
 
-    let mut lines: Vec<String> = vec![];
-
-    // no resource fields: the params struct is its own per-frame data
-    if binding_fields.is_empty() {
-        lines.push(format!("impl GraphShaderParams for {params_type} {{"));
-        lines.push("    type Data = Self;".to_string());
-        lines.push("    type Bindings = ();".to_string());
-        lines.push(String::new());
-        lines.push("    fn assemble(".to_string());
-        lines.push("        data: &Self::Data,".to_string());
-        lines.push("        _bindings: &Self::Bindings,".to_string());
-        lines.push("        _resolver: &BindingResolver<'_>,".to_string());
-        lines.push("    ) -> Self {".to_string());
-        lines.push("        *data".to_string());
-        lines.push("    }".to_string());
-        lines.push("}".to_string());
-        return Ok(GraphSplitDef { lines });
+    let source = GraphSplitTemplate {
+        params_type,
+        data_fields,
+        binding_fields,
+        assemble_lines,
+        visit_lines,
     }
+    .render()?;
 
-    let bindings_type = format!("{params_type}Bindings");
-    let data_assoc = if data_fields.is_empty() {
-        "()".to_string()
-    } else {
-        let data_type = format!("{params_type}Data");
-        lines.push("#[derive(Debug, Clone, Copy)]".to_string());
-        lines.push(format!("pub struct {data_type} {{"));
-        for field in &data_fields {
-            lines.push(format!(
-                "    pub {}: {},",
-                field.field_name, field.type_name
-            ));
-        }
-        lines.push("}".to_string());
-        lines.push(String::new());
-        data_type
-    };
-
-    lines.push("#[derive(Debug, Clone, Copy)]".to_string());
-    lines.push(format!("pub struct {bindings_type} {{"));
-    for (field, binding_type) in &binding_fields {
-        lines.push(format!("    pub {}: {binding_type},", field.field_name));
-    }
-    lines.push("}".to_string());
-    lines.push(String::new());
-
-    let data_param = if data_fields.is_empty() {
-        "_data"
-    } else {
-        "data"
-    };
-    lines.push(format!("impl GraphShaderParams for {params_type} {{"));
-    lines.push(format!("    type Data = {data_assoc};"));
-    lines.push(format!("    type Bindings = {bindings_type};"));
-    lines.push(String::new());
-    lines.push("    fn assemble(".to_string());
-    lines.push(format!("        {data_param}: &Self::Data,"));
-    lines.push("        bindings: &Self::Bindings,".to_string());
-    lines.push("        resolver: &BindingResolver<'_>,".to_string());
-    lines.push("    ) -> Self {".to_string());
-    lines.push("        Self {".to_string());
-    lines.extend(assemble_lines);
-    lines.push("        }".to_string());
-    lines.push("    }".to_string());
-    lines.push("}".to_string());
-    lines.push(String::new());
-
-    lines.push(format!("impl GraphBindingSet for {bindings_type} {{"));
-    lines.push("    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {".to_string());
-    lines.extend(visit_lines);
-    lines.push("    }".to_string());
-    lines.push("}".to_string());
-
-    Ok(GraphSplitDef { lines })
+    Ok(GraphSplitDef { source })
 }
 
 /// Split defs for the params/push types among `struct_defs`, in definition order.
@@ -2415,7 +2362,8 @@ mod tests {
         );
         def.fields
             .push(GeneratedStructFieldDefinition::padding(0, 4));
-        let block = graph_test_split(&[def], &["Params"]).unwrap()[0].block();
+        let splits = graph_test_split(&[def], &["Params"]).unwrap();
+        let block = splits[0].block();
         assert!(block.contains("pub _padding_hint: u32"));
         assert!(block.contains("_padding_hint: data._padding_hint"));
         assert!(block.contains("_padding_0: Default::default()"));
