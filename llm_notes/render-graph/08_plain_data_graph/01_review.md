@@ -3,7 +3,7 @@
 STATUS: REVIEW RECORD (2026-09-08) — audit of branch
 `render-graph-plain-data-core` (`50c8037..f927629`, 6 commits) against
 [`../08_plain_data_graph.md`](../08_plain_data_graph.md),
-[`phase_1.md`](phase_1.md), and
+[`phase_1.md`](01_pure_core.md) (the file is named `01_pure_core.md`), and
 [`../07_graph_api_plan.md`](../07_graph_api_plan.md).
 Line references point at the branch tip.
 
@@ -170,6 +170,26 @@ sources. `RasterTargets::Offscreen` IDs are also never bounds-checked, and the
 inside a `When` or `Repeat` body.
 
 ### 3g. Duplicate and colliding diagnostics
+
+RESOLVED (2026-09-08). One diagnostic per defect:
+
+- A second raster pass reports only `MultipleRasterPasses`;
+  `PassAfterMainRaster` covers non-raster passes after the main raster.
+- Dispatch names come from a dedicated counter, so they advance inside
+  `Repeat`/`Optional` bodies.
+- `GraphResources::texture` is `#[track_caller]` and records the call site
+  into the texture name (`tex0 (src/main.rs:42)`). The hazard errors carry
+  the name instead of the index.
+- A binding that fails to lower drops from the schema fields and the
+  bindings together, so `MutableExternalImport` does not cascade into shape
+  errors.
+- `UnsupportedFeature` and `TableKind` implement `Display`.
+  `UnsupportedFeature` prints a description and the owning phase/ledger row.
+- `RenderGraph::new` reports through `validation_message`: a
+  `render graph validation failed:` header and one `  - ` bullet per error.
+  The per-error `render graph: ` prefix is gone.
+
+The finding as written:
 
 - A second raster pass reports both `PassAfterMainRaster`
   (`validate.rs:464`) and `UnsupportedInPhase1 { MultipleRasterPasses }`

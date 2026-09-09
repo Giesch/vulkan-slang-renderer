@@ -69,6 +69,7 @@ pub struct LowerCtx {
     ignored: usize,
     picking: Option<usize>,
     draws: usize,
+    dispatches: usize,
     uniform_slots: Vec<usize>,
     buffer_indices: Vec<usize>,
     pipeline_indices: Vec<usize>,
@@ -92,6 +93,7 @@ impl LowerCtx {
             ignored: 0,
             picking: None,
             draws: 0,
+            dispatches: 0,
             uniform_slots: vec![],
             buffer_indices: vec![],
             pipeline_indices: vec![],
@@ -238,26 +240,28 @@ impl LowerCtx {
         })
     }
 
-    fn bindings(&mut self, input: Vec<GraphBinding>) -> Vec<(FieldKey, ResourceRef)> {
-        input
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, binding)| {
-                self.binding(binding)
-                    .map(|resource| (FieldKey(i as u16), resource))
-            })
-            .collect()
-    }
-
-    fn fields(input: &[GraphBinding]) -> Vec<ResourceFieldKind> {
-        input
-            .iter()
-            .map(|binding| match binding {
+    /// A binding that fails to lower drops from the schema fields and the
+    /// bindings together, so the two lists stay aligned and the lowering
+    /// error does not cascade into shape errors.
+    fn resolve_bindings(
+        &mut self,
+        input: Vec<GraphBinding>,
+    ) -> (Vec<ResourceFieldKind>, Vec<(FieldKey, ResourceRef)>) {
+        let mut fields = vec![];
+        let mut bindings = vec![];
+        for binding in input {
+            let field = match &binding {
                 GraphBinding::SampledTex(_) => ResourceFieldKind::SampledTex,
                 GraphBinding::StorageTex(_) => ResourceFieldKind::StorageTex,
                 GraphBinding::Buffer(_) => ResourceFieldKind::BufAddr,
-            })
-            .collect()
+            };
+            if let Some(resource) = self.binding(binding) {
+                fields.push(field);
+                bindings.push((FieldKey(bindings.len() as u16), resource));
+            }
+        }
+
+        (fields, bindings)
     }
 
     /// The data value of an existing uniform decl, identified by its byte size:
@@ -273,9 +277,8 @@ impl LowerCtx {
     }
 
     fn uniform(&mut self, input: UniformInput) -> UniformId {
-        let fields = Self::fields(&input.bindings);
         let data_size = input.data_size;
-        let bindings = self.bindings(input.bindings);
+        let (fields, bindings) = self.resolve_bindings(input.bindings);
         if let Some(id) = self.uniforms.get(&input.slot).copied() {
             let same_source = self.uniform_data_size(id) == Some(data_size)
                 && self.desc.uniforms[id.0 as usize].source.bindings == bindings;
@@ -339,8 +342,7 @@ impl LowerCtx {
 
     fn push(&mut self, input: Option<PushInput>) -> Option<PushDesc> {
         input.map(|push| {
-            let fields = Self::fields(&push.bindings);
-            let bindings = self.bindings(push.bindings);
+            let (fields, bindings) = self.resolve_bindings(push.bindings);
             let schema = self.schema(
                 format!("push{}", self.schemas.schemas.len()),
                 push.size,
@@ -390,7 +392,8 @@ impl LowerCtx {
             params,
             push.as_ref().map(|push| push.schema),
         );
-        let name = format!("dispatch{}", self.desc.passes.len());
+        let name = format!("dispatch{}", self.dispatches);
+        self.dispatches += 1;
 
         self.leaf(LeafPass::Compute(DispatchDesc {
             name,
@@ -596,8 +599,9 @@ mod tests {
     use crate::renderer::descriptor_heap::BindlessIndex;
 
     use super::super::desc::{
-        BufferKind, DrawCall, GraphFormat, LeafPass, PassDesc, PipelineKind, ResourceRef,
-        SizeClass, SlotSel, TexAccess, TexDecl, TexUsage, UniformId, ValueKind,
+        BufferKind, DrawCall, FieldKey, GraphFormat, LeafPass, PassDesc, PipelineKind,
+        ResourceFieldKind, ResourceRef, SizeClass, SlotSel, TexAccess, TexDecl, TexId, TexUsage,
+        UniformId, ValueKind,
     };
     use super::super::validate::{GraphError, validate};
     use super::super::{BufferBindingKind, GraphBinding, GraphTex, RawBufferBinding};
@@ -931,6 +935,53 @@ mod tests {
 
         assert!(out.errors.contains(&GraphError::MutableExternalImport));
         assert!(uniform_refs(&out, UniformId(0)).is_empty());
+        let schema = out.schemas.get(out.desc.uniforms[0].schema).unwrap();
+        assert!(schema.resource_fields.is_empty());
+    }
+
+    /// a failed binding drops from the schema and the bindings together, so
+    /// the one lowering error does not cascade into shape errors
+    #[test]
+    fn failed_binding_drops_its_schema_field() {
+        let mut cx = LowerCtx::new(textures(1));
+        cx.dispatch(
+            0,
+            GROUPS,
+            uni(0, vec![external_storage(2), sampled(0)]),
+            None,
+        );
+        let out = cx.finish();
+
+        assert_eq!(out.errors, vec![GraphError::MutableExternalImport]);
+        let schema = out.schemas.get(out.desc.uniforms[0].schema).unwrap();
+        assert_eq!(schema.resource_fields, vec![ResourceFieldKind::SampledTex]);
+        assert_eq!(
+            out.desc.uniforms[0].source.bindings,
+            vec![(FieldKey(0), ResourceRef::Tex(TexId(0), TexAccess::Read))]
+        );
+        assert!(validate(&out.desc, &out.schemas).is_ok());
+    }
+
+    #[test]
+    fn dispatch_names_advance_inside_repeat() {
+        let mut cx = LowerCtx::new(textures(1));
+        cx.begin_repeat();
+        cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
+        cx.dispatch(1, GROUPS, uni(1, vec![sampled(0)]), None);
+        cx.end_repeat();
+        let out = cx.finish();
+
+        let PassDesc::Repeat { body, .. } = &out.desc.passes[0] else {
+            panic!("expected a repeat pass")
+        };
+        let names: Vec<_> = body
+            .iter()
+            .map(|leaf| match leaf {
+                LeafPass::Compute(compute) => compute.name.as_str(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(names, vec!["dispatch0", "dispatch1"]);
     }
 
     #[test]

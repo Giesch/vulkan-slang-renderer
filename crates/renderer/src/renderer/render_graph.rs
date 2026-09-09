@@ -125,14 +125,17 @@ impl GraphResources {
 
     /// Declare a logical texture. It persists across frames; each physical
     /// image is created cleared.
+    #[track_caller]
     pub fn texture(&mut self, width: u32, height: u32, format: GraphFormat) -> GraphTex {
+        let loc = std::panic::Location::caller();
         let tex = GraphTex(self.decls.len() as u32);
         self.decls.push(TexDecl {
-            name: format!("tex{}", tex.0),
+            name: format!("tex{} ({}:{})", tex.0, loc.file(), loc.line()),
             size: SizeClass::Fixed(width, height),
             format,
             usage: TexUsage::Storage,
         });
+
         tex
     }
 }
@@ -1525,12 +1528,7 @@ impl<N: GraphNode> RenderGraph<N> {
             max,
         ));
         if !errors.is_empty() {
-            let message = errors
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n");
-            anyhow::bail!(message);
+            anyhow::bail!(validate::validation_message(&errors));
         }
 
         let mut tex = vec![];
@@ -1603,5 +1601,20 @@ impl<N: GraphNode> RenderGraph<N> {
         frame.pending_draws.extend(draws);
 
         frame.draw_frame(picking, |gpu| staged.apply(gpu))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GraphFormat, GraphResources};
+
+    #[test]
+    fn texture_names_carry_the_call_site() {
+        let mut resources = GraphResources::new();
+        resources.texture(8, 8, GraphFormat::R32Float);
+
+        let name = &resources.decls[0].name;
+        assert!(name.starts_with("tex0 ("), "{name}");
+        assert!(name.contains("render_graph.rs:"), "{name}");
     }
 }

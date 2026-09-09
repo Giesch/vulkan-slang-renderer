@@ -14,6 +14,20 @@ pub(crate) enum TableKind {
     Schema,
 }
 
+impl fmt::Display for TableKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Texture => "texture",
+            Self::Buffer => "buffer",
+            Self::Import => "import",
+            Self::Value => "value",
+            Self::Uniform => "uniform",
+            Self::Pipeline => "pipeline",
+            Self::Schema => "schema",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnsupportedFeature {
     WindowSizeClass,
@@ -25,6 +39,20 @@ pub(crate) enum UnsupportedFeature {
     GroupSourceValue,
 }
 
+impl fmt::Display for UnsupportedFeature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::WindowSizeClass => "window-relative texture sizes (phase 5, ledger S7)",
+            Self::ColorAttachmentUsage => "color-attachment texture usage (phase 5, ledger S6)",
+            Self::DepthAttachmentUsage => "depth-attachment texture usage (phase 5, ledger S6)",
+            Self::OffscreenTargets => "offscreen raster targets (phase 5, ledger S6)",
+            Self::MultipleRasterPasses => "a second raster pass (phase 5, ledger S6)",
+            Self::RasterInWhen => "a raster pass inside an optional scope (phase 5, ledger S6)",
+            Self::GroupSourceValue => "per-frame dispatch group counts (phase 3a, ledger S1)",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum GraphError {
     IdOutOfRange {
@@ -33,24 +61,24 @@ pub(crate) enum GraphError {
     },
     DuplicateWrite {
         command: String,
-        tex: u32,
+        tex: String,
     },
     MutateAndRead {
         command: String,
-        tex: u32,
+        tex: String,
     },
     MutateAndWrite {
         command: String,
-        tex: u32,
+        tex: String,
     },
     WriteAndPrevRead {
         command: String,
-        tex: u32,
+        tex: String,
     },
     RepeatUniformRotatesTexture {
         repeat: String,
         uniform: String,
-        tex: u32,
+        tex: String,
     },
     RasterInRepeat {
         repeat: String,
@@ -60,7 +88,7 @@ pub(crate) enum GraphError {
     },
     DrawWritesTexture {
         draw: String,
-        tex: u32,
+        tex: String,
     },
     TextureExtentZero {
         texture: String,
@@ -128,9 +156,8 @@ pub(crate) enum GraphError {
 
 impl fmt::Display for GraphError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "render graph: ")?;
         match self {
-            Self::IdOutOfRange { table, id } => write!(f, "{table:?} id {id} is undeclared"),
+            Self::IdOutOfRange { table, id } => write!(f, "{table} id {id} is undeclared"),
             Self::DuplicateWrite { command, tex } => {
                 write!(f, "{command} writes texture {tex} more than once")
             }
@@ -209,7 +236,7 @@ impl fmt::Display for GraphError {
                 write!(f, "{uniform} binding {field} has the wrong kind")
             }
             Self::UnsupportedInPhase1 { feature, at } => {
-                write!(f, "{feature:?} at {at} is unsupported in phase 1")
+                write!(f, "{at}: {feature} is unsupported in phase 1")
             }
             Self::NestedControlFlow { outer, inner } => {
                 write!(f, "nested {inner} inside {outer} is not supported")
@@ -232,7 +259,22 @@ impl fmt::Display for GraphError {
 
 impl std::error::Error for GraphError {}
 
+pub(crate) fn validation_message(errors: &[GraphError]) -> String {
+    let mut message = String::from("render graph validation failed:");
+    for error in errors {
+        message.push_str("\n  - ");
+        message.push_str(&error.to_string());
+    }
 
+    message
+}
+
+fn tex_name(desc: &GraphDesc, tex: TexId) -> String {
+    match desc.textures.get(tex.0 as usize) {
+        Some(decl) => decl.name.clone(),
+        None => format!("tex{}", tex.0),
+    }
+}
 
 /// `max` is the device's `maxImageDimension2D`; device-dependent checks stay
 /// out of [`validate`].
@@ -554,7 +596,7 @@ pub(crate) fn validate(
             PassDesc::Leaf(LeafPass::Raster(raster)) => &raster.name,
             PassDesc::When { name, .. } | PassDesc::Repeat { name, .. } => name,
         };
-        if raster_seen {
+        if raster_seen && !matches!(pass, PassDesc::Leaf(LeafPass::Raster(_))) {
             errors.push(GraphError::PassAfterMainRaster {
                 pass: pass_name.clone(),
             });
@@ -609,7 +651,7 @@ pub(crate) fn validate(
                                 errors.push(GraphError::RepeatUniformRotatesTexture {
                                     repeat: name.clone(),
                                     uniform: uniform.name.clone(),
-                                    tex: tex.0,
+                                    tex: tex_name(desc, *tex),
                                 })
                             }
                         }
@@ -676,7 +718,7 @@ pub(crate) fn validate(
                 if writes[i + 1..].contains(tex) {
                     errors.push(GraphError::DuplicateWrite {
                         command: command.into(),
-                        tex: tex.0,
+                        tex: tex_name(desc, *tex),
                     })
                 }
                 if reads.contains(tex) && (tex.0 as usize) < phys.len() {
@@ -685,7 +727,7 @@ pub(crate) fn validate(
                 if prev_reads.contains(tex) {
                     errors.push(GraphError::WriteAndPrevRead {
                         command: command.into(),
-                        tex: tex.0,
+                        tex: tex_name(desc, *tex),
                     })
                 }
             }
@@ -693,13 +735,13 @@ pub(crate) fn validate(
                 if reads.contains(&tex) {
                     errors.push(GraphError::MutateAndRead {
                         command: command.into(),
-                        tex: tex.0,
+                        tex: tex_name(desc, tex),
                     })
                 }
                 if writes.contains(&tex) {
                     errors.push(GraphError::MutateAndWrite {
                         command: command.into(),
-                        tex: tex.0,
+                        tex: tex_name(desc, tex),
                     })
                 }
             }
@@ -782,7 +824,7 @@ pub(crate) fn validate(
                     for tex in written {
                         errors.push(GraphError::DrawWritesTexture {
                             draw: draw.name.clone(),
-                            tex: tex.0,
+                            tex: tex_name(desc, tex),
                         })
                     }
 
@@ -854,7 +896,9 @@ mod tests {
     use super::super::test_desc::{
         DescBuilder, bindings, mutate, raster, read, read_previous, write,
     };
-    use super::{GraphError, TableKind, UnsupportedFeature, extent_limit_errors};
+    use super::{
+        GraphError, TableKind, UnsupportedFeature, extent_limit_errors, validation_message,
+    };
 
     /// one command reading and writing a texture cannot alias the two, so the
     /// texture needs a second physical image
@@ -907,7 +951,7 @@ mod tests {
             builder
                 .errors()
                 .iter()
-                .any(|e| matches!(e, GraphError::WriteAndPrevRead { tex: 0, .. }))
+                .any(|e| matches!(e, GraphError::WriteAndPrevRead { tex, .. } if tex == "tex0"))
         );
     }
 
@@ -941,7 +985,7 @@ mod tests {
             builder
                 .errors()
                 .iter()
-                .any(|e| matches!(e, GraphError::MutateAndRead { tex: 0, .. }))
+                .any(|e| matches!(e, GraphError::MutateAndRead { tex, .. } if tex == "tex0"))
         );
     }
 
@@ -955,7 +999,7 @@ mod tests {
             builder
                 .errors()
                 .iter()
-                .any(|e| matches!(e, GraphError::MutateAndWrite { tex: 0, .. }))
+                .any(|e| matches!(e, GraphError::MutateAndWrite { tex, .. } if tex == "tex0"))
         );
     }
 
@@ -969,7 +1013,7 @@ mod tests {
             builder
                 .errors()
                 .iter()
-                .any(|e| matches!(e, GraphError::DuplicateWrite { tex: 0, .. }))
+                .any(|e| matches!(e, GraphError::DuplicateWrite { tex, .. } if tex == "tex0"))
         );
     }
 
@@ -993,12 +1037,10 @@ mod tests {
         let dispatch = builder.dispatch_with_push("d0", &[read(0)], &[write(0)]);
         builder.repeat("repeat0", vec![LeafPass::Compute(dispatch)]);
 
-        assert!(
-            builder
-                .errors()
-                .iter()
-                .any(|e| matches!(e, GraphError::RepeatUniformRotatesTexture { tex: 0, .. }))
-        );
+        assert!(builder.errors().iter().any(|e| matches!(
+            e,
+            GraphError::RepeatUniformRotatesTexture { tex, .. } if tex == "tex0"
+        )));
     }
 
     #[test]
@@ -1013,7 +1055,8 @@ mod tests {
 
         assert!(builder.errors().iter().any(|e| matches!(
             e,
-            GraphError::RepeatUniformRotatesTexture { uniform, tex: 0, .. } if uniform == "uniform0"
+            GraphError::RepeatUniformRotatesTexture { uniform, tex, .. }
+                if uniform == "uniform0" && tex == "tex0"
         )));
     }
 
@@ -1081,7 +1124,7 @@ mod tests {
 
             assert!(builder.errors().iter().any(|e| matches!(
                 e,
-                GraphError::DrawWritesTexture { draw, tex: 0 } if draw == "draw0"
+                GraphError::DrawWritesTexture { draw, tex } if draw == "draw0" && tex == "tex0"
             )));
         }
     }
@@ -1389,15 +1432,15 @@ mod tests {
         assert!(
             GraphError::MutateAndRead {
                 command: "d0".into(),
-                tex: 3,
+                tex: "tex3".into(),
             }
             .to_string()
-            .contains("mutates and reads texture 3")
+            .contains("mutates and reads texture tex3")
         );
         assert!(
             GraphError::DrawWritesTexture {
                 draw: "draw0".into(),
-                tex: 1,
+                tex: "tex1".into(),
             }
             .to_string()
             .contains("can only read graph textures")
@@ -1408,7 +1451,7 @@ mod tests {
                 id: 7,
             }
             .to_string()
-            .contains("Texture id 7 is undeclared")
+            .contains("texture id 7 is undeclared")
         );
         let _ = (TexAccess::Read, UniformId(0));
     }
@@ -1441,4 +1484,49 @@ mod tests {
         );
     }
 
+    /// a second raster pass is one defect with one diagnostic
+    #[test]
+    fn second_raster_pass_reports_one_error() {
+        let mut builder = DescBuilder::new(1);
+        let first = builder.draw("draw0", &[read(0)]);
+        builder.leaf_raster(raster("main", vec![first]));
+        let second = builder.draw("draw1", &[read(0)]);
+        builder.leaf_raster(raster("second", vec![second]));
+
+        let errors = builder.errors();
+        assert!(errors.contains(&GraphError::UnsupportedInPhase1 {
+            feature: UnsupportedFeature::MultipleRasterPasses,
+            at: "second".into(),
+        }));
+        assert!(
+            errors
+                .iter()
+                .all(|e| !matches!(e, GraphError::PassAfterMainRaster { .. }))
+        );
+    }
+
+    #[test]
+    fn unsupported_feature_display_names_phase_and_ledger() {
+        assert_eq!(
+            UnsupportedFeature::OffscreenTargets.to_string(),
+            "offscreen raster targets (phase 5, ledger S6)"
+        );
+        assert_eq!(
+            UnsupportedFeature::GroupSourceValue.to_string(),
+            "per-frame dispatch group counts (phase 3a, ledger S1)"
+        );
+    }
+
+    #[test]
+    fn validation_message_has_header_and_bullets() {
+        let errors = vec![
+            GraphError::MultiplePickingNodes,
+            GraphError::EmptyOptionalScope,
+        ];
+
+        assert_eq!(
+            validation_message(&errors),
+            "render graph validation failed:\n  - at most one picking node is allowed\n  - optional scope has no frame value"
+        );
+    }
 }
