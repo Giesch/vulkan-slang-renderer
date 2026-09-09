@@ -39,7 +39,7 @@ with an access mode:
 
 ```rust
 let mut res = GraphResources::new();
-let wet_mask = res.texture(W, H, vk::Format::R32_SFLOAT);
+let wet_mask = res.texture(W, H, GraphFormat::R32Float);
 
 // in a *ParamsBindings literal:
 wet_mask.read()           // sampled; sees the most recent write
@@ -47,6 +47,9 @@ wet_mask.write()          // storage; produces the next version
 wet_mask.mutate()         // storage; read-modify-write in place
 wet_mask.read_previous()  // sampled; the version before the last write
 ```
+
+Graph textures currently support `GraphFormat::R32Float` and
+`GraphFormat::Rgba32Float`.
 
 A read sees the most recent write in schedule order. At the first node of a
 frame, that is the previous frame's final version. `read_previous` sees one
@@ -58,10 +61,12 @@ a texture it also writes (or any node uses `read_previous`), otherwise 1.
 Physical images are created cleared. Rotation, including across the frame
 boundary, is graph-internal; odd loop trip counts are legal.
 
-A texture the game creates itself (for example one filled with
-`write_storage_texture` at setup) binds externally via
-`handle.bindless_handle().into()`. External textures take no part in version
-tracking.
+A sampled texture the game creates itself (for example a storage texture
+filled with `write_storage_texture` at setup and then exposed through
+`storage_texture_as_sampled`) binds via `handle.bindless_handle().into()`.
+External sampled textures take no part in version tracking. Mutable external
+storage textures are rejected when the graph is built; use a logical graph
+texture for storage writes.
 
 ## Buffers
 
@@ -109,14 +114,56 @@ Every draw form has a `_with_push` variant taking
 inside a `repeat` its texture references rotate per iteration. The push
 block's data half is fixed at build time.
 
-`RenderGraph::new` validates the structure and returns `Err` for: an
-undeclared texture, a node that writes a texture twice, mutate combined with
-read or write of the same texture in one node, a write combined with
-`read_previous` of the same texture in one node, nested `repeat`, a draw
-inside `repeat`, a compute node after a draw node, a repeat-body node whose
-uniform block references a texture that rotates in the same repeat (move the
-reference into the push block), more than one picking node, and a picking
-node without draws.
+## Build-time validation
+
+`RenderGraph::new` lowers and validates the complete graph before creating
+its logical textures. It returns all detected problems in one error:
+
+```text
+render graph validation failed:
+  - first problem
+  - second problem
+```
+
+Texture-access diagnostics identify the `res.texture(...)` call site. Access
+hazards are checked per dispatch or draw, so independent draws in the main
+raster pass do not interfere with each other's checks.
+
+The validator enforces these rules:
+
+- A command cannot write one logical texture more than once, combine
+  `mutate` with a read or write of that texture, or combine `write` with
+  `read_previous`. Draw nodes can only read graph textures.
+- Every texture read with `read_previous` must have a `write` somewhere in
+  the graph. A `mutate` does not advance the version and does not satisfy
+  this requirement.
+- A repeat-body uniform block cannot reference a texture written by that
+  repeat. Put that binding in the node's push block so it resolves again for
+  each iteration.
+- Compute and upload nodes must precede the main raster pass. A `repeat` can
+  contain compute and upload nodes, but no draw. `repeat` and `optional`
+  scopes cannot nest in either combination.
+- An `optional` scope must contain a frame value and use an optional value as
+  its gate. In particular, `optional(picking(...))` by itself is empty.
+- A graph can contain at most one picking node, and picking requires at least
+  one draw.
+- A reused uniform-buffer slot must resolve to the same data size and resource
+  bindings at every node. Different sources for one slot are rejected.
+- Pipeline kinds, per-frame value kinds, parameter schemas, and binding kinds
+  must match their nodes. Resource IDs in uniform sources, push blocks, and
+  raster targets are checked at their declarations, including uniform
+  sources that no node consumes.
+- An upload must target a storage buffer, and its declared maximum element
+  count must fit the buffer. Indirect draw arguments must use an immutable
+  buffer. Buffer byte offsets must fit in `u32`.
+- Fixed texture dimensions must be nonzero and no larger than the device's
+  `maxImageDimension2D`.
+
+The phase-1 description also rejects features reserved for later phases:
+window-relative texture sizes, color/depth attachment texture usages,
+offscreen raster targets, a second raster pass, a raster pass inside
+`optional`, and per-frame dispatch group counts. These errors name the owning
+future phase and ledger item.
 
 ## The params tuple
 
@@ -155,7 +202,12 @@ recreation, matching the manual API's behavior.
 ## Limits
 
 - Tuple arity is 12 per nesting level.
-- `repeat` does not nest, and holds compute nodes only.
+- `repeat` and `optional` do not nest. A `repeat` holds compute and upload
+  nodes only.
+- A shader used by a graph node must have a reflected uniform parameter
+  block so codegen can implement `GraphShaderParams` for it.
+- Logical textures support `GraphFormat::R32Float` and
+  `GraphFormat::Rgba32Float`.
 - Texture dimensions are at least 1 and at most the device's
   `maxImageDimension2D`.
 - `read_previous` requires that some node `write()` the texture. A mutate
