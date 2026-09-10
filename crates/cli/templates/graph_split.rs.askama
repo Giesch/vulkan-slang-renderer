@@ -23,8 +23,8 @@ pub struct {{ params_type }}Data {
 {% endif -%}
 #[derive(Debug, Clone, Copy)]
 pub struct {{ params_type }}Bindings {
-{%- for (field, binding_type) in binding_fields %}
-    pub {{ field.field_name }}: {{ binding_type }},
+{%- for (field, kind) in binding_fields %}
+    pub {{ field.field_name }}: {% match kind %}{% when GraphBindingKind::SampledTex %}SampledTexBinding{% when GraphBindingKind::StorageTex %}StorageTexBinding{% when GraphBindingKind::Buffer with { pointee } %}BufferBinding<{{ pointee }}>{% when GraphBindingKind::ReadBuffer with { pointee } %}ReadBufferBinding<{{ pointee }}>{% when GraphBindingKind::ImmutableBuffer with { pointee } %}ImmutableBufferBinding<{{ pointee }}>{% endmatch %},
 {%- endfor %}
 }
 
@@ -38,8 +38,8 @@ impl GraphShaderParams for {{ params_type }} {
         resolver: &BindingResolver<'_>,
     ) -> Self {
         Self {
-{%- for line in assemble_lines %}
-{{ line }}
+{%- for (field, class) in assemble_fields %}
+            {{ field.field_name }}: {% match class %}{% when GraphFieldClass::Padding %}Default::default(){% when GraphFieldClass::Data %}data.{{ field.field_name }}{% when GraphFieldClass::Binding(kind) %}resolver.{% match kind %}{% when GraphBindingKind::SampledTex %}sampled_tex{% when GraphBindingKind::StorageTex %}storage_tex{% when GraphBindingKind::Buffer with { .. } %}buf{% when GraphBindingKind::ReadBuffer with { .. } %}read_buf{% when GraphBindingKind::ImmutableBuffer with { .. } %}immutable_buf{% endmatch %}(bindings.{{ field.field_name }}){% endmatch %},
 {%- endfor %}
         }
     }
@@ -47,8 +47,8 @@ impl GraphShaderParams for {{ params_type }} {
 
 impl GraphBindingSet for {{ params_type }}Bindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
-{%- for line in visit_lines %}
-{{ line }}
+{%- for (field, kind) in binding_fields %}
+        f(GraphBinding::{% match kind %}{% when GraphBindingKind::SampledTex %}SampledTex(self.{{ field.field_name }}){% when GraphBindingKind::StorageTex %}StorageTex(self.{{ field.field_name }}){% when GraphBindingKind::Buffer with { .. } %}Buffer(self.{{ field.field_name }}.erased()){% when GraphBindingKind::ReadBuffer with { .. } %}Buffer(self.{{ field.field_name }}.erased()){% when GraphBindingKind::ImmutableBuffer with { .. } %}Buffer(self.{{ field.field_name }}.erased()){% endmatch %});
 {%- endfor %}
     }
 }

@@ -346,9 +346,10 @@ it does not make that scaffolding part of production execution.
 - **Done:** `graph_split_def` now renders its structs and trait implementations
   through `graph_split.rs.askama`. Existing output snapshots and all 51 CLI
   tests pass.
-- `classify_graph_field` still returns a pre-rendered
-  `visit_line: String`, mixing classification with rendering. Executor
-  migration does not resolve this codegen maintainability concern.
+- **Done:** `classify_graph_field` returns five semantic resource kinds,
+  retaining buffer pointee types. `graph_split.rs.askama` renders binding
+  types, resolver calls, and visits from structured fields; classification
+  no longer constructs Rust source strings.
 
 ### Leaving for later phases
 

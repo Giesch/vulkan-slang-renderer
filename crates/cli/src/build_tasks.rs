@@ -1452,65 +1452,63 @@ impl GeneratedStructFieldDefinition {
 
 /// How one field of a params/push struct participates in the render-graph
 /// split: GPU-layout padding, per-frame data, or a build-time resource binding.
-enum GraphFieldClass {
+#[derive(Clone, Copy)]
+enum GraphFieldClass<'a> {
     Padding,
     Data,
-    Binding {
-        binding_type: String,
-        resolver_method: &'static str,
-        visit_line: String,
-    },
+    Binding(GraphBindingKind<'a>),
 }
 
-fn classify_graph_field(field: &GeneratedStructFieldDefinition) -> anyhow::Result<GraphFieldClass> {
+/// Resource semantics retained until the graph split template renders Rust.
+#[derive(Clone, Copy)]
+enum GraphBindingKind<'a> {
+    SampledTex,
+    StorageTex,
+    Buffer { pointee: &'a str },
+    ReadBuffer { pointee: &'a str },
+    ImmutableBuffer { pointee: &'a str },
+}
+
+fn classify_graph_field(
+    field: &GeneratedStructFieldDefinition,
+) -> anyhow::Result<GraphFieldClass<'_>> {
     let name = &field.field_name;
     if field.synthetic_padding {
         return Ok(GraphFieldClass::Padding);
     }
 
-    match field.type_name.as_str() {
-        "BindlessHandle<Sampler2D>" => {
-            return Ok(GraphFieldClass::Binding {
-                binding_type: "SampledTexBinding".to_string(),
-                resolver_method: "sampled_tex",
-                visit_line: format!("f(GraphBinding::SampledTex(self.{name}));"),
-            });
-        }
-        "BindlessHandle<RwTexture2D>" => {
-            return Ok(GraphFieldClass::Binding {
-                binding_type: "StorageTexBinding".to_string(),
-                resolver_method: "storage_tex",
-                visit_line: format!("f(GraphBinding::StorageTex(self.{name}));"),
-            });
-        }
+    let kind = match field.type_name.as_str() {
+        "BindlessHandle<Sampler2D>" => GraphBindingKind::SampledTex,
+        "BindlessHandle<RwTexture2D>" => GraphBindingKind::StorageTex,
         other if other.starts_with("BindlessHandle<") => {
             anyhow::bail!("field '{name}': unsupported graph resource type '{other}'");
         }
-        _ => {}
-    }
 
-    for (addr_prefix, binding_type, resolver_method) in [
-        ("Addr<", "BufferBinding", "buf"),
-        ("ReadAddr<", "ReadBufferBinding", "read_buf"),
-        ("ImmutableAddr<", "ImmutableBufferBinding", "immutable_buf"),
-    ] {
-        if let Some(rest) = field.type_name.strip_prefix(addr_prefix) {
-            let pointee = rest
-                .strip_suffix('>')
-                .expect("addr-typed field name ends with '>'");
-            return Ok(GraphFieldClass::Binding {
-                binding_type: format!("{binding_type}<{pointee}>"),
-                resolver_method,
-                visit_line: format!("f(GraphBinding::Buffer(self.{name}.erased()));"),
-            });
+        other => {
+            for prefix in ["Addr<", "ReadAddr<", "ImmutableAddr<"] {
+                if let Some(rest) = other.strip_prefix(prefix) {
+                    let pointee = rest
+                        .strip_suffix('>')
+                        .expect("addr-typed field name ends with '>'");
+                    let kind = match prefix {
+                        "Addr<" => GraphBindingKind::Buffer { pointee },
+                        "ReadAddr<" => GraphBindingKind::ReadBuffer { pointee },
+                        "ImmutableAddr<" => GraphBindingKind::ImmutableBuffer { pointee },
+                        _ => unreachable!("this match must be in sync with the array above"),
+                    };
+
+                    return Ok(GraphFieldClass::Binding(kind));
+                }
+            }
+
+            return Ok(GraphFieldClass::Data);
         }
-    }
+    };
 
-    Ok(GraphFieldClass::Data)
+    Ok(GraphFieldClass::Binding(kind))
 }
 
-/// The render-graph split of one params or push-constant struct, rendered as
-/// finished source rendered by the graph split template.
+/// Finished Rust source for the render-graph split of one params or push struct.
 struct GraphSplitDef {
     source: String,
 }
@@ -1526,9 +1524,8 @@ impl GraphSplitDef {
 struct GraphSplitTemplate<'a> {
     params_type: &'a str,
     data_fields: Vec<&'a GeneratedStructFieldDefinition>,
-    binding_fields: Vec<(&'a GeneratedStructFieldDefinition, String)>,
-    assemble_lines: Vec<String>,
-    visit_lines: Vec<String>,
+    binding_fields: Vec<(&'a GeneratedStructFieldDefinition, GraphBindingKind<'a>)>,
+    assemble_fields: Vec<(&'a GeneratedStructFieldDefinition, GraphFieldClass<'a>)>,
 }
 
 fn graph_split_def(
@@ -1538,16 +1535,15 @@ fn graph_split_def(
     let params_type = &def.type_name;
 
     let mut data_fields: Vec<&GeneratedStructFieldDefinition> = vec![];
-    let mut binding_fields: Vec<(&GeneratedStructFieldDefinition, String)> = vec![];
-    let mut assemble_lines: Vec<String> = vec![];
-    let mut visit_lines: Vec<String> = vec![];
+    let mut binding_fields = vec![];
+    let mut assemble_fields = vec![];
 
     for field in &def.fields {
         let name = &field.field_name;
-        match classify_graph_field(field)? {
-            GraphFieldClass::Padding => {
-                assemble_lines.push(format!("            {name}: Default::default(),"));
-            }
+        let class = classify_graph_field(field)?;
+        assemble_fields.push((field, class));
+        match class {
+            GraphFieldClass::Padding => {}
             GraphFieldClass::Data => {
                 anyhow::ensure!(
                     !resource_bearing.contains(graph_field_element_type(&field.type_name))
@@ -1557,18 +1553,9 @@ fn graph_split_def(
                     field.type_name,
                 );
                 data_fields.push(field);
-                assemble_lines.push(format!("            {name}: data.{name},"));
             }
-            GraphFieldClass::Binding {
-                binding_type,
-                resolver_method,
-                visit_line,
-            } => {
-                assemble_lines.push(format!(
-                    "            {name}: resolver.{resolver_method}(bindings.{name}),"
-                ));
-                visit_lines.push(format!("        {visit_line}"));
-                binding_fields.push((field, binding_type));
+            GraphFieldClass::Binding(kind) => {
+                binding_fields.push((field, kind));
             }
         }
     }
@@ -1577,8 +1564,7 @@ fn graph_split_def(
         params_type,
         data_fields,
         binding_fields,
-        assemble_lines,
-        visit_lines,
+        assemble_fields,
     }
     .render()?;
 
@@ -1604,7 +1590,7 @@ fn graph_split_defs(
             .collect::<anyhow::Result<Vec<_>>>()?;
         if classes
             .iter()
-            .any(|class| matches!(class, GraphFieldClass::Binding { .. }))
+            .any(|class| matches!(class, GraphFieldClass::Binding(..)))
         {
             for suffix in ["Bindings", "Data"] {
                 if suffix == "Data"
