@@ -335,14 +335,19 @@ it does not make that scaffolding part of production execution.
 
 ### Remaining items to address
 
-- `GraphPush::access` is declared, implemented twice, and never called.
-  Finding 3a was fixed in validation without this hook. Remove it unless
-  executor work establishes a concrete need for it.
-- `refs` and `all_leaves` return names every caller discards. Remove the
-  unused return values or identify a diagnostic consumer.
-- `GroupSource::Value` and `ValueKind::Groups` have test construction sites
-  but no production lowering path. Identify the intended typed input and
-  its owning phase, or remove this vocabulary until it has a consumer.
+- **Done:** Removed the unused `GraphPush::access` hook and both implementations.
+  `GraphPush::lower_input` preserves push bindings in `PushDesc`; validation
+  and compilation derive access information from those bindings. Later executor,
+  draw-list, and synchronization phases consume this lowered information.
+- **Done:** `refs` and `all_leaves` now return only the bindings and leaves
+  their callers use. Description names and per-command diagnostic names remain;
+  repeat validation gets its scope and uniform names directly from declarations.
+- **Done (ownership identified):** Preserve `GroupSource::Value` and
+  `ValueKind::Groups` for phase 3a / S1. The intended typed input is a per-frame
+  `[u32; 3]` dispatch group count, lowered to a `ValueId` of kind `Groups` and
+  resolved by the executor. Phase 3a must define its typed facade adapter and
+  wire ingestion and execution before removing `GroupSourceValue` rejection.
+  The particles example uses fixed counts and does not exercise this requirement.
 - **Done:** `graph_split_def` now renders its structs and trait implementations
   through `graph_split.rs.askama`. Existing output snapshots and all 51 CLI
   tests pass.

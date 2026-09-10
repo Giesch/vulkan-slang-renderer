@@ -209,8 +209,11 @@ pub(crate) enum SchemaFieldKind {
 
 ## `lower.rs`
 
-`NodeAccess` moves here verbatim from `schedule.rs:12-31`. It keeps its place
-in `GraphPush::access`'s signature with the same pub-in-private-module seal.
+`NodeAccess` moves here verbatim from `schedule.rs:12-31` for the legacy
+`plan()` path. Cleanup removes the unused `GraphPush::access` hook:
+`GraphPush::lower_input` preserves push bindings in `PushDesc`, from which
+validation and compilation derive access information. Later phases use that
+lowered information; they do not require a separate push-access hook.
 
 `LowerCtx` accumulates errors; no method returns `Result`. The facade merges
 lowering errors with validation errors and reports all of them at once.

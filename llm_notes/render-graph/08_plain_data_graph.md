@@ -531,7 +531,10 @@ subchoices before it removes the corresponding rejection.
    - **3a — Particles and executor core.** Settle scalar storage/padding rules.
      Wire typed lowering and assembly over staged writes. Fix submission-aware
      commits and cross-frame WAR ordering. Migrate initialization and graph identity.
-     Test controlled shutdown on invalid dynamic inputs. Remove S1.
+     Test controlled shutdown on invalid dynamic inputs. Add a typed per-frame
+     `[u32; 3]` dispatch group-count input, lower it to `GroupSource::Value`
+     with `ValueKind::Groups`, and resolve it during execution. The particles
+     example uses fixed counts, so test dynamic counts separately. Remove S1.
    - **3b — Watercolor and shared sources.** Settle array storage rules. Implement
      typed uniform scopes, repeat, optional groups, and uploads under the complete
      tuple contract. Preserve retained contents, `read_previous`, push resolution,

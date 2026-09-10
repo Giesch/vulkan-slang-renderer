@@ -769,16 +769,11 @@ pub struct GraphPushPayload {
 /// A draw node's optional push block: `()` for none, [`PushValues`] for a
 /// per-draw payload resolved at plan time.
 pub trait GraphPush {
-    fn access(&self) -> NodeAccess;
     fn payload(&self, resolver: &BindingResolver<'_>) -> GraphPushPayload;
     fn lower_input(&self) -> Option<PushInput>;
 }
 
 impl GraphPush for () {
-    fn access(&self) -> NodeAccess {
-        NodeAccess::default()
-    }
-
     fn payload(&self, _resolver: &BindingResolver<'_>) -> GraphPushPayload {
         GraphPushPayload { bytes: None }
     }
@@ -802,10 +797,6 @@ pub fn push_values<B: GraphShaderParams + PushConstantBlock>(
 }
 
 impl<B: GraphShaderParams + PushConstantBlock> GraphPush for PushValues<B> {
-    fn access(&self) -> NodeAccess {
-        collect_access(&self.bindings)
-    }
-
     fn payload(&self, resolver: &BindingResolver<'_>) -> GraphPushPayload {
         let value = B::assemble(&self.data, &self.bindings, resolver);
         GraphPushPayload {

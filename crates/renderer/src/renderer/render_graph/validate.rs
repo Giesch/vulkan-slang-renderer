@@ -318,18 +318,15 @@ fn kind(value: &ValueKind) -> &'static str {
     }
 }
 
-fn refs<'a>(
-    desc: &'a GraphDesc,
-    leaf: &'a LeafPass,
-) -> Vec<(&'a str, &'a [(FieldKey, ResourceRef)])> {
+fn refs<'a>(desc: &'a GraphDesc, leaf: &'a LeafPass) -> Vec<&'a [(FieldKey, ResourceRef)]> {
     match leaf {
         LeafPass::Compute(compute) => {
             let mut out = vec![];
             if let Some(uniform) = desc.uniforms.get(compute.uniform.0 as usize) {
-                out.push((uniform.name.as_str(), uniform.source.bindings.as_slice()));
+                out.push(uniform.source.bindings.as_slice());
             }
             if let Some(push) = &compute.push {
-                out.push((compute.name.as_str(), push.bindings.as_slice()));
+                out.push(push.bindings.as_slice());
             }
 
             out
@@ -340,10 +337,10 @@ fn refs<'a>(
             .flat_map(|draw| {
                 let mut out = vec![];
                 if let Some(uniform) = desc.uniforms.get(draw.uniform.0 as usize) {
-                    out.push((uniform.name.as_str(), uniform.source.bindings.as_slice()));
+                    out.push(uniform.source.bindings.as_slice());
                 }
                 if let Some(push) = &draw.push {
-                    out.push((draw.name.as_str(), push.bindings.as_slice()));
+                    out.push(push.bindings.as_slice());
                 }
 
                 out
@@ -392,14 +389,14 @@ fn commands<'a>(
     }
 }
 
-fn all_leaves(desc: &GraphDesc) -> Vec<(&str, &LeafPass)> {
+fn all_leaves(desc: &GraphDesc) -> Vec<&LeafPass> {
     let mut leaves = vec![];
     for pass in &desc.passes {
         match pass {
-            PassDesc::Leaf(leaf) => leaves.push(("", leaf)),
-            PassDesc::When { name, body, .. } | PassDesc::Repeat { name, body, .. } => {
+            PassDesc::Leaf(leaf) => leaves.push(leaf),
+            PassDesc::When { body, .. } | PassDesc::Repeat { body, .. } => {
                 for leaf in body {
-                    leaves.push((name, leaf))
+                    leaves.push(leaf)
                 }
             }
         }
@@ -665,7 +662,7 @@ pub(crate) fn validate(
                 let rotating: Vec<_> = body
                     .iter()
                     .flat_map(|leaf| refs(desc, leaf))
-                    .flat_map(|(_, resource)| resource)
+                    .flatten()
                     .filter_map(|(_, resource)| match resource {
                         ResourceRef::Tex(tex, TexAccess::Write) => Some(*tex),
                         _ => None,
@@ -704,7 +701,7 @@ pub(crate) fn validate(
     let mut phys = vec![1; desc.textures.len()];
     let mut prev_readers: Vec<(TexId, String)> = vec![];
     let mut written_anywhere: Vec<TexId> = vec![];
-    for (_, leaf) in all_leaves(desc) {
+    for leaf in all_leaves(desc) {
         for (command, resources) in commands(desc, leaf) {
             for (_, resource) in &resources {
                 if let ResourceRef::Tex(tex, TexAccess::ReadPrevious) = resource
