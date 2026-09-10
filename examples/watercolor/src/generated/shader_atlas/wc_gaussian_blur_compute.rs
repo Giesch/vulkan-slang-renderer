@@ -60,41 +60,76 @@ pub struct BlurDispatchBindings {
     pub output_tex: StorageTexBinding,
 }
 
-impl GraphShaderParams for BlurDispatch {
-    type Data = BlurDispatchData;
-    type Bindings = BlurDispatchBindings;
-
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            input_tex: resolver.sampled_tex(bindings.input_tex),
-            output_tex: resolver.storage_tex(bindings.output_tex),
-            direction: data.direction,
-        }
-    }
-}
-
 impl GraphBindingSet for BlurDispatchBindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.input_tex));
         f(GraphBinding::StorageTex(self.output_tex));
     }
 }
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct BlurDispatchInput {
+    pub input_tex: SampledTexBinding,
+    pub output_tex: StorageTexBinding,
+    pub direction: glam::Vec2,
+}
+
+impl GraphShaderParams for BlurDispatch {
+    type Data = BlurDispatchData;
+    type Bindings = BlurDispatchBindings;
+    type Input = BlurDispatchInput;
+
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            direction: data.direction,
+            input_tex: bindings.input_tex,
+            output_tex: bindings.output_tex,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            input_tex: resolver.sampled_tex(input.input_tex),
+            output_tex: resolver.storage_tex(input.output_tex),
+            direction: input.direction,
+        }
+    }
+}
+
+impl GraphBindingSet for BlurDispatchInput {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.input_tex));
+        f(GraphBinding::StorageTex(self.output_tex));
+    }
+}
+
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub grid_size: glam::Vec2,
+}
 
 impl GraphShaderParams for Params {
     type Data = Self;
     type Bindings = ();
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
+    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            grid_size: data.grid_size,
+        }
     }
+
+    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            grid_size: input.grid_size,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for ParamsInput {
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
 impl mltrs::renderer::gpu_write::PushConstantBlock for BlurDispatch {}

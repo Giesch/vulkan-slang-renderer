@@ -62,17 +62,40 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<OuterData>,
 }
 
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct OuterDataInput {
+    pub x: f32,
+    pub inner: InnerData,
+    pub y: f32,
+}
+
 impl GraphShaderParams for OuterData {
     type Data = Self;
     type Bindings = ();
+    type Input = OuterDataInput;
 
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
+    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            x: data.x,
+            inner: data.inner,
+            y: data.y,
+        }
     }
+
+    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            x: input.x,
+            _padding_0: Default::default(),
+            inner: input.inner,
+            y: input.y,
+            _padding_1: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for OuterDataInput {
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
 #[derive(Clone)]

@@ -38,17 +38,36 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<DragonParams>,
 }
 
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct DragonParamsInput {
+    pub resolution: glam::Vec2,
+    pub time: f32,
+}
+
 impl GraphShaderParams for DragonParams {
     type Data = Self;
     type Bindings = ();
+    type Input = DragonParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
+    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            resolution: data.resolution,
+            time: data.time,
+        }
     }
+
+    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            resolution: input.resolution,
+            time: input.time,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for DragonParamsInput {
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
 #[derive(Clone)]

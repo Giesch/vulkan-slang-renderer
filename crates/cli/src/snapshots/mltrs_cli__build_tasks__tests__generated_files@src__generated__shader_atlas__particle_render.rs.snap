@@ -54,24 +54,40 @@ pub struct RenderParamsBindings {
     pub particles: ReadBufferBinding<Particle>,
 }
 
+impl GraphBindingSet for RenderParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.particles.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct RenderParamsInput {
+    pub particle_count: u32,
+    pub particles: ReadBufferBinding<Particle>,
+}
+
 impl GraphShaderParams for RenderParams {
     type Data = RenderParamsData;
     type Bindings = RenderParamsBindings;
+    type Input = RenderParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             particle_count: data.particle_count,
+            particles: bindings.particles,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            particle_count: input.particle_count,
             _padding_0: Default::default(),
-            particles: resolver.read_buf(bindings.particles),
+            particles: resolver.read_buf(input.particles),
         }
     }
 }
 
-impl GraphBindingSet for RenderParamsBindings {
+impl GraphBindingSet for RenderParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.particles.erased()));
     }

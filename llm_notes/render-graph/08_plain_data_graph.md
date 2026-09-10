@@ -3,8 +3,52 @@
 STATUS: DRAFT — decisions 1–13 record the current direction. Decisions 12–13
 replace the earlier proposal to remove the tuple API. Unresolved subchoices
 remain explicit and gate their owning implementation phases.
+The Roc target update dated 2026-09-10 below takes precedence for validation timing,
+schema fingerprints, and prototype portability.
 The review update dated 2026-09-07 records later decisions and open questions.
 Accepted changes in that update take precedence over earlier wording.
+
+## Roc target update — 2026-09-10
+
+The product path is a Rust prototype followed by a Roc platform. Rust traits and
+lifetimes are implementation tools, not requirements for the portable API.
+The detailed phase-2 plan records compiler evidence and implementation gates.
+
+- Keep the typed facade and private plain-data graph. Roc construction, validation,
+  and device-independent compilation should evaluate at compile time when all
+  inputs are known. Rust runs the corresponding pure work during setup.
+- Port the pure algorithms to Roc for constant evaluation. Do not assume the Roc
+  evaluator can invoke the existing Rust validator through a hosted function.
+  Keep shared semantic fixtures so the implementations can be compared.
+- Keep the compiled description free of live handles and retained builder callbacks.
+  Resolve logical resource declarations to live resources during platform setup.
+  Keep device limits, actual pipeline/uniform identity, generations, allocation,
+  and callback-discovered dependencies at the boundary where those inputs exist.
+- Do not add mandatory layout fingerprints or per-frame type checks. Typed execution
+  supplies complete inputs. Generated layout metadata, interface comparison,
+  layout assertions, and assembly tests remain required. Cache fingerprints are
+  a possible future optimization with a separately defined artifact contract.
+- Check uniform-source ownership with pure validation. Reject missing sources,
+  independent duplicate sources, and consumers outside their source scope.
+  Roc can run these checks during constant evaluation. Rust runs them at setup.
+  Do not require generative lifetimes or borrow checking in the portable API.
+  Lack of mutable capture does not by itself prove source ownership: ordinary
+  returned values and immutable reuse still need a type/API proof or validation.
+- Keep dynamic frame values and their numeric/range checks at runtime. A constant
+  graph does not make repeat counts, uploads, dispatch counts, or device state constant.
+- Roc scene structure is a build input. Import and parse assets such as JSON in
+  Roc to determine draw runs and material counts. This layer does not change at
+  runtime. Rust phase 4 keeps its setup-defined lists as the prototype equivalent.
+  GPU allocation and resolution of logical references still occur during setup.
+- The future Roc platform API will use encoders/decoders for a custom data format.
+  Construction of a heterogeneous typed execution tuple remains unexplored future
+  design work. Do not design or implement that Roc API in the Rust phase-2 work.
+- The Roc host ABI is a separate representation boundary. Do not reinterpret Roc
+  records/lists as Rust structs or GPU data. Use explicit platform glue and typed
+  packing. Layout metadata describes GPU assembly, not the Roc host ABI.
+
+This update does not implement a Roc platform or settle scalar/array storage,
+callback dependency discovery, resize, or graph rebuild. Their existing gates remain.
 
 ## Core restrictions and direction
 
@@ -15,8 +59,9 @@ Accepted changes in that update take precedence over earlier wording.
   lists of indexed indirect draws with shared frame data and per-run pointers.
   Multiple raster nodes must support shadow mapping. Future AAA features must
   preserve the typed input contract, but are not all implementation requirements now.
-- Support an eventual strongly typed scripting language. Its type system can
-  express the node/input relationship. Its const evaluator can run pure graph validation.
+- Target Roc through a Rust API prototype, followed by a Roc platform port.
+  Prove the node/input relationship with Roc compile fixtures before the port.
+  Roc constant evaluation runs pure graph validation for compile-time-known graphs.
 - Validate Rust graphs during startup/setup, not by evaluating graphs during
   Rust builds. Put every applicable restriction into the public types first.
   Use setup validation for relationships that types cannot enforce.
@@ -262,7 +307,8 @@ New checks:
 - declaration tables: check each `ValueId` against its declared kind.
   `Repeat` uses `Count`. `GroupSource::Value` uses `Groups`.
   Data and uploads use their declared `Bytes` or `Array` schemas.
-  Check each schema ID against the generated layout hash. A `When` gate must be optional.
+  Check schema references and compare the required interface metadata during setup.
+  Schema IDs are local indices, not runtime type fingerprints. A `When` gate must be optional.
   Check declaration use under the supported subset.
   Allow a uniform source with no consumers, including a source owned by an empty draw list.
   Still check its resource identities, schemas, and complete bindings.
@@ -435,7 +481,7 @@ graph.execute(frame, &(compute_data, raster_data))?;
 
 - Keep generated `Params`, `*ParamsBindings`, `*ParamsData`, `GraphShaderParams`,
   and `GraphBindingSet`. Do not delete the tuple fixture surface.
-- Add schema metadata, stable layout hashes, and internal assembly mappings.
+- Add schema metadata and internal assembly mappings. Do not require layout hashes.
   Cover resource kinds, nested layouts, and data-to-GPU offsets.
 - Use generated complete binding structs at call sites. Internal field IDs
   support lowering; public field-key/value-key mapping is not required.
@@ -521,12 +567,14 @@ subchoices before it removes the corresponding rejection.
    test pure expansion without a renderer. Initially support fixed textures,
    direct compute, and one main raster output. Add ownership and uniform-source
    analysis. Test rejection of later-phase paths. No public raw description API.
-   Detailed plan: [`08_plain_data_graph/phase_1.md`](08_plain_data_graph/phase_1.md).
+   Detailed plan: [`08_plain_data_graph/01_pure_core.md`](08_plain_data_graph/01_pure_core.md).
 2. **Additive schemas and compile checks.** Keep generated split types and
    traits. Add layout metadata and automatic input adapters. Test omitted frame
    elements, incomplete resource bindings, and invalid buffer operations as
    compile failures. Positive controls must compile. Prototype typed list insertion
    and uniform ownership contracts before executor work depends on them.
+   Detailed plan and accepted API decisions:
+   [`08_plain_data_graph/02_schemas_and_compile_checks.md`](08_plain_data_graph/02_schemas_and_compile_checks.md).
 3. **Executor migration without tuple deletion.** Each sub-phase lands green.
    - **3a — Particles and executor core.** Settle scalar storage/padding rules.
      Wire typed lowering and assembly over staged writes. Fix submission-aware
@@ -626,9 +674,10 @@ and graph-owned picking are not hidden completion gates for these phases.
 - **Record-path surgery.** Phase 5 rewrites the middle of
   `record_command_buffer`. The offscreen example plus sweep gates it; the
   manual API path stays untouched as a control.
-- **Layout-hash drift.** The hash must change whenever a struct's layout
-  changes and must be stable across codegen runs. Derive it from the
-  reflection layout (offsets, sizes, kinds), not from source text.
+- **Layout metadata drift.** Derive GPU offsets, sizes, and kinds from reflection.
+  Verify generated layouts with assertions and assembly tests. Compare full
+  interface descriptions where compatibility needs checking. A matching hash
+  would not prove that metadata or generated assembly is correct.
 - **Assembly-program correctness.** Tables for uniform sources and command push blocks replace
   per-type `assemble` fns. Unit-test the program builder against the
   schema snapshots, and cover a struct with interleaved data/resource
@@ -680,11 +729,12 @@ top-level parameter fields cannot see.
 Decision 12 replaces the earlier `Key<T>` and incremental `set` proposal.
 `GraphNode::Frame` and generated binding/data structs define complete inputs.
 Stock/generated adapters populate private value storage without a user mapping.
-Schema metadata and layout hashes validate internal lowering and assembly.
+Schema metadata describes internal lowering and assembly. Types enforce input
+completeness. Layout assertions and assembly tests check representation correctness.
 
 Unresolved subchoices: copy values or borrow through CPU preparation; array
 storage/count representation; initialization of all copied bytes including padding.
-Hashes must cover data and GPU layouts, nested types, and resource kinds.
+Metadata must describe data and GPU layouts, nested types, and resource kinds.
 These storage choices must not weaken the typed completeness contract.
 
 ### 4. Resource identity and ownership
@@ -980,8 +1030,9 @@ that description, then expand typed inputs without live renderer access.
 Keep the resource, initialization, uniform, synchronization, and shutdown decisions.
 Do not replace the tuple facade with unchecked erased node construction.
 
-The following Toon_link examples show proposed syntax. Final names and exact
-trait signatures remain implementation subchoices. The input restrictions are settled.
+The following Toon_link examples show proposed syntax. The method name
+`.with_push_constant(...)` is settled. It accepts a generated combined `*Input` struct. Other exact
+signatures remain implementation subchoices. The input restrictions are settled.
 
 ```rust
 let mut draws = DrawList::<ToonLinkParams, MultiDraw>::new(
@@ -996,7 +1047,7 @@ for run in runs {
             args.at(run.first),
             run.count,
         )
-        .push_bindings(MultiDrawBindings {
+        .with_push_constant(MultiDrawInput {
             individual_draws: individual_draws.at(run.first),
         }),
     )?;
@@ -1106,9 +1157,11 @@ Testing strategy:
 - Preserve existing picking tests/sweep behavior without adding generic readback
   or a picking migration gate. Audit every temporary rejection at phase 7.
 
-Tuple arity handling, input borrowing, and list insertion signatures remain API subchoices.
+Phase 2 keeps 12 elements per tuple, nested composition, and `&N::Frame`.
+Lists accept complete typed runs. Draws and dispatches use `.with_push_constant(...)`.
 The `with_uniform` callback form and scope frame contract are accepted.
-Resolve the remaining subchoices with compile-check fixtures before the executor depends on them.
+Use pure source-ownership checks rather than requiring Rust lifetime branding.
+Verify the generated combined push inputs with compile-check fixtures before executor integration.
 None may restore incremental missing-value assembly.
 
 ### Evidence locations (current working tree)
@@ -1374,7 +1427,7 @@ an owning phase before merging that rejection.
 
 | ID | Temporary rejection | Phase that removes it | Required evidence |
 | --- | --- | --- | --- |
-| S1 | V2 frame-data schemas or ingestion that require unresolved scalar padding or mixed data/resource layout rules | 3a | Generated data/GPU layout hashes, safe byte assembly, mixed-field/padding tests, and particles migration |
+| S1 | V2 frame-data schemas or ingestion that require unresolved scalar padding or mixed data/resource layout rules | 3a | Generated data/GPU layout metadata, safe byte assembly, mixed-field/padding tests, and particles migration |
 | S2 | Frame uploads and runtime array values | 3b | Array schema/count checks, current-slot Immutable brush uploads, rejection of GpuOnlyFlight/Singleton frame uploads, shorter-upload behavior, and watercolor's upload coupled to `When` |
 | S3 | Migrated core paths beyond the 3a subset | 3b | Typed shared sources, repeat, optional groups, and existing draw paths. Preserve legacy picking compatibility without redesign |
 | S4 | Typed setup-length draw lists and per-run push bindings | 4 | Toon_link migration, fixed frame type across list lengths, typed insertion, and indexed indirect range/access checks |

@@ -63,28 +63,52 @@ pub struct ParamsBindings {
     pub dst_rgba: StorageTexBinding,
 }
 
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.src));
+        f(GraphBinding::StorageTex(self.dst_r));
+        f(GraphBinding::StorageTex(self.dst_rgba));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub src: SampledTexBinding,
+    pub dst_r: StorageTexBinding,
+    pub dst_rgba: StorageTexBinding,
+    pub scale: f32,
+    pub grid_size: glam::Vec2,
+}
+
 impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            src: resolver.sampled_tex(bindings.src),
-            dst_r: resolver.storage_tex(bindings.dst_r),
-            dst_rgba: resolver.storage_tex(bindings.dst_rgba),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             scale: data.scale,
-            _padding_0: Default::default(),
             grid_size: data.grid_size,
+            src: bindings.src,
+            dst_r: bindings.dst_r,
+            dst_rgba: bindings.dst_rgba,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            src: resolver.sampled_tex(input.src),
+            dst_r: resolver.storage_tex(input.dst_r),
+            dst_rgba: resolver.storage_tex(input.dst_rgba),
+            scale: input.scale,
+            _padding_0: Default::default(),
+            grid_size: input.grid_size,
             _padding_1: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for ParamsBindings {
+impl GraphBindingSet for ParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.src));
         f(GraphBinding::StorageTex(self.dst_r));

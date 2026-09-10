@@ -107,29 +107,56 @@ pub struct RayMarchingParamsBindings {
     pub boxes: ReadBufferBinding<BoxRect>,
 }
 
+impl GraphBindingSet for RayMarchingParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.spheres.erased()));
+        f(GraphBinding::Buffer(self.boxes.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct RayMarchingParamsInput {
+    pub camera: RayMarchCamera,
+    pub light_position: glam::Vec3,
+    pub sphere_count: u32,
+    pub box_count: u32,
+    pub resolution: glam::Vec2,
+    pub spheres: ReadBufferBinding<Sphere>,
+    pub boxes: ReadBufferBinding<BoxRect>,
+}
+
 impl GraphShaderParams for RayMarchingParams {
     type Data = RayMarchingParamsData;
     type Bindings = RayMarchingParamsBindings;
+    type Input = RayMarchingParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             camera: data.camera,
             light_position: data.light_position,
             sphere_count: data.sphere_count,
             box_count: data.box_count,
-            _padding_0: Default::default(),
             resolution: data.resolution,
-            spheres: resolver.read_buf(bindings.spheres),
-            boxes: resolver.read_buf(bindings.boxes),
+            spheres: bindings.spheres,
+            boxes: bindings.boxes,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            camera: input.camera,
+            light_position: input.light_position,
+            sphere_count: input.sphere_count,
+            box_count: input.box_count,
+            _padding_0: Default::default(),
+            resolution: input.resolution,
+            spheres: resolver.read_buf(input.spheres),
+            boxes: resolver.read_buf(input.boxes),
         }
     }
 }
 
-impl GraphBindingSet for RayMarchingParamsBindings {
+impl GraphBindingSet for RayMarchingParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.spheres.erased()));
         f(GraphBinding::Buffer(self.boxes.erased()));

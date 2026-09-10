@@ -39,6 +39,59 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<IngredientParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct IngredientParamsData {
+    pub weights: [glam::IVec4; 4],
+    pub calories: glam::IVec4,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct IngredientParamsBindings {
+    pub solution: BufferBinding<Solution>,
+}
+
+impl GraphBindingSet for IngredientParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.solution.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct IngredientParamsInput {
+    pub weights: [glam::IVec4; 4],
+    pub calories: glam::IVec4,
+    pub solution: BufferBinding<Solution>,
+}
+
+impl GraphShaderParams for IngredientParams {
+    type Data = IngredientParamsData;
+    type Bindings = IngredientParamsBindings;
+    type Input = IngredientParamsInput;
+
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            weights: data.weights,
+            calories: data.calories,
+            solution: bindings.solution,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            weights: input.weights,
+            calories: input.calories,
+            solution: resolver.buf(input.solution),
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for IngredientParamsInput {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.solution.erased()));
+    }
+}
+
 pub const WORKGROUP_SIZE: [u32; 3] = [10, 10, 10];
 
 #[derive(Clone)]

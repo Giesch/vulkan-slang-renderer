@@ -73,31 +73,64 @@ pub struct ParamsBindings {
     pub wet_mask_out: StorageTexBinding,
 }
 
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.saturation_in));
+        f(GraphBinding::SampledTex(self.wet_mask_in));
+        f(GraphBinding::StorageTex(self.saturation_out));
+        f(GraphBinding::StorageTex(self.wet_mask_out));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub saturation_in: SampledTexBinding,
+    pub wet_mask_in: SampledTexBinding,
+    pub saturation_out: StorageTexBinding,
+    pub wet_mask_out: StorageTexBinding,
+    pub grid_size: glam::Vec2,
+    pub diffuse_rate: f32,
+    pub capacity: f32,
+    pub sigma: f32,
+    pub dry_threshold: f32,
+}
+
 impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            saturation_in: resolver.sampled_tex(bindings.saturation_in),
-            wet_mask_in: resolver.sampled_tex(bindings.wet_mask_in),
-            saturation_out: resolver.storage_tex(bindings.saturation_out),
-            wet_mask_out: resolver.storage_tex(bindings.wet_mask_out),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             grid_size: data.grid_size,
             diffuse_rate: data.diffuse_rate,
             capacity: data.capacity,
             sigma: data.sigma,
             dry_threshold: data.dry_threshold,
+            saturation_in: bindings.saturation_in,
+            wet_mask_in: bindings.wet_mask_in,
+            saturation_out: bindings.saturation_out,
+            wet_mask_out: bindings.wet_mask_out,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            saturation_in: resolver.sampled_tex(input.saturation_in),
+            wet_mask_in: resolver.sampled_tex(input.wet_mask_in),
+            saturation_out: resolver.storage_tex(input.saturation_out),
+            wet_mask_out: resolver.storage_tex(input.wet_mask_out),
+            grid_size: input.grid_size,
+            diffuse_rate: input.diffuse_rate,
+            capacity: input.capacity,
+            sigma: input.sigma,
+            dry_threshold: input.dry_threshold,
             _padding_0: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for ParamsBindings {
+impl GraphBindingSet for ParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.saturation_in));
         f(GraphBinding::SampledTex(self.wet_mask_in));

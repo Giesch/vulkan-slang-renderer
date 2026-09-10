@@ -38,6 +38,54 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<RenderParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RenderParamsData {
+    pub resolution: glam::Vec2,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RenderParamsBindings {
+    pub solution: ReadBufferBinding<Solution>,
+}
+
+impl GraphBindingSet for RenderParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.solution.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct RenderParamsInput {
+    pub solution: ReadBufferBinding<Solution>,
+    pub resolution: glam::Vec2,
+}
+
+impl GraphShaderParams for RenderParams {
+    type Data = RenderParamsData;
+    type Bindings = RenderParamsBindings;
+    type Input = RenderParamsInput;
+
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            resolution: data.resolution,
+            solution: bindings.solution,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            solution: resolver.read_buf(input.solution),
+            resolution: input.resolution,
+        }
+    }
+}
+
+impl GraphBindingSet for RenderParamsInput {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.solution.erased()));
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

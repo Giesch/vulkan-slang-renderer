@@ -71,27 +71,51 @@ pub struct SuzanneParamsBindings {
     pub texture2: SampledTexBinding,
 }
 
+impl GraphBindingSet for SuzanneParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.texture0));
+        f(GraphBinding::SampledTex(self.texture1));
+        f(GraphBinding::SampledTex(self.texture2));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct SuzanneParamsInput {
+    pub mvp: MVPMatrices,
+    pub time: f32,
+    pub texture0: SampledTexBinding,
+    pub texture1: SampledTexBinding,
+    pub texture2: SampledTexBinding,
+}
+
 impl GraphShaderParams for SuzanneParams {
     type Data = SuzanneParamsData;
     type Bindings = SuzanneParamsBindings;
+    type Input = SuzanneParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             mvp: data.mvp,
             time: data.time,
+            texture0: bindings.texture0,
+            texture1: bindings.texture1,
+            texture2: bindings.texture2,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            mvp: input.mvp,
+            time: input.time,
             _padding_0: Default::default(),
-            texture0: resolver.sampled_tex(bindings.texture0),
-            texture1: resolver.sampled_tex(bindings.texture1),
-            texture2: resolver.sampled_tex(bindings.texture2),
+            texture0: resolver.sampled_tex(input.texture0),
+            texture1: resolver.sampled_tex(input.texture1),
+            texture2: resolver.sampled_tex(input.texture2),
         }
     }
 }
 
-impl GraphBindingSet for SuzanneParamsBindings {
+impl GraphBindingSet for SuzanneParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.texture0));
         f(GraphBinding::SampledTex(self.texture1));

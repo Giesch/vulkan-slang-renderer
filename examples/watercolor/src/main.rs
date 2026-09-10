@@ -16,7 +16,7 @@ use mltrs::renderer::{
     ComputeNode, ComputeNodeWithPush, DrawError, DrawVertexCountNode, FrameRenderer, GraphFormat,
     GraphResources, LoopCount, OptionalNode, RenderGraph, Renderer, RepeatNode,
     StorageBufferHandle, StorageSlot, StorageTextureHandle, TextureHandle, UniformBufferHandle,
-    UploadNode, dispatch, dispatch_with_push, draw_vertex_count, optional, repeat, upload,
+    UploadNode, dispatch, draw_vertex_count, optional, repeat, upload,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -516,18 +516,19 @@ impl Game for Watercolor {
                 ),
                 // 4. Pressure Jacobi iterations; the push block rotates
                 //    pressure per iteration, so odd trip counts are legal
-                repeat((dispatch_with_push(
+                repeat((dispatch(
                     &pressure_jacobi_pipeline,
                     &pressure_jacobi_params_buffer,
                     workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE),
                     wc_pressure_jacobi_compute::ParamsBindings {
                         divergence: divergence.read(),
                     },
-                    wc_pressure_jacobi_compute::JacobiDispatchBindings {
+                )
+                .with_push_constant(
+                    wc_pressure_jacobi_compute::JacobiDispatchInput {
                         pressure_in: pressure.read(),
                         pressure_out: pressure.write(),
                     },
-                    (),
                 ),)),
                 // 5. Project velocity in place
                 dispatch(
@@ -542,33 +543,29 @@ impl Game for Watercolor {
                     },
                 ),
                 // 6. Gaussian blur H (pre-capillary wet mask -> blur_temp)
-                dispatch_with_push(
+                dispatch(
                     &blur_h_pipeline,
                     &blur_h_params_buffer,
                     workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
                     (),
-                    wc_gaussian_blur_compute::BlurDispatchBindings {
-                        input_tex: wet_mask.read(),
-                        output_tex: blur_temp.write(),
-                    },
-                    wc_gaussian_blur_compute::BlurDispatchData {
-                        direction: Vec2::new(1.0, 0.0),
-                    },
-                ),
+                )
+                .with_push_constant(wc_gaussian_blur_compute::BlurDispatchInput {
+                    input_tex: wet_mask.read(),
+                    output_tex: blur_temp.write(),
+                    direction: Vec2::new(1.0, 0.0),
+                }),
                 // 7. Gaussian blur V (blur_temp -> blurred_mask)
-                dispatch_with_push(
+                dispatch(
                     &blur_v_pipeline,
                     &blur_v_params_buffer,
                     workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
                     (),
-                    wc_gaussian_blur_compute::BlurDispatchBindings {
-                        input_tex: blur_temp.read(),
-                        output_tex: blurred_mask.write(),
-                    },
-                    wc_gaussian_blur_compute::BlurDispatchData {
-                        direction: Vec2::new(0.0, 1.0),
-                    },
-                ),
+                )
+                .with_push_constant(wc_gaussian_blur_compute::BlurDispatchInput {
+                    input_tex: blur_temp.read(),
+                    output_tex: blurred_mask.write(),
+                    direction: Vec2::new(0.0, 1.0),
+                }),
                 // 8. Flow outward (blurred_mask -> flow formula into pressure
                 //    + saturation, in place)
                 dispatch(

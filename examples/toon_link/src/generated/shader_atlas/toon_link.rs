@@ -156,38 +156,77 @@ pub struct MultiDrawBindings {
     pub individual_draws: ImmutableBufferBinding<IndividualDraw>,
 }
 
-impl GraphShaderParams for MultiDraw {
-    type Data = ();
-    type Bindings = MultiDrawBindings;
-
-    fn assemble(
-        _data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            individual_draws: resolver.immutable_buf(bindings.individual_draws),
-        }
-    }
-}
-
 impl GraphBindingSet for MultiDrawBindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.individual_draws.erased()));
     }
 }
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct MultiDrawInput {
+    pub individual_draws: ImmutableBufferBinding<IndividualDraw>,
+}
+
+impl GraphShaderParams for MultiDraw {
+    type Data = ();
+    type Bindings = MultiDrawBindings;
+    type Input = MultiDrawInput;
+
+    fn input(_data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            individual_draws: bindings.individual_draws,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            individual_draws: resolver.immutable_buf(input.individual_draws),
+        }
+    }
+}
+
+impl GraphBindingSet for MultiDrawInput {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.individual_draws.erased()));
+    }
+}
+
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ToonLinkParamsInput {
+    pub mvp: MVPMatrices,
+    pub lights: GXLights,
+    pub env: GXTevColorOverride,
+    pub debug_mode: DebugMode,
+}
 
 impl GraphShaderParams for ToonLinkParams {
     type Data = Self;
     type Bindings = ();
+    type Input = ToonLinkParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
+    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            mvp: data.mvp,
+            lights: data.lights,
+            env: data.env,
+            debug_mode: data.debug_mode,
+        }
     }
+
+    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            mvp: input.mvp,
+            lights: input.lights,
+            env: input.env,
+            debug_mode: input.debug_mode,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for ToonLinkParamsInput {
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
 impl mltrs::renderer::gpu_write::PushConstantBlock for MultiDraw {}

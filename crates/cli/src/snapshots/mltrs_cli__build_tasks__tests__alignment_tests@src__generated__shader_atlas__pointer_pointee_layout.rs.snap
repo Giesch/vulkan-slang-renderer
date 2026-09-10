@@ -124,26 +124,44 @@ pub struct ParamsBindings {
     pub items: BufferBinding<HostileData>,
 }
 
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.items.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub scale: f32,
+    pub items: BufferBinding<HostileData>,
+    pub post: glam::Vec2,
+}
+
 impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             scale: data.scale,
-            _padding_0: Default::default(),
-            items: resolver.buf(bindings.items),
             post: data.post,
+            items: bindings.items,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            scale: input.scale,
+            _padding_0: Default::default(),
+            items: resolver.buf(input.items),
+            post: input.post,
             _padding_1: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for ParamsBindings {
+impl GraphBindingSet for ParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.items.erased()));
     }

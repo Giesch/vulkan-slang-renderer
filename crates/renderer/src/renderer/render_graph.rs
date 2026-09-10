@@ -605,12 +605,19 @@ impl BindingResolver<'_> {
 pub trait GraphShaderParams: Sized {
     type Data;
     type Bindings: GraphBindingSet;
+    type Input: GraphBindingSet;
+
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input;
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self;
 
     fn assemble(
         data: &Self::Data,
         bindings: &Self::Bindings,
         resolver: &BindingResolver<'_>,
-    ) -> Self;
+    ) -> Self {
+        Self::assemble_input(&Self::input(data, bindings), resolver)
+    }
 }
 
 /// A repeat node's per-frame iteration count. A newtype, not a bare `u32`,
@@ -629,7 +636,7 @@ pub trait GraphNode {
 }
 
 /// A compute dispatch writing one uniform params buffer per frame.
-pub struct ComputeNode<S: GraphShaderParams, P: GraphPush = ()> {
+pub struct ComputeNode<S: GraphShaderParams, P = ()> {
     pipeline_index: ComputePipelineIndex,
     uniform: UniformSlot<S>,
     group_count: [u32; 3],
@@ -637,18 +644,18 @@ pub struct ComputeNode<S: GraphShaderParams, P: GraphPush = ()> {
     push: P,
 }
 
-pub fn dispatch<S: GraphShaderParams>(
-    pipeline: &PipelineHandle<Compute, NoPush>,
+pub fn dispatch<S: GraphShaderParams, P: GraphPipelinePush>(
+    pipeline: &PipelineHandle<Compute, P>,
     params_buffer: &UniformBufferHandle<S>,
     group_count: [u32; 3],
     bindings: S::Bindings,
-) -> ComputeNode<S> {
+) -> ComputeNode<S, P::Pending> {
     ComputeNode {
         pipeline_index: pipeline.index(),
         uniform: params_buffer.into(),
         group_count,
         bindings,
-        push: (),
+        push: P::pending(),
     }
 }
 
@@ -737,26 +744,130 @@ impl GraphPush for () {
     }
 }
 
-/// A push block's build-time halves: resource bindings plus fixed data.
+/// A push block's complete unresolved input, fixed at graph construction.
 pub struct PushValues<B: GraphShaderParams + PushConstantBlock> {
-    bindings: B::Bindings,
-    data: B::Data,
+    input: B::Input,
 }
 
 pub fn push_values<B: GraphShaderParams + PushConstantBlock>(
     bindings: B::Bindings,
     data: B::Data,
 ) -> PushValues<B> {
-    PushValues { bindings, data }
+    PushValues {
+        input: B::input(&data, &bindings),
+    }
+}
+
+/// A command that still needs its pipeline's complete push input.
+///
+/// Both command forms become graph nodes after the complete input is attached:
+/// ```
+/// use mltrs_renderer::renderer::render_graph::*;
+/// use mltrs_renderer::renderer::gpu_write::{GPUWrite, PushConstantBlock};
+/// fn complete<S, B>(compute: ComputeNode<S, PendingPush<B>>,
+///                   draw: DrawNode<S, PendingPush<B>>, input: B::Input)
+/// where S: GraphShaderParams + GPUWrite,
+///       B: GraphShaderParams + PushConstantBlock, B::Input: Clone {
+///     fn node<N: GraphNode>(_: N) {}
+///     node(compute.with_push_constant(input.clone()));
+///     node(draw.with_push_constant(input));
+/// }
+/// ```
+/// Missing push input cannot enter the graph:
+/// ```compile_fail,E0277
+/// use mltrs_renderer::renderer::render_graph::*;
+/// use mltrs_renderer::renderer::gpu_write::{GPUWrite, PushConstantBlock};
+/// fn incomplete<S: GraphShaderParams + GPUWrite, B: GraphShaderParams + PushConstantBlock>(
+///     command: ComputeNode<S, PendingPush<B>>,
+/// ) {
+///     fn node<N: GraphNode>(_: N) {}
+///     node(command);
+/// }
+/// ```
+/// Draws enforce the same restriction:
+/// ```compile_fail,E0277
+/// use mltrs_renderer::renderer::render_graph::*;
+/// use mltrs_renderer::renderer::gpu_write::{GPUWrite, PushConstantBlock};
+/// fn incomplete<S: GraphShaderParams + GPUWrite, B: GraphShaderParams + PushConstantBlock>(
+///     command: DrawNode<S, PendingPush<B>>,
+/// ) {
+///     fn node<N: GraphNode>(_: N) {}
+///     node(command);
+/// }
+/// ```
+/// A different push interface is not accepted:
+/// ```compile_fail,E0308
+/// use mltrs_renderer::renderer::render_graph::*;
+/// use mltrs_renderer::renderer::gpu_write::PushConstantBlock;
+/// fn wrong<S, B, Other>(command: DrawNode<S, PendingPush<B>>, input: Other::Input)
+/// where S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock,
+///       Other: GraphShaderParams {
+///     command.with_push_constant(input);
+/// }
+/// ```
+pub struct PendingPush<B>(PhantomData<B>);
+
+mod push_state {
+    pub trait Sealed {}
+
+    impl Sealed for super::NoPush {}
+
+    impl<B: super::GraphShaderParams + super::PushConstantBlock> Sealed for super::PushBlock<B> {}
+}
+
+/// Selects the initial command state from the pipeline's push interface.
+pub trait GraphPipelinePush: push_state::Sealed {
+    type Pending;
+    fn pending() -> Self::Pending;
+}
+
+impl GraphPipelinePush for NoPush {
+    type Pending = ();
+
+    fn pending() {}
+}
+
+impl<B: GraphShaderParams + PushConstantBlock> GraphPipelinePush for PushBlock<B> {
+    type Pending = PendingPush<B>;
+
+    fn pending() -> Self::Pending {
+        PendingPush(PhantomData)
+    }
+}
+
+impl<S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock>
+    ComputeNode<S, PendingPush<B>>
+{
+    pub fn with_push_constant(self, input: B::Input) -> ComputeNode<S, PushValues<B>> {
+        ComputeNode {
+            pipeline_index: self.pipeline_index,
+            uniform: self.uniform,
+            group_count: self.group_count,
+            bindings: self.bindings,
+            push: PushValues { input },
+        }
+    }
+}
+
+impl<S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock> DrawNode<S, PendingPush<B>> {
+    pub fn with_push_constant(self, input: B::Input) -> DrawNode<S, PushValues<B>> {
+        DrawNode {
+            pipeline_index: self.pipeline_index,
+            uniform: self.uniform,
+            call: self.call,
+            bindings: self.bindings,
+            push: PushValues { input },
+        }
+    }
 }
 
 impl<B: GraphShaderParams + PushConstantBlock> GraphPush for PushValues<B> {
     fn visit_bindings(&self, visit: &mut dyn FnMut(GraphBinding)) {
-        self.bindings.visit(visit);
+        self.input.visit(visit);
     }
 
     fn payload(&self, resolver: &BindingResolver<'_>) -> GraphPushPayload {
-        let value = B::assemble(&self.data, &self.bindings, resolver);
+        let value = B::assemble_input(&self.input, resolver);
         GraphPushPayload {
             bytes: Some(PushConstantBytes::from_value(&value)),
         }
@@ -765,14 +876,14 @@ impl<B: GraphShaderParams + PushConstantBlock> GraphPush for PushValues<B> {
     fn lower_input(&self) -> Option<PushInput> {
         Some(PushInput {
             size: std::mem::size_of::<B>() as u32,
-            bindings: collect_bindings(&self.bindings),
+            bindings: collect_bindings(&self.input),
         })
     }
 }
 
 /// A draw writing one uniform params buffer per frame. Declaration order is
 /// draw order; draw nodes follow every compute node.
-pub struct DrawNode<S: GraphShaderParams, P: GraphPush = ()> {
+pub struct DrawNode<S: GraphShaderParams, P = ()> {
     pipeline_index: GraphicsPipelineIndex,
     uniform: UniformSlot<S>,
     call: LowerDrawCall,
@@ -782,18 +893,18 @@ pub struct DrawNode<S: GraphShaderParams, P: GraphPush = ()> {
 
 pub type DrawVertexCountNode<S> = DrawNode<S, ()>;
 
-pub fn draw_vertex_count<S: GraphShaderParams>(
-    pipeline: &PipelineHandle<DrawVertexCount, NoPush>,
+pub fn draw_vertex_count<S: GraphShaderParams, P: GraphPipelinePush>(
+    pipeline: &PipelineHandle<DrawVertexCount, P>,
     params_buffer: &UniformBufferHandle<S>,
     vertex_count: u32,
     bindings: S::Bindings,
-) -> DrawNode<S, ()> {
+) -> DrawNode<S, P::Pending> {
     DrawNode {
         pipeline_index: pipeline.index(),
         uniform: params_buffer.into(),
         call: LowerDrawCall::VertexCount(vertex_count),
         bindings,
-        push: (),
+        push: P::pending(),
     }
 }
 
@@ -817,17 +928,17 @@ where
     }
 }
 
-pub fn draw_indexed<S: GraphShaderParams>(
-    pipeline: &PipelineHandle<DrawIndexed, NoPush>,
+pub fn draw_indexed<S: GraphShaderParams, P: GraphPipelinePush>(
+    pipeline: &PipelineHandle<DrawIndexed, P>,
     params_buffer: &UniformBufferHandle<S>,
     bindings: S::Bindings,
-) -> DrawNode<S, ()> {
+) -> DrawNode<S, P::Pending> {
     DrawNode {
         pipeline_index: pipeline.index(),
         uniform: params_buffer.into(),
         call: LowerDrawCall::WholeIndexed,
         bindings,
-        push: (),
+        push: P::pending(),
     }
 }
 
@@ -850,13 +961,13 @@ where
     }
 }
 
-pub fn draw_index_range<S: GraphShaderParams>(
-    pipeline: &PipelineHandle<DrawIndexed, NoPush>,
+pub fn draw_index_range<S: GraphShaderParams, P: GraphPipelinePush>(
+    pipeline: &PipelineHandle<DrawIndexed, P>,
     params_buffer: &UniformBufferHandle<S>,
     first_index: u32,
     index_count: u32,
     bindings: S::Bindings,
-) -> DrawNode<S, ()> {
+) -> DrawNode<S, P::Pending> {
     DrawNode {
         pipeline_index: pipeline.index(),
         uniform: params_buffer.into(),
@@ -865,7 +976,7 @@ pub fn draw_index_range<S: GraphShaderParams>(
             index_count,
         },
         bindings,
-        push: (),
+        push: P::pending(),
     }
 }
 
@@ -923,20 +1034,20 @@ fn indirect_call(
     }
 }
 
-pub fn draw_indexed_indirect<S: GraphShaderParams>(
-    pipeline: &PipelineHandle<DrawIndexedIndirect, NoPush>,
+pub fn draw_indexed_indirect<S: GraphShaderParams, P: GraphPipelinePush>(
+    pipeline: &PipelineHandle<DrawIndexedIndirect, P>,
     params_buffer: &UniformBufferHandle<S>,
     args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
     first_command: u32,
     draw_count: u32,
     bindings: S::Bindings,
-) -> DrawNode<S, ()> {
+) -> DrawNode<S, P::Pending> {
     DrawNode {
         pipeline_index: pipeline.index(),
         uniform: params_buffer.into(),
         call: indirect_call(args.into(), first_command, draw_count),
         bindings,
-        push: (),
+        push: P::pending(),
     }
 }
 
@@ -1592,6 +1703,7 @@ mod tests {
         use super::*;
         use crate::renderer::descriptor_heap::BindlessIndex;
 
+        #[derive(Clone, Copy)]
         struct Bindings {
             read: SampledTexBinding,
             write: StorageTexBinding,
@@ -1601,6 +1713,12 @@ mod tests {
             fn visit(&self, visit: &mut dyn FnMut(GraphBinding)) {
                 visit(GraphBinding::SampledTex(self.read));
                 visit(GraphBinding::StorageTex(self.write));
+            }
+        }
+
+        impl GraphBindingSet for (u64, Bindings) {
+            fn visit(&self, visit: &mut dyn FnMut(GraphBinding)) {
+                self.1.visit(visit);
             }
         }
 
@@ -1614,8 +1732,15 @@ mod tests {
         impl GraphShaderParams for Block {
             type Data = u64;
             type Bindings = Bindings;
+            type Input = (u64, Bindings);
 
-            fn assemble(data: &u64, bindings: &Bindings, resolver: &BindingResolver<'_>) -> Self {
+            fn input(data: &u64, bindings: &Bindings) -> Self::Input {
+                (*data, *bindings)
+            }
+
+            fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+                let (data, bindings) = input;
+
                 Self([
                     resolver.sampled_tex(bindings.read).to_raw(),
                     resolver.storage_tex(bindings.write).to_raw(),

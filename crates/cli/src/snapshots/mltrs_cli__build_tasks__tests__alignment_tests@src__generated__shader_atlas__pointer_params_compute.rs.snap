@@ -73,26 +73,48 @@ pub struct ParamsBindings {
     pub lut: ImmutableBufferBinding<PtrItem>,
 }
 
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.data.erased()));
+        f(GraphBinding::Buffer(self.src.erased()));
+        f(GraphBinding::Buffer(self.lut.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub data: BufferBinding<PtrItem>,
+    pub src: ReadBufferBinding<PtrItem>,
+    pub lut: ImmutableBufferBinding<PtrItem>,
+    pub count: u32,
+}
+
 impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            data: resolver.buf(bindings.data),
-            src: resolver.read_buf(bindings.src),
-            lut: resolver.immutable_buf(bindings.lut),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             count: data.count,
+            data: bindings.data,
+            src: bindings.src,
+            lut: bindings.lut,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            data: resolver.buf(input.data),
+            src: resolver.read_buf(input.src),
+            lut: resolver.immutable_buf(input.lut),
+            count: input.count,
             _padding_0: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for ParamsBindings {
+impl GraphBindingSet for ParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.data.erased()));
         f(GraphBinding::Buffer(self.src.erased()));

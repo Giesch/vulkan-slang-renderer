@@ -89,26 +89,45 @@ pub struct SpriteBatchParamsBindings {
     pub texture: SampledTexBinding,
 }
 
+impl GraphBindingSet for SpriteBatchParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.sprites.erased()));
+        f(GraphBinding::SampledTex(self.texture));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct SpriteBatchParamsInput {
+    pub sprites: ImmutableBufferBinding<Sprite>,
+    pub projection: Projection,
+    pub texture: SampledTexBinding,
+}
+
 impl GraphShaderParams for SpriteBatchParams {
     type Data = SpriteBatchParamsData;
     type Bindings = SpriteBatchParamsBindings;
+    type Input = SpriteBatchParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            sprites: resolver.immutable_buf(bindings.sprites),
-            _padding_0: Default::default(),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             projection: data.projection,
-            texture: resolver.sampled_tex(bindings.texture),
+            sprites: bindings.sprites,
+            texture: bindings.texture,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            sprites: resolver.immutable_buf(input.sprites),
+            _padding_0: Default::default(),
+            projection: input.projection,
+            texture: resolver.sampled_tex(input.texture),
             _padding_1: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for SpriteBatchParamsBindings {
+impl GraphBindingSet for SpriteBatchParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.sprites.erased()));
         f(GraphBinding::SampledTex(self.texture));

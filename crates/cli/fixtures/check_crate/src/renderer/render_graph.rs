@@ -117,10 +117,17 @@ impl BindingResolver<'_> {
 pub trait GraphShaderParams: Sized {
     type Data;
     type Bindings: GraphBindingSet;
+    type Input: GraphBindingSet;
+
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input;
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self;
 
     fn assemble(
         data: &Self::Data,
         bindings: &Self::Bindings,
         resolver: &BindingResolver<'_>,
-    ) -> Self;
+    ) -> Self {
+        Self::assemble_input(&Self::input(data, bindings), resolver)
+    }
 }

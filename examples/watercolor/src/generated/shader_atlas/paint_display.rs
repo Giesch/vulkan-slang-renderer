@@ -176,26 +176,52 @@ pub struct DisplayParamsBindings {
     pub wet_mask: SampledTexBinding,
 }
 
+impl GraphBindingSet for DisplayParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.deposit_0_3));
+        f(GraphBinding::SampledTex(self.deposit_4_7));
+        f(GraphBinding::SampledTex(self.deposit_8_11));
+        f(GraphBinding::SampledTex(self.paper_height));
+        f(GraphBinding::SampledTex(self.wet_mask));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct DisplayParamsInput {
+    pub deposit_0_3: SampledTexBinding,
+    pub deposit_4_7: SampledTexBinding,
+    pub deposit_8_11: SampledTexBinding,
+    pub paper_height: SampledTexBinding,
+    pub wet_mask: SampledTexBinding,
+    pub texel_size: glam::Vec2,
+    pub debug_view: DebugView,
+    pub canvas_aspect: f32,
+    pub window_aspect: f32,
+    pub pigment0: PigmentKM,
+    pub pigment1: PigmentKM,
+    pub pigment2: PigmentKM,
+    pub pigment3: PigmentKM,
+    pub pigment4: PigmentKM,
+    pub pigment5: PigmentKM,
+    pub pigment6: PigmentKM,
+    pub pigment7: PigmentKM,
+    pub pigment8: PigmentKM,
+    pub pigment9: PigmentKM,
+    pub pigment10: PigmentKM,
+    pub pigment11: PigmentKM,
+}
+
 impl GraphShaderParams for DisplayParams {
     type Data = DisplayParamsData;
     type Bindings = DisplayParamsBindings;
+    type Input = DisplayParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            deposit_0_3: resolver.sampled_tex(bindings.deposit_0_3),
-            deposit_4_7: resolver.sampled_tex(bindings.deposit_4_7),
-            deposit_8_11: resolver.sampled_tex(bindings.deposit_8_11),
-            paper_height: resolver.sampled_tex(bindings.paper_height),
-            wet_mask: resolver.sampled_tex(bindings.wet_mask),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             texel_size: data.texel_size,
             debug_view: data.debug_view,
             canvas_aspect: data.canvas_aspect,
             window_aspect: data.window_aspect,
-            _padding_0: Default::default(),
             pigment0: data.pigment0,
             pigment1: data.pigment1,
             pigment2: data.pigment2,
@@ -208,11 +234,43 @@ impl GraphShaderParams for DisplayParams {
             pigment9: data.pigment9,
             pigment10: data.pigment10,
             pigment11: data.pigment11,
+            deposit_0_3: bindings.deposit_0_3,
+            deposit_4_7: bindings.deposit_4_7,
+            deposit_8_11: bindings.deposit_8_11,
+            paper_height: bindings.paper_height,
+            wet_mask: bindings.wet_mask,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            deposit_0_3: resolver.sampled_tex(input.deposit_0_3),
+            deposit_4_7: resolver.sampled_tex(input.deposit_4_7),
+            deposit_8_11: resolver.sampled_tex(input.deposit_8_11),
+            paper_height: resolver.sampled_tex(input.paper_height),
+            wet_mask: resolver.sampled_tex(input.wet_mask),
+            texel_size: input.texel_size,
+            debug_view: input.debug_view,
+            canvas_aspect: input.canvas_aspect,
+            window_aspect: input.window_aspect,
+            _padding_0: Default::default(),
+            pigment0: input.pigment0,
+            pigment1: input.pigment1,
+            pigment2: input.pigment2,
+            pigment3: input.pigment3,
+            pigment4: input.pigment4,
+            pigment5: input.pigment5,
+            pigment6: input.pigment6,
+            pigment7: input.pigment7,
+            pigment8: input.pigment8,
+            pigment9: input.pigment9,
+            pigment10: input.pigment10,
+            pigment11: input.pigment11,
         }
     }
 }
 
-impl GraphBindingSet for DisplayParamsBindings {
+impl GraphBindingSet for DisplayParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.deposit_0_3));
         f(GraphBinding::SampledTex(self.deposit_4_7));

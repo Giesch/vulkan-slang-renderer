@@ -121,17 +121,41 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<EnumData>,
 }
 
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct EnumDataInput {
+    pub a: f32,
+    pub mode: Mode,
+    pub kind: Untagged,
+    pub b: f32,
+}
+
 impl GraphShaderParams for EnumData {
     type Data = Self;
     type Bindings = ();
+    type Input = EnumDataInput;
 
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
+    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            a: data.a,
+            mode: data.mode,
+            kind: data.kind,
+            b: data.b,
+        }
     }
+
+    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            a: input.a,
+            mode: input.mode,
+            kind: input.kind,
+            b: input.b,
+        }
+    }
+}
+
+impl GraphBindingSet for EnumDataInput {
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
 #[derive(Clone)]

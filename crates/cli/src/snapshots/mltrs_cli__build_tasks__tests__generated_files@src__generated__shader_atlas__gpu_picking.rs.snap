@@ -62,25 +62,45 @@ pub struct GpuPickingParamsBindings {
     pub cubes: ReadBufferBinding<Cube>,
 }
 
+impl GraphBindingSet for GpuPickingParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.cubes.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct GpuPickingParamsInput {
+    pub camera: RayMarchCamera,
+    pub picked_object_id: u32,
+    pub cube_count: u32,
+    pub cubes: ReadBufferBinding<Cube>,
+}
+
 impl GraphShaderParams for GpuPickingParams {
     type Data = GpuPickingParamsData;
     type Bindings = GpuPickingParamsBindings;
+    type Input = GpuPickingParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             camera: data.camera,
             picked_object_id: data.picked_object_id,
             cube_count: data.cube_count,
-            cubes: resolver.read_buf(bindings.cubes),
+            cubes: bindings.cubes,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            camera: input.camera,
+            picked_object_id: input.picked_object_id,
+            cube_count: input.cube_count,
+            cubes: resolver.read_buf(input.cubes),
         }
     }
 }
 
-impl GraphBindingSet for GpuPickingParamsBindings {
+impl GraphBindingSet for GpuPickingParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.cubes.erased()));
     }

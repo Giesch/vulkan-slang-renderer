@@ -52,25 +52,47 @@ pub struct ParamsBindings {
     pub divergence: StorageTexBinding,
 }
 
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.u_in));
+        f(GraphBinding::SampledTex(self.v_in));
+        f(GraphBinding::StorageTex(self.divergence));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub u_in: SampledTexBinding,
+    pub v_in: SampledTexBinding,
+    pub divergence: StorageTexBinding,
+    pub grid_size: glam::Vec2,
+}
+
 impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            u_in: resolver.sampled_tex(bindings.u_in),
-            v_in: resolver.sampled_tex(bindings.v_in),
-            divergence: resolver.storage_tex(bindings.divergence),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             grid_size: data.grid_size,
+            u_in: bindings.u_in,
+            v_in: bindings.v_in,
+            divergence: bindings.divergence,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            u_in: resolver.sampled_tex(input.u_in),
+            v_in: resolver.sampled_tex(input.v_in),
+            divergence: resolver.storage_tex(input.divergence),
+            grid_size: input.grid_size,
         }
     }
 }
 
-impl GraphBindingSet for ParamsBindings {
+impl GraphBindingSet for ParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.u_in));
         f(GraphBinding::SampledTex(self.v_in));

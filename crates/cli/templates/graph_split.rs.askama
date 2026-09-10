@@ -1,17 +1,4 @@
-{%- if binding_fields.is_empty() -%}
-impl GraphShaderParams for {{ params_type }} {
-    type Data = Self;
-    type Bindings = ();
-
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
-    }
-}
-{%- else -%}
+{%- if !binding_fields.is_empty() -%}
 {%- if !data_fields.is_empty() -%}
 #[derive(Debug, Clone, Copy)]
 pub struct {{ params_type }}Data {
@@ -28,23 +15,6 @@ pub struct {{ params_type }}Bindings {
 {%- endfor %}
 }
 
-impl GraphShaderParams for {{ params_type }} {
-    type Data = {% if data_fields.is_empty() %}(){% else %}{{ params_type }}Data{% endif %};
-    type Bindings = {{ params_type }}Bindings;
-
-    fn assemble(
-        {% if data_fields.is_empty() %}_data{% else %}data{% endif %}: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-{%- for (field, class) in assemble_fields %}
-            {{ field.field_name }}: {% match class %}{% when GraphFieldClass::Padding %}Default::default(){% when GraphFieldClass::Data %}data.{{ field.field_name }}{% when GraphFieldClass::Binding(kind) %}resolver.{% match kind %}{% when GraphBindingKind::SampledTex %}sampled_tex{% when GraphBindingKind::StorageTex %}storage_tex{% when GraphBindingKind::Buffer with { .. } %}buf{% when GraphBindingKind::ReadBuffer with { .. } %}read_buf{% when GraphBindingKind::ImmutableBuffer with { .. } %}immutable_buf{% endmatch %}(bindings.{{ field.field_name }}){% endmatch %},
-{%- endfor %}
-        }
-    }
-}
-
 impl GraphBindingSet for {{ params_type }}Bindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
 {%- for (field, kind) in binding_fields %}
@@ -52,4 +22,64 @@ impl GraphBindingSet for {{ params_type }}Bindings {
 {%- endfor %}
     }
 }
-{%- endif -%}
+{% endif -%}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct {{ params_type }}Input {
+{%- for (field, class) in assemble_fields %}
+{%- match class %}
+{%- when GraphFieldClass::Padding %}
+{%- when GraphFieldClass::Data %}
+    pub {{ field.field_name }}: {{ field.type_name }},
+{%- when GraphFieldClass::Binding(kind) %}
+    pub {{ field.field_name }}: {% match kind %}{% when GraphBindingKind::SampledTex %}SampledTexBinding{% when GraphBindingKind::StorageTex %}StorageTexBinding{% when GraphBindingKind::Buffer with { pointee } %}BufferBinding<{{ pointee }}>{% when GraphBindingKind::ReadBuffer with { pointee } %}ReadBufferBinding<{{ pointee }}>{% when GraphBindingKind::ImmutableBuffer with { pointee } %}ImmutableBufferBinding<{{ pointee }}>{% endmatch %},
+{%- endmatch %}
+{%- endfor %}
+}
+
+impl GraphShaderParams for {{ params_type }} {
+    type Data = {% if binding_fields.is_empty() %}Self{% else if data_fields.is_empty() %}(){% else %}{{ params_type }}Data{% endif %};
+    type Bindings = {% if binding_fields.is_empty() %}(){% else %}{{ params_type }}Bindings{% endif %};
+    type Input = {{ params_type }}Input;
+
+    fn input({% if data_fields.is_empty() %}_data{% else %}data{% endif %}: &Self::Data, {% if binding_fields.is_empty() %}_bindings{% else %}bindings{% endif %}: &Self::Bindings) -> Self::Input {
+{%- if data_fields.len() == 1 && binding_fields.is_empty() && self.compact_data_field() %}
+        Self::Input { {{ data_fields[0].field_name }}: data.{{ data_fields[0].field_name }} }
+{%- else if binding_fields.len() == 1 && data_fields.is_empty() && self.compact_binding_field() %}
+        Self::Input { {{ binding_fields[0].0.field_name }}: bindings.{{ binding_fields[0].0.field_name }} }
+{%- else %}
+        Self::Input {
+{%- for field in data_fields %}
+            {{ field.field_name }}: data.{{ field.field_name }},
+{%- endfor %}
+{%- for (field, kind) in binding_fields %}
+            {{ field.field_name }}: bindings.{{ field.field_name }},
+{%- endfor %}
+        }
+{%- endif %}
+    }
+
+    fn assemble_input({% if data_fields.is_empty() && binding_fields.is_empty() %}_input{% else %}input{% endif %}: &Self::Input, {% if binding_fields.is_empty() %}_resolver{% else %}resolver{% endif %}: &BindingResolver<'_>) -> Self {
+{%- if assemble_fields.len() == 1 && binding_fields.is_empty() && data_fields.len() == 1 && self.compact_data_field() %}
+        Self { {{ data_fields[0].field_name }}: input.{{ data_fields[0].field_name }} }
+{%- else %}
+        Self {
+{%- for (field, class) in assemble_fields %}
+            {{ field.field_name }}: {% match class %}{% when GraphFieldClass::Padding %}Default::default(){% when GraphFieldClass::Data %}input.{{ field.field_name }}{% when GraphFieldClass::Binding(kind) %}resolver.{% match kind %}{% when GraphBindingKind::SampledTex %}sampled_tex{% when GraphBindingKind::StorageTex %}storage_tex{% when GraphBindingKind::Buffer with { .. } %}buf{% when GraphBindingKind::ReadBuffer with { .. } %}read_buf{% when GraphBindingKind::ImmutableBuffer with { .. } %}immutable_buf{% endmatch %}(input.{{ field.field_name }}){% endmatch %},
+{%- endfor %}
+        }
+{%- endif %}
+    }
+}
+
+impl GraphBindingSet for {{ params_type }}Input {
+{%- if binding_fields.is_empty() %}
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
+{%- else %}
+    fn visit(&self, {% if binding_fields.is_empty() %}_f{% else %}f{% endif %}: &mut dyn FnMut(GraphBinding)) {
+{%- for (field, kind) in binding_fields %}
+        f(GraphBinding::{% match kind %}{% when GraphBindingKind::SampledTex %}SampledTex(self.{{ field.field_name }}){% when GraphBindingKind::StorageTex %}StorageTex(self.{{ field.field_name }}){% when GraphBindingKind::Buffer with { .. } %}Buffer(self.{{ field.field_name }}.erased()){% when GraphBindingKind::ReadBuffer with { .. } %}Buffer(self.{{ field.field_name }}.erased()){% when GraphBindingKind::ImmutableBuffer with { .. } %}Buffer(self.{{ field.field_name }}.erased()){% endmatch %});
+{%- endfor %}
+    }
+{%- endif %}
+}

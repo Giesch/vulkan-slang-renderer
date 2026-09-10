@@ -1530,6 +1530,22 @@ struct GraphSplitTemplate<'a> {
     assemble_fields: Vec<(&'a GeneratedStructFieldDefinition, GraphFieldClass<'a>)>,
 }
 
+impl GraphSplitTemplate<'_> {
+    // rustfmt's default struct_lit_width is 18. These single-field expressions
+    // use `data.field` or `input.field` (equal width), and `bindings.field`.
+    fn compact_data_field(&self) -> bool {
+        self.data_fields
+            .first()
+            .is_some_and(|field| 2 * field.field_name.len() + 8 <= 18)
+    }
+
+    fn compact_binding_field(&self) -> bool {
+        self.binding_fields
+            .first()
+            .is_some_and(|(field, _)| 2 * field.field_name.len() + 12 <= 18)
+    }
+}
+
 fn graph_split_def(
     def: &GeneratedStructDefinition,
     resource_bearing: &BTreeSet<String>,
@@ -1555,20 +1571,23 @@ fn graph_split_def(
         }
     }
 
-    if !binding_fields.is_empty() {
-        for suffix in ["Bindings", "Data"] {
-            let omit_data = suffix == "Data" && data_fields.is_empty();
-            if omit_data {
-                continue;
-            }
-
-            let name = format!("{params_type}{suffix}");
-            anyhow::ensure!(
-                names.insert(name.clone()),
-                "render-graph split of '{params_type}': generated type '{name}' collides with another type",
-            );
+    for suffix in ["Input", "Bindings", "Data"] {
+        if binding_fields.is_empty() && suffix != "Input" {
+            continue;
         }
+
+        let omit_data = suffix == "Data" && data_fields.is_empty();
+        if omit_data {
+            continue;
+        }
+
+        let name = format!("{params_type}{suffix}");
+        anyhow::ensure!(
+            names.insert(name.clone()),
+            "render-graph split of '{params_type}': generated type '{name}' collides with another type",
+        );
     }
+
     for field in &data_fields {
         anyhow::ensure!(
             !resource_bearing.contains(graph_field_element_type(&field.type_name))
@@ -2313,7 +2332,7 @@ mod tests {
 
     #[test]
     fn graph_generated_names_reject_collisions() {
-        for name in ["ParamsData", "ParamsBindings"] {
+        for name in ["ParamsData", "ParamsBindings", "ParamsInput"] {
             let defs = [
                 graph_test_def(
                     "Params",

@@ -112,26 +112,48 @@ pub struct SpaceInvadersParamsBindings {
     pub sprite_sheet: SampledTexBinding,
 }
 
+impl GraphBindingSet for SpaceInvadersParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.sprites.erased()));
+        f(GraphBinding::Buffer(self.debug_boxes.erased()));
+        f(GraphBinding::SampledTex(self.sprite_sheet));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct SpaceInvadersParamsInput {
+    pub projection: Projection,
+    pub sprites: ReadBufferBinding<Sprite>,
+    pub debug_boxes: ReadBufferBinding<DebugBox>,
+    pub sprite_sheet: SampledTexBinding,
+}
+
 impl GraphShaderParams for SpaceInvadersParams {
     type Data = SpaceInvadersParamsData;
     type Bindings = SpaceInvadersParamsBindings;
+    type Input = SpaceInvadersParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             projection: data.projection,
-            sprites: resolver.read_buf(bindings.sprites),
-            debug_boxes: resolver.read_buf(bindings.debug_boxes),
-            sprite_sheet: resolver.sampled_tex(bindings.sprite_sheet),
+            sprites: bindings.sprites,
+            debug_boxes: bindings.debug_boxes,
+            sprite_sheet: bindings.sprite_sheet,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            projection: input.projection,
+            sprites: resolver.read_buf(input.sprites),
+            debug_boxes: resolver.read_buf(input.debug_boxes),
+            sprite_sheet: resolver.sampled_tex(input.sprite_sheet),
             _padding_0: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for SpaceInvadersParamsBindings {
+impl GraphBindingSet for SpaceInvadersParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.sprites.erased()));
         f(GraphBinding::Buffer(self.debug_boxes.erased()));

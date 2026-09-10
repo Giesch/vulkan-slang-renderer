@@ -104,17 +104,39 @@ pub struct SerenityCRTParamsBindings {
     pub tex: SampledTexBinding,
 }
 
+impl GraphBindingSet for SerenityCRTParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.tex));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct SerenityCRTParamsInput {
+    pub tex: SampledTexBinding,
+    pub resolution: glam::Vec2,
+    pub scanline_intensity: f32,
+    pub scanline_count: f32,
+    pub time: f32,
+    pub y_offset: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub bloom_intensity: f32,
+    pub bloom_threshold: f32,
+    pub rgb_shift: f32,
+    pub adaptive_intensity: f32,
+    pub vignette_strength: f32,
+    pub curvature: f32,
+    pub flicker_strength: f32,
+}
+
 impl GraphShaderParams for SerenityCRTParams {
     type Data = SerenityCRTParamsData;
     type Bindings = SerenityCRTParamsBindings;
+    type Input = SerenityCRTParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            tex: resolver.sampled_tex(bindings.tex),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             resolution: data.resolution,
             scanline_intensity: data.scanline_intensity,
             scanline_count: data.scanline_count,
@@ -130,12 +152,34 @@ impl GraphShaderParams for SerenityCRTParams {
             vignette_strength: data.vignette_strength,
             curvature: data.curvature,
             flicker_strength: data.flicker_strength,
+            tex: bindings.tex,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            tex: resolver.sampled_tex(input.tex),
+            resolution: input.resolution,
+            scanline_intensity: input.scanline_intensity,
+            scanline_count: input.scanline_count,
+            time: input.time,
+            y_offset: input.y_offset,
+            brightness: input.brightness,
+            contrast: input.contrast,
+            saturation: input.saturation,
+            bloom_intensity: input.bloom_intensity,
+            bloom_threshold: input.bloom_threshold,
+            rgb_shift: input.rgb_shift,
+            adaptive_intensity: input.adaptive_intensity,
+            vignette_strength: input.vignette_strength,
+            curvature: input.curvature,
+            flicker_strength: input.flicker_strength,
             _padding_0: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for SerenityCRTParamsBindings {
+impl GraphBindingSet for SerenityCRTParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.tex));
     }

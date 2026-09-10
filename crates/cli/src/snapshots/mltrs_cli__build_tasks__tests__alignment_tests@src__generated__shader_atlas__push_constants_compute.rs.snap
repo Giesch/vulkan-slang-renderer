@@ -89,46 +89,82 @@ pub struct DispatchConstantsBindings {
     pub target: StorageTexBinding,
 }
 
-impl GraphShaderParams for DispatchConstants {
-    type Data = DispatchConstantsData;
-    type Bindings = DispatchConstantsBindings;
-
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            scale: data.scale,
-            _padding_0: Default::default(),
-            tex: resolver.sampled_tex(bindings.tex),
-            target: resolver.storage_tex(bindings.target),
-            inner: data.inner,
-            tail: data.tail,
-            _padding_1: Default::default(),
-            model: data.model,
-        }
-    }
-}
-
 impl GraphBindingSet for DispatchConstantsBindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.tex));
         f(GraphBinding::StorageTex(self.target));
     }
 }
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct DispatchConstantsInput {
+    pub scale: f32,
+    pub tex: SampledTexBinding,
+    pub target: StorageTexBinding,
+    pub inner: DispatchInner,
+    pub tail: f32,
+    pub model: glam::Mat4,
+}
+
+impl GraphShaderParams for DispatchConstants {
+    type Data = DispatchConstantsData;
+    type Bindings = DispatchConstantsBindings;
+    type Input = DispatchConstantsInput;
+
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            scale: data.scale,
+            inner: data.inner,
+            tail: data.tail,
+            model: data.model,
+            tex: bindings.tex,
+            target: bindings.target,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            scale: input.scale,
+            _padding_0: Default::default(),
+            tex: resolver.sampled_tex(input.tex),
+            target: resolver.storage_tex(input.target),
+            inner: input.inner,
+            tail: input.tail,
+            _padding_1: Default::default(),
+            model: input.model,
+        }
+    }
+}
+
+impl GraphBindingSet for DispatchConstantsInput {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.tex));
+        f(GraphBinding::StorageTex(self.target));
+    }
+}
+
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub tint: glam::Vec4,
+}
 
 impl GraphShaderParams for Params {
     type Data = Self;
     type Bindings = ();
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
+    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+        Self::Input { tint: data.tint }
     }
+
+    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+        Self { tint: input.tint }
+    }
+}
+
+impl GraphBindingSet for ParamsInput {
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
 impl crate::renderer::gpu_write::PushConstantBlock for DispatchConstants {}

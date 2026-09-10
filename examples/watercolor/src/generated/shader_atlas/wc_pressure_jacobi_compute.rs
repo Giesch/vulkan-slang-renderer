@@ -54,23 +54,40 @@ pub struct JacobiDispatchBindings {
     pub pressure_out: StorageTexBinding,
 }
 
+impl GraphBindingSet for JacobiDispatchBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.pressure_in));
+        f(GraphBinding::StorageTex(self.pressure_out));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct JacobiDispatchInput {
+    pub pressure_in: SampledTexBinding,
+    pub pressure_out: StorageTexBinding,
+}
+
 impl GraphShaderParams for JacobiDispatch {
     type Data = ();
     type Bindings = JacobiDispatchBindings;
+    type Input = JacobiDispatchInput;
 
-    fn assemble(
-        _data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
+    fn input(_data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            pressure_in: bindings.pressure_in,
+            pressure_out: bindings.pressure_out,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
         Self {
-            pressure_in: resolver.sampled_tex(bindings.pressure_in),
-            pressure_out: resolver.storage_tex(bindings.pressure_out),
+            pressure_in: resolver.sampled_tex(input.pressure_in),
+            pressure_out: resolver.storage_tex(input.pressure_out),
         }
     }
 }
 
-impl GraphBindingSet for JacobiDispatchBindings {
+impl GraphBindingSet for JacobiDispatchInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.pressure_in));
         f(GraphBinding::StorageTex(self.pressure_out));
@@ -87,23 +104,39 @@ pub struct ParamsBindings {
     pub divergence: SampledTexBinding,
 }
 
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.divergence));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub divergence: SampledTexBinding,
+    pub grid_size: glam::Vec2,
+}
+
 impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            divergence: resolver.sampled_tex(bindings.divergence),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             grid_size: data.grid_size,
+            divergence: bindings.divergence,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            divergence: resolver.sampled_tex(input.divergence),
+            grid_size: input.grid_size,
         }
     }
 }
 
-impl GraphBindingSet for ParamsBindings {
+impl GraphBindingSet for ParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.divergence));
     }

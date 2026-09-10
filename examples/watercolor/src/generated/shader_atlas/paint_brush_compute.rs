@@ -107,22 +107,44 @@ pub struct BrushParamsBindings {
     pub stroke_points: ReadBufferBinding<StrokePoint>,
 }
 
+impl GraphBindingSet for BrushParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::StorageTex(self.wet_mask));
+        f(GraphBinding::StorageTex(self.pressure));
+        f(GraphBinding::StorageTex(self.pigment_0_3));
+        f(GraphBinding::StorageTex(self.pigment_4_7));
+        f(GraphBinding::StorageTex(self.pigment_8_11));
+        f(GraphBinding::StorageTex(self.saturation));
+        f(GraphBinding::Buffer(self.stroke_points.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct BrushParamsInput {
+    pub wet_mask: StorageTexBinding,
+    pub pressure: StorageTexBinding,
+    pub pigment_0_3: StorageTexBinding,
+    pub pigment_4_7: StorageTexBinding,
+    pub pigment_8_11: StorageTexBinding,
+    pub saturation: StorageTexBinding,
+    pub point_count: u32,
+    pub brush_radius: f32,
+    pub brush_opacity: f32,
+    pub brush_pressure: f32,
+    pub pigment_color_0_3: glam::Vec4,
+    pub pigment_color_4_7: glam::Vec4,
+    pub pigment_color_8_11: glam::Vec4,
+    pub canvas_size: glam::Vec2,
+    pub stroke_points: ReadBufferBinding<StrokePoint>,
+}
+
 impl GraphShaderParams for BrushParams {
     type Data = BrushParamsData;
     type Bindings = BrushParamsBindings;
+    type Input = BrushParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            wet_mask: resolver.storage_tex(bindings.wet_mask),
-            pressure: resolver.storage_tex(bindings.pressure),
-            pigment_0_3: resolver.storage_tex(bindings.pigment_0_3),
-            pigment_4_7: resolver.storage_tex(bindings.pigment_4_7),
-            pigment_8_11: resolver.storage_tex(bindings.pigment_8_11),
-            saturation: resolver.storage_tex(bindings.saturation),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             point_count: data.point_count,
             brush_radius: data.brush_radius,
             brush_opacity: data.brush_opacity,
@@ -131,12 +153,38 @@ impl GraphShaderParams for BrushParams {
             pigment_color_4_7: data.pigment_color_4_7,
             pigment_color_8_11: data.pigment_color_8_11,
             canvas_size: data.canvas_size,
-            stroke_points: resolver.read_buf(bindings.stroke_points),
+            wet_mask: bindings.wet_mask,
+            pressure: bindings.pressure,
+            pigment_0_3: bindings.pigment_0_3,
+            pigment_4_7: bindings.pigment_4_7,
+            pigment_8_11: bindings.pigment_8_11,
+            saturation: bindings.saturation,
+            stroke_points: bindings.stroke_points,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            wet_mask: resolver.storage_tex(input.wet_mask),
+            pressure: resolver.storage_tex(input.pressure),
+            pigment_0_3: resolver.storage_tex(input.pigment_0_3),
+            pigment_4_7: resolver.storage_tex(input.pigment_4_7),
+            pigment_8_11: resolver.storage_tex(input.pigment_8_11),
+            saturation: resolver.storage_tex(input.saturation),
+            point_count: input.point_count,
+            brush_radius: input.brush_radius,
+            brush_opacity: input.brush_opacity,
+            brush_pressure: input.brush_pressure,
+            pigment_color_0_3: input.pigment_color_0_3,
+            pigment_color_4_7: input.pigment_color_4_7,
+            pigment_color_8_11: input.pigment_color_8_11,
+            canvas_size: input.canvas_size,
+            stroke_points: resolver.read_buf(input.stroke_points),
         }
     }
 }
 
-impl GraphBindingSet for BrushParamsBindings {
+impl GraphBindingSet for BrushParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::StorageTex(self.wet_mask));
         f(GraphBinding::StorageTex(self.pressure));

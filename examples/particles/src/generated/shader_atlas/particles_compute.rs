@@ -50,25 +50,44 @@ pub struct SimParamsBindings {
     pub particles_out: BufferBinding<Particle>,
 }
 
+impl GraphBindingSet for SimParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.particles_in.erased()));
+        f(GraphBinding::Buffer(self.particles_out.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct SimParamsInput {
+    pub particles_in: ReadBufferBinding<Particle>,
+    pub particles_out: BufferBinding<Particle>,
+    pub delta_time: f32,
+}
+
 impl GraphShaderParams for SimParams {
     type Data = SimParamsData;
     type Bindings = SimParamsBindings;
+    type Input = SimParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            particles_in: resolver.read_buf(bindings.particles_in),
-            particles_out: resolver.buf(bindings.particles_out),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             delta_time: data.delta_time,
+            particles_in: bindings.particles_in,
+            particles_out: bindings.particles_out,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            particles_in: resolver.read_buf(input.particles_in),
+            particles_out: resolver.buf(input.particles_out),
+            delta_time: input.delta_time,
             _padding_0: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for SimParamsBindings {
+impl GraphBindingSet for SimParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.particles_in.erased()));
         f(GraphBinding::Buffer(self.particles_out.erased()));

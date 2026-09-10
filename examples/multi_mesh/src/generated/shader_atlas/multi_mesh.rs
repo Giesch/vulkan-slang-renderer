@@ -63,25 +63,43 @@ pub struct MultiMeshParamsBindings {
     pub texture: SampledTexBinding,
 }
 
+impl GraphBindingSet for MultiMeshParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.texture));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct MultiMeshParamsInput {
+    pub mvp: MVPMatrices,
+    pub tint: glam::Vec4,
+    pub texture: SampledTexBinding,
+}
+
 impl GraphShaderParams for MultiMeshParams {
     type Data = MultiMeshParamsData;
     type Bindings = MultiMeshParamsBindings;
+    type Input = MultiMeshParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             mvp: data.mvp,
             tint: data.tint,
-            texture: resolver.sampled_tex(bindings.texture),
+            texture: bindings.texture,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            mvp: input.mvp,
+            tint: input.tint,
+            texture: resolver.sampled_tex(input.texture),
             _padding_0: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for MultiMeshParamsBindings {
+impl GraphBindingSet for MultiMeshParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.texture));
     }

@@ -81,17 +81,59 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<ArrayData>,
 }
 
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ArrayDataInput {
+    pub lead: f32,
+    pub konst: [glam::Vec4; 4],
+    pub stages: [glam::UVec4; 8],
+    pub wedge: glam::Vec2,
+    pub offsets: [glam::IVec4; 3],
+    pub tail: f32,
+    pub nested: Nested,
+    pub flags: glam::UVec4,
+    pub bias: glam::IVec4,
+}
+
 impl GraphShaderParams for ArrayData {
     type Data = Self;
     type Bindings = ();
+    type Input = ArrayDataInput;
 
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
+    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            lead: data.lead,
+            konst: data.konst,
+            stages: data.stages,
+            wedge: data.wedge,
+            offsets: data.offsets,
+            tail: data.tail,
+            nested: data.nested,
+            flags: data.flags,
+            bias: data.bias,
+        }
     }
+
+    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            lead: input.lead,
+            _padding_0: Default::default(),
+            konst: input.konst,
+            stages: input.stages,
+            wedge: input.wedge,
+            _padding_1: Default::default(),
+            offsets: input.offsets,
+            tail: input.tail,
+            _padding_2: Default::default(),
+            nested: input.nested,
+            flags: input.flags,
+            bias: input.bias,
+        }
+    }
+}
+
+impl GraphBindingSet for ArrayDataInput {
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
 #[derive(Clone)]

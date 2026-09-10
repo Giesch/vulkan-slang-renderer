@@ -75,16 +75,32 @@ pub struct KochCurveParamsBindings {
     pub reflection_map: SampledTexBinding,
 }
 
+impl GraphBindingSet for KochCurveParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.reflection_map));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct KochCurveParamsInput {
+    pub resolution: glam::Vec2,
+    pub mouse: glam::Vec2,
+    pub time: f32,
+    pub koch_iterations: f32,
+    pub scale_factor: f32,
+    pub sphere_radius: f32,
+    pub sphere_blend: f32,
+    pub rotation_speed: f32,
+    pub reflection_map: SampledTexBinding,
+}
+
 impl GraphShaderParams for KochCurveParams {
     type Data = KochCurveParamsData;
     type Bindings = KochCurveParamsBindings;
+    type Input = KochCurveParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             resolution: data.resolution,
             mouse: data.mouse,
             time: data.time,
@@ -93,12 +109,26 @@ impl GraphShaderParams for KochCurveParams {
             sphere_radius: data.sphere_radius,
             sphere_blend: data.sphere_blend,
             rotation_speed: data.rotation_speed,
-            reflection_map: resolver.sampled_tex(bindings.reflection_map),
+            reflection_map: bindings.reflection_map,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            resolution: input.resolution,
+            mouse: input.mouse,
+            time: input.time,
+            koch_iterations: input.koch_iterations,
+            scale_factor: input.scale_factor,
+            sphere_radius: input.sphere_radius,
+            sphere_blend: input.sphere_blend,
+            rotation_speed: input.rotation_speed,
+            reflection_map: resolver.sampled_tex(input.reflection_map),
         }
     }
 }
 
-impl GraphBindingSet for KochCurveParamsBindings {
+impl GraphBindingSet for KochCurveParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.reflection_map));
     }

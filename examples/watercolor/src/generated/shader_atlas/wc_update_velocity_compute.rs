@@ -89,35 +89,79 @@ pub struct ParamsBindings {
     pub paper_height: SampledTexBinding,
 }
 
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.u_in));
+        f(GraphBinding::SampledTex(self.v_in));
+        f(GraphBinding::SampledTex(self.pressure));
+        f(GraphBinding::SampledTex(self.wet_mask));
+        f(GraphBinding::StorageTex(self.u_out));
+        f(GraphBinding::StorageTex(self.v_out));
+        f(GraphBinding::SampledTex(self.paper_height));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub u_in: SampledTexBinding,
+    pub v_in: SampledTexBinding,
+    pub pressure: SampledTexBinding,
+    pub wet_mask: SampledTexBinding,
+    pub u_out: StorageTexBinding,
+    pub v_out: StorageTexBinding,
+    pub paper_height: SampledTexBinding,
+    pub grid_size: glam::Vec2,
+    pub texel_size: glam::Vec2,
+    pub dt: f32,
+    pub mu: f32,
+    pub kappa: f32,
+    pub slope_strength: f32,
+}
+
 impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            u_in: resolver.sampled_tex(bindings.u_in),
-            v_in: resolver.sampled_tex(bindings.v_in),
-            pressure: resolver.sampled_tex(bindings.pressure),
-            wet_mask: resolver.sampled_tex(bindings.wet_mask),
-            u_out: resolver.storage_tex(bindings.u_out),
-            v_out: resolver.storage_tex(bindings.v_out),
-            paper_height: resolver.sampled_tex(bindings.paper_height),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             grid_size: data.grid_size,
             texel_size: data.texel_size,
             dt: data.dt,
             mu: data.mu,
             kappa: data.kappa,
             slope_strength: data.slope_strength,
+            u_in: bindings.u_in,
+            v_in: bindings.v_in,
+            pressure: bindings.pressure,
+            wet_mask: bindings.wet_mask,
+            u_out: bindings.u_out,
+            v_out: bindings.v_out,
+            paper_height: bindings.paper_height,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            u_in: resolver.sampled_tex(input.u_in),
+            v_in: resolver.sampled_tex(input.v_in),
+            pressure: resolver.sampled_tex(input.pressure),
+            wet_mask: resolver.sampled_tex(input.wet_mask),
+            u_out: resolver.storage_tex(input.u_out),
+            v_out: resolver.storage_tex(input.v_out),
+            paper_height: resolver.sampled_tex(input.paper_height),
+            grid_size: input.grid_size,
+            texel_size: input.texel_size,
+            dt: input.dt,
+            mu: input.mu,
+            kappa: input.kappa,
+            slope_strength: input.slope_strength,
             _padding_0: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for ParamsBindings {
+impl GraphBindingSet for ParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.u_in));
         f(GraphBinding::SampledTex(self.v_in));

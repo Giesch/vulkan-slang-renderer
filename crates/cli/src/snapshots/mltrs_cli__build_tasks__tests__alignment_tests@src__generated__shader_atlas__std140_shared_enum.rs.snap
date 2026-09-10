@@ -44,17 +44,36 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<SharedEnumData>,
 }
 
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct SharedEnumDataInput {
+    pub scale: f32,
+    pub mode: SharedMode,
+}
+
 impl GraphShaderParams for SharedEnumData {
     type Data = Self;
     type Bindings = ();
+    type Input = SharedEnumDataInput;
 
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
+    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            scale: data.scale,
+            mode: data.mode,
+        }
     }
+
+    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            scale: input.scale,
+            mode: input.mode,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for SharedEnumDataInput {
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
 #[derive(Clone)]

@@ -57,27 +57,52 @@ pub struct ParamsBindings {
     pub pressure: SampledTexBinding,
 }
 
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::StorageTex(self.u));
+        f(GraphBinding::StorageTex(self.v));
+        f(GraphBinding::SampledTex(self.wet_mask));
+        f(GraphBinding::SampledTex(self.pressure));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub u: StorageTexBinding,
+    pub v: StorageTexBinding,
+    pub wet_mask: SampledTexBinding,
+    pub pressure: SampledTexBinding,
+    pub grid_size: glam::Vec2,
+}
+
 impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            u: resolver.storage_tex(bindings.u),
-            v: resolver.storage_tex(bindings.v),
-            wet_mask: resolver.sampled_tex(bindings.wet_mask),
-            pressure: resolver.sampled_tex(bindings.pressure),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             grid_size: data.grid_size,
+            u: bindings.u,
+            v: bindings.v,
+            wet_mask: bindings.wet_mask,
+            pressure: bindings.pressure,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            u: resolver.storage_tex(input.u),
+            v: resolver.storage_tex(input.v),
+            wet_mask: resolver.sampled_tex(input.wet_mask),
+            pressure: resolver.sampled_tex(input.pressure),
+            grid_size: input.grid_size,
             _padding_0: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for ParamsBindings {
+impl GraphBindingSet for ParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::StorageTex(self.u));
         f(GraphBinding::StorageTex(self.v));

@@ -59,24 +59,40 @@ pub struct DepthTextureParamsBindings {
     pub texture: SampledTexBinding,
 }
 
+impl GraphBindingSet for DepthTextureParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.texture));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct DepthTextureParamsInput {
+    pub mvp: MVPMatrices,
+    pub texture: SampledTexBinding,
+}
+
 impl GraphShaderParams for DepthTextureParams {
     type Data = DepthTextureParamsData;
     type Bindings = DepthTextureParamsBindings;
+    type Input = DepthTextureParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             mvp: data.mvp,
-            texture: resolver.sampled_tex(bindings.texture),
+            texture: bindings.texture,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            mvp: input.mvp,
+            texture: resolver.sampled_tex(input.texture),
             _padding_0: Default::default(),
         }
     }
 }
 
-impl GraphBindingSet for DepthTextureParamsBindings {
+impl GraphBindingSet for DepthTextureParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.texture));
     }

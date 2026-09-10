@@ -178,32 +178,69 @@ pub struct ParamsBindings {
     pub paper_height: SampledTexBinding,
 }
 
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.pigment_in_0_3));
+        f(GraphBinding::SampledTex(self.pigment_in_4_7));
+        f(GraphBinding::SampledTex(self.pigment_in_8_11));
+        f(GraphBinding::SampledTex(self.u_in));
+        f(GraphBinding::SampledTex(self.v_in));
+        f(GraphBinding::SampledTex(self.wet_mask));
+        f(GraphBinding::StorageTex(self.pigment_out_0_3));
+        f(GraphBinding::StorageTex(self.pigment_out_4_7));
+        f(GraphBinding::StorageTex(self.pigment_out_8_11));
+        f(GraphBinding::SampledTex(self.deposit_in_0_3));
+        f(GraphBinding::SampledTex(self.deposit_in_4_7));
+        f(GraphBinding::SampledTex(self.deposit_in_8_11));
+        f(GraphBinding::StorageTex(self.deposit_out_0_3));
+        f(GraphBinding::StorageTex(self.deposit_out_4_7));
+        f(GraphBinding::StorageTex(self.deposit_out_8_11));
+        f(GraphBinding::SampledTex(self.paper_height));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsInput {
+    pub pigment_in_0_3: SampledTexBinding,
+    pub pigment_in_4_7: SampledTexBinding,
+    pub pigment_in_8_11: SampledTexBinding,
+    pub u_in: SampledTexBinding,
+    pub v_in: SampledTexBinding,
+    pub wet_mask: SampledTexBinding,
+    pub pigment_out_0_3: StorageTexBinding,
+    pub pigment_out_4_7: StorageTexBinding,
+    pub pigment_out_8_11: StorageTexBinding,
+    pub deposit_in_0_3: SampledTexBinding,
+    pub deposit_in_4_7: SampledTexBinding,
+    pub deposit_in_8_11: SampledTexBinding,
+    pub deposit_out_0_3: StorageTexBinding,
+    pub deposit_out_4_7: StorageTexBinding,
+    pub deposit_out_8_11: StorageTexBinding,
+    pub paper_height: SampledTexBinding,
+    pub grid_size: glam::Vec2,
+    pub dt: f32,
+    pub transfer_rate: f32,
+    pub pigment0: PigmentProperties,
+    pub pigment1: PigmentProperties,
+    pub pigment2: PigmentProperties,
+    pub pigment3: PigmentProperties,
+    pub pigment4: PigmentProperties,
+    pub pigment5: PigmentProperties,
+    pub pigment6: PigmentProperties,
+    pub pigment7: PigmentProperties,
+    pub pigment8: PigmentProperties,
+    pub pigment9: PigmentProperties,
+    pub pigment10: PigmentProperties,
+    pub pigment11: PigmentProperties,
+}
+
 impl GraphShaderParams for Params {
     type Data = ParamsData;
     type Bindings = ParamsBindings;
+    type Input = ParamsInput;
 
-    fn assemble(
-        data: &Self::Data,
-        bindings: &Self::Bindings,
-        resolver: &BindingResolver<'_>,
-    ) -> Self {
-        Self {
-            pigment_in_0_3: resolver.sampled_tex(bindings.pigment_in_0_3),
-            pigment_in_4_7: resolver.sampled_tex(bindings.pigment_in_4_7),
-            pigment_in_8_11: resolver.sampled_tex(bindings.pigment_in_8_11),
-            u_in: resolver.sampled_tex(bindings.u_in),
-            v_in: resolver.sampled_tex(bindings.v_in),
-            wet_mask: resolver.sampled_tex(bindings.wet_mask),
-            pigment_out_0_3: resolver.storage_tex(bindings.pigment_out_0_3),
-            pigment_out_4_7: resolver.storage_tex(bindings.pigment_out_4_7),
-            pigment_out_8_11: resolver.storage_tex(bindings.pigment_out_8_11),
-            deposit_in_0_3: resolver.sampled_tex(bindings.deposit_in_0_3),
-            deposit_in_4_7: resolver.sampled_tex(bindings.deposit_in_4_7),
-            deposit_in_8_11: resolver.sampled_tex(bindings.deposit_in_8_11),
-            deposit_out_0_3: resolver.storage_tex(bindings.deposit_out_0_3),
-            deposit_out_4_7: resolver.storage_tex(bindings.deposit_out_4_7),
-            deposit_out_8_11: resolver.storage_tex(bindings.deposit_out_8_11),
-            paper_height: resolver.sampled_tex(bindings.paper_height),
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
             grid_size: data.grid_size,
             dt: data.dt,
             transfer_rate: data.transfer_rate,
@@ -219,11 +256,63 @@ impl GraphShaderParams for Params {
             pigment9: data.pigment9,
             pigment10: data.pigment10,
             pigment11: data.pigment11,
+            pigment_in_0_3: bindings.pigment_in_0_3,
+            pigment_in_4_7: bindings.pigment_in_4_7,
+            pigment_in_8_11: bindings.pigment_in_8_11,
+            u_in: bindings.u_in,
+            v_in: bindings.v_in,
+            wet_mask: bindings.wet_mask,
+            pigment_out_0_3: bindings.pigment_out_0_3,
+            pigment_out_4_7: bindings.pigment_out_4_7,
+            pigment_out_8_11: bindings.pigment_out_8_11,
+            deposit_in_0_3: bindings.deposit_in_0_3,
+            deposit_in_4_7: bindings.deposit_in_4_7,
+            deposit_in_8_11: bindings.deposit_in_8_11,
+            deposit_out_0_3: bindings.deposit_out_0_3,
+            deposit_out_4_7: bindings.deposit_out_4_7,
+            deposit_out_8_11: bindings.deposit_out_8_11,
+            paper_height: bindings.paper_height,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            pigment_in_0_3: resolver.sampled_tex(input.pigment_in_0_3),
+            pigment_in_4_7: resolver.sampled_tex(input.pigment_in_4_7),
+            pigment_in_8_11: resolver.sampled_tex(input.pigment_in_8_11),
+            u_in: resolver.sampled_tex(input.u_in),
+            v_in: resolver.sampled_tex(input.v_in),
+            wet_mask: resolver.sampled_tex(input.wet_mask),
+            pigment_out_0_3: resolver.storage_tex(input.pigment_out_0_3),
+            pigment_out_4_7: resolver.storage_tex(input.pigment_out_4_7),
+            pigment_out_8_11: resolver.storage_tex(input.pigment_out_8_11),
+            deposit_in_0_3: resolver.sampled_tex(input.deposit_in_0_3),
+            deposit_in_4_7: resolver.sampled_tex(input.deposit_in_4_7),
+            deposit_in_8_11: resolver.sampled_tex(input.deposit_in_8_11),
+            deposit_out_0_3: resolver.storage_tex(input.deposit_out_0_3),
+            deposit_out_4_7: resolver.storage_tex(input.deposit_out_4_7),
+            deposit_out_8_11: resolver.storage_tex(input.deposit_out_8_11),
+            paper_height: resolver.sampled_tex(input.paper_height),
+            grid_size: input.grid_size,
+            dt: input.dt,
+            transfer_rate: input.transfer_rate,
+            pigment0: input.pigment0,
+            pigment1: input.pigment1,
+            pigment2: input.pigment2,
+            pigment3: input.pigment3,
+            pigment4: input.pigment4,
+            pigment5: input.pigment5,
+            pigment6: input.pigment6,
+            pigment7: input.pigment7,
+            pigment8: input.pigment8,
+            pigment9: input.pigment9,
+            pigment10: input.pigment10,
+            pigment11: input.pigment11,
         }
     }
 }
 
-impl GraphBindingSet for ParamsBindings {
+impl GraphBindingSet for ParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.pigment_in_0_3));
         f(GraphBinding::SampledTex(self.pigment_in_4_7));

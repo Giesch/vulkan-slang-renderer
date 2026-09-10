@@ -28,15 +28,36 @@ const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
 const _: () = assert!(std::mem::offset_of!(MVPMatrices, proj) == 128);
 const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
 
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct MVPMatricesInput {
+    pub model: glam::Mat4,
+    pub view: glam::Mat4,
+    pub proj: glam::Mat4,
+}
+
 impl GraphShaderParams for MVPMatrices {
     type Data = Self;
     type Bindings = ();
+    type Input = MVPMatricesInput;
 
-    fn assemble(
-        data: &Self::Data,
-        _bindings: &Self::Bindings,
-        _resolver: &BindingResolver<'_>,
-    ) -> Self {
-        *data
+    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            model: data.model,
+            view: data.view,
+            proj: data.proj,
+        }
     }
+
+    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            model: input.model,
+            view: input.view,
+            proj: input.proj,
+        }
+    }
+}
+
+impl GraphBindingSet for MVPMatricesInput {
+    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
