@@ -5,7 +5,14 @@ STATUS: REVIEW RECORD (2026-09-08) — audit of branch
 [`../08_plain_data_graph.md`](../08_plain_data_graph.md),
 [`phase_1.md`](01_pure_core.md) (the file is named `01_pure_core.md`), and
 [`../07_graph_api_plan.md`](../07_graph_api_plan.md).
-Line references point at the branch tip.
+Historical finding line references point at the reviewed branch tip.
+
+Closeout (2026-09-09): phase-1 implementation findings and cleanup are resolved,
+and the documentation is reconciled. Sections below preserve the original
+findings and their resolutions. Later-phase work retains its explicit ownership.
+Cleanup commit `ff5b9e2` passed 111 renderer tests and repository hooks, including
+CLI tests, shader compilation, workspace checks, Clippy, and formatting. No
+visual sweep was rerun during cleanup or this documentation reconciliation.
 
 ## Scope note
 
@@ -333,7 +340,7 @@ it does not make that scaffolding part of production execution.
   access tracking also serves later indirect/table accesses (phase 4) and
   derived synchronization (phase 6); phase 3 does not finish those features.
 
-### Remaining items to address
+### Completed cleanup
 
 - **Done:** Removed the unused `GraphPush::access` hook and both implementations.
   `GraphPush::lower_input` preserves push bindings in `PushDesc`; validation
@@ -375,23 +382,13 @@ it does not make that scaffolding part of production execution.
 
 ## 7. Documentation deviations
 
-Updated (2026-09-09): four original findings are resolved. Plan annotations
-and one contradictory synchronization paragraph remain open.
-
-### Remaining items to address
-
-- `01_pure_core.md` still requires no `crates/cli` changes and exempts
-  `just test`, although the 07 codegen implementation landed with phase 1.
-  It also says `PlanCtx`/`plan()` stays byte-for-byte unchanged until 3a,
-  which no longer reflects the §4 fixes. Annotate the implemented scope,
-  applicable verification gates, and submission-aware cursor commits brought
-  forward from 3a. The 07 plan still names the nonexistent `schedule.rs`;
-  update its implementation references and record the combined landing.
-- `docs/render_graph.md` under "Barriers and synchronization" still says
-  version cursors advance when submission aborts on swapchain recreation.
-  This contradicts its updated "Logical textures" section and the current
-  submission callback. Replace the stale paragraph: acquisition skips retain
-  cursors; successful submission commits them even if presentation fails.
+RESOLVED (2026-09-09). The phase-1 plan now records the combined 07/phase-1
+landing, CLI/codegen scope and verification gates, tested scaffolding policy,
+and submission-aware cursor commits brought forward from 3a. Historical
+`schedule.rs`/`BuildCtx` instructions are labeled as design ancestry; the 07
+plan points to the implemented modules and records the combined landing.
+`docs/render_graph.md` now consistently states that acquisition skips preserve
+cursors and successful submission commits them even if presentation fails.
 
 ### Resolved
 
@@ -406,22 +403,23 @@ and one contradictory synchronization paragraph remain open.
 - "Limits" now states that graph shaders require a reflected uniform
   parameter block for `GraphShaderParams` generation.
 
-## Priority
+## Closeout and later-phase ownership
 
-Updated (2026-09-09): §§1–5 are resolved. The phase-1 test inventory is in
-place, and §6's keep-or-delete decision is keep for tested migration
-scaffolding. This does not imply that the pure compiler and expander are
-wired into production execution.
+Phase-1 findings in §§1–5, the cleanup in §6, and documentation reconciliation
+in §7 are complete. No implementation or documentation item remains open in
+this review. The visual sweep was not rerun during this closeout; automated
+test results do not establish visual parity.
 
-1. Reconcile the remaining documentation discrepancies (§7): correct the
-   stale cursor paragraph and annotate 07/phase 1 with the implemented scope
-   and verification requirements.
-2. Address §6's "Remaining items to address": the unused push-access hook,
-   discarded names, runtime dispatch-group vocabulary ownership, and codegen
-   classification/rendering separation.
-3. During phase 3, integrate the pure compiler, assembly, expansion, and
-   required side tables; remove obsolete adapters after parity tests pass
-   (§6, "Leaving for phase 3").
-4. Keep later feature scaffolding assigned to its owning phases (§6,
-   "Leaving for later phases"). Unsupported phase-5 vocabulary is not a
-   phase-3 completion blocker.
+The following work belongs to later phases:
+
+- **Phase 2:** generated schema layout and field metadata.
+- **Phase 3a/3b:** integrate the pure compiler, assembly, expansion, typed
+  frame inputs, and required side tables. Phase 3a / S1 owns dynamic dispatch
+  group counts; submission-aware cursor commits already landed.
+- **Phase 3c:** remove obsolete live scheduling/recording adapters after parity
+  tests pass; consume or remove remaining redundant side tables.
+- **Phases 4–6:** complete indirect/table access tracking, phase-5 rendering
+  features and their temporary rejections, then derived synchronization.
+
+Tests justify preserving migration scaffolding; they do not close its
+production integration work or the later ledger rows.

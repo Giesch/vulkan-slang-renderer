@@ -1,12 +1,22 @@
 # Phase 1 — Pure Core Beneath Typed Nodes
 
-STATUS: PLAN — detailed implementation plan for phase 1 of
+STATUS: IMPLEMENTED; review reconciled (2026-09-09) — implementation record for phase 1 of
 [`../08_plain_data_graph.md`](../08_plain_data_graph.md). That document owns
 the v2 design and decisions 1–13. This document specifies the phase-1 work at
 implementation depth. Where the two disagree, the decision record below wins
 for phase-1 scope.
 
-Line references point at the current working tree.
+Historical line references below describe the planned extraction, not the
+current working tree. The 07 typed API and this phase landed together; neither
+`schedule.rs` nor `BuildCtx` existed in this branch history. Instructions to
+port, move, or delete them describe design ancestry, not remaining work.
+Tests cover the specified access shapes but cannot establish parity against
+an independent `BuildCtx` implementation in this repository.
+
+The implementation updates here supersede the original extraction-only scope.
+The review record is `01_review.md`. Tested migration scaffolding remains until
+its owning phase wires it into production; phase-1 completion does not imply
+executor migration or closure of later ledger rows.
 
 ## Scope
 
@@ -15,15 +25,17 @@ Phase 1 puts a pure, plain-data core beneath the typed tuple facade:
 - Typed nodes lower into a private `GraphDesc`.
 - One pure `validate()` produces every error and an `Analysis`.
 - `RenderGraph::new` is the single validation authority: lower → validate →
-  allocate. `schedule.rs` and `BuildCtx` are deleted.
+  allocate. No separate `schedule.rs` or `BuildCtx` remains.
 - Pure `compile()` and `expand()` exist and are unit-tested. They are **not
-  wired into `execute()`**. The `PlanCtx`/`plan()` execute path stays
-  byte-for-byte unchanged until phase 3a.
+  wired into `execute()`**. Production execution retains `PlanCtx`/`plan()`,
+  with review fixes for staging errors, buffer validation, padding-safe byte
+  staging, optional picking, and submission-aware cursor commits.
 
 Non-goals for phase 1: executor migration (3a), schema codegen (phase 2),
 frame uploads to `Immutable` (3b), draw lists (4), offscreen targets (5),
-derived barriers (6). Codegen, templates, snapshots, and the `check_crate`
-fixture stay untouched.
+derived barriers (6). The combined 07/phase-1 landing includes split-type
+codegen, templates, snapshots, and the `check_crate` fixture. Phase-2 schema
+metadata remains separate.
 
 Graph API consumers in the tree: `examples/watercolor` (stress: optional,
 upload, repeat, push blocks, prev-reads, one draw) and `examples/particles`
@@ -66,15 +78,15 @@ All under `crates/renderer/src/renderer/render_graph/`. The facade file
 | `expand.rs` | pure | `TexRunState` (moved here), `RunState`, `FrameShape`, `ExpandedFrame`, `expand()` |
 | `lower.rs` | facade-side: no `ash`; live indices only as plain `usize`/`u64` | `LowerCtx`, `NodeAccess` (moved here), `LowerOutput` |
 | `render_graph.rs` | facade: keeps `ash` | binding types, node types, `GraphNode`, `PlanCtx`, `BindingResolver`, `RenderGraph`, `GraphFormat → vk::Format` mapping |
-| `schedule.rs` | **deleted** in task 9 | — |
+| `schedule.rs` | never created in the combined landing | — |
 
 Visibility rules:
 
 - All modules are private (`mod desc; mod validate; ...`).
 - The only new `pub` item is `GraphFormat`, re-exported with
   `pub use desc::GraphFormat;` (flows out through `renderer.rs:57`).
-- `LowerCtx` and `NodeAccess` stay pub-in-a-private-module, exactly like
-  `BuildCtx` today (`schedule.rs:35-37`). `GraphNode` stays sealed. No public
+- `LowerCtx` and `NodeAccess` stay pub-in-a-private-module.
+  `GraphNode` stays sealed. No public
   raw description API exists.
 - The new files are child modules of `render_graph`, so their tests can
   construct private facade types (`RawBufferBinding`, `GraphTex(0)`) directly.
@@ -227,7 +239,7 @@ pub(crate) struct LowerOutput {
     pub errors: Vec<GraphError>,
     pub picking: Option<usize>,        // legacy facade marker: graphics pipeline index
     // Transient side tables. Phase 1 produces them for tests and drops them;
-    // the unchanged execute path does not need them. Phase 3a persists them.
+    // executor-only tables await phase 3a; buffer validation retains its tables.
     pub uniform_slots: Vec<usize>,     // UniformId  -> live uniform buffer index
     pub buffer_indices: Vec<usize>,    // BufferId   -> live storage/singleton buffer index
     pub pipeline_indices: Vec<usize>,  // PipelineId -> live pipeline index
@@ -333,7 +345,8 @@ pub(crate) enum LowerDrawCall {
 ### Per-node lowering
 
 `GraphNode::declare` becomes `fn lower(&self, cx: &mut LowerCtx)` (no
-`Result`). `plan` is unchanged. Existing accessors supply raw indices:
+`Result`). `plan` retains the legacy executor with the review fixes listed
+in Scope. Existing accessors supply raw indices:
 `PipelineIndex::raw()` (`pipeline.rs:20-21`) and `BindlessHandle::to_raw()`.
 Sizes come from `size_of::<S>()`, `size_of::<S::Data>()`, `size_of::<B>()`.
 A new helper beside `collect_access` collects bindings:
@@ -624,10 +637,14 @@ comment states: not wired into `execute()` in phase 1.
      the count from `analysis.tex_phys[i]` and the format from
      `out.desc.textures[i].format` via `.to_vk()`;
      `tex.push(TexRunState::new(analysis.tex_phys[i]))`.
-  5. Do not call `compile()` and do not store `CompiledGraph` or the side
-     tables. Phase 3a wires them; stored-but-unused state is dead weight.
-- `execute()` (`render_graph.rs:1415-1452`) is untouched, including the
-  commit-before-submit comment (option-A commit is 3a).
+  5. Do not call `compile()` or store `CompiledGraph` yet. Retain the
+     `uniform_slots` and `buffer_indices` needed for runtime buffer validation;
+     other tested side tables await phase-3 executor wiring.
+- `execute()` keeps the legacy planner. Review fixes validate captured buffer
+  slots, propagate staging errors, and commit texture cursors immediately after
+  successful queue submission. Acquisition skips preserve cursors; presentation
+  failures after submission keep the committed versions. This part of option A
+  was brought forward from phase 3a.
 
 ## Watercolor changes (`examples/watercolor/src/main.rs`)
 
@@ -671,7 +688,8 @@ the old pipeline silently reads the old buffer.
    not change. Rendered output is identical; `just sweep` output must not
    change.
 
-Particles does not change (`GraphResources::new()`, zero textures).
+The format-only extraction does not change particles (`GraphResources::new()`,
+zero textures); its typed graph migration belongs to the combined 07 landing.
 
 ## Test inventory
 
@@ -823,8 +841,11 @@ Expansion tests (`expand.rs`; each builds a small desc and runs
 ## Task breakdown
 
 Each task ends with the repo compiling and its listed verification green.
-Tasks 3–8 put `#![allow(dead_code)]` at the top of not-yet-wired module
-files; task 10 removes every one.
+The table retains the original extraction sequence for historical context.
+In the combined landing, tests replace blanket module-level dead-code allows
+with `cfg_attr(not(test), allow(dead_code, reason = ...))` on tested migration
+modules. Task 10 removes unused APIs but preserves scaffolding assigned to a
+later phase.
 
 | # | Task | Files | Verification |
 | --- | --- | --- | --- |
@@ -837,32 +858,35 @@ files; task 10 removes every one.
 | 7 | `expand.rs`: move `TexRunState` out of `schedule.rs` (facade constructs it with `new(if needs_two { 2 } else { 1 })` until task 9; `schedule.rs` keeps `BuildCtx`); `RunState`/`FrameShape`/`ExpandedFrame`/`expand()`; tests 24–27 (moved), 63–72 | `expand.rs`, `schedule.rs`, `render_graph.rs` | same |
 | 8 | `lower.rs`: `LowerCtx`, interners, scope machinery, `LowerOutput`; move `NodeAccess` here (`schedule.rs` switches to `use super::lower::NodeAccess;`); tests 19–23, 28–30, 33–43 | `lower.rs`, `schedule.rs` | same |
 | 9 | The flip: `declare` → `lower` on `GraphNode`, all 8 node impls, tuple macro, `GraphPush::lower_input`, `collect_bindings`; rewrite `RenderGraph::new` per the facade section; verify every `schedule.rs` test appears in this inventory, then **delete `schedule.rs`** and `mod schedule;` | `render_graph.rs`, delete `schedule.rs` | `cargo check --workspace --all-targets && cargo test -p mltrs-renderer && just lint && just sweep && cargo fmt` |
-| 10 | Cleanup: remove every `#![allow(dead_code)]` from tasks 3–8 (delete any item that stays dead instead of keeping the allow); confirm `git diff crates/cli` is empty (fixture, templates, snapshots) | new modules | full gates, as task 9 |
+| 10 | Cleanup: remove unused APIs; retain tested migration scaffolding with documented phase ownership and non-test dead-code allowances; review CLI fixture, template, and snapshot changes | new modules | full gates, as task 9 |
 
 Task 9 is the only large task, and it is mechanical: every rule already
 landed tested in tasks 4–8.
 
 ## Invariants
 
-- Execute path unchanged: `PlanCtx`, `BindingResolver`, `StagedWrites`,
-  `stage_uniform`/`stage_storage`, `apply_writes`, the commit-before-submit
-  behavior and its comment, `queue_dispatch_raw`, `pending_draws`,
-  `draw_frame`. `compile()` and `expand()` have no callers outside tests.
-- Generated-code-facing surface unchanged: `GraphBinding`, `GraphBindingSet`,
+- Production execution retains `PlanCtx`, `BindingResolver`, staged writes,
+  and the existing recording path, with the review fixes described in Scope.
+  Cursors commit after successful submission. `compile()` and `expand()` have
+  no callers outside tests.
+- Generated-code-facing contracts retained: `GraphBinding`, `GraphBindingSet`,
   `GraphShaderParams`, the `BindingResolver` method set,
   `SampledTexBinding`/`StorageTexBinding`/`RawBufferBinding`/`BufferBinding*`.
-  `crates/cli/fixtures/check_crate/src/renderer/render_graph.rs` needs zero
-  edits; no `crates/cli` source, template, or snapshot changes.
-- Public API delta is exactly two items: the `GraphResources::texture` format
-  parameter and the `GraphFormat` export. `GraphNode`/`GraphPush` change but
+  The combined landing implements and tests these contracts in `crates/cli`,
+  including fixture, template, and snapshot changes.
+- The pure-core extraction adds two public format API items: the
+  `GraphResources::texture` format parameter and the `GraphFormat` export. `GraphNode`/`GraphPush` change but
   are sealed (their methods name pub-in-private types). Nothing from
   `desc`/`validate`/`compile`/`expand`/`lower` leaks through
   `pub use render_graph::*` except `GraphFormat`.
-- Behavioral parity: `analysis.tex_phys` equals the old `needs_two` result
-  for the watercolor and particles shapes (tests 42–43). Error messages
-  become variant-listed but keep the old key phrases.
-- `just sweep` output unchanged: watercolor renders identical bytes after the
-  blur split; particles is untouched.
+- Access-shape coverage: tests 42–43 check `analysis.tex_phys` against the
+  specified watercolor and particles expectations. No independent `BuildCtx`
+  implementation exists in this history for a parity comparison. Error
+  messages are variant-listed and retain the specified key phrases.
+- `just sweep` remains the visual regression gate. The blur split should
+  preserve output; the separate blur-H `read_previous()` → `read()` review fix
+  intentionally restores current-version sampling. Particles migrates as part
+  of the combined 07 landing.
 - New strictness with zero consumers, documented rather than hidden:
   `optional(repeat(..))`, nested `optional`, draws inside `optional`, and
   external storage-image bindings were constructible and are rejected after
@@ -919,15 +943,19 @@ Recorded so the implementer does not re-decide them:
 
 ## Gates
 
-Phase 1 lands green on:
+The combined landing requires these gates (status below):
 
 ```
 cargo check --workspace --all-targets
 cargo test -p mltrs-renderer
+just shaders
+just test
 just lint
 just sweep
-cargo fmt
+cargo fmt --all --check
 ```
 
-`just test` is not required: phase 1 changes no `crates/cli` sources,
-templates, or snapshots.
+`just test` is required for the combined landing because CLI sources,
+templates, fixtures, and snapshots changed. The shader, check, test, lint, and
+formatting gates passed for cleanup commit `ff5b9e2`; that verification did not
+rerun `just sweep`. Record visual sweep results separately from automated tests.

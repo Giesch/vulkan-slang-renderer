@@ -3,12 +3,21 @@
 STATUS: IMPLEMENTED (2026-09-02). The reference documentation is
 `docs/render_graph.md`; the code is
 `crates/renderer/src/renderer/render_graph.rs` and
-`render_graph/schedule.rs`. `examples/particles` and `examples/watercolor`
-use the graph. This design replaces the execute-time API of `04_design.md`
+`render_graph/{desc,validate,compile,expand,lower}.rs`.
+`examples/particles` and `examples/watercolor` use the graph. This design replaces the execute-time API of `04_design.md`
 (§3, §5, §7) and its parity concepts (§2, §4). It keeps 04's build-once
 structure. Barrier *derivation* stays deferred per `06_derived_barriers.md`,
 but the access declarations it needs are part of this design's bindings
 structs.
+
+Implementation update (2026-09-09): this typed API and phase 1 of
+`08_plain_data_graph.md` landed together on `render-graph-plain-data-core`.
+There was no intermediate `schedule.rs` or `BuildCtx` implementation in this
+history. The pure compiler and expander are tested; production execution still
+uses `PlanCtx`. Review fixes brought submission-aware cursor commits forward
+from phase 3a. The combined landing includes CLI codegen, templates, fixtures,
+and snapshots, so its gates include `just test` as well as shader compilation,
+workspace checks, lint, formatting, and the visual sweep.
 
 Deviations found during implementation:
 
@@ -242,9 +251,12 @@ later phase on the same access declarations.
 
 - `crates/renderer/src/renderer/render_graph.rs` — public API: resources,
   node constructors, `RenderGraph`, marker traits, errors.
-- `crates/renderer/src/renderer/render_graph/schedule.rs` — pure core:
-  step model, version resolution, physical assignment, schedule
-  expansion, validation. No `ash`; unit-testable.
+- `crates/renderer/src/renderer/render_graph/{desc,validate,compile,expand}.rs`
+  — pure descriptions, validation and physical assignment, compilation, and
+  frame expansion. No `ash`; unit-tested. Compiler/expander execution wiring
+  belongs to phase 3.
+- `crates/renderer/src/renderer/render_graph/lower.rs` — typed-node lowering,
+  resource interners, and live-resource side tables.
 - `crates/renderer/src/renderer.rs` — module declaration; `pub(crate)`
   `queue_dispatch_raw`, `queue_draw_raw`, non-asserting picking-capable
   submit variant.

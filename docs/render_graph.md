@@ -210,8 +210,9 @@ barrier. A disabled `optional` node changes no barriers. The declared access
 modes are the input for deriving minimal barriers later; nothing in the API
 changes when that lands.
 
-Version cursors advance even when the submit aborts on swapchain
-recreation, matching the manual API's behavior.
+Version cursors commit immediately after successful GPU queue submission.
+A frame skipped during swapchain image acquisition preserves the previous
+cursors. A presentation failure after submission keeps the committed versions.
 
 ## Limits
 
