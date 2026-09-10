@@ -53,6 +53,9 @@ pub use storage_texture::*;
 pub mod pipeline;
 pub use pipeline::*;
 
+pub mod render_graph;
+pub use render_graph::*;
+
 pub mod egui;
 pub use egui::EguiIntegration;
 
@@ -2560,6 +2563,7 @@ impl Renderer {
         picking_config: Option<PickingDrawConfig>,
         pending_compute: Vec<PendingComputeCommand>,
         gpu_update: impl FnOnce(&mut Gpu),
+        on_submitted: impl FnOnce(),
     ) -> Result<(), anyhow::Error> {
         // The slot the draws were queued against
         let queue_flight_slot = self.flight_slot;
@@ -2695,6 +2699,8 @@ impl Renderer {
             self.device
                 .queue_submit2(self.graphics_queue, &[submit_info], vk::Fence::null())?;
         }
+
+        on_submitted();
 
         // 6. Advance the frame slot BEFORE present
         //    This ensures that if present triggers swapchain recreation (early return),
@@ -5925,6 +5931,18 @@ impl<'f> FrameRenderer<'f> {
         group_count: [u32; 3],
         push_constants: Option<PushConstantBytes>,
     ) {
+        self.queue_dispatch_raw(pipeline.index(), group_count, push_constants);
+    }
+
+    /// The index-level dispatch queue shared with the render graph. Keeps the
+    /// positional barrier rule: a dispatch directly after a dispatch gets a
+    /// global compute-to-compute barrier between them.
+    fn queue_dispatch_raw(
+        &mut self,
+        pipeline_index: ComputePipelineIndex,
+        group_count: [u32; 3],
+        push_constants: Option<PushConstantBytes>,
+    ) {
         match self.pending_compute.last() {
             Some(PendingComputeCommand::Dispatch { .. }) => {
                 self.push_compute_barrier();
@@ -5934,7 +5952,7 @@ impl<'f> FrameRenderer<'f> {
         }
 
         self.pending_compute.push(PendingComputeCommand::Dispatch {
-            pipeline_index: pipeline.index(),
+            pipeline_index,
             group_count,
             push_constants,
         });
@@ -6221,12 +6239,22 @@ impl<'f> FrameRenderer<'f> {
         picking_config: Option<PickingDrawConfig>,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
+        self.draw_frame_with_submission(picking_config, gpu_update, || {})
+    }
+
+    fn draw_frame_with_submission(
+        self,
+        picking_config: Option<PickingDrawConfig>,
+        gpu_update: impl FnOnce(&mut Gpu),
+        on_submitted: impl FnOnce(),
+    ) -> Result<(), DrawError> {
         self.renderer
             .draw_frame(
                 self.pending_draws,
                 picking_config,
                 self.pending_compute,
                 gpu_update,
+                on_submitted,
             )
             .map_err(DrawError::DrawError)
     }

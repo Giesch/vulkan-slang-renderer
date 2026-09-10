@@ -32,6 +32,12 @@ impl BindlessIndex {
     pub(super) fn to_raw(self) -> u32 {
         self.0
     }
+
+    /// Only the heap hands out real slots; tests need a handle without a device.
+    #[cfg(test)]
+    pub(super) fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
 }
 
 pub(super) struct DescriptorHeap {

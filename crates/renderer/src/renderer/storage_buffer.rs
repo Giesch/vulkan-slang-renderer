@@ -18,6 +18,10 @@ impl<T> StorageBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
+
+    pub(super) fn index(&self) -> usize {
+        self.index
+    }
 }
 
 /// A storage buffer that nothing on the GPU ever writes
@@ -41,6 +45,10 @@ impl<T> ImmutableBufferHandle<T> {
     pub(super) fn element_byte_offset(&self, index: u32) -> u64 {
         element_byte_offset(index, self.len, std::mem::size_of::<T>())
     }
+
+    pub(super) fn index(&self) -> usize {
+        self.index
+    }
 }
 
 /// A storage buffer uploaded once at creation and never written again
@@ -63,6 +71,10 @@ impl<T> SingletonBufferHandle<T> {
 
     pub(super) fn element_byte_offset(&self, index: u32) -> u64 {
         element_byte_offset(index, self.len, std::mem::size_of::<T>())
+    }
+
+    pub(super) fn index(&self) -> usize {
+        self.index
     }
 }
 
@@ -92,6 +104,10 @@ impl<T> GpuOnlyBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
+
+    pub(super) fn index(&self) -> usize {
+        self.index
+    }
 }
 
 pub(super) struct RawStorageBuffer {
@@ -108,6 +124,10 @@ pub(super) struct RawStorageBuffer {
 pub(super) struct StorageBufferStorage(Vec<Option<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]>>);
 
 impl StorageBufferStorage {
+    pub(super) fn contains(&self, index: usize) -> bool {
+        self.0.get(index).is_some_and(Option::is_some)
+    }
+
     pub fn new() -> Self {
         Self(Default::default())
     }
@@ -287,6 +307,18 @@ impl StorageBufferStorage {
             .filter_map(|option| option.take())
             .collect()
     }
+
+    pub(super) fn device_address_by_index(&self, index: usize, frame: usize) -> vk::DeviceAddress {
+        self.0[index].as_ref().unwrap()[frame].device_address
+    }
+
+    pub(super) fn mapped_mem_by_index(&mut self, index: usize, frame: usize) -> *mut c_void {
+        self.0[index].as_mut().unwrap()[frame].mapped_mem
+    }
+
+    pub(super) fn vk_buffer_by_index(&self, index: usize, frame: usize) -> vk::Buffer {
+        self.0[index].as_ref().unwrap()[frame].buffer
+    }
 }
 
 // Singleton buffers are intended for data that doesn't change after upload,
@@ -296,6 +328,10 @@ impl StorageBufferStorage {
 pub(super) struct SingletonBufferStorage(Vec<Option<RawStorageBuffer>>);
 
 impl SingletonBufferStorage {
+    pub(super) fn contains(&self, index: usize) -> bool {
+        self.0.get(index).is_some_and(Option::is_some)
+    }
+
     pub fn new() -> Self {
         Self(Default::default())
     }
@@ -335,6 +371,10 @@ impl SingletonBufferStorage {
         self.0[handle.index].take().unwrap()
     }
 
+    pub(super) fn device_address_by_index(&self, index: usize) -> vk::DeviceAddress {
+        self.0[index].as_ref().unwrap().device_address
+    }
+
     pub fn take_all(&mut self) -> Vec<RawStorageBuffer> {
         self.0
             .iter_mut()
@@ -351,7 +391,7 @@ impl SingletonBufferStorage {
 /// covers descriptor-bound buffers and does *not* cover buffer device addresses,
 /// which bypass descriptor bounds checking entirely. An out-of-range element
 /// address is undefined behaviour and a plausible device loss, not a clamped read.
-fn element_byte_offset(index: u32, len: u32, stride: usize) -> u64 {
+pub(super) fn element_byte_offset(index: u32, len: u32, stride: usize) -> u64 {
     assert!(
         index < len,
         "element index {index} out of bounds for buffer of {len} element(s)"

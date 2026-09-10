@@ -58,6 +58,52 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<KochCurveParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct KochCurveParamsData {
+    pub resolution: glam::Vec2,
+    pub mouse: glam::Vec2,
+    pub time: f32,
+    pub koch_iterations: f32,
+    pub scale_factor: f32,
+    pub sphere_radius: f32,
+    pub sphere_blend: f32,
+    pub rotation_speed: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct KochCurveParamsBindings {
+    pub reflection_map: SampledTexBinding,
+}
+
+impl GraphShaderParams for KochCurveParams {
+    type Data = KochCurveParamsData;
+    type Bindings = KochCurveParamsBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            resolution: data.resolution,
+            mouse: data.mouse,
+            time: data.time,
+            koch_iterations: data.koch_iterations,
+            scale_factor: data.scale_factor,
+            sphere_radius: data.sphere_radius,
+            sphere_blend: data.sphere_blend,
+            rotation_speed: data.rotation_speed,
+            reflection_map: resolver.sampled_tex(bindings.reflection_map),
+        }
+    }
+}
+
+impl GraphBindingSet for KochCurveParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.reflection_map));
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

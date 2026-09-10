@@ -15,7 +15,9 @@ use {{ import.use_path() }};
 {# a module holding only enums has no GPUWrite impl to emit -#}
 #[allow(unused_imports)]
 use {{ import_root }}::renderer::gpu_write::GPUWrite;
-
+{% if graph_split_defs.len() > 0 -%}
+use {{ import_root }}::renderer::render_graph::*;
+{% endif %}
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 {% for def in enum_defs %}
@@ -85,4 +87,7 @@ const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 {%- for assert_line in def.layout_assert_lines() +%}
 {{ assert_line }}
 {%- endfor %}
+{% endfor %}
+{%- for split in graph_split_defs %}
+{{ split.block() }}
 {% endfor %}

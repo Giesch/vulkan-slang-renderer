@@ -94,6 +94,9 @@ const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 {{ assert_line }}
 {%- endfor %}
 {% endfor %}
+{%- for split in graph_split_defs %}
+{{ split.block() }}
+{% endfor %}
 {%- match shader_impl.push_constant_type_name -%}
 {%- when Some with (push_constant_type_name) +%}
 impl {{ import_root }}::renderer::gpu_write::PushConstantBlock for {{ push_constant_type_name }} {}

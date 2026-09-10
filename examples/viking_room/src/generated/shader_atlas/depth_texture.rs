@@ -49,6 +49,39 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<DepthTextureParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DepthTextureParamsData {
+    pub mvp: MVPMatrices,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DepthTextureParamsBindings {
+    pub texture: SampledTexBinding,
+}
+
+impl GraphShaderParams for DepthTextureParams {
+    type Data = DepthTextureParamsData;
+    type Bindings = DepthTextureParamsBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            mvp: data.mvp,
+            texture: resolver.sampled_tex(bindings.texture),
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for DepthTextureParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.texture));
+    }
+}
+
 impl VertexDescription for Vertex {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
         let binding_description = ash::vk::VertexInputBindingDescription::default()

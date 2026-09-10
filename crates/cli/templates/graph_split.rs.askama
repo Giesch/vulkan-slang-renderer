@@ -1,0 +1,55 @@
+{%- if binding_fields.is_empty() -%}
+impl GraphShaderParams for {{ params_type }} {
+    type Data = Self;
+    type Bindings = ();
+
+    fn assemble(
+        data: &Self::Data,
+        _bindings: &Self::Bindings,
+        _resolver: &BindingResolver<'_>,
+    ) -> Self {
+        *data
+    }
+}
+{%- else -%}
+{%- if !data_fields.is_empty() -%}
+#[derive(Debug, Clone, Copy)]
+pub struct {{ params_type }}Data {
+{%- for field in data_fields %}
+    pub {{ field.field_name }}: {{ field.type_name }},
+{%- endfor %}
+}
+
+{% endif -%}
+#[derive(Debug, Clone, Copy)]
+pub struct {{ params_type }}Bindings {
+{%- for (field, kind) in binding_fields %}
+    pub {{ field.field_name }}: {% match kind %}{% when GraphBindingKind::SampledTex %}SampledTexBinding{% when GraphBindingKind::StorageTex %}StorageTexBinding{% when GraphBindingKind::Buffer with { pointee } %}BufferBinding<{{ pointee }}>{% when GraphBindingKind::ReadBuffer with { pointee } %}ReadBufferBinding<{{ pointee }}>{% when GraphBindingKind::ImmutableBuffer with { pointee } %}ImmutableBufferBinding<{{ pointee }}>{% endmatch %},
+{%- endfor %}
+}
+
+impl GraphShaderParams for {{ params_type }} {
+    type Data = {% if data_fields.is_empty() %}(){% else %}{{ params_type }}Data{% endif %};
+    type Bindings = {{ params_type }}Bindings;
+
+    fn assemble(
+        {% if data_fields.is_empty() %}_data{% else %}data{% endif %}: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+{%- for (field, class) in assemble_fields %}
+            {{ field.field_name }}: {% match class %}{% when GraphFieldClass::Padding %}Default::default(){% when GraphFieldClass::Data %}data.{{ field.field_name }}{% when GraphFieldClass::Binding(kind) %}resolver.{% match kind %}{% when GraphBindingKind::SampledTex %}sampled_tex{% when GraphBindingKind::StorageTex %}storage_tex{% when GraphBindingKind::Buffer with { .. } %}buf{% when GraphBindingKind::ReadBuffer with { .. } %}read_buf{% when GraphBindingKind::ImmutableBuffer with { .. } %}immutable_buf{% endmatch %}(bindings.{{ field.field_name }}){% endmatch %},
+{%- endfor %}
+        }
+    }
+}
+
+impl GraphBindingSet for {{ params_type }}Bindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+{%- for (field, kind) in binding_fields %}
+        f(GraphBinding::{% match kind %}{% when GraphBindingKind::SampledTex %}SampledTex(self.{{ field.field_name }}){% when GraphBindingKind::StorageTex %}StorageTex(self.{{ field.field_name }}){% when GraphBindingKind::Buffer with { .. } %}Buffer(self.{{ field.field_name }}.erased()){% when GraphBindingKind::ReadBuffer with { .. } %}Buffer(self.{{ field.field_name }}.erased()){% when GraphBindingKind::ImmutableBuffer with { .. } %}Buffer(self.{{ field.field_name }}.erased()){% endmatch %});
+{%- endfor %}
+    }
+}
+{%- endif -%}

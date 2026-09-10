@@ -147,6 +147,81 @@ pub struct Resources<'a> {
     pub display_params_buffer: &'a UniformBufferHandle<DisplayParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DisplayParamsData {
+    pub texel_size: glam::Vec2,
+    pub debug_view: DebugView,
+    pub canvas_aspect: f32,
+    pub window_aspect: f32,
+    pub pigment0: PigmentKM,
+    pub pigment1: PigmentKM,
+    pub pigment2: PigmentKM,
+    pub pigment3: PigmentKM,
+    pub pigment4: PigmentKM,
+    pub pigment5: PigmentKM,
+    pub pigment6: PigmentKM,
+    pub pigment7: PigmentKM,
+    pub pigment8: PigmentKM,
+    pub pigment9: PigmentKM,
+    pub pigment10: PigmentKM,
+    pub pigment11: PigmentKM,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DisplayParamsBindings {
+    pub deposit_0_3: SampledTexBinding,
+    pub deposit_4_7: SampledTexBinding,
+    pub deposit_8_11: SampledTexBinding,
+    pub paper_height: SampledTexBinding,
+    pub wet_mask: SampledTexBinding,
+}
+
+impl GraphShaderParams for DisplayParams {
+    type Data = DisplayParamsData;
+    type Bindings = DisplayParamsBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            deposit_0_3: resolver.sampled_tex(bindings.deposit_0_3),
+            deposit_4_7: resolver.sampled_tex(bindings.deposit_4_7),
+            deposit_8_11: resolver.sampled_tex(bindings.deposit_8_11),
+            paper_height: resolver.sampled_tex(bindings.paper_height),
+            wet_mask: resolver.sampled_tex(bindings.wet_mask),
+            texel_size: data.texel_size,
+            debug_view: data.debug_view,
+            canvas_aspect: data.canvas_aspect,
+            window_aspect: data.window_aspect,
+            _padding_0: Default::default(),
+            pigment0: data.pigment0,
+            pigment1: data.pigment1,
+            pigment2: data.pigment2,
+            pigment3: data.pigment3,
+            pigment4: data.pigment4,
+            pigment5: data.pigment5,
+            pigment6: data.pigment6,
+            pigment7: data.pigment7,
+            pigment8: data.pigment8,
+            pigment9: data.pigment9,
+            pigment10: data.pigment10,
+            pigment11: data.pigment11,
+        }
+    }
+}
+
+impl GraphBindingSet for DisplayParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.deposit_0_3));
+        f(GraphBinding::SampledTex(self.deposit_4_7));
+        f(GraphBinding::SampledTex(self.deposit_8_11));
+        f(GraphBinding::SampledTex(self.paper_height));
+        f(GraphBinding::SampledTex(self.wet_mask));
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

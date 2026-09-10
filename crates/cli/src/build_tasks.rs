@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use askama::Template;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 
@@ -159,8 +160,52 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
 
         let shared_modules = collect_shared_modules(&all_shader_defs);
 
+        let shader_contexts: Vec<_> = graphics_data
+            .iter()
+            .map(|data| {
+                (
+                    &data.defs,
+                    &data.params_type_names,
+                    data.source_file_name.as_str(),
+                )
+            })
+            .chain(compute_data.iter().map(|data| {
+                (
+                    &data.defs,
+                    &data.params_type_names,
+                    data.source_file_name.as_str(),
+                )
+            }))
+            .collect();
+
         for (module_name, module) in &shared_modules {
             let cross_imports = cross_module_imports(module_name, module, &shared_modules);
+            let mut visible_names = graph_type_names(module);
+            visible_names.extend(
+                cross_imports
+                    .iter()
+                    .flat_map(|import| import.type_names.iter().cloned()),
+            );
+            let mut splits = vec![];
+            for def in &module.struct_defs {
+                let context = shader_contexts.iter().find(|(defs, params, _)| {
+                    params.contains(&def.type_name)
+                        && defs.struct_defs.iter().any(|candidate| {
+                            candidate.type_name == def.type_name
+                                && candidate.source_module.as_ref() == Some(module_name)
+                        })
+                });
+                if let Some((defs, _, source)) = context {
+                    let split = graph_split_defs(
+                        std::slice::from_ref(def),
+                        &BTreeSet::from([def.type_name.clone()]),
+                        &resource_bearing_types(&defs.struct_defs),
+                        &mut visible_names,
+                    )
+                    .with_context(|| format!("{module_name}.slang (used by {source})"))?;
+                    splits.extend(split);
+                }
+            }
 
             let template = SharedModuleTemplate {
                 import_root: config.import_root.clone(),
@@ -170,6 +215,7 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
                 cross_module_imports: cross_imports,
                 enum_defs: module.enum_defs.clone(),
                 struct_defs: module.struct_defs.clone(),
+                graph_split_defs: splits,
             };
 
             let file_name = format!("{module_name}.rs");
@@ -180,12 +226,12 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         }
 
         for data in &graphics_data {
-            let file = render_graphics_shader_file(data, &shared_modules, &config.import_root);
+            let file = render_graphics_shader_file(data, &shared_modules, &config.import_root)?;
             generated_source_files.push(file);
         }
 
         for data in &compute_data {
-            let file = render_compute_shader_file(data, &shared_modules, &config.import_root);
+            let file = render_compute_shader_file(data, &shared_modules, &config.import_root)?;
             generated_source_files.push(file);
         }
 
@@ -286,6 +332,9 @@ struct GraphicsShaderData {
     vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
     source_file_name: String,
+    /// uniform-block element types plus the push block: the types that get a
+    /// render-graph split
+    params_type_names: Vec<String>,
 }
 
 /// Collect struct definitions and template data from a graphics shader (without rendering)
@@ -384,19 +433,22 @@ fn collect_graphics_shader_data(
     let mut resources_texture_fields: Vec<String> = vec![];
     let mut resources_uniform_buffer_fields: Vec<String> = vec![];
     let mut resources_storage_texture_fields: Vec<String> = vec![];
+    let mut params_type_names: Vec<String> = vec![];
     for res in &required_resources {
-        match res.resource_type {
+        match &res.resource_type {
             RequiredResourceType::Texture => {
                 resources_texture_fields.push(res.field_name.clone());
             }
-            RequiredResourceType::UniformBuffer(_) => {
+            RequiredResourceType::UniformBuffer(element_type_name) => {
                 resources_uniform_buffer_fields.push(res.field_name.clone());
+                params_type_names.push(element_type_name.clone());
             }
             RequiredResourceType::StorageTexture2D => {
                 resources_storage_texture_fields.push(res.field_name.clone());
             }
         }
     }
+    params_type_names.extend(push_constant_type_name.clone());
 
     let shader_impl = GeneratedShaderImpl {
         shader_name: shader_name.clone(),
@@ -417,6 +469,7 @@ fn collect_graphics_shader_data(
         vertex_impl_blocks,
         shader_impl,
         source_file_name: reflection_json.source_file_name.clone(),
+        params_type_names,
     }
 }
 
@@ -425,7 +478,7 @@ fn render_graphics_shader_file(
     data: &GraphicsShaderData,
     shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
     import_root: &str,
-) -> GeneratedFile {
+) -> anyhow::Result<GeneratedFile> {
     let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
     // Filter out shared types — they're in their own module files
@@ -436,12 +489,21 @@ fn render_graphics_shader_file(
         data.source_file_name
     )];
 
+    let graph_split_defs = graph_split_defs(
+        &local.struct_defs,
+        &data.params_type_names.iter().cloned().collect(),
+        &resource_bearing_types(&data.defs.struct_defs),
+        &mut graph_type_names(&data.defs),
+    )
+    .with_context(|| data.source_file_name.clone())?;
+
     let content = ShaderAtlasEntryModule {
         import_root: import_root.to_string(),
         module_doc_lines,
         shared_module_imports,
         enum_defs: local.enum_defs,
         struct_defs: local.struct_defs,
+        graph_split_defs,
         vertex_impl_blocks: data.vertex_impl_blocks.clone(),
         shader_impl: data.shader_impl.clone(),
         push_constant_budget: MAX_PUSH_CONSTANT_BYTES,
@@ -450,10 +512,10 @@ fn render_graphics_shader_file(
     .unwrap();
 
     let file_name = data.source_file_name.replace(SHADER_FILE_SUFFIX, ".rs");
-    GeneratedFile {
+    Ok(GeneratedFile {
         relative_path: relative_path(["generated", "shader_atlas", &file_name]),
         content,
-    }
+    })
 }
 
 #[derive(Template)]
@@ -503,6 +565,7 @@ struct ShaderAtlasEntryModule {
     shared_module_imports: Vec<SharedModuleImport>,
     enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
+    graph_split_defs: Vec<GraphSplitDef>,
     vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
     push_constant_budget: usize,
@@ -516,6 +579,7 @@ struct ShaderComputeEntryModule {
     shared_module_imports: Vec<SharedModuleImport>,
     enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
+    graph_split_defs: Vec<GraphSplitDef>,
     shader_impl: GeneratedComputeShaderImpl,
     push_constant_budget: usize,
 }
@@ -610,6 +674,9 @@ struct ComputeShaderData {
     defs: GeneratedTypeDefs,
     shader_impl: GeneratedComputeShaderImpl,
     source_file_name: String,
+    /// uniform-block element types plus the push block: the types that get a
+    /// render-graph split
+    params_type_names: Vec<String>,
 }
 
 /// Collect struct definitions and template data from a compute shader (without rendering)
@@ -650,19 +717,22 @@ fn collect_compute_shader_data(
     let mut resources_texture_fields: Vec<String> = vec![];
     let mut resources_uniform_buffer_fields: Vec<String> = vec![];
     let mut resources_storage_texture_fields: Vec<String> = vec![];
+    let mut params_type_names: Vec<String> = vec![];
     for res in &required_resources {
-        match res.resource_type {
+        match &res.resource_type {
             RequiredResourceType::Texture => {
                 resources_texture_fields.push(res.field_name.clone());
             }
-            RequiredResourceType::UniformBuffer(_) => {
+            RequiredResourceType::UniformBuffer(element_type_name) => {
                 resources_uniform_buffer_fields.push(res.field_name.clone());
+                params_type_names.push(element_type_name.clone());
             }
             RequiredResourceType::StorageTexture2D => {
                 resources_storage_texture_fields.push(res.field_name.clone());
             }
         }
     }
+    params_type_names.extend(push_constant_type_name.clone());
 
     let shader_impl = GeneratedComputeShaderImpl {
         shader_name: shader_name.clone(),
@@ -682,6 +752,7 @@ fn collect_compute_shader_data(
         defs,
         shader_impl,
         source_file_name: reflection_json.source_file_name.clone(),
+        params_type_names,
     }
 }
 
@@ -690,7 +761,7 @@ fn render_compute_shader_file(
     data: &ComputeShaderData,
     shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
     import_root: &str,
-) -> GeneratedFile {
+) -> anyhow::Result<GeneratedFile> {
     let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
     let local = local_type_defs(&data.defs);
@@ -700,12 +771,21 @@ fn render_compute_shader_file(
         data.source_file_name
     )];
 
+    let graph_split_defs = graph_split_defs(
+        &local.struct_defs,
+        &data.params_type_names.iter().cloned().collect(),
+        &resource_bearing_types(&data.defs.struct_defs),
+        &mut graph_type_names(&data.defs),
+    )
+    .with_context(|| data.source_file_name.clone())?;
+
     let content = ShaderComputeEntryModule {
         import_root: import_root.to_string(),
         module_doc_lines,
         shared_module_imports,
         enum_defs: local.enum_defs,
         struct_defs: local.struct_defs,
+        graph_split_defs,
         shader_impl: data.shader_impl.clone(),
         push_constant_budget: MAX_PUSH_CONSTANT_BYTES,
     }
@@ -714,10 +794,10 @@ fn render_compute_shader_file(
 
     let module_name = format!("{}_compute", data.shader_name);
     let file_name = format!("{module_name}.rs");
-    GeneratedFile {
+    Ok(GeneratedFile {
         relative_path: relative_path(["generated", "shader_atlas", &file_name]),
         content,
-    }
+    })
 }
 
 /// Generates fields for a std430 storage buffer struct, inserting padding as needed.
@@ -1326,6 +1406,7 @@ impl GeneratedStructDefinition {
 struct GeneratedStructFieldDefinition {
     field_name: String,
     type_name: String,
+    synthetic_padding: bool,
     /// reflected offset within the GPU struct; None for padding fields
     /// and fields outside GPU layout (vertex inputs, CPU-only structs)
     offset: Option<usize>,
@@ -1341,6 +1422,7 @@ impl GeneratedStructFieldDefinition {
         Self {
             field_name,
             type_name,
+            synthetic_padding: false,
             offset: None,
             size: None,
             rust_align: None,
@@ -1351,6 +1433,7 @@ impl GeneratedStructFieldDefinition {
         Self {
             field_name,
             type_name,
+            synthetic_padding: false,
             offset: None,
             size: None,
             rust_align: Some(rust_align),
@@ -1359,6 +1442,7 @@ impl GeneratedStructFieldDefinition {
 
     fn padding(index: usize, size: usize) -> Self {
         Self {
+            synthetic_padding: true,
             field_name: format!("_padding_{index}"),
             type_name: format!("[u8; {size}]"),
             offset: None,
@@ -1366,6 +1450,209 @@ impl GeneratedStructFieldDefinition {
             rust_align: None,
         }
     }
+}
+
+/// How one field of a params/push struct participates in the render-graph
+/// split: GPU-layout padding, per-frame data, or a build-time resource binding.
+#[derive(Clone, Copy)]
+enum GraphFieldClass<'a> {
+    Padding,
+    Data,
+    Binding(GraphBindingKind<'a>),
+}
+
+/// Resource semantics retained until the graph split template renders Rust.
+#[derive(Clone, Copy)]
+enum GraphBindingKind<'a> {
+    SampledTex,
+    StorageTex,
+    Buffer { pointee: &'a str },
+    ReadBuffer { pointee: &'a str },
+    ImmutableBuffer { pointee: &'a str },
+}
+
+fn classify_graph_field(
+    field: &GeneratedStructFieldDefinition,
+) -> anyhow::Result<GraphFieldClass<'_>> {
+    let name = &field.field_name;
+    if field.synthetic_padding {
+        return Ok(GraphFieldClass::Padding);
+    }
+
+    let kind = match field.type_name.as_str() {
+        "BindlessHandle<Sampler2D>" => GraphBindingKind::SampledTex,
+        "BindlessHandle<RwTexture2D>" => GraphBindingKind::StorageTex,
+        other if other.starts_with("BindlessHandle<") => {
+            anyhow::bail!("field '{name}': unsupported graph resource type '{other}'");
+        }
+
+        other => {
+            for prefix in ["Addr<", "ReadAddr<", "ImmutableAddr<"] {
+                if let Some(rest) = other.strip_prefix(prefix) {
+                    let pointee = rest
+                        .strip_suffix('>')
+                        .expect("addr-typed field name ends with '>'");
+                    let kind = match prefix {
+                        "Addr<" => GraphBindingKind::Buffer { pointee },
+                        "ReadAddr<" => GraphBindingKind::ReadBuffer { pointee },
+                        "ImmutableAddr<" => GraphBindingKind::ImmutableBuffer { pointee },
+                        _ => unreachable!("this match must be in sync with the array above"),
+                    };
+
+                    return Ok(GraphFieldClass::Binding(kind));
+                }
+            }
+
+            return Ok(GraphFieldClass::Data);
+        }
+    };
+
+    Ok(GraphFieldClass::Binding(kind))
+}
+
+/// Finished Rust source for the render-graph split of one params or push struct.
+struct GraphSplitDef {
+    source: String,
+}
+
+impl GraphSplitDef {
+    fn block(&self) -> &str {
+        &self.source
+    }
+}
+
+#[derive(Template)]
+#[template(path = "graph_split.rs.askama", escape = "none")]
+struct GraphSplitTemplate<'a> {
+    params_type: &'a str,
+    data_fields: Vec<&'a GeneratedStructFieldDefinition>,
+    binding_fields: Vec<(&'a GeneratedStructFieldDefinition, GraphBindingKind<'a>)>,
+    assemble_fields: Vec<(&'a GeneratedStructFieldDefinition, GraphFieldClass<'a>)>,
+}
+
+fn graph_split_def(
+    def: &GeneratedStructDefinition,
+    resource_bearing: &BTreeSet<String>,
+    names: &mut BTreeSet<String>,
+) -> anyhow::Result<GraphSplitDef> {
+    let params_type = &def.type_name;
+
+    let mut data_fields: Vec<&GeneratedStructFieldDefinition> = vec![];
+    let mut binding_fields = vec![];
+    let mut assemble_fields = vec![];
+
+    for field in &def.fields {
+        let class = classify_graph_field(field)?;
+        assemble_fields.push((field, class));
+        match class {
+            GraphFieldClass::Padding => {}
+            GraphFieldClass::Data => {
+                data_fields.push(field);
+            }
+            GraphFieldClass::Binding(kind) => {
+                binding_fields.push((field, kind));
+            }
+        }
+    }
+
+    if !binding_fields.is_empty() {
+        for suffix in ["Bindings", "Data"] {
+            let omit_data = suffix == "Data" && data_fields.is_empty();
+            if omit_data {
+                continue;
+            }
+
+            let name = format!("{params_type}{suffix}");
+            anyhow::ensure!(
+                names.insert(name.clone()),
+                "render-graph split of '{params_type}': generated type '{name}' collides with another type",
+            );
+        }
+    }
+    for field in &data_fields {
+        anyhow::ensure!(
+            !resource_bearing.contains(graph_field_element_type(&field.type_name))
+                && !is_graph_resource_type(graph_field_element_type(&field.type_name)),
+            "render-graph split of '{params_type}': field '{}' nests resource \
+            fields through '{}'; flatten them into the parameter block",
+            field.field_name,
+            field.type_name,
+        );
+    }
+
+    let source = GraphSplitTemplate {
+        params_type,
+        data_fields,
+        binding_fields,
+        assemble_fields,
+    }
+    .render()?;
+
+    Ok(GraphSplitDef { source })
+}
+
+/// Split defs for the params/push types among `struct_defs`, in definition order.
+fn graph_split_defs(
+    struct_defs: &[GeneratedStructDefinition],
+    params_types: &BTreeSet<String>,
+    resource_bearing: &BTreeSet<String>,
+    names: &mut BTreeSet<String>,
+) -> anyhow::Result<Vec<GraphSplitDef>> {
+    let mut splits = vec![];
+    for def in struct_defs
+        .iter()
+        .filter(|def| params_types.contains(&def.type_name))
+    {
+        splits.push(graph_split_def(def, resource_bearing, names)?);
+    }
+
+    Ok(splits)
+}
+
+fn graph_type_names(defs: &GeneratedTypeDefs) -> BTreeSet<String> {
+    defs.struct_defs
+        .iter()
+        .map(|def| def.type_name.clone())
+        .chain(defs.enum_defs.iter().map(|def| def.type_name.clone()))
+        .collect()
+}
+
+fn is_graph_resource_type(ty: &str) -> bool {
+    ["BindlessHandle<", "Addr<", "ReadAddr<", "ImmutableAddr<"]
+        .iter()
+        .any(|prefix| ty.starts_with(prefix))
+}
+
+/// Includes nested structs and arrays of resource-bearing structs.
+fn resource_bearing_types(defs: &[GeneratedStructDefinition]) -> BTreeSet<String> {
+    let mut result = BTreeSet::new();
+    loop {
+        let before = result.len();
+        for def in defs {
+            if def.fields.iter().any(|field| {
+                let ty = graph_field_element_type(&field.type_name);
+
+                is_graph_resource_type(ty) || result.contains(ty)
+            }) {
+                result.insert(def.type_name.clone());
+            }
+        }
+
+        if result.len() == before {
+            return result;
+        }
+    }
+}
+
+fn graph_field_element_type(mut ty: &str) -> &str {
+    while let Some(inner) = ty.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        let Some((element, _)) = inner.rsplit_once(';') else {
+            break;
+        };
+        ty = element.trim();
+    }
+
+    ty
 }
 
 struct GeneratedFile {
@@ -1889,6 +2176,7 @@ struct SharedModuleTemplate {
     cross_module_imports: Vec<SharedModuleImport>,
     enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
+    graph_split_defs: Vec<GraphSplitDef>,
 }
 
 #[cfg(test)]
@@ -1950,6 +2238,187 @@ mod tests {
                 insta::assert_snapshot!(content);
             });
         });
+    }
+
+    fn graph_test_def(name: &str, fields: &[(&str, &str)]) -> GeneratedStructDefinition {
+        GeneratedStructDefinition::gpu_layout(
+            name.into(),
+            fields
+                .iter()
+                .map(|(name, ty)| GeneratedStructFieldDefinition::new((*name).into(), (*ty).into()))
+                .collect(),
+            None,
+            None,
+        )
+    }
+
+    fn graph_test_split(
+        defs: &[GeneratedStructDefinition],
+        params: &[&str],
+    ) -> anyhow::Result<Vec<GraphSplitDef>> {
+        graph_split_defs(
+            defs,
+            &params.iter().map(|name| (*name).into()).collect(),
+            &resource_bearing_types(defs),
+            &mut defs.iter().map(|def| def.type_name.clone()).collect(),
+        )
+    }
+
+    #[test]
+    fn graph_analysis_keeps_shader_local_names_separate() {
+        let shader_a = [
+            graph_test_def("Params", &[("nested", "Local")]),
+            graph_test_def("Local", &[("value", "f32")]),
+        ];
+        let shader_b = [
+            graph_test_def("Params", &[("nested", "Local")]),
+            graph_test_def("Local", &[("image", "BindlessHandle<Sampler2D>")]),
+        ];
+        assert_eq!(graph_test_split(&shader_a, &["Params"]).unwrap().len(), 1);
+        assert!(graph_test_split(&shader_b, &[]).unwrap().is_empty());
+        assert!(graph_test_split(&shader_b, &["Params"]).is_err());
+    }
+
+    #[test]
+    fn graph_nested_resources_are_transitive_and_order_independent() {
+        let mut defs = vec![
+            graph_test_def("Params", &[("outer", "Outer")]),
+            graph_test_def("Outer", &[("inner", "Inner")]),
+            graph_test_def("Inner", &[("image", "BindlessHandle<Sampler2D>")]),
+        ];
+        for _ in 0..2 {
+            let error = graph_test_split(&defs, &["Params"])
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(error.contains("field 'outer' nests resource"), "{error}");
+            defs.reverse();
+        }
+    }
+
+    #[test]
+    fn graph_resource_arrays_cannot_escape_into_frame_data() {
+        for ty in [
+            "[[Inner; 2]; 3]",
+            "[BindlessHandle<Sampler2D>; 2]",
+            "[Addr<f32>; 2]",
+        ] {
+            let defs = [
+                graph_test_def("Params", &[("nested", ty)]),
+                graph_test_def("Inner", &[("image", "BindlessHandle<Sampler2D>")]),
+            ];
+            assert!(graph_test_split(&defs, &["Params"]).is_err(), "{ty}");
+        }
+    }
+
+    #[test]
+    fn graph_generated_names_reject_collisions() {
+        for name in ["ParamsData", "ParamsBindings"] {
+            let defs = [
+                graph_test_def(
+                    "Params",
+                    &[("value", "f32"), ("image", "BindlessHandle<Sampler2D>")],
+                ),
+                graph_test_def(name, &[]),
+            ];
+            let error = graph_test_split(&defs, &["Params"])
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(
+                error.contains(name) && error.contains("collides"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn graph_split_reports_classification_then_collision_then_nested_resources() {
+        let mut defs = vec![
+            graph_test_def(
+                "Params",
+                &[
+                    ("nested", "Inner"),
+                    ("image", "BindlessHandle<Sampler2D>"),
+                    ("unknown", "BindlessHandle<FutureMarker>"),
+                ],
+            ),
+            graph_test_def("Inner", &[("image", "BindlessHandle<Sampler2D>")]),
+            graph_test_def("ParamsBindings", &[]),
+        ];
+        let error = graph_test_split(&defs, &["Params"])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("FutureMarker"), "{error}");
+
+        defs[0].fields.pop();
+        let error = graph_test_split(&defs, &["Params"])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            error.contains("ParamsBindings") && error.contains("collides"),
+            "{error}"
+        );
+
+        defs.pop();
+        let error = graph_test_split(&defs, &["Params"])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("field 'nested' nests resource"), "{error}");
+    }
+
+    #[test]
+    fn graph_user_padding_prefix_is_data_and_synthetic_padding_is_zeroed() {
+        let mut def = graph_test_def(
+            "Params",
+            &[
+                ("_padding_hint", "u32"),
+                ("image", "BindlessHandle<Sampler2D>"),
+            ],
+        );
+        def.fields
+            .push(GeneratedStructFieldDefinition::padding(0, 4));
+        let splits = graph_test_split(&[def], &["Params"]).unwrap();
+        let block = splits[0].block();
+        assert!(block.contains("pub _padding_hint: u32"));
+        assert!(block.contains("_padding_hint: data._padding_hint"));
+        assert!(block.contains("_padding_0: Default::default()"));
+        assert!(!block.contains("pub _padding_0"));
+    }
+
+    #[test]
+    fn graph_unknown_handle_returns_a_source_qualified_error() {
+        let defs = vec![graph_test_def(
+            "Params",
+            &[("image", "BindlessHandle<FutureMarker>")],
+        )];
+        let data = ComputeShaderData {
+            shader_name: "unknown".into(),
+            source_file_name: "unknown.compute.slang".into(),
+            defs: GeneratedTypeDefs {
+                struct_defs: defs,
+                ..Default::default()
+            },
+            params_type_names: vec!["Params".into()],
+            shader_impl: GeneratedComputeShaderImpl {
+                shader_name: "unknown".into(),
+                shader_type_name: "Shader".into(),
+                workgroup_size: [1; 3],
+                push_constant_type_name: None,
+                resources_texture_fields: vec![],
+                resources_uniform_buffer_fields: vec![],
+                resources_storage_texture_fields: vec![],
+            },
+        };
+        let result = render_compute_shader_file(&data, &BTreeMap::new(), "crate");
+        let error = format!("{:#}", result.err().unwrap());
+        assert!(
+            error.contains("unknown.compute.slang") && error.contains("FutureMarker"),
+            "{error}"
+        );
     }
 
     /// No fixture has a shader name long enough to reach the wrapped branch, so

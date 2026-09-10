@@ -39,6 +39,39 @@ pub struct Resources<'a> {
     pub render_params_buffer: &'a UniformBufferHandle<RenderParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RenderParamsData {
+    pub particle_count: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RenderParamsBindings {
+    pub particles: ReadBufferBinding<Particle>,
+}
+
+impl GraphShaderParams for RenderParams {
+    type Data = RenderParamsData;
+    type Bindings = RenderParamsBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            particle_count: data.particle_count,
+            _padding_0: Default::default(),
+            particles: resolver.read_buf(bindings.particles),
+        }
+    }
+}
+
+impl GraphBindingSet for RenderParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.particles.erased()));
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

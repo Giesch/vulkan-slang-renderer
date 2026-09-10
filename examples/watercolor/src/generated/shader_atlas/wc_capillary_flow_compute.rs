@@ -56,6 +56,56 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsData {
+    pub grid_size: glam::Vec2,
+    pub diffuse_rate: f32,
+    pub capacity: f32,
+    pub sigma: f32,
+    pub dry_threshold: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsBindings {
+    pub saturation_in: SampledTexBinding,
+    pub wet_mask_in: SampledTexBinding,
+    pub saturation_out: StorageTexBinding,
+    pub wet_mask_out: StorageTexBinding,
+}
+
+impl GraphShaderParams for Params {
+    type Data = ParamsData;
+    type Bindings = ParamsBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            saturation_in: resolver.sampled_tex(bindings.saturation_in),
+            wet_mask_in: resolver.sampled_tex(bindings.wet_mask_in),
+            saturation_out: resolver.storage_tex(bindings.saturation_out),
+            wet_mask_out: resolver.storage_tex(bindings.wet_mask_out),
+            grid_size: data.grid_size,
+            diffuse_rate: data.diffuse_rate,
+            capacity: data.capacity,
+            sigma: data.sigma,
+            dry_threshold: data.dry_threshold,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for ParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.saturation_in));
+        f(GraphBinding::SampledTex(self.wet_mask_in));
+        f(GraphBinding::StorageTex(self.saturation_out));
+        f(GraphBinding::StorageTex(self.wet_mask_out));
+    }
+}
+
 pub const WORKGROUP_SIZE: [u32; 3] = [16, 16, 1];
 
 #[derive(Clone)]

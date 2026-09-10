@@ -84,6 +84,70 @@ pub struct Resources<'a> {
     pub brush_params_buffer: &'a UniformBufferHandle<BrushParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BrushParamsData {
+    pub point_count: u32,
+    pub brush_radius: f32,
+    pub brush_opacity: f32,
+    pub brush_pressure: f32,
+    pub pigment_color_0_3: glam::Vec4,
+    pub pigment_color_4_7: glam::Vec4,
+    pub pigment_color_8_11: glam::Vec4,
+    pub canvas_size: glam::Vec2,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BrushParamsBindings {
+    pub wet_mask: StorageTexBinding,
+    pub pressure: StorageTexBinding,
+    pub pigment_0_3: StorageTexBinding,
+    pub pigment_4_7: StorageTexBinding,
+    pub pigment_8_11: StorageTexBinding,
+    pub saturation: StorageTexBinding,
+    pub stroke_points: ReadBufferBinding<StrokePoint>,
+}
+
+impl GraphShaderParams for BrushParams {
+    type Data = BrushParamsData;
+    type Bindings = BrushParamsBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            wet_mask: resolver.storage_tex(bindings.wet_mask),
+            pressure: resolver.storage_tex(bindings.pressure),
+            pigment_0_3: resolver.storage_tex(bindings.pigment_0_3),
+            pigment_4_7: resolver.storage_tex(bindings.pigment_4_7),
+            pigment_8_11: resolver.storage_tex(bindings.pigment_8_11),
+            saturation: resolver.storage_tex(bindings.saturation),
+            point_count: data.point_count,
+            brush_radius: data.brush_radius,
+            brush_opacity: data.brush_opacity,
+            brush_pressure: data.brush_pressure,
+            pigment_color_0_3: data.pigment_color_0_3,
+            pigment_color_4_7: data.pigment_color_4_7,
+            pigment_color_8_11: data.pigment_color_8_11,
+            canvas_size: data.canvas_size,
+            stroke_points: resolver.read_buf(bindings.stroke_points),
+        }
+    }
+}
+
+impl GraphBindingSet for BrushParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::StorageTex(self.wet_mask));
+        f(GraphBinding::StorageTex(self.pressure));
+        f(GraphBinding::StorageTex(self.pigment_0_3));
+        f(GraphBinding::StorageTex(self.pigment_4_7));
+        f(GraphBinding::StorageTex(self.pigment_8_11));
+        f(GraphBinding::StorageTex(self.saturation));
+        f(GraphBinding::Buffer(self.stroke_points.erased()));
+    }
+}
+
 pub const WORKGROUP_SIZE: [u32; 3] = [16, 16, 1];
 
 #[derive(Clone)]

@@ -39,6 +39,42 @@ pub struct Resources<'a> {
     pub sim_params_buffer: &'a UniformBufferHandle<SimParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SimParamsData {
+    pub delta_time: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SimParamsBindings {
+    pub particles_in: ReadBufferBinding<Particle>,
+    pub particles_out: BufferBinding<Particle>,
+}
+
+impl GraphShaderParams for SimParams {
+    type Data = SimParamsData;
+    type Bindings = SimParamsBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            particles_in: resolver.read_buf(bindings.particles_in),
+            particles_out: resolver.buf(bindings.particles_out),
+            delta_time: data.delta_time,
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for SimParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.particles_in.erased()));
+        f(GraphBinding::Buffer(self.particles_out.erased()));
+    }
+}
+
 pub const WORKGROUP_SIZE: [u32; 3] = [256, 1, 1];
 
 #[derive(Clone)]

@@ -6,6 +6,7 @@ use serde::Serialize;
 
 #[allow(unused_imports)]
 use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::*;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
@@ -26,3 +27,16 @@ const _: () = assert!(std::mem::offset_of!(MVPMatrices, view) == 64);
 const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
 const _: () = assert!(std::mem::offset_of!(MVPMatrices, proj) == 128);
 const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
+
+impl GraphShaderParams for MVPMatrices {
+    type Data = Self;
+    type Bindings = ();
+
+    fn assemble(
+        data: &Self::Data,
+        _bindings: &Self::Bindings,
+        _resolver: &BindingResolver<'_>,
+    ) -> Self {
+        *data
+    }
+}

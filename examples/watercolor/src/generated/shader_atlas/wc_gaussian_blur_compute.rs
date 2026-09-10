@@ -49,6 +49,54 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BlurDispatchData {
+    pub direction: glam::Vec2,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BlurDispatchBindings {
+    pub input_tex: SampledTexBinding,
+    pub output_tex: StorageTexBinding,
+}
+
+impl GraphShaderParams for BlurDispatch {
+    type Data = BlurDispatchData;
+    type Bindings = BlurDispatchBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            input_tex: resolver.sampled_tex(bindings.input_tex),
+            output_tex: resolver.storage_tex(bindings.output_tex),
+            direction: data.direction,
+        }
+    }
+}
+
+impl GraphBindingSet for BlurDispatchBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.input_tex));
+        f(GraphBinding::StorageTex(self.output_tex));
+    }
+}
+
+impl GraphShaderParams for Params {
+    type Data = Self;
+    type Bindings = ();
+
+    fn assemble(
+        data: &Self::Data,
+        _bindings: &Self::Bindings,
+        _resolver: &BindingResolver<'_>,
+    ) -> Self {
+        *data
+    }
+}
+
 impl mltrs::renderer::gpu_write::PushConstantBlock for BlurDispatch {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<BlurDispatch>() <= 128);

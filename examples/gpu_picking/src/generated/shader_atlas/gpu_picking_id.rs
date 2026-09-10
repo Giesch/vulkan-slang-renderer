@@ -43,6 +43,41 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<GpuPickingIdParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct GpuPickingIdParamsData {
+    pub camera: RayMarchCamera,
+    pub cube_count: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct GpuPickingIdParamsBindings {
+    pub cubes: ReadBufferBinding<Cube>,
+}
+
+impl GraphShaderParams for GpuPickingIdParams {
+    type Data = GpuPickingIdParamsData;
+    type Bindings = GpuPickingIdParamsBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            camera: data.camera,
+            cube_count: data.cube_count,
+            _padding_0: Default::default(),
+            cubes: resolver.read_buf(bindings.cubes),
+        }
+    }
+}
+
+impl GraphBindingSet for GpuPickingIdParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.cubes.erased()));
+    }
+}
+
 #[derive(Clone)]
 pub struct Shader {
     pub reflection_json: ReflectionJson,

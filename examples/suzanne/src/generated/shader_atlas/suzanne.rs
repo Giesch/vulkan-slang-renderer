@@ -58,6 +58,47 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<SuzanneParams>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SuzanneParamsData {
+    pub mvp: MVPMatrices,
+    pub time: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SuzanneParamsBindings {
+    pub texture0: SampledTexBinding,
+    pub texture1: SampledTexBinding,
+    pub texture2: SampledTexBinding,
+}
+
+impl GraphShaderParams for SuzanneParams {
+    type Data = SuzanneParamsData;
+    type Bindings = SuzanneParamsBindings;
+
+    fn assemble(
+        data: &Self::Data,
+        bindings: &Self::Bindings,
+        resolver: &BindingResolver<'_>,
+    ) -> Self {
+        Self {
+            mvp: data.mvp,
+            time: data.time,
+            _padding_0: Default::default(),
+            texture0: resolver.sampled_tex(bindings.texture0),
+            texture1: resolver.sampled_tex(bindings.texture1),
+            texture2: resolver.sampled_tex(bindings.texture2),
+        }
+    }
+}
+
+impl GraphBindingSet for SuzanneParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::SampledTex(self.texture0));
+        f(GraphBinding::SampledTex(self.texture1));
+        f(GraphBinding::SampledTex(self.texture2));
+    }
+}
+
 impl VertexDescription for Vertex {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
         let binding_description = ash::vk::VertexInputBindingDescription::default()
