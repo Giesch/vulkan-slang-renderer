@@ -147,7 +147,7 @@ pub(crate) fn build_assembly(
 
 fn access(desc: &GraphDesc, pass: &LeafPass) -> LeafAccess {
     let mut access = LeafAccess::default();
-    let mut add = |resource: &ResourceRef| {
+    for (_, resource) in pass.commands().flat_map(|command| command.bindings(desc)) {
         if let ResourceRef::Tex(tex, tex_access) = resource {
             match tex_access {
                 TexAccess::Read => &mut access.reads,
@@ -157,37 +157,26 @@ fn access(desc: &GraphDesc, pass: &LeafPass) -> LeafAccess {
             }
             .push(*tex)
         }
-    };
-    match pass {
-        LeafPass::Compute(compute) => {
-            if let Some(uniform) = desc.uniforms.get(compute.uniform.0 as usize) {
-                for (_, resource) in &uniform.source.bindings {
-                    add(resource)
-                }
-            }
-            if let Some(push) = &compute.push {
-                for (_, resource) in &push.bindings {
-                    add(resource)
-                }
-            }
-        }
-        LeafPass::Raster(raster) => {
-            for draw in &raster.draws {
-                if let Some(uniform) = desc.uniforms.get(draw.uniform.0 as usize) {
-                    for (_, resource) in &uniform.source.bindings {
-                        add(resource)
-                    }
-                }
-                if let Some(push) = &draw.push {
-                    for (_, resource) in &push.bindings {
-                        add(resource)
-                    }
-                }
-            }
-        }
     }
 
     access
+}
+
+fn push_assembly(
+    push: Option<&PushDesc>,
+    schemas: &SchemaTable,
+    assemblies: &mut Vec<AssemblyProgram>,
+) -> Option<AsmId> {
+    push.map(|push| {
+        let id = AsmId(assemblies.len() as u32);
+        assemblies.push(build_assembly(
+            schemas.get(push.schema).unwrap(),
+            push.data,
+            &push.bindings,
+        ));
+
+        id
+    })
 }
 
 pub(crate) fn compile(
@@ -217,15 +206,8 @@ pub(crate) fn compile(
 
         match pass {
             LeafPass::Compute(compute) => {
-                let push_asm = compute.push.as_ref().map(|push| {
-                    let id = AsmId(assemblies.len() as u32);
-                    assemblies.push(build_assembly(
-                        schemas.get(push.schema).unwrap(),
-                        push.data,
-                        &push.bindings,
-                    ));
-                    id
-                });
+                let push_asm = push_assembly(compute.push.as_ref(), schemas, assemblies);
+
                 CompiledLeaf {
                     kind: CompiledLeafKind::Dispatch {
                         pipeline: compute.pipeline,
@@ -243,15 +225,8 @@ pub(crate) fn compile(
                     .draws
                     .iter()
                     .map(|draw| {
-                        let push_asm = draw.push.as_ref().map(|push| {
-                            let id = AsmId(assemblies.len() as u32);
-                            assemblies.push(build_assembly(
-                                schemas.get(push.schema).unwrap(),
-                                push.data,
-                                &push.bindings,
-                            ));
-                            id
-                        });
+                        let push_asm = push_assembly(draw.push.as_ref(), schemas, assemblies);
+
                         CompiledDraw {
                             pipeline: draw.pipeline,
                             uniform: draw.uniform,
@@ -593,5 +568,75 @@ mod tests {
             panic!("expected a dispatch leaf")
         };
         assert_eq!(push_asm, Some(AsmId(builder.desc.uniforms.len() as u32)));
+    }
+
+    #[test]
+    fn mixed_commands_append_only_present_pushes_in_command_order() {
+        use super::super::desc::PushDesc;
+
+        let mut builder = DescBuilder::new(2);
+        let compute = builder.dispatch_with_push("compute", &[], &[read(0)]);
+        let mut draw = builder.draw("draw", &[]);
+        let push_schema = compute.push.as_ref().unwrap().schema;
+        builder.schemas.schemas[push_schema.0 as usize].layout = Some(SchemaLayout {
+            fields: vec![resource(0, 0, 8, SchemaFieldKind::SampledTex)],
+        });
+        draw.push = Some(PushDesc {
+            data: None,
+            schema: push_schema,
+            bindings: bindings(&[read(1)]),
+        });
+        let no_push_compute = builder.dispatch("no push compute", &[]);
+        let no_push_draw = builder.draw("no push draw", &[]);
+        builder.leaf(compute);
+        builder.leaf(no_push_compute);
+        builder.leaf_raster(raster("main", vec![no_push_draw, draw]));
+        let analysis = builder.validate().unwrap();
+        let graph = compile(&builder.desc, &analysis, &builder.schemas);
+        let uniform_count = builder.desc.uniforms.len();
+
+        assert_eq!(graph.assemblies.len(), uniform_count + 2);
+        assert!(
+            graph.assemblies[..uniform_count]
+                .iter()
+                .all(|program| *program == AssemblyProgram::Deferred)
+        );
+        for (index, tex) in [TexId(0), TexId(1)].into_iter().enumerate() {
+            assert_eq!(
+                graph.assemblies[uniform_count + index],
+                AssemblyProgram::Steps(vec![AssemblyStep {
+                    dst_offset: 0,
+                    src: AssemblySrc::ResolveTex {
+                        tex,
+                        access: TexAccess::Read
+                    },
+                }])
+            );
+        }
+        let pushes: Vec<_> = graph
+            .passes
+            .iter()
+            .flat_map(|pass| {
+                let CompiledPass::Leaf(leaf) = pass else {
+                    unreachable!()
+                };
+
+                match &leaf.kind {
+                    CompiledLeafKind::Dispatch { push_asm, .. } => vec![*push_asm],
+                    CompiledLeafKind::Raster { draws } => {
+                        draws.iter().map(|draw| draw.push_asm).collect()
+                    }
+                }
+            })
+            .collect();
+        assert_eq!(
+            pushes,
+            vec![
+                Some(AsmId(uniform_count as u32)),
+                None,
+                None,
+                Some(AsmId(uniform_count as u32 + 1)),
+            ]
+        );
     }
 }

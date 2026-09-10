@@ -144,6 +144,70 @@ pub(crate) enum LeafPass {
     Raster(RasterDesc),
 }
 
+impl GraphDesc {
+    pub(crate) fn leaves(&self) -> impl Iterator<Item = &LeafPass> {
+        self.passes.iter().flat_map(|pass| match pass {
+            PassDesc::Leaf(leaf) => std::slice::from_ref(leaf),
+            PassDesc::When { body, .. } | PassDesc::Repeat { body, .. } => body.as_slice(),
+        })
+    }
+}
+
+/// One dispatch or draw, retaining command boundaries inside raster passes.
+#[derive(Clone, Copy)]
+pub(crate) struct Command<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) pipeline: PipelineId,
+    pub(crate) uniform: UniformId,
+    pub(crate) push: Option<&'a PushDesc>,
+}
+
+impl<'a> From<&'a DispatchDesc> for Command<'a> {
+    fn from(dispatch: &'a DispatchDesc) -> Self {
+        Self {
+            name: &dispatch.name,
+            pipeline: dispatch.pipeline,
+            uniform: dispatch.uniform,
+            push: dispatch.push.as_ref(),
+        }
+    }
+}
+
+impl<'a> From<&'a DrawDesc> for Command<'a> {
+    fn from(draw: &'a DrawDesc) -> Self {
+        Self {
+            name: &draw.name,
+            pipeline: draw.pipeline,
+            uniform: draw.uniform,
+            push: draw.push.as_ref(),
+        }
+    }
+}
+
+impl<'a> Command<'a> {
+    pub(crate) fn bindings(
+        self,
+        desc: &'a GraphDesc,
+    ) -> impl Iterator<Item = &'a (FieldKey, ResourceRef)> + Clone {
+        desc.uniforms
+            .get(self.uniform.0 as usize)
+            .into_iter()
+            .flat_map(|uniform| &uniform.source.bindings)
+            .chain(self.push.into_iter().flat_map(|push| &push.bindings))
+    }
+}
+
+impl LeafPass {
+    pub(crate) fn commands(&self) -> impl Iterator<Item = Command<'_>> {
+        let (compute, draws) = match self {
+            Self::Compute(compute) => (Some(Command::from(compute)), &[][..]),
+            Self::Raster(raster) => (None, raster.draws.as_slice()),
+        };
+
+        compute.into_iter().chain(draws.iter().map(Command::from))
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct DispatchDesc {
     pub(crate) name: String,

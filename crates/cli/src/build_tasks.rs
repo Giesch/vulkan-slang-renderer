@@ -1531,6 +1531,7 @@ struct GraphSplitTemplate<'a> {
 fn graph_split_def(
     def: &GeneratedStructDefinition,
     resource_bearing: &BTreeSet<String>,
+    names: &mut BTreeSet<String>,
 ) -> anyhow::Result<GraphSplitDef> {
     let params_type = &def.type_name;
 
@@ -1539,25 +1540,42 @@ fn graph_split_def(
     let mut assemble_fields = vec![];
 
     for field in &def.fields {
-        let name = &field.field_name;
         let class = classify_graph_field(field)?;
         assemble_fields.push((field, class));
         match class {
             GraphFieldClass::Padding => {}
             GraphFieldClass::Data => {
-                anyhow::ensure!(
-                    !resource_bearing.contains(graph_field_element_type(&field.type_name))
-                        && !is_graph_resource_type(graph_field_element_type(&field.type_name)),
-                    "render-graph split of '{params_type}': field '{name}' nests resource \
-                    fields through '{}'; flatten them into the parameter block",
-                    field.type_name,
-                );
                 data_fields.push(field);
             }
             GraphFieldClass::Binding(kind) => {
                 binding_fields.push((field, kind));
             }
         }
+    }
+
+    if !binding_fields.is_empty() {
+        for suffix in ["Bindings", "Data"] {
+            let omit_data = suffix == "Data" && data_fields.is_empty();
+            if omit_data {
+                continue;
+            }
+
+            let name = format!("{params_type}{suffix}");
+            anyhow::ensure!(
+                names.insert(name.clone()),
+                "render-graph split of '{params_type}': generated type '{name}' collides with another type",
+            );
+        }
+    }
+    for field in &data_fields {
+        anyhow::ensure!(
+            !resource_bearing.contains(graph_field_element_type(&field.type_name))
+                && !is_graph_resource_type(graph_field_element_type(&field.type_name)),
+            "render-graph split of '{params_type}': field '{}' nests resource \
+            fields through '{}'; flatten them into the parameter block",
+            field.field_name,
+            field.type_name,
+        );
     }
 
     let source = GraphSplitTemplate {
@@ -1583,32 +1601,7 @@ fn graph_split_defs(
         .iter()
         .filter(|def| params_types.contains(&def.type_name))
     {
-        let classes = def
-            .fields
-            .iter()
-            .map(classify_graph_field)
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        if classes
-            .iter()
-            .any(|class| matches!(class, GraphFieldClass::Binding(..)))
-        {
-            for suffix in ["Bindings", "Data"] {
-                if suffix == "Data"
-                    && !classes
-                        .iter()
-                        .any(|class| matches!(class, GraphFieldClass::Data))
-                {
-                    continue;
-                }
-                let name = format!("{}{suffix}", def.type_name);
-                anyhow::ensure!(
-                    names.insert(name.clone()),
-                    "render-graph split of '{}': generated type '{name}' collides with another type",
-                    def.type_name
-                );
-            }
-        }
-        splits.push(graph_split_def(def, resource_bearing)?);
+        splits.push(graph_split_def(def, resource_bearing, names)?);
     }
 
     Ok(splits)
@@ -2335,6 +2328,44 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn graph_split_reports_classification_then_collision_then_nested_resources() {
+        let mut defs = vec![
+            graph_test_def(
+                "Params",
+                &[
+                    ("nested", "Inner"),
+                    ("image", "BindlessHandle<Sampler2D>"),
+                    ("unknown", "BindlessHandle<FutureMarker>"),
+                ],
+            ),
+            graph_test_def("Inner", &[("image", "BindlessHandle<Sampler2D>")]),
+            graph_test_def("ParamsBindings", &[]),
+        ];
+        let error = graph_test_split(&defs, &["Params"])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("FutureMarker"), "{error}");
+
+        defs[0].fields.pop();
+        let error = graph_test_split(&defs, &["Params"])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            error.contains("ParamsBindings") && error.contains("collides"),
+            "{error}"
+        );
+
+        defs.pop();
+        let error = graph_test_split(&defs, &["Params"])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("field 'nested' nests resource"), "{error}");
     }
 
     #[test]

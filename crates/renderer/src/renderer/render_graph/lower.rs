@@ -4,14 +4,6 @@ use super::validate::GraphError;
 use super::{BufferBindingKind, GraphBinding, SampledRef, StorageRef, StorageTexAccess};
 use std::collections::HashMap;
 
-#[derive(Debug, Default, Clone)]
-pub struct NodeAccess {
-    pub(crate) reads: Vec<u32>,
-    pub(crate) prev_reads: Vec<u32>,
-    pub(crate) writes: Vec<u32>,
-    pub(crate) mutates: Vec<u32>,
-}
-
 pub(crate) struct LowerOutput {
     pub(crate) desc: GraphDesc,
     pub(crate) schemas: SchemaTable,
@@ -35,6 +27,7 @@ pub struct PushInput {
     pub(crate) bindings: Vec<GraphBinding>,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum LowerDrawCall {
     VertexCount(u32),
     WholeIndexed,

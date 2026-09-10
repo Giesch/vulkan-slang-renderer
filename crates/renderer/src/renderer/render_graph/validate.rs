@@ -318,93 +318,6 @@ fn kind(value: &ValueKind) -> &'static str {
     }
 }
 
-fn refs<'a>(desc: &'a GraphDesc, leaf: &'a LeafPass) -> Vec<&'a [(FieldKey, ResourceRef)]> {
-    match leaf {
-        LeafPass::Compute(compute) => {
-            let mut out = vec![];
-            if let Some(uniform) = desc.uniforms.get(compute.uniform.0 as usize) {
-                out.push(uniform.source.bindings.as_slice());
-            }
-            if let Some(push) = &compute.push {
-                out.push(push.bindings.as_slice());
-            }
-
-            out
-        }
-        LeafPass::Raster(raster) => raster
-            .draws
-            .iter()
-            .flat_map(|draw| {
-                let mut out = vec![];
-                if let Some(uniform) = desc.uniforms.get(draw.uniform.0 as usize) {
-                    out.push(uniform.source.bindings.as_slice());
-                }
-                if let Some(push) = &draw.push {
-                    out.push(push.bindings.as_slice());
-                }
-
-                out
-            })
-            .collect(),
-    }
-}
-
-fn command_bindings<'a>(
-    desc: &'a GraphDesc,
-    uniform: UniformId,
-    push: Option<&'a PushDesc>,
-) -> Vec<&'a (FieldKey, ResourceRef)> {
-    let mut out = vec![];
-    if let Some(decl) = desc.uniforms.get(uniform.0 as usize) {
-        out.extend(&decl.source.bindings);
-    }
-    if let Some(push) = push {
-        out.extend(&push.bindings);
-    }
-
-    out
-}
-
-/// A command is one dispatch or one draw. Hazard checks partition by command,
-/// not by pass: a raster pass holds several independent draws.
-fn commands<'a>(
-    desc: &'a GraphDesc,
-    leaf: &'a LeafPass,
-) -> Vec<(&'a str, Vec<&'a (FieldKey, ResourceRef)>)> {
-    match leaf {
-        LeafPass::Compute(compute) => vec![(
-            compute.name.as_str(),
-            command_bindings(desc, compute.uniform, compute.push.as_ref()),
-        )],
-        LeafPass::Raster(raster) => raster
-            .draws
-            .iter()
-            .map(|draw| {
-                (
-                    draw.name.as_str(),
-                    command_bindings(desc, draw.uniform, draw.push.as_ref()),
-                )
-            })
-            .collect(),
-    }
-}
-
-fn all_leaves(desc: &GraphDesc) -> Vec<&LeafPass> {
-    let mut leaves = vec![];
-    for pass in &desc.passes {
-        match pass {
-            PassDesc::Leaf(leaf) => leaves.push(leaf),
-            PassDesc::When { body, .. } | PassDesc::Repeat { body, .. } => {
-                for leaf in body {
-                    leaves.push(leaf)
-                }
-            }
-        }
-    }
-
-    leaves
-}
-
 fn check_shape(
     name: &str,
     schema: SchemaId,
@@ -486,6 +399,49 @@ pub(crate) fn validate(
             }
         }
     };
+    let valid_command =
+        |command: Command<'_>, expected: PipelineKind, errors: &mut Vec<GraphError>| {
+            if valid(
+                command.pipeline.0,
+                desc.pipelines.len(),
+                TableKind::Pipeline,
+                errors,
+            ) && desc.pipelines[command.pipeline.0 as usize].kind != expected
+            {
+                errors.push(GraphError::PipelineKindMismatch {
+                    command: command.name.into(),
+                    expected,
+                })
+            }
+            valid(
+                command.uniform.0,
+                desc.uniforms.len(),
+                TableKind::Uniform,
+                errors,
+            );
+            if let Some(push) = command.push {
+                valid(
+                    push.schema.0,
+                    schemas.schemas.len(),
+                    TableKind::Schema,
+                    errors,
+                );
+                if let Some(value) = push.data
+                    && valid(value.0, desc.values.len(), TableKind::Value, errors)
+                    && !matches!(desc.values[value.0 as usize].kind, ValueKind::Bytes { .. })
+                {
+                    let value = &desc.values[value.0 as usize];
+                    errors.push(GraphError::ValueKindMismatch {
+                        value: value.name.clone(),
+                        expected: "bytes",
+                        found: kind(&value.kind),
+                    });
+                }
+                valid_bindings(&push.bindings, errors);
+
+                check_shape(command.name, push.schema, &push.bindings, schemas, errors)
+            }
+        };
     for tex in &desc.textures {
         match tex.size {
             SizeClass::Window | SizeClass::WindowDiv(_) => {
@@ -661,8 +617,8 @@ pub(crate) fn validate(
                 }
                 let rotating: Vec<_> = body
                     .iter()
-                    .flat_map(|leaf| refs(desc, leaf))
-                    .flatten()
+                    .flat_map(LeafPass::commands)
+                    .flat_map(|command| command.bindings(desc))
                     .filter_map(|(_, resource)| match resource {
                         ResourceRef::Tex(tex, TexAccess::Write) => Some(*tex),
                         _ => None,
@@ -701,9 +657,10 @@ pub(crate) fn validate(
     let mut phys = vec![1; desc.textures.len()];
     let mut prev_readers: Vec<(TexId, String)> = vec![];
     let mut written_anywhere: Vec<TexId> = vec![];
-    for leaf in all_leaves(desc) {
-        for (command, resources) in commands(desc, leaf) {
-            for (_, resource) in &resources {
+    for leaf in desc.leaves() {
+        for command in leaf.commands() {
+            let resources = command.bindings(desc);
+            for (_, resource) in resources.clone() {
                 if let ResourceRef::Tex(tex, TexAccess::ReadPrevious) = resource
                     && (tex.0 as usize) < phys.len()
                 {
@@ -712,7 +669,7 @@ pub(crate) fn validate(
             }
             let tex_ids = |access| {
                 resources
-                    .iter()
+                    .clone()
                     .filter_map(move |(_, resource)| match resource {
                         ResourceRef::Tex(tex, tex_access) if *tex_access == access => Some(*tex),
                         _ => None,
@@ -725,7 +682,7 @@ pub(crate) fn validate(
             let mutates = tex_ids(TexAccess::Mutate);
             for tex in &prev_reads {
                 if (tex.0 as usize) < phys.len() && !prev_readers.iter().any(|(t, _)| t == tex) {
-                    prev_readers.push((*tex, command.into()))
+                    prev_readers.push((*tex, command.name.into()))
                 }
             }
             for (i, tex) in writes.iter().enumerate() {
@@ -734,7 +691,7 @@ pub(crate) fn validate(
                 }
                 if writes[i + 1..].contains(tex) {
                     errors.push(GraphError::DuplicateWrite {
-                        command: command.into(),
+                        command: command.name.into(),
                         tex: tex_name(desc, *tex),
                     })
                 }
@@ -743,7 +700,7 @@ pub(crate) fn validate(
                 }
                 if prev_reads.contains(tex) {
                     errors.push(GraphError::WriteAndPrevRead {
-                        command: command.into(),
+                        command: command.name.into(),
                         tex: tex_name(desc, *tex),
                     })
                 }
@@ -751,13 +708,13 @@ pub(crate) fn validate(
             for tex in mutates {
                 if reads.contains(&tex) {
                     errors.push(GraphError::MutateAndRead {
-                        command: command.into(),
+                        command: command.name.into(),
                         tex: tex_name(desc, tex),
                     })
                 }
                 if writes.contains(&tex) {
                     errors.push(GraphError::MutateAndWrite {
-                        command: command.into(),
+                        command: command.name.into(),
                         tex: tex_name(desc, tex),
                     })
                 }
@@ -781,51 +738,7 @@ pub(crate) fn validate(
                         at: compute.name.clone(),
                     })
                 }
-                if valid(
-                    compute.pipeline.0,
-                    desc.pipelines.len(),
-                    TableKind::Pipeline,
-                    &mut errors,
-                ) && desc.pipelines[compute.pipeline.0 as usize].kind != PipelineKind::Compute
-                {
-                    errors.push(GraphError::PipelineKindMismatch {
-                        command: compute.name.clone(),
-                        expected: PipelineKind::Compute,
-                    })
-                }
-                valid(
-                    compute.uniform.0,
-                    desc.uniforms.len(),
-                    TableKind::Uniform,
-                    &mut errors,
-                );
-                if let Some(push) = &compute.push {
-                    valid(
-                        push.schema.0,
-                        schemas.schemas.len(),
-                        TableKind::Schema,
-                        &mut errors,
-                    );
-                    if let Some(value) = push.data
-                        && valid(value.0, desc.values.len(), TableKind::Value, &mut errors)
-                        && !matches!(desc.values[value.0 as usize].kind, ValueKind::Bytes { .. })
-                    {
-                        let value = &desc.values[value.0 as usize];
-                        errors.push(GraphError::ValueKindMismatch {
-                            value: value.name.clone(),
-                            expected: "bytes",
-                            found: kind(&value.kind),
-                        });
-                    }
-                    valid_bindings(&push.bindings, &mut errors);
-                    check_shape(
-                        &compute.name,
-                        push.schema,
-                        &push.bindings,
-                        schemas,
-                        &mut errors,
-                    )
-                }
+                valid_command(Command::from(compute), PipelineKind::Compute, &mut errors);
             }
             LeafPass::Raster(raster) => {
                 if let RasterTargets::Offscreen { color, depth } = &raster.targets {
@@ -839,7 +752,7 @@ pub(crate) fn validate(
                 }
                 for draw in &raster.draws {
                     let mut written: Vec<TexId> = vec![];
-                    for (_, resource) in command_bindings(desc, draw.uniform, draw.push.as_ref()) {
+                    for (_, resource) in Command::from(draw).bindings(desc) {
                         if let ResourceRef::Tex(tex, TexAccess::Write | TexAccess::Mutate) =
                             resource
                             && !written.contains(tex)
@@ -855,40 +768,7 @@ pub(crate) fn validate(
                         })
                     }
 
-                    if valid(
-                        draw.pipeline.0,
-                        desc.pipelines.len(),
-                        TableKind::Pipeline,
-                        &mut errors,
-                    ) && desc.pipelines[draw.pipeline.0 as usize].kind != PipelineKind::Graphics
-                    {
-                        errors.push(GraphError::PipelineKindMismatch {
-                            command: draw.name.clone(),
-                            expected: PipelineKind::Graphics,
-                        })
-                    }
-                    valid(
-                        draw.uniform.0,
-                        desc.uniforms.len(),
-                        TableKind::Uniform,
-                        &mut errors,
-                    );
-                    if let Some(push) = &draw.push {
-                        valid(
-                            push.schema.0,
-                            schemas.schemas.len(),
-                            TableKind::Schema,
-                            &mut errors,
-                        );
-                        valid_bindings(&push.bindings, &mut errors);
-                        check_shape(
-                            &draw.name,
-                            push.schema,
-                            &push.bindings,
-                            schemas,
-                            &mut errors,
-                        );
-                    }
+                    valid_command(Command::from(draw), PipelineKind::Graphics, &mut errors);
                     if let DrawCall::IndexedIndirect { args, .. } = &draw.call
                         && valid(
                             args.buffer.0,
@@ -1056,6 +936,46 @@ mod tests {
                 .errors()
                 .iter()
                 .any(|e| matches!(e, GraphError::DuplicateWrite { tex, .. } if tex == "tex0"))
+        );
+    }
+
+    #[test]
+    fn duplicate_write_across_uniform_and_push_is_an_error() {
+        let mut builder = DescBuilder::new(1);
+        let dispatch = builder.dispatch_with_push("dispatch", &[write(0)], &[write(0)]);
+        builder.leaf(dispatch);
+
+        assert_eq!(
+            builder.errors(),
+            vec![GraphError::DuplicateWrite {
+                command: "dispatch".into(),
+                tex: "tex0".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn missing_command_uniforms_report_errors_without_panicking() {
+        let mut builder = DescBuilder::new(0);
+        let mut dispatch = builder.dispatch("dispatch", &[]);
+        let mut draw = builder.draw("draw", &[]);
+        dispatch.uniform = UniformId(9);
+        draw.uniform = UniformId(10);
+        builder.leaf(dispatch);
+        builder.leaf_raster(raster("main", vec![draw]));
+
+        assert_eq!(
+            builder.errors(),
+            vec![
+                GraphError::IdOutOfRange {
+                    table: TableKind::Uniform,
+                    id: 9
+                },
+                GraphError::IdOutOfRange {
+                    table: TableKind::Uniform,
+                    id: 10
+                },
+            ]
         );
     }
 
@@ -1653,6 +1573,64 @@ mod tests {
             })
             .count();
         assert_eq!(out_of_range, 1);
+    }
+
+    #[test]
+    fn compute_and_draw_push_data_require_declared_bytes() {
+        use super::super::desc::{PushDesc, ValueId};
+
+        for graphics in [false, true] {
+            for case in ["missing", "wrong kind", "bytes", "none"] {
+                let mut builder = DescBuilder::new(0);
+                let mut dispatch = builder.dispatch("dispatch", &[]);
+                let schema = builder.desc.uniforms[dispatch.uniform.0 as usize].schema;
+                let (data, expected) = match case {
+                    "missing" => (
+                        Some(ValueId(99)),
+                        Some(GraphError::IdOutOfRange {
+                            table: TableKind::Value,
+                            id: 99,
+                        }),
+                    ),
+                    "wrong kind" => {
+                        let value = builder.value(ValueKind::Count, false);
+
+                        (
+                            Some(value),
+                            Some(GraphError::ValueKindMismatch {
+                                value: builder.desc.values[value.0 as usize].name.clone(),
+                                expected: "bytes",
+                                found: "count",
+                            }),
+                        )
+                    }
+                    "bytes" => (
+                        Some(builder.value(ValueKind::Bytes { schema }, false)),
+                        None,
+                    ),
+                    "none" => (None, None),
+                    _ => unreachable!(),
+                };
+                let push = Some(PushDesc {
+                    data,
+                    schema,
+                    bindings: vec![],
+                });
+                if graphics {
+                    let mut draw = builder.draw("draw", &[]);
+                    draw.push = push;
+                    builder.leaf_raster(raster("main", vec![draw]));
+                } else {
+                    dispatch.push = push;
+                    builder.leaf(dispatch);
+                }
+
+                match expected {
+                    Some(error) => assert_eq!(builder.errors(), vec![error], "{graphics}: {case}"),
+                    None => assert!(builder.validate().is_ok(), "{graphics}: {case}"),
+                }
+            }
+        }
     }
 
     #[test]
