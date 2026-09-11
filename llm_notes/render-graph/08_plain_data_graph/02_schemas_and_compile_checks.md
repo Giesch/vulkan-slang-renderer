@@ -158,10 +158,78 @@ Keep prototype-only APIs separate from production execution until their owning p
 5. Pair each negative fixture with a minimally changed positive case. Use isolated
    temporary fixture output so concurrent tests cannot overwrite generated modules.
 
-Evidence: omitted tuple element, incomplete generated binding struct, wrong binding
+Evidence: omitted tuple element, wrong binding
 kind and buffer element type fail. Their positive controls compile. Twelve-element
 and nested tuples compile. Repeat uses `(LoopCount, BodyFrame)` and optional uses
 `Option<BodyFrame>` without weakening completeness.
+
+Implementation record — P2.1 is implemented.
+
+- Harness: `crates/renderer/tests/render_graph_api_compile.rs`. Fixture crate:
+  `crates/renderer/fixtures/api_compile`, one bin per case, outside the
+  workspace (root `Cargo.toml` `exclude`) because its negative bins never
+  compile and its `src/generated` exists only while the test runs.
+- The harness generates the fixture's bindings, checks every case, then deletes
+  the generated output, the same shape `alignment_tests` uses for the CLI stub
+  fixture. Nothing generated is committed and no justfile recipe maintains it.
+  It writes the vendored `mltrs.slang` beside the five committed slang sources,
+  generates with `--import-root mltrs_renderer` instead of the default `mltrs`,
+  and removes `shaders/compiled/`, `src/generated/` and the vendored module
+  afterwards. `mltrs-cli` is a dev-dependency of `mltrs-renderer` for this; it
+  does not depend on the renderer, so there is no cycle. Running the renderer's
+  tests now needs the slang compiler, and the test is `#[cfg(not(windows))]`
+  like the other codegen tests.
+- The case types come from the generated modules, so they cannot drift from what
+  `crates/cli/templates/` emits. Five slang sources supply them: `particle`
+  (`Particle`, `OtherElement`), `sim` (`SimParams`), `tex` (`TexParams`),
+  `other` (`OtherParams`), `render` (`RenderParams`).
+- The fixture's `Cargo.lock` is a pruned copy of the root lock, and
+  `CARGO_TARGET_DIR` points at the workspace target, so the checks reuse the
+  workspace build. The pinning is load-bearing: a fresh resolve picks different
+  `sdl3` versions and rebuilds SDL from source. The harness passes `--locked`,
+  which `check_crate` does not, so drift fails loudly rather than silently
+  duplicating heavy dependency builds. `docs/testing.md` records the recovery
+  step.
+- The missing-binding negative case and its positive control were removed as
+  redundant with the generated required fields. The harness now has 12 cases.
+- Case set (positive control listed beside each negative):
+  - omitted tuple element: `negative_omitted_tuple_element` fails E0308
+    (`RenderParamsData` appears only in the expected frame type); control
+    `positive_complete_tuple`.
+  - wrong binding kind: `negative_wrong_binding_kind` fails E0308
+    (`SampledTexBinding` vs `StorageTexBinding`); control
+    `positive_right_binding_kind`.
+  - wrong buffer element type: `negative_wrong_buffer_element_type` fails E0308
+    (`BufferBinding<Particle>` vs `BufferBinding<OtherElement>`); control
+    `positive_right_buffer_element_type`.
+  - repeat: `positive_repeat_frame` pins `Frame = (LoopCount, SimParamsData)`;
+    `negative_repeat_frame_without_loop_count` fails E0308 on the bare count.
+  - optional: `positive_optional_frame` pins `Frame = Option<Vec<Particle>>`;
+    `negative_optional_frame_without_option` fails E0308 on the bare body.
+  - `positive_tuple_twelve_elements` and `positive_nested_tuples` compile;
+    the nested case composes upload, repeat, and optional inside the tuples.
+- The CLI stub fixture (`crates/cli/fixtures/check_crate`) is unchanged. It
+  compiles generated code against stub renderer types, which needs no graphics
+  stack. This harness compiles generated code against the real renderer.
+- Each negative case is one `cargo check --bin` invocation. The harness rejects
+  a failure caused by an unresolved import or dependency (E0432/E0433/E0463),
+  and requires the expected error code, the expected type names, and the case
+  file name in the diagnostic. The file name pins the failure to the case
+  source rather than to a generated module or the renderer. The harness collects
+  every case result, cleans up, then asserts, so a failure reports all cases and
+  leaves no generated files behind.
+- No case constructs a `Renderer`. Every case type-checks functions with
+  renderer handles as parameters. A case that declares graph textures takes
+  `&mut GraphResources`, because `RenderGraph::new` consumes the collection.
+- The harness itself runs `cargo`, so it waits when another build holds the
+  build-directory lock. Under `cargo test` it does not deadlock: the outer
+  build releases the lock before the test binaries run.
+- Original gates run before removing the missing-binding pair: the harness
+  (generation plus 14 cases, 2.5 s once the workspace is
+  built), `cargo check --workspace --all-targets`,
+  `cargo test -p mltrs-renderer`, `just lint`, `just test`, `just sweep`,
+  `cargo fmt`. A vacuity check confirmed the harness fails when a negative case
+  is changed to compile.
 
 ### P2.2 — Add metadata without choosing a new frame ABI
 

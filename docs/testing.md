@@ -43,6 +43,70 @@ Line width is decided in rust, not in the template. See
 `ShaderAtlasField::init_line` and `RUSTFMT_MAX_WIDTH` in
 `crates/cli/src/build_tasks.rs`.
 
+## Render-graph API compile checks
+
+`cargo test -p mltrs-renderer` also runs a compile harness for the public
+render-graph API. It runs inside `just test` and `just pre-commit`.
+
+- The driver is `crates/renderer/tests/render_graph_api_compile.rs`.
+- Each case is one bin of the fixture crate `crates/renderer/fixtures/api_compile`.
+- The harness checks each bin independently with `cargo check` against the
+  real `mltrs-renderer` crate.
+- Positive cases must compile. A negative case must fail at its intended
+  operation. The harness requires the expected error code, the expected type
+  names, and the case file name in the diagnostic. A case that fails on an
+  unresolved import or a missing dependency fails the harness.
+- No case constructs a `Renderer` or allocates a GPU. Every case type-checks
+  a function that takes renderer handles as parameters.
+
+The harness generates the fixture's shader bindings, checks every case against
+them, and deletes the generated output again. This is the shape `alignment_tests`
+uses for the CLI stub fixture, so nothing generated is committed and no justfile
+recipe maintains it. The committed tree holds the slang sources and the cases,
+nothing built from them.
+
+- `shaders/source/*.slang` are the inputs. The harness writes the vendored
+  `mltrs.slang` beside them, then generates `shaders/compiled/` and
+  `src/generated/`, then removes all three.
+- Generation uses `--import-root mltrs_renderer` instead of the default
+  `mltrs`, so the cases reach the renderer API with no engine crate in between.
+- The case types come from the generated modules. Nothing in the fixture
+  mirrors a codegen template, so the cases cannot drift from what the generator
+  emits.
+- `mltrs-cli` is a dev-dependency of `mltrs-renderer` for this. It does not
+  depend on the renderer, so this adds no cycle. It does mean the slang
+  compiler is needed to run the renderer's tests.
+- The test is `#[cfg(not(windows))]`, like every other codegen test here.
+
+The fixture crate sits outside the workspace (root `Cargo.toml` `exclude`)
+because its negative bins never compile and its `src/generated` exists only
+while the test runs. The harness points `CARGO_TARGET_DIR` at the workspace
+`target/`, so the checks reuse the workspace build of `mltrs-renderer`.
+
+The fixture's `Cargo.lock` is a pruned copy of the root lock. It pins the same
+dependency versions, which is what lets the shared target directory be reused;
+a fresh resolve picks different `sdl3` versions and rebuilds SDL from source.
+Unlike `check_crate`, the harness passes `--locked`, so drift fails loudly
+rather than silently diverging. To recover: copy the root `Cargo.lock` into the
+fixture and run the harness once without `--locked` to re-prune it.
+
+The harness runs `cargo`, which takes the build-directory lock. A cargo build
+running at the same time (bacon, a second shell) makes the harness wait for
+that build to finish.
+
+`cargo fmt` does not reach the fixture, because it is outside the workspace and
+its `src/lib.rs` names a module that exists only during the test. Format the
+cases directly:
+
+```bash
+rustfmt --edition 2024 crates/renderer/fixtures/api_compile/cases/*/*.rs
+```
+
+The CLI stub fixture (`crates/cli/fixtures/check_crate`) compiles generated
+code against stub renderer types, which is fast and needs no graphics stack.
+It cannot prove that real renderer API calls are safe. This harness compiles
+the same generated code against the real renderer.
+
 ## Validation sweep
 
 `scripts/headless-sweep.sh` runs every example under the lavapipe software

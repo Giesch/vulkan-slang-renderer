@@ -1182,6 +1182,7 @@ dependencies = [
  "glam",
  "heck",
  "log",
+ "mltrs-cli",
  "mltrs-slang-reflection",
  "notify",
  "sdl3",

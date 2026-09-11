@@ -33,6 +33,11 @@ pub struct Config {
     pub optimization: OptimizationLevel,
 }
 
+/// The canonical engine slang module, embedded so `cargo install mltrs-cli`
+/// is self-contained. `shaders init` writes it into a consumer's source dir.
+pub const VENDORED_MODULES: &[(&str, &str)] =
+    &[("mltrs.slang", include_str!("../vendor/mltrs.slang"))];
+
 const SHADER_FILE_SUFFIX: &str = ".shader.slang";
 const COMPUTE_SHADER_FILE_SUFFIX: &str = ".compute.slang";
 

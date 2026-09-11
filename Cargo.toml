@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "examples/*"]
-exclude = ["crates/cli/fixtures/check_crate"]
+exclude = ["crates/cli/fixtures/check_crate", "crates/renderer/fixtures/api_compile"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,7 @@ edition = "2024"
 # internal
 gx = { path = "crates/gx" }
 mltrs = { path = "crates/mltrs" }
+mltrs-cli = { path = "crates/cli" }
 mltrs-renderer = { path = "crates/renderer" }
 mltrs-slang-reflection = { path = "crates/slang-reflection" }
 

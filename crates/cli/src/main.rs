@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 use mltrs_cli::build_tasks;
+use mltrs_cli::build_tasks::VENDORED_MODULES;
 
 #[derive(Parser)]
 #[command(name = "mltrs", version, about = "mltrs engine tooling")]
@@ -54,10 +55,6 @@ struct InitArgs {
     #[arg(long)]
     force: bool,
 }
-
-/// The canonical engine slang module, embedded so `cargo install mltrs-cli`
-/// is self-contained. `shaders init` writes it into a consumer's source dir.
-const VENDORED_MODULES: &[(&str, &str)] = &[("mltrs.slang", include_str!("../vendor/mltrs.slang"))];
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();

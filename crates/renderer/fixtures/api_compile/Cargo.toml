@@ -1,0 +1,69 @@
+[package]
+name = "render-graph-api-checks"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+mltrs-renderer = { path = "../.." }
+
+ash = "0.38"
+glam = { version = "0.33", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# One bin target per case, so the harness in
+# crates/renderer/tests/render_graph_api_compile.rs can check each positive and
+# negative case independently. The negative bins do not compile on purpose.
+[[bin]]
+name = "positive_complete_tuple"
+path = "cases/positive/complete_tuple.rs"
+
+[[bin]]
+name = "negative_omitted_tuple_element"
+path = "cases/negative/omitted_tuple_element.rs"
+
+[[bin]]
+name = "positive_right_binding_kind"
+path = "cases/positive/right_binding_kind.rs"
+
+[[bin]]
+name = "negative_wrong_binding_kind"
+path = "cases/negative/wrong_binding_kind.rs"
+
+[[bin]]
+name = "positive_right_buffer_element_type"
+path = "cases/positive/right_buffer_element_type.rs"
+
+[[bin]]
+name = "negative_wrong_buffer_element_type"
+path = "cases/negative/wrong_buffer_element_type.rs"
+
+[[bin]]
+name = "positive_repeat_frame"
+path = "cases/positive/repeat_frame.rs"
+
+[[bin]]
+name = "negative_repeat_frame_without_loop_count"
+path = "cases/negative/repeat_frame_without_loop_count.rs"
+
+[[bin]]
+name = "positive_optional_frame"
+path = "cases/positive/optional_frame.rs"
+
+[[bin]]
+name = "negative_optional_frame_without_option"
+path = "cases/negative/optional_frame_without_option.rs"
+
+[[bin]]
+name = "positive_tuple_twelve_elements"
+path = "cases/positive/tuple_twelve_elements.rs"
+
+[[bin]]
+name = "positive_nested_tuples"
+path = "cases/positive/nested_tuples.rs"
+
+# keep this fixture out of the real workspace (it is also in root `exclude`).
+# `src/generated` exists only while the harness runs, and the negative bins
+# never compile, so no workspace-wide build can include this crate.
+[workspace]

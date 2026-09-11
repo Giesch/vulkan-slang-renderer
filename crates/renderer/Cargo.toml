@@ -25,3 +25,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 vk-mem.workspace = true
+
+# the render-graph API compile harness (tests/render_graph_api_compile.rs)
+# generates its fixture's shader bindings, the same way the cli's own codegen
+# tests do. mltrs-cli does not depend on the renderer, so this adds no cycle.
+[dev-dependencies]
+mltrs-cli.workspace = true
