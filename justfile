@@ -91,12 +91,12 @@ textures:
     # source image -- it is deliberately not part of `just pre-commit`.
     for e in {{examples_with_textures}}; do just "$e" textures; done
 
-# re-seed every example's vendored engine slang modules from the cli's canonical copies
+# re-seed the examples and Roc platform with the cli's canonical engine slang module
 [unix]
 vendor-shaders:
     #!/usr/bin/env bash
     set -euo pipefail
-    for d in examples/*/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
+    for d in examples/*/ roc-platform/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
     cargo fmt
 
 # e.g. `just mltrs shaders compile --crate-dir examples/sdf_2d`
