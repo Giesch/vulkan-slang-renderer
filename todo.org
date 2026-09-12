@@ -1,6 +1,8 @@
 #+title: Todo
 
 * Now
+- [ ] render graph
+
 - [ ] get toon link animations working
   - convert to gltf?
     this is not workable; maybe gltf plus an extension?
