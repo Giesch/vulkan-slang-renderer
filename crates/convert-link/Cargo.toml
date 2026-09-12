@@ -11,6 +11,10 @@ workspace = true
 name = "convert_link"
 path = "src/main.rs"
 
+[[bin]]
+name = "convert_link_animations"
+path = "src/bin/convert_link_animations.rs"
+
 [dependencies]
 gx.workspace = true
 
