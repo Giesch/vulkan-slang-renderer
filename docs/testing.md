@@ -10,6 +10,22 @@ Two checks cover different things. A renderer change needs both.
 `just test` says nothing about whether the renderer works. The sweep says
 nothing about whether codegen is correct.
 
+## Link animations
+
+The toon_link animation pipeline carries its own two-level checks
+([link_animations.md](link_animations.md) has the full picture):
+
+- `just toon_link link-test-animations` — asset-free: Rust parser/schema
+  unit tests, CLI integration tests on synthetic raw inventories, and
+  Python unittests that drive the extraction script against a fake `dtk`
+  with generated RARC/J3D fixtures. Needs `uv` (it resolves the pinned
+  gclib dependency) but no game assets.
+- `just toon_link link-verify-animations` — real-asset gate: raw-tree and
+  golden-hash checks, byte-identical parity between the Rust converter and
+  the independent Python oracle over every clip, conversion repeatability,
+  tamper detection, and a model-gate isolation check. Fails loudly when
+  the assets or prerequisites are missing; it is never cargo-discovered.
+
 ## Snapshot tests
 
 [insta](https://insta.rs) holds the snapshots of the generated code.
