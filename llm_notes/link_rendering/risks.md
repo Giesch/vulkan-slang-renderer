@@ -300,7 +300,7 @@ manifest, so only the two light colors (`lit_mask` is 3) are seeds.
 [`phase_08.md`](phase_08.md)'s Recorded facts — the lighting pass, and its risk
 #4)*. P8 did ship the hand-tuned seeds first, and they were visibly wrong in a
 specific way — the lit band came out strongly **yellow**. Chasing that turned
-out to answer the whole risk, from `../tww` and the disc rather than from RAM:
+out to answer the whole risk, from `tww` and the disc rather than from RAM:
 
 - **The two GX lights carry one channel each.** Light 0 is red-only
   (`d_kankyo.cpp:1494-1499` sets `mColor.r`, `:1545-1547` hard-zeros green and

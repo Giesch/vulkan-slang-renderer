@@ -37,7 +37,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 EXAMPLE_DIR = SCRIPT_DIR.parent
 ANIM_DIR = EXAMPLE_DIR / "assets/link/animations"
 
-DEFAULT_TWW_DIR = EXAMPLE_DIR.parent.parent.parent / "tww"
 DEFAULT_DISC_REL = "orig/GZLE01/Legend of Zelda, The - The Wind Waker (USA, Canada).ciso"
 DEFAULT_DTK_REL = "build/tools/dtk"
 
@@ -158,9 +157,12 @@ def sha256_hex(data: bytes) -> str:
 # --- disc / dtk ---------------------------------------------------------------
 
 
-def resolve_paths(tww_dir: str | None, disc: str | None, dtk: str | None) -> dict[str, Path]:
-    """Resolve the three tool paths independently of the invocation directory."""
-    tww = Path(tww_dir or os.environ.get("TWW_DIR") or DEFAULT_TWW_DIR).resolve()
+def resolve_paths(disc: str | None, dtk: str | None) -> dict[str, Path]:
+    """Resolve the checkout from TWW_DIR and optional disc/tool overrides."""
+    tww_dir = os.environ.get("TWW_DIR")
+    if not tww_dir:
+        raise ExtractError("Set TWW_DIR to the absolute path of your tww checkout")
+    tww = Path(tww_dir).resolve()
     disc_path = Path(disc).resolve() if disc else (tww / DEFAULT_DISC_REL)
     dtk_path = Path(dtk).resolve() if dtk else (tww / DEFAULT_DTK_REL)
     return {"tww": tww, "disc": disc_path, "dtk": dtk_path}
@@ -168,7 +170,7 @@ def resolve_paths(tww_dir: str | None, disc: str | None, dtk: str | None) -> dic
 
 def check_prerequisites(paths: dict[str, Path]) -> None:
     if not paths["tww"].is_dir():
-        raise ExtractError(f"tww checkout not found at '{paths['tww']}' (pass --tww-dir or set TWW_DIR)")
+        raise ExtractError(f"tww checkout not found at '{paths['tww']}' (set TWW_DIR)")
     if not paths["disc"].is_file():
         raise ExtractError(f"disc image not found: {paths['disc']}")
     if not (paths["dtk"].is_file() and os.access(paths["dtk"], os.X_OK)):
@@ -647,9 +649,8 @@ def extract(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Extract reviewed Link body/face animations from the GZLE01 disc"
+        description="Extract reviewed Link body/face animations from the GZLE01 disc (requires TWW_DIR)"
     )
-    parser.add_argument("--tww-dir", help="tww checkout root (default: $TWW_DIR, then ../../../tww beside the repo)")
     parser.add_argument("--disc", help="disc image (default: <tww>/orig/GZLE01/*.ciso)")
     parser.add_argument("--dtk", help="dtk binary (default: <tww>/build/tools/dtk)")
     parser.add_argument(
@@ -667,7 +668,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hashes", type=Path, default=HASHES_GOLDEN, help="golden sha256 manifest path")
     args = parser.parse_args(argv)
 
-    paths = resolve_paths(args.tww_dir, args.disc, args.dtk)
     out_dir = (args.out_dir or ANIM_DIR).resolve()
     if args.bootstrap:
         # Bootstrap never reads or writes the tracked goldens: force the
@@ -679,6 +679,7 @@ def main(argv: list[str] | None = None) -> int:
         hashes = args.hashes
 
     try:
+        paths = resolve_paths(args.disc, args.dtk)
         result = extract(paths, out_dir, selection, hashes, args.bootstrap)
     except ExtractError as ex:
         print(f"extract_link_animations: error: {ex}", file=sys.stderr)

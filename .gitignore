@@ -14,3 +14,5 @@ crates/renderer/fixtures/api_compile/shaders/compiled/
 crates/renderer/fixtures/api_compile/shaders/source/mltrs.slang
 crates/renderer/fixtures/api_compile/target/
 __pycache__/
+
+.env

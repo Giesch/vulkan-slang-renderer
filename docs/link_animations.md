@@ -15,9 +15,14 @@ example changes. Nothing here feeds `toon_link`'s run path.
 
 ## Prerequisites
 
-- The tww checkout beside the repo (`TWW_DIR`, default `../../../tww`
-  relative to the example), containing the GZLE01 CISO and a built
-  `build/tools/dtk`.
+- A tww checkout containing the GZLE01 CISO at
+  `tww/orig/GZLE01/Legend of Zelda, The - The Wind Waker (USA, Canada).ciso`
+  and a built `tww/build/tools/dtk`. Set `TWW_DIR` in the project `.env` to
+  the absolute filesystem path of this checkout, and load it with direnv
+  (the project `.envrc` uses `dotenv`) or export `TWW_DIR` in your shell.
+  Both extraction scripts require a nonempty `TWW_DIR`; there is no default
+  checkout location or `--tww-dir` option. Documentation paths beginning
+  with `tww/` are rooted at this checkout.
 - `uv` (resolves the pinned
   `gclib @ 64127742467acb633d51685b9b1798ab45bb4034` used by the oracle and
   the extraction reader; the scripts are PEP-723 and fail loudly without it).
@@ -26,6 +31,24 @@ example changes. Nothing here feeds `toon_link`'s run path.
   rewriting them.
 
 ## Commands
+
+For a new clone, prepare and verify all Wind Waker assets with one command
+from the repo root:
+
+```bash
+just toon_link tww-assets
+```
+
+This extracts the model, textures, environment palette, and animations;
+converts the model and animation assets; and runs the model and animation
+verification gates, including raw asset hashes, animation output hashes, and
+independent oracle comparisons. It requires
+`just`, Rust/Cargo, Bash, GNU coreutils, and the prerequisites above. Outputs
+stay in the gitignored `examples/toon_link/assets/link/` tree. Once it succeeds,
+run the example with `cargo run -p toon_link` (with the renderer's usual build
+and runtime prerequisites installed).
+
+The individual animation commands remain available:
 
 ```bash
 just toon_link extract-link-animations   # disc -> assets/link/animations/raw
