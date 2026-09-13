@@ -69,11 +69,16 @@ def u32(data: bytes, off: int, what: str) -> int:
 
 
 def chunk_slice(data: bytes, what: str) -> bytes:
-    """The single chunk at 0x20, clamped to the file (vanilla BTK chunk-size
-    words can overrun EOF by a pad block)."""
+    """The single chunk at 0x20, clamped to the file. Vanilla BTK chunk-size
+    words can overrun EOF by up to one 0x20 pad block; anything larger is
+    corruption and rejected (mirroring the Rust bound)."""
     chunk_size = u32(data, 0x24, f"{what}: chunk size")
     if chunk_size < 0x18:
         raise OracleError(f"{what}: chunk size {chunk_size} smaller than its header")
+    if 0x20 + chunk_size > len(data) + 0x20:
+        raise OracleError(
+            f"{what}: chunk claims {chunk_size} bytes, past the {len(data)}-byte file"
+        )
     end = min(0x20 + chunk_size, len(data))
     return data[0x20:end]
 
@@ -114,23 +119,28 @@ def track_words(desc: tuple[int, int, int]) -> tuple[int, int]:
     return count, stride
 
 
-def read_track_f32(chunk: bytes, desc: tuple[int, int, int], pool_off: int, what: str) -> str:
+def read_track_f32(
+    chunk: bytes, desc: tuple[int, int, int], pool: tuple[int, int], what: str
+) -> str:
     count, index, tangent_type = desc
+    pool_off, pool_len = pool
     if count == 0:
         return "default"
-    word = lambda i: chunk[pool_off + 4 * i : pool_off + 4 * i + 4]
+
+    def word(i: int) -> bytes:
+        start = pool_off + 4 * i
+        raw = chunk[start : start + 4]
+        if len(raw) < 4 or start + 4 > pool_off + pool_len:
+            raise OracleError(f"{what}: pool word {i} outside the pool")
+        return raw
+
     if count == 1:
-        raw = word(index)
-        if len(raw) < 4:
-            raise OracleError(f"{what}: pool word {index} outside the pool")
-        return f"constant={f32hex(raw)}"
+        return f"constant={f32hex(word(index))}"
     stride = 3 if tangent_type == 0 else 4
     parts = []
     prev_time = None
     for k in range(count):
         words = [word(index + k * stride + j) for j in range(stride)]
-        if any(len(w) < 4 for w in words):
-            raise OracleError(f"{what}: key {k} outside the pool")
         (time_bits,) = struct.unpack_from(">I", words[0], 0)
         if time_bits in (0x7F800000, 0xFF800000) or (time_bits >> 23) & 0xFF == 0xFF:
             raise OracleError(f"{what}: key {k} time is not finite")
@@ -143,21 +153,31 @@ def read_track_f32(chunk: bytes, desc: tuple[int, int, int], pool_off: int, what
     return f"keyed[ty={tangent_type}] " + ";".join(parts)
 
 
-def read_track_i16(chunk: bytes, desc: tuple[int, int, int], pool_off: int, what: str) -> str:
+def read_track_i16(
+    chunk: bytes, desc: tuple[int, int, int], pool: tuple[int, int], what: str
+) -> str:
     count, index, tangent_type = desc
+    pool_off, pool_len = pool
     if count == 0:
         return "default"
+
+    def halfword(i: int) -> int:
+        start = pool_off + 2 * i
+        if start + 2 > pool_off + pool_len:
+            raise OracleError(f"{what}: pool word {i} outside the pool")
+        return i16(chunk, start, what)
+
     if count == 1:
-        return f"constant={i16(chunk, pool_off + 2 * index, what)}"
+        return f"constant={halfword(index)}"
     stride = 3 if tangent_type == 0 else 4
     parts = []
     prev_time = None
     for k in range(count):
-        base = pool_off + 2 * (index + k * stride)
-        time = i16(chunk, base, what)
-        value = i16(chunk, base + 2, what)
-        ti = i16(chunk, base + 4, what)
-        to = i16(chunk, base + 6, what) if stride == 4 else ti
+        base = index + k * stride
+        time = halfword(base)
+        value = halfword(base + 1)
+        ti = halfword(base + 2)
+        to = halfword(base + 3) if stride == 4 else ti
         if prev_time is not None and time <= prev_time:
             raise OracleError(f"{what}: key {k} time does not strictly increase")
         prev_time = time
@@ -165,7 +185,9 @@ def read_track_i16(chunk: bytes, desc: tuple[int, int, int], pool_off: int, what
     return f"keyed[ty={tangent_type}] " + ";".join(parts)
 
 
-def read_axis(chunk: bytes, table_off: int, pools: tuple[int, int, int], what: str) -> str:
+def read_axis(
+    chunk: bytes, table_off: int, pools: tuple[tuple[int, int], tuple[int, int], tuple[int, int]], what: str
+) -> str:
     def desc_at(off: int) -> tuple[int, int, int]:
         if off + 6 > len(chunk):
             raise OracleError(f"{what}: key descriptor at {off:#x} outside the chunk")
@@ -195,6 +217,12 @@ def dump_bck(data: bytes, what: str) -> str:
     scale_off = u32(chunk, 0x18, f"{what}: scale pool offset")
     rot_off = u32(chunk, 0x1C, f"{what}: rotation pool offset")
     trans_off = u32(chunk, 0x20, f"{what}: translation pool offset")
+    # Pools are bounded by their declared element counts, not by the chunk.
+    pools = (
+        (scale_off, 4 * u16(chunk, 0x0E, f"{what}: scale count")),
+        (rot_off, 2 * u16(chunk, 0x10, f"{what}: rotation count")),
+        (trans_off, 4 * u16(chunk, 0x12, f"{what}: translation count")),
+    )
 
     sound_off = u32(data, 0x1C, f"{what}: sound offset")
     if sound_off == 0xFFFFFFFF:
@@ -202,6 +230,12 @@ def dump_bck(data: bytes, what: str) -> str:
     else:
         count = u16(data, sound_off, f"{what}: BAS count")
         length = 8 + count * 0x20
+        declared_chunk_end = 0x20 + u32(data, 0x24, f"{what}: chunk size")
+        if sound_off < declared_chunk_end:
+            raise OracleError(
+                f"{what}: BAS trailer at {sound_off:#x} starts inside the"
+                f" declared chunk (ends {declared_chunk_end:#x})"
+            )
         if sound_off + length > len(data):
             raise OracleError(
                 f"{what}: BAS trailer at {sound_off:#x} spans {length} bytes,"
@@ -213,7 +247,7 @@ def dump_bck(data: bytes, what: str) -> str:
     for j in range(joints):
         out.append(f"  joint {j}")
         for axis, axis_name in enumerate(("x", "y", "z")):
-            track = read_axis(chunk, table_off + (j * 3 + axis) * 0x12, (scale_off, rot_off, trans_off), f"{what}: joint {j} axis {axis_name}")
+            track = read_axis(chunk, table_off + (j * 3 + axis) * 0x12, pools, f"{what}: joint {j} axis {axis_name}")
             out.append(f"    axis {axis_name} {track}")
     return "\n".join(out)
 
@@ -292,7 +326,8 @@ def dump_btk(data: bytes, what: str) -> str:
         raise OracleError(f"{what}: {target_count} rows but {len(names)} names")
 
     def render_set(set_, n, names, what_set: str) -> list[str]:
-        (tables, remap, _names, selectors, centers, s_off, r_off, t_off, _sc, _rc, _tc) = set_
+        (tables, remap, _names, selectors, centers, s_off, r_off, t_off, sc, rc, tc) = set_
+        pools = ((s_off, 4 * sc), (r_off, 2 * rc), (t_off, 4 * tc))
         out = []
         for t in range(n):
             what_t = f"{what_set}: target {t}"
@@ -308,7 +343,7 @@ def dump_btk(data: bytes, what: str) -> str:
                 track = read_axis(
                     chunk,
                     tables + (t * 3 + axis) * 0x12,
-                    (s_off, r_off, t_off),
+                    pools,
                     f"{what_t} axis {axis_name}",
                 )
                 out.append(f"    axis {axis_name} {track}")
@@ -367,10 +402,19 @@ def cross_check(data: bytes, fmt: str, what: str) -> None:
 
     gclib's BCK/BTP chunk objects expose only header fields; its TTK1 walks
     the full track set but asserts identity remaps and keeps the post set
-    opaque. Those gaps are exactly what the struct walk above covers.
+    opaque. Those gaps are exactly what the struct walk above covers. For
+    BTKs with non-identity remaps gclib refuses the file outright (its own
+    assert), so the walk stands alone for those clips — synthetic
+    differential tests cover that path instead.
     """
-    parsed = _gclib_load(data, fmt, what)
     local = chunk_slice(data, what)
+    if fmt == "btk":
+        track_count = u16(local, 0x0C, f"{what}: track count")
+        remap_off = u32(local, 0x18, f"{what}: remap offset")
+        remaps = [u16(local, remap_off + 2 * i, what) for i in range(track_count // 3)]
+        if remaps != list(range(len(remaps))):
+            return  # documented gclib limitation: non-identity remap
+    parsed = _gclib_load(data, fmt, what)
 
     if fmt == "bck":
         ank = parsed.ank1
@@ -438,19 +482,56 @@ def cross_check(data: bytes, fmt: str, what: str) -> None:
                             f"{what}: target {i} {kind}_{axis_name}: gclib descriptor"
                             f" {(g.count, g.index, g.tangent_type)} != walk {desc}"
                         )
+                    pool_off, elem = pools[kind]
                     if g.count == 1:
-                        pool_off, elem = pools[kind]
-                        value = (
-                            i16(local, pool_off + 2 * g.index, what)
-                            if elem == 2
-                            else f32hex(local[pool_off + 4 * g.index : pool_off + 4 * g.index + 4])
-                        )
-                        expected = g.keyframes[0].value
-                        if elem != 2:
-                            if f32hex(struct.pack(">f", expected)) != value:
+                        if elem == 2:
+                            value = i16(local, pool_off + 2 * g.index, what)
+                            if g.keyframes[0].value != value:
                                 raise OracleError(f"{what}: target {i} {kind}_{axis_name} constant disagrees")
-                        elif expected != value:
-                            raise OracleError(f"{what}: target {i} {kind}_{axis_name} constant disagrees")
+                        else:
+                            raw = local[pool_off + 4 * g.index : pool_off + 4 * g.index + 4]
+                            if f32hex(struct.pack(">f", g.keyframes[0].value)) != f32hex(raw):
+                                raise OracleError(f"{what}: target {i} {kind}_{axis_name} constant disagrees")
+                    elif g.count >= 2:
+                        # Keyed tracks: every keyframe's time, value and both
+                        # tangents must agree with gclib's decode, compared
+                        # bit-exactly (f32) or exactly (i16). The tangent
+                        # enum is a plain Enum, not IntEnum: normalize first.
+                        tangent_u8 = _enum_u8(g.tangent_type, what, "tangent_type")
+                        stride = 3 if tangent_u8 == 0 else 4
+                        for k in range(g.count):
+                            gk = g.keyframes[k]
+                            if elem == 2:
+                                base = pool_off + 2 * (g.index + k * stride)
+                                walk_key = (
+                                    i16(local, base, what),
+                                    i16(local, base + 2, what),
+                                    i16(local, base + 4, what),
+                                )
+                                if stride == 4:
+                                    walk_key = walk_key + (i16(local, base + 6, what),)
+                                else:
+                                    # shared tangent: out repeats in
+                                    walk_key = walk_key + (walk_key[2],)
+                                gclib_key = (gk.time, gk.value, gk.tangent_in, gk.tangent_out)
+                            else:
+                                base = pool_off + 4 * (g.index + k * stride)
+                                walk_key = tuple(
+                                    f32hex(local[base + 4 * j : base + 4 * j + 4]) for j in range(stride)
+                                )
+                                gclib_key = tuple(
+                                    f32hex(struct.pack(">f", v))
+                                    for v in (gk.time, gk.value, gk.tangent_in, gk.tangent_out)
+                                )
+                                if stride == 3:
+                                    # shared tangent: walk repeats in for out
+                                    gclib_key = gclib_key[:3] + (gclib_key[2],)
+                                    walk_key = walk_key[:3] + (walk_key[2],)
+                            if walk_key != gclib_key:
+                                raise OracleError(
+                                    f"{what}: target {i} {kind}_{axis_name} key {k}:"
+                                    f" gclib {gclib_key} != walk {walk_key}"
+                                )
 
     for gclib_value, walk_value, field in checks:
         if gclib_value != walk_value:

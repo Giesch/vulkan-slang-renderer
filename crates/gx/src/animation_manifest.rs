@@ -374,6 +374,138 @@ mod tests {
     }
 
     #[test]
+    fn animation_schema_roundtrip_all_formats() {
+        // BCK with a present BAS trailer and a keyed rotation track.
+        let bck = AnimationClip {
+            version: CLIP_VERSION,
+            identity: identity(),
+            data: ClipData::Bck(BckClip {
+                duration_frames: 12,
+                loop_attribute: 4,
+                rotation_decimal_shift: 2,
+                joints: vec![BckJoint {
+                    ordinal: 7,
+                    axes: std::array::from_fn(|_| AxisSrt {
+                        scale: TrackF32::Keyed {
+                            tangent_type: 7,
+                            keys: vec![
+                                KeyF32 {
+                                    time: 0.0,
+                                    value: 1.0,
+                                    tangent_in: 0.25,
+                                    tangent_out: 0.5,
+                                },
+                                KeyF32 {
+                                    time: 4.0,
+                                    value: -2.5,
+                                    tangent_in: 0.5,
+                                    tangent_out: 1.0,
+                                },
+                            ],
+                        },
+                        rotation: TrackI16::Keyed {
+                            tangent_type: 0,
+                            keys: vec![
+                                KeyI16 {
+                                    time: 0,
+                                    value: -32768,
+                                    tangent_in: 12,
+                                    tangent_out: 12,
+                                },
+                                KeyI16 {
+                                    time: 9,
+                                    value: 16383,
+                                    tangent_in: -4,
+                                    tangent_out: -4,
+                                },
+                            ],
+                        },
+                        translation: TrackF32::Constant { value: 5.5 },
+                    }),
+                }],
+                bas: BasMetadata {
+                    present: true,
+                    offset: 0x240,
+                    length: 0x48,
+                },
+            }),
+        };
+        // BTP with duplicate material rows and sample-count != duration.
+        let btp = AnimationClip {
+            version: CLIP_VERSION,
+            identity: ClipIdentity {
+                archive: "LkAnm".into(),
+                member: "btp/y.btp".into(),
+                entry_index: 30,
+                resource_id: 31,
+                sha256: "bb".repeat(32),
+            },
+            data: ClipData::Btp(BtpClip {
+                duration_frames: 10,
+                loop_attribute: 2,
+                targets: vec![
+                    BtpTarget {
+                        material: "mouth".into(),
+                        material_remap: 14,
+                        texture_map_slot: 0,
+                        texture_indices: vec![27, 7, 7],
+                    },
+                    BtpTarget {
+                        material: "mouth".into(),
+                        material_remap: 99,
+                        texture_map_slot: 1,
+                        texture_indices: vec![4],
+                    },
+                ],
+            }),
+        };
+        // BTK with a full post set.
+        let axis = AxisSrt {
+            scale: TrackF32::Default,
+            rotation: TrackI16::Constant { value: 0x4000 },
+            translation: TrackF32::Default,
+        };
+        let btk = AnimationClip {
+            version: CLIP_VERSION,
+            identity: ClipIdentity {
+                archive: "LkD01".into(),
+                member: "btk/z.btk".into(),
+                entry_index: 40,
+                resource_id: 41,
+                sha256: "cc".repeat(32),
+            },
+            data: ClipData::Btk(BtkClip {
+                duration_frames: 20,
+                loop_attribute: 2,
+                rotation_decimal_shift: 1,
+                matrix_calc_type: 1,
+                targets: vec![BtkTarget {
+                    material: "eyeL".into(),
+                    material_remap: 37,
+                    texgen_selector: 2,
+                    center: [0.5, -0.5, 0.25],
+                    axes: std::array::from_fn(|_| axis.clone()),
+                }],
+                post: Some(BtkPostSet {
+                    targets: vec![BtkTarget {
+                        material: "eyeR".into(),
+                        material_remap: 11,
+                        texgen_selector: 1,
+                        center: [0.0; 3],
+                        axes: std::array::from_fn(|_| axis.clone()),
+                    }],
+                }),
+            }),
+        };
+        for clip in [bck, btp, btk] {
+            let json = serde_json::to_string(&clip).unwrap();
+            let back: AnimationClip = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, clip);
+            assert_eq!(read_clip(&json).unwrap(), clip);
+        }
+    }
+
+    #[test]
     fn animation_schema_roundtrip() {
         let clip = AnimationClip {
             version: CLIP_VERSION,

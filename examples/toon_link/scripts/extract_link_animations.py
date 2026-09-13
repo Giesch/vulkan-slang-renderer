@@ -341,6 +341,23 @@ def ttk1_names(data: bytes) -> list[str]:
     return read_string_table(data, 0x20 + off)
 
 
+def ttk1_post_names(data: bytes) -> list[str] | None:
+    """Post-set material names, or None when the clip has no post set.
+
+    Presence follows the Rust converter's consistency rule: the post set
+    exists iff both the post name-table offset and the post track count are
+    nonzero (the J3D loader reads both; anything else is inconsistent and
+    the converter rejects it, so classification must not accept it either).
+    """
+    (names_off,) = struct.unpack_from(">I", data, 0x20 + 0x44)
+    (track_count,) = struct.unpack_from(">H", data, 0x20 + 0x34)
+    if names_off == 0 and track_count == 0:
+        return None
+    if names_off == 0 or track_count == 0 or track_count % 3 != 0:
+        raise ExtractError("btk clip has an inconsistent post set")
+    return read_string_table(data, 0x20 + names_off)
+
+
 def classify(member: Member, cl_joints: int, cl_materials: frozenset[str]) -> Candidate:
     """Deterministic Link-only selection policy.
 
@@ -357,6 +374,12 @@ def classify(member: Member, cl_joints: int, cl_materials: frozenset[str]) -> Ca
         return Candidate(member, "excluded", f"joint-count-{joints}-not-cl-{cl_joints}")
     names = tpt1_names(member.data) if fmt == "btp" else ttk1_names(member.data)
     targets = set(names)
+    if fmt == "btk":
+        # Every target of an included clip must be in scope, including the
+        # optional post track set the converter preserves.
+        post = ttk1_post_names(member.data)
+        if post is not None:
+            targets |= set(post)
     if not targets:
         raise ExtractError(f"{what}: {fmt} clip with an empty material name table")
     matched = targets & cl_materials
@@ -488,22 +511,32 @@ def verify_hashes(manifest: Path, raw_root: Path, rel_prefix: str) -> None:
             raise ExtractError(f"{manifest.name}: {rel}: hash mismatch (extracted data differs from golden)")
 
 
-def promote_raw(staged: Path, final_raw: Path, stage_dir: Path) -> None:
+def promote_raw(staged: Path, final_raw: Path, out_dir: Path) -> None:
     """Replace the owned raw tree only after staging verified.
 
-    The previous tree is moved aside first and deleted only after the new tree
-    is in place, so a failure at any point leaves a valid tree behind.
+    The previous tree is moved aside (outside any directory the caller
+    cleans up) and restored on any failure — including a partial
+    destination left by a failed copy — so a valid tree always survives.
     """
     final_raw.parent.mkdir(parents=True, exist_ok=True)
-    backup = stage_dir / "previous-raw"
+    backup = out_dir / ".previous-raw"
+    if backup.exists():
+        shutil.rmtree(backup)
     if final_raw.exists():
         shutil.move(str(final_raw), str(backup))
     try:
         shutil.move(str(staged), str(final_raw))
     except BaseException:
-        if backup.exists() and not final_raw.exists():
+        # A failed move can leave a partial destination; drop it before
+        # restoring, or the restore would fail on a non-empty directory.
+        if final_raw.exists():
+            shutil.rmtree(final_raw, ignore_errors=True)
+        if backup.exists():
             shutil.move(str(backup), str(final_raw))
         raise
+    # Success: the backup is no longer needed.
+    if backup.exists():
+        shutil.rmtree(backup)
 
 
 # --- cl.bdl metadata -----------------------------------------------------------
@@ -578,7 +611,7 @@ def extract(
                 shutil.rmtree(candidate_raw)
             stage_raw(stage, report)
             write_inventory(stage / "raw", report)
-            promote_raw(stage / "raw", candidate_raw, stage)
+            promote_raw(stage / "raw", candidate_raw, out_dir)
             write_selection_json(out_dir / "candidate" / "selection.json", selection_doc)
             # Candidate hash lines are relative to the candidate tree itself so
             # `sha256sum --check` works from inside candidate/.
@@ -600,7 +633,7 @@ def extract(
         stage_raw(stage, report)
         write_inventory(stage / "raw", report)
         verify_hashes(hashes_path, stage / "raw", "assets/link/animations/raw")
-        promote_raw(stage / "raw", out_dir / "raw", stage)
+        promote_raw(stage / "raw", out_dir / "raw", out_dir)
         write_selection_json(out_dir / "extraction_report.json", report.to_json(cl_meta))
         return {
             "bootstrap": False,

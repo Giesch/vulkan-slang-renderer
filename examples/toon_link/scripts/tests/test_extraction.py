@@ -169,6 +169,52 @@ class ExtractionScopeAndIdentity(Harness):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("mixed material targets", proc.stderr)
 
+    def test_btk_post_set_membership_governs_scope(self) -> None:
+        def btk_with(post_material: str | None) -> bytes:
+            main = dict(
+                material="eyeL",
+                remap=0,
+                texgen=0,
+                center=[0.0, 0.0, 0.0],
+                axes=[fx.default_axis()] * 3,
+                scale_pool=[],
+                rotation_pool=[],
+                translation_pool=[],
+            )
+            post = None
+            if post_material is not None:
+                post = dict(
+                    material=post_material,
+                    remap=0,
+                    texgen=0,
+                    center=[0.0, 0.0, 0.0],
+                    axes=[fx.default_axis()] * 3,
+                    scale_pool=[],
+                    rotation_pool=[],
+                    translation_pool=[],
+                )
+            return fx.j3d_file(b"btk1", fx.btk_chunk([main], post_targets=[post] if post else None))
+
+        # CL main targets + foreign post target: mixed scope, hard failure.
+        members = sample_members()
+        members["btk/post_mixed.btk"] = btk_with("lightSaver")
+        (self.fake_root / "LkAnm.arc").write_bytes(fx.rarc(members))
+        proc = self.run_extract("--bootstrap")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("mixed material targets", proc.stderr)
+
+        # CL main + CL post: included.
+        members = sample_members()
+        members["btk/post_ok.btk"] = btk_with("eyeR")
+        (self.fake_root / "LkAnm.arc").write_bytes(fx.rarc(members))
+        proc = self.run_extract("--bootstrap")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        inventory = json.loads((self.out / "candidate" / "raw" / "inventory.json").read_text())
+        self.assertIn(
+            "btk/post_ok.btk",
+            {e["member"] for e in inventory["entries"]},
+        )
+
 
 class ExtractionRejectsUnsafePaths(Harness):
     """AC.1 test: extraction_rejects_unsafe_paths."""
@@ -295,25 +341,52 @@ class BootstrapIsExplicit(GoldenGates):
 
     def test_pre_promotion_pipeline_end_to_end(self) -> None:
         """The full bootstrap → convert → oracle pipeline over the candidate
-        tree, proving the pre-promotion flow works and leaves the tracked
-        goldens and production output untouched."""
+        tree with goldens *absent*, proving the pre-promotion flow works and
+        leaves the tracked goldens and production output untouched."""
         converter = os.environ.get("CONVERT_LINK_ANIMATIONS")
         if not converter:
             self.fail("CONVERT_LINK_ANIMATIONS is unset; the recipe must build the converter first")
-        selection, hashes = self.promote()
-        raw_before = selection.read_bytes()
-        self.bootstrap()  # fresh candidate from the same sources
+        selection = self.root / "goldens-absent" / "selection.json"
+        hashes = self.root / "goldens-absent" / "hashes.sha256"
+        # Bootstrap with no goldens in play.
+        proc = self.run_extract(
+            "--bootstrap",
+            "--selection", str(selection),
+            "--hashes", str(hashes),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         candidate_raw = self.out / "candidate" / "raw"
+        self.assertTrue((candidate_raw / "inventory.json").is_file())
+
+        # Convert the candidate tree; every clip must parse.
+        converted = self.out / "candidate" / "converted"
         proc = subprocess.run(
-            [converter, str(candidate_raw), str(self.out / "candidate" / "converted")],
+            [converter, str(candidate_raw), str(converted)], capture_output=True, text=True
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        catalog = json.loads((converted / "catalog.json").read_text())
+        self.assertGreater(len(catalog["clips"]), 0)
+
+        # Oracle parity over the whole candidate tree, including the gclib
+        # cross-check layer.
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        import link_animation_oracle as oracle_mod
+
+        dump = oracle_mod.dump_all(candidate_raw)
+        rust = subprocess.run(
+            [converter, str(candidate_raw), str(self.out / "unused"), "--dump-canonical"],
             capture_output=True,
             text=True,
         )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        catalog = json.loads((self.out / "candidate" / "converted" / "catalog.json").read_text())
-        self.assertGreater(len(catalog["clips"]), 0)
-        # goldens untouched, production raw still absent
-        self.assertEqual(raw_before, selection.read_bytes())
+        self.assertEqual(rust.returncode, 0, rust.stderr)
+        self.assertEqual(rust.stdout, dump)
+        for e in json.loads((candidate_raw / "inventory.json").read_text())["entries"]:
+            data = (candidate_raw / e["archive"] / e["member"]).read_bytes()
+            oracle_mod.cross_check(data, e["format"], f"{e['archive']}/{e['member']}")
+
+        # Goldens still absent, production raw still not published.
+        self.assertFalse(selection.exists())
+        self.assertFalse(hashes.exists())
         self.assertFalse((self.out / "raw").exists())
 
 

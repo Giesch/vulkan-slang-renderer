@@ -266,15 +266,22 @@ impl RawDir {
         let path = self.root.join(archive).join(member);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, data).unwrap();
+        let ordinal = self.next_ordinal();
         json!({
             "archive": archive,
             "member": member,
-            "entry_index": 1,
-            "resource_id": 2,
+            "entry_index": ordinal,
+            "resource_id": ordinal + 1,
             "format": format,
             "size": data.len(),
             "sha256": sha256_hex(data),
         })
+    }
+
+    fn next_ordinal(&self) -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static ORDINAL: AtomicU64 = AtomicU64::new(1);
+        ORDINAL.fetch_add(1, Ordering::SeqCst)
     }
 
     fn write_inventory(&self, entries: &[serde_json::Value]) {
@@ -439,6 +446,49 @@ fn animation_cli_invalid_input_does_not_publish() {
         "failed rerun must not touch published output"
     );
     let _ = fs::remove_dir_all(&out);
+}
+
+#[test]
+fn animation_cli_duplicate_inventory_rows_rejected() {
+    // Same archive/member listed twice: rejected even though the file
+    // itself is valid.
+    let raw = RawDir::new("dup");
+    let bck = raw.add("LkAnm", "bcks/a.bck", "bck", &build_bck());
+    raw.write_inventory(&[bck.clone(), bck]);
+    let out = raw.out("dup");
+    let status = run(&[raw.root.to_str().unwrap(), out.to_str().unwrap()]);
+    assert!(!status.status.success());
+    assert!(String::from_utf8_lossy(&status.stderr).contains("more than once"));
+    assert!(!out.exists());
+    let _ = fs::remove_dir_all(&out);
+
+    // Reused entry index within one archive: rejected too.
+    let raw = RawDir::new("dupidx");
+    let a = raw.add("LkAnm", "bcks/a.bck", "bck", &build_bck());
+    let mut b = raw.add("LkAnm", "btp/b.btp", "btp", &build_btp());
+    b["entry_index"] = json!(a["entry_index"]);
+    raw.write_inventory(&[a, b]);
+    let out = raw.out("dupidx");
+    let status = run(&[raw.root.to_str().unwrap(), out.to_str().unwrap()]);
+    assert!(!status.status.success());
+    assert!(String::from_utf8_lossy(&status.stderr).contains("reuses entry index"));
+    let _ = fs::remove_dir_all(&out);
+}
+
+#[test]
+fn animation_cli_rejects_overlapping_raw_and_out_dirs() {
+    let raw = full_raw();
+    // out == raw
+    let status = run(&[raw.root.to_str().unwrap(), raw.root.to_str().unwrap()]);
+    assert!(!status.status.success());
+    assert!(String::from_utf8_lossy(&status.stderr).contains("overlap"));
+    // out inside raw
+    let inner = raw.root.join("converted");
+    let status = run(&[raw.root.to_str().unwrap(), inner.to_str().unwrap()]);
+    assert!(!status.status.success());
+    assert!(String::from_utf8_lossy(&status.stderr).contains("overlap"));
+    // and the raw tree was not damaged
+    assert!(raw.root.join("inventory.json").is_file());
 }
 
 #[test]

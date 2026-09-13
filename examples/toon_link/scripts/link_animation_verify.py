@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -75,6 +76,48 @@ def real_inventory_matches_selection(raw_dir: Path) -> list[dict]:
     inventory_path = raw_dir / "inventory.json"
     require(inventory_path.is_file(), f"inventory.json missing in {raw_dir}")
     entries = oracle.load_inventory(raw_dir)
+
+    # The inventory must match the reviewed selection manifest's *included*
+    # rows exactly (identity, format, size, hash), so a locally consistent
+    # but altered inventory cannot pass this gate.
+    selection_path = SCRIPT_DIR / "link_animation_selection.json"
+    if selection_path.is_file():
+        selection = json.loads(selection_path.read_text())
+        included = {
+            (e["archive"], e["member"]): e
+            for e in selection["entries"]
+            if e["classification"] == "included"
+        }
+        inventory_rows = {(e["archive"], e["member"]): e for e in entries}
+        require(
+            len(inventory_rows) == len(entries),
+            "inventory contains duplicate identities",
+        )
+        for key, golden_row in included.items():
+            row = inventory_rows.get(key)
+            require(row is not None, f"selection member {key} missing from inventory")
+            for field in ("entry_index", "resource_id", "format", "size", "sha256"):
+                require(
+                    row[field] == golden_row[field],
+                    f"{key}: inventory {field} differs from the reviewed selection",
+                )
+        require(
+            set(inventory_rows) == set(included),
+            "inventory membership differs from the reviewed selection",
+        )
+
+    # The raw golden hash manifest must also verify directly.
+    raw_golden = SCRIPT_DIR / "link_animation_assets.sha256"
+    if raw_golden.is_file():
+        for line in raw_golden.read_text().splitlines():
+            if not line.strip():
+                continue
+            digest, _, rel = line.partition("  ")
+            rel = rel.removeprefix("*").removeprefix("assets/link/animations/raw/")
+            path = raw_dir / rel
+            require(path.is_file(), f"raw golden entry {rel} missing from the raw tree")
+            require(sha256_file(path) == digest, f"{rel}: raw tree hash differs from golden")
+
     expected = {f"{e['archive']}/{e['member']}" for e in entries}
     actual = {
         str(p.relative_to(raw_dir))
@@ -89,7 +132,7 @@ def real_inventory_matches_selection(raw_dir: Path) -> list[dict]:
     for e in entries:
         path = raw_dir / e["archive"] / e["member"]
         require(sha256_file(path) == e["sha256"], f"{e['archive']}/{e['member']}: raw hash mismatch")
-    print(f"  {len(entries)} clips verified")
+    print(f"  {len(entries)} clips verified (inventory == selection, goldens match)")
     return entries
 
 
@@ -133,8 +176,6 @@ def real_conversion_hashes_and_repeatability(converter: Path, raw_dir: Path, con
 
 def tamper_gate(converter: Path, raw_dir: Path, workdir: Path) -> None:
     step("5. tamper/deletion detection on copies")
-    import json
-
     copy = workdir / "tamper-raw"
     if copy.exists():
         shutil.rmtree(copy)

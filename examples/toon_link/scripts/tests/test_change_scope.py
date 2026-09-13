@@ -105,6 +105,17 @@ class ChangeScopeAudit(unittest.TestCase):
             if status.strip() == "??" and path.endswith(FORBIDDEN_SUFFIXES):
                 self.fail(f"untracked payload: {path}")
 
+    def test_no_game_payloads_anywhere(self) -> None:
+        """No Wind Waker-derived payload may be tracked, and nothing under
+        the ignored assets tree may ever become tracked. (Other examples'
+        committed .ktx2 textures are their own assets, not game payloads.)
+        This catches committed payloads the working-tree diff cannot see."""
+        tracked = git("ls-files").splitlines()
+        payloads = [t for t in tracked if t.endswith((".bck", ".btp", ".btk", ".arc", ".bdl", ".ciso"))]
+        self.assertEqual(payloads, [], "game-derived payloads are tracked")
+        tracked_assets = [t for t in tracked if t.startswith("examples/toon_link/assets/")]
+        self.assertEqual(tracked_assets, [], "assets/ tree must stay fully gitignored")
+
     def test_gitignore_covers_animation_outputs(self) -> None:
         proc = subprocess.run(
             ["git", "-C", str(REPO_ROOT), "check-ignore", "examples/toon_link/assets/link/animations/raw"],

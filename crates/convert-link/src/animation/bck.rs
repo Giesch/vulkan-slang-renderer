@@ -88,7 +88,9 @@ pub fn parse(data: &[u8], what: &str) -> Result<BckClip> {
 }
 
 /// BAS trailer location metadata. Validates the u16 entry count and the
-/// `8 + count * 0x20` extent against the file when present.
+/// `8 + count * 0x20` extent against the file when present, and that the
+/// trailer starts after the declared chunk (matching the extraction-side
+/// rule; a "trailer" inside the chunk is corruption).
 pub(crate) fn bas_metadata(data: &[u8], what: &str) -> Result<BasMetadata> {
     let sound_off = u32::from_be_bytes([data[0x1C], data[0x1D], data[0x1E], data[0x1F]]);
     if sound_off == SOUND_ABSENT {
@@ -99,23 +101,30 @@ pub(crate) fn bas_metadata(data: &[u8], what: &str) -> Result<BasMetadata> {
         });
     }
 
-    let off = sound_off as usize;
-    if off + 2 > data.len() {
+    let off = sound_off as u64;
+    if off + 2 > data.len() as u64 {
         bail!("{what}: BAS offset {off:#x} out of bounds");
     }
 
-    let count = u16::from_be_bytes([data[off], data[off + 1]]) as usize;
-    let length = 8usize
+    let count = u16::from_be_bytes([data[sound_off as usize], data[sound_off as usize + 1]]) as u64;
+    let length = 8u64
         .checked_add(
             count
                 .checked_mul(0x20)
                 .ok_or_else(|| anyhow!("{what}: BAS count overflows"))?,
         )
         .ok_or_else(|| anyhow!("{what}: BAS length overflows"))?;
-    if off + length > data.len() {
+    if off + length > data.len() as u64 {
         bail!(
             "{what}: BAS trailer at {off:#x} spans {length} bytes, past the {}-byte file",
             data.len()
+        );
+    }
+    let declared_chunk_end =
+        0x20u64 + u32::from_be_bytes([data[0x24], data[0x25], data[0x26], data[0x27]]) as u64;
+    if off < declared_chunk_end {
+        bail!(
+            "{what}: BAS trailer at {off:#x} starts inside the declared chunk (ends {declared_chunk_end:#x})"
         );
     }
 
