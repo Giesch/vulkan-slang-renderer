@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Last verified: 2026-09-13
+
 ## Docs
 
 - **`docs/`** — current reference material, kept up to date. Trust it, and update
@@ -19,6 +21,10 @@
   type appears in its public API: `OptimizationLevel` and `ShaderStage` are
   ours, not re-exports. Keep it free of `ash`, `vk-mem` and `sdl3` — that is
   what lets `mltrs shaders compile` build without a graphics stack.
+- `crates/render-graph` (package `mltrs-render-graph`) — backend-neutral graph
+  construction, validation, scheduling, staging, and execution. Renderer depends
+  on graph, not the reverse. Keep its dependency closure free of ash, vk-mem,
+  SDL, and shader-slang. See `crates/render-graph/AGENTS.md` for backend contracts.
 - `crates/renderer` (package `mltrs-renderer`) — the renderer, editor widgets,
   env_config, and the shader watcher. `shaders.rs` is a façade over
   `mltrs-slang-reflection` plus the vulkan-facing pieces: the `atlas` traits,

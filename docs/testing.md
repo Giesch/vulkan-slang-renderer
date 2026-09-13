@@ -43,6 +43,25 @@ Line width is decided in rust, not in the template. See
 `ShaderAtlasField::init_line` and `RUSTFMT_MAX_WIDTH` in
 `crates/cli/src/build_tasks.rs`.
 
+## Extracted render-graph tests
+
+`cargo test -p mltrs-render-graph` runs the logical/compiler regression suite,
+four doctests, and `graph_dependency_boundary`, which checks the resolved
+transitive dependency closure for renderer, ash, vk-mem, SDL, and shader-slang.
+The deterministic fake backend exercises real preparation and execution:
+extent rejection before allocation, physical image counts, keepalive drops,
+partial preparation failure, current/previous addresses, dropped buffers,
+upload capacity, command plans, and submission-time cursor commits.
+
+Renderer unit tests separately prove the opaque Vulkan indirect ABI and buffer
+range checks. Graph-driven upload regressions exercise the production adapter's
+batch preflight helper with forged storage capacity, wrong uniform payload sizes,
+unmapped/missing destinations, and incompatible upload access kinds. Invalid
+batches must fail before any write, submission, or cursor commit. Submission-order tests inject failures into the same coordinator
+used by production submission: writes follow the flight wait, and cursor commits
+follow submission but precede presentation. These CPU tests complement, rather
+than replace, the real Vulkan validation sweep below.
+
 ## Render-graph API compile checks
 
 `cargo test -p mltrs-renderer` also runs a compile harness for the public
@@ -60,6 +79,14 @@ render-graph API. It runs inside `just test` and `just pre-commit`.
   both attachment orders with push constants, and parameter blocks with unit bindings.
 - Trait cases check that public graph bounds satisfy backend APIs and that
   backend traits cannot be imported through either renderer path.
+- Extraction cases cover direct graph imports and facade type identity (including
+  bindless-to-sampled conversion), opaque indirect construction and private
+  fields, and private erased-request layout metadata. Two distinct types both
+  implement `IndexedIndirectArgs`: exact backend matches compile for direct and
+  nested tuple/repeat/optional graphs; mismatches fail at `prepare`'s compatibility
+  bound. A wrong prepared-frame family and an external `CompatibleWith`
+  implementation also fail. Expected codes and snippets must occur in diagnostics
+  located in the intended case file, not merely somewhere in cargo output.
 - No case constructs a `Renderer` or allocates a GPU. Every case type-checks
   a function that takes renderer handles as parameters.
 
@@ -92,7 +119,11 @@ dependency versions, which is what lets the shared target directory be reused;
 a fresh resolve picks different `sdl3` versions and rebuilds SDL from source.
 Unlike `check_crate`, the harness passes `--locked`, so drift fails loudly
 rather than silently diverging. To recover: copy the root `Cargo.lock` into the
-fixture and run the harness once without `--locked` to re-prune it.
+fixture, then run `cargo metadata --offline --format-version 1 --manifest-path
+crates/renderer/fixtures/api_compile/Cargo.toml` to re-prune it. This maintenance
+command omits `--locked`; the compile harness keeps `--locked`. Check the lock
+diff for unexpected registry-version changes, then rerun the harness. Metadata
+does not require the generated fixture sources to exist.
 
 The harness runs `cargo`, which takes the build-directory lock. A cargo build
 running at the same time (bacon, a second shell) makes the harness wait for
