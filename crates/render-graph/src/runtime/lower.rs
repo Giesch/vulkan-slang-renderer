@@ -39,6 +39,7 @@ pub(crate) enum LowerDrawCall {
         args_index: usize,
         byte_offset: u64,
         draw_count: u32,
+        request: crate::commands::IndirectRequest,
     },
 }
 
@@ -425,6 +426,7 @@ impl LowerCtx {
                 args_index,
                 byte_offset,
                 draw_count,
+                ..
             } => {
                 let args_buffer = self.intern_buffer(BufferKind::Immutable, args_index, None, None);
                 DrawCall::IndexedIndirect {
@@ -588,8 +590,7 @@ impl LowerCtx {
 
 #[cfg(test)]
 mod tests {
-    use crate::renderer::bindless::{BindlessHandle, Sampler2D};
-    use crate::renderer::descriptor_heap::BindlessIndex;
+    use crate::bindless::{BindlessHandle, Sampler2D};
 
     use super::super::desc::{
         BufferKind, DrawCall, FieldKey, GraphFormat, LeafPass, PassDesc, PipelineKind,
@@ -638,9 +639,7 @@ mod tests {
     }
 
     fn external_sampled(slot: u32) -> GraphBinding {
-        GraphBinding::SampledTex(
-            BindlessHandle::<Sampler2D>::from_slot(BindlessIndex::from_raw(slot)).into(),
-        )
+        GraphBinding::SampledTex(BindlessHandle::<Sampler2D>::from_raw(u64::from(slot)).into())
     }
 
     fn external_storage(slot: u32) -> GraphBinding {
@@ -1075,6 +1074,9 @@ mod tests {
                 args_index: 7,
                 byte_offset: 32,
                 draw_count: 5,
+                request: crate::commands::IndirectRequest::new::<
+                    crate::runtime::tests::DrawIndexedIndirectCommand,
+                >(7, 32, 5),
             },
             uni(3, vec![]),
             None,

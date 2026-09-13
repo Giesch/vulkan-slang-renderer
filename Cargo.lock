@@ -1170,6 +1170,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mltrs-render-graph"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mltrs-renderer"
 version = "0.1.0"
 dependencies = [
@@ -1183,6 +1192,7 @@ dependencies = [
  "heck",
  "log",
  "mltrs-cli",
+ "mltrs-render-graph",
  "mltrs-slang-reflection",
  "notify",
  "sdl3",

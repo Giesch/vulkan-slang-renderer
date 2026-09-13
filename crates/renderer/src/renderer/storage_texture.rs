@@ -12,7 +12,7 @@ pub struct StorageTextureHandle {
 
 impl StorageTextureHandle {
     pub fn bindless_handle(&self) -> BindlessHandle<RwTexture2D> {
-        BindlessHandle::from_slot(self.bindless_slot)
+        super::bindless::from_slot(self.bindless_slot)
     }
 }
 
