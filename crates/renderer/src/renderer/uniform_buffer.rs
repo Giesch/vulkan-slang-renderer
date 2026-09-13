@@ -72,6 +72,7 @@ impl UniformBufferStorage {
         self.0[index].as_mut().unwrap()[frame].mapped_mem
     }
 
+    #[expect(dead_code)]
     pub fn take<T>(
         &mut self,
         handle: UniformBufferHandle<T>,

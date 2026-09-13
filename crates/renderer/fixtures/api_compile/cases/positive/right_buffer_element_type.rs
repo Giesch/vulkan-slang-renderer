@@ -7,7 +7,9 @@
 #![allow(dead_code)]
 
 use mltrs_renderer::renderer::pipeline::{Compute, NoPush, PipelineHandle};
-use mltrs_renderer::renderer::render_graph::{ComputeNode, GpuOnlySlot, dispatch};
+use mltrs_renderer::renderer::render_graph::{
+    ComputeNode, ComputePipelineKey, GpuOnlySlot, dispatch,
+};
 use mltrs_renderer::renderer::{GpuOnlyBufferHandle, UniformBufferHandle};
 
 use render_graph_api_checks::generated::shader_atlas::other_compute::{
@@ -24,22 +26,18 @@ fn nodes(
     other_params: &UniformBufferHandle<OtherParams>,
     others: &GpuOnlyBufferHandle<OtherElement>,
 ) -> (ComputeNode<SimParams>, ComputeNode<OtherParams>) {
+    let sim_pipeline_key = ComputePipelineKey::from(sim_pipeline);
+    let other_pipeline_key = ComputePipelineKey::from(other_pipeline);
+
     let slots = GpuOnlySlot::from(particles);
     let other_slots = GpuOnlySlot::from(others);
+
     (
-        dispatch(
-            sim_pipeline,
-            sim_params,
-            [1, 1, 1],
-            SimParamsBindings {
-                particles_in: slots.previous(),
-                particles_out: slots.current(),
-            },
-        ),
-        dispatch(
-            other_pipeline,
-            other_params,
-            [1, 1, 1],
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(SimParamsBindings {
+            particles_in: slots.previous(),
+            particles_out: slots.current(),
+        }),
+        dispatch(other_pipeline_key, other_params, [1, 1, 1]).with_param_bindings(
             OtherParamsBindings {
                 items: other_slots.current(),
             },

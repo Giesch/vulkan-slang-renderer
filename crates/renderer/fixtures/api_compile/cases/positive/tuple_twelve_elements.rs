@@ -6,7 +6,7 @@
 
 use mltrs_renderer::renderer::pipeline::{Compute, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, GpuOnlySlot, GraphNode, RenderGraph, dispatch,
+    ComputeNode, ComputePipelineKey, GpuOnlySlot, GraphNode, PreparedRenderGraph, dispatch,
 };
 use mltrs_renderer::renderer::{
     DrawError, FrameRenderer, GpuOnlyBufferHandle, UniformBufferHandle,
@@ -38,24 +38,26 @@ fn graph(
     sim_params: &UniformBufferHandle<SimParams>,
     particles: &GpuOnlyBufferHandle<Particle>,
 ) -> Graph {
+    let sim_pipeline_key = ComputePipelineKey::from(sim_pipeline);
     let slots = GpuOnlySlot::from(particles);
     let bindings = SimParamsBindings {
         particles_in: slots.previous(),
         particles_out: slots.current(),
     };
+
     (
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
-        dispatch(sim_pipeline, sim_params, [1, 1, 1], bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings),
     )
 }
 
@@ -82,8 +84,11 @@ fn frame_contract() {
     frame_is::<Graph>();
 }
 
-fn execute(graph: &mut RenderGraph<Graph>, frame: FrameRenderer<'_>) -> Result<(), DrawError> {
-    graph.execute(
+fn execute(
+    prepared: &mut PreparedRenderGraph<Graph>,
+    frame: FrameRenderer<'_>,
+) -> Result<(), DrawError> {
+    prepared.execute(
         frame,
         &(
             SimParamsData { delta_time: 0.016 },

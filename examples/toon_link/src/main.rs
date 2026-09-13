@@ -38,14 +38,15 @@ use image::ImageReader;
 
 use mltrs::editor::{Checkbox, Label, RGBPicker, Slider};
 use mltrs::game::Game;
+use mltrs::renderer::render_graph::DrawIndexedIndirectCommand;
 // The manifest's GX enums keep the `mm::` prefix. `mm::CullMode` and
 // `mm::BlendMode` collide with the renderer's pipeline enums of the same name.
 use gx::model_manifest::{self as mm, Batch, Manifest, MaterialEntry, TextureEntry};
 use mltrs::renderer::{
     BindlessHandle, BlendMode, CullMode, DepthCompare, DrawError, DrawIndexedIndirect,
-    DrawIndexedIndirectCommand, FrameRenderer, ImmutableBufferHandle, MeshHandle, PipelineHandle,
-    PushBlock, RasterState, Renderer, RgbaPixels, Sampler2D, SamplerOptions, SingletonBufferHandle,
-    StencilMode, TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
+    FrameRenderer, ImmutableBufferHandle, MeshHandle, PipelineHandle, PushBlock, RasterState,
+    Renderer, RgbaPixels, Sampler2D, SamplerOptions, SingletonBufferHandle, StencilMode,
+    TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
     UniformBufferHandle,
 };
 
@@ -1067,8 +1068,7 @@ impl Game for ToonLink {
             renderer,
             &materials_buffer,
         )?;
-        let mut args_buffer = renderer.create_immutable_buffer(draw_list.commands.len() as u32)?;
-        renderer.write_immutable_all_frames(&mut args_buffer, &draw_list.commands);
+        let args_buffer = renderer.create_indirect_buffer(&draw_list.commands)?;
         let individual_draw_buffer =
             renderer.create_singleton_buffer(&draw_list.individual_draws)?;
 

@@ -10,7 +10,7 @@ use ash::vk;
 use facet::Facet;
 use serde::Serialize;
 
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
@@ -174,6 +174,14 @@ pub struct DisplayParamsBindings {
     pub deposit_8_11: SampledTexBinding,
     pub paper_height: SampledTexBinding,
     pub wet_mask: SampledTexBinding,
+}
+
+impl GraphParamBindingSet for DisplayParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for DisplayParamsBindings {

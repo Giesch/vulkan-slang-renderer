@@ -1,3 +1,7 @@
+// Public renderer APIs accept graph implementors through crate-private marker
+// bounds. Keeping those bounds private prevents downstream backend-only impls.
+#![allow(private_bounds)]
+
 use std::collections::BTreeSet;
 use std::ffi::{CStr, CString, c_char};
 use std::fs::File;
@@ -27,7 +31,8 @@ pub mod debug;
 mod platform;
 
 pub mod gpu_write;
-use gpu_write::{GPUWrite, PushConstantBlock, write_to_gpu_buffer};
+use gpu_write::write_to_gpu_buffer;
+pub(crate) use gpu_write::{GPUWrite, PushConstantBlock};
 
 pub mod vertex_description;
 use vertex_description::VertexDescription;
@@ -54,7 +59,19 @@ pub mod pipeline;
 pub use pipeline::*;
 
 pub mod render_graph;
-pub use render_graph::*;
+// GPU-data traits and graph push markers are exposed only under render_graph.
+pub use render_graph::{
+    BindingResolver, BufferBinding, ComputeNode, ComputeNodeWithPush, ComputePipelineKey,
+    DrawIndexedIndirectCommand, DrawIndexedIndirectKey, DrawIndexedKey, DrawNode,
+    DrawVertexCountKey, DrawVertexCountNode, GpuOnlySlot, GraphBinding, GraphBindingSet,
+    GraphFormat, GraphNode, GraphParamBindingSet, GraphPipelinePush, GraphPush, GraphPushPayload,
+    GraphShaderParams, GraphTex, ImmutableBufferBinding, ImmutableSlot, LoopCount, OptionalNode,
+    PendingParamBindings, PendingPush, PickingCursor, PickingNode, PickingPipelineKey, PlanCtx,
+    PreparedRenderGraph, PushValues, RawBufferBinding, ReadBufferBinding, RenderGraph, RepeatNode,
+    ResourcePlanner, SampledTexBinding, SingletonSlot, StorageSlot, StorageTexBinding, UniformSlot,
+    UploadNode, dispatch, draw_index_range, draw_indexed, draw_indexed_indirect, draw_vertex_count,
+    optional, picking, repeat, upload,
+};
 
 pub mod egui;
 pub use egui::EguiIntegration;
@@ -1043,7 +1060,8 @@ impl Renderer {
         Ok(handle)
     }
 
-    pub fn drop_uniform_buffer<T>(&mut self, uniform_buffer: UniformBufferHandle<T>) {
+    #[expect(dead_code)]
+    fn drop_uniform_buffer<T>(&mut self, uniform_buffer: UniformBufferHandle<T>) {
         let buffers_per_frame = self.uniform_buffers.take(uniform_buffer);
         for raw_uniform_buffer in buffers_per_frame {
             self.destroy_uniform_buffer(raw_uniform_buffer);
@@ -1071,6 +1089,18 @@ impl Renderer {
     ) -> anyhow::Result<ImmutableBufferHandle<T>> {
         let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
         Ok(self.storage_buffers.add_immutable(buffers_per_frame, len))
+    }
+
+    /// Create and initialize an indirect argument buffer.
+    pub fn create_indirect_buffer(
+        &mut self,
+        commands: &[DrawIndexedIndirectCommand],
+    ) -> anyhow::Result<ImmutableBufferHandle<DrawIndexedIndirectCommand>> {
+        let len = u32::try_from(commands.len())?;
+        let mut buffer = self.create_immutable_buffer(len)?;
+        self.write_immutable_all_frames(&mut buffer, commands);
+
+        Ok(buffer)
     }
 
     pub fn create_gpu_only_buffer<T: GPUWrite>(
@@ -1206,26 +1236,30 @@ impl Renderer {
         }
     }
 
-    pub fn drop_storage_buffer<T>(&mut self, storage_buffer: StorageBufferHandle<T>) {
+    #[expect(dead_code)]
+    fn drop_storage_buffer<T>(&mut self, storage_buffer: StorageBufferHandle<T>) {
         let buffers_per_frame = self.storage_buffers.take(storage_buffer);
         for raw_storage_buffer in buffers_per_frame {
             self.destroy_storage_buffer(raw_storage_buffer);
         }
     }
 
-    pub fn drop_immutable_buffer<T>(&mut self, immutable_buffer: ImmutableBufferHandle<T>) {
+    #[expect(dead_code)]
+    fn drop_immutable_buffer<T>(&mut self, immutable_buffer: ImmutableBufferHandle<T>) {
         let buffers_per_frame = self.storage_buffers.take_immutable(immutable_buffer);
         for raw_storage_buffer in buffers_per_frame {
             self.destroy_storage_buffer(raw_storage_buffer);
         }
     }
 
-    pub fn drop_singleton_buffer<T>(&mut self, singleton_buffer: SingletonBufferHandle<T>) {
+    #[expect(dead_code)]
+    fn drop_singleton_buffer<T>(&mut self, singleton_buffer: SingletonBufferHandle<T>) {
         let raw_storage_buffer = self.singleton_buffers.take(singleton_buffer);
         self.destroy_storage_buffer(raw_storage_buffer);
     }
 
-    pub fn drop_gpu_only_buffer<T>(&mut self, gpu_only_buffer: GpuOnlyBufferHandle<T>) {
+    #[expect(dead_code)]
+    fn drop_gpu_only_buffer<T>(&mut self, gpu_only_buffer: GpuOnlyBufferHandle<T>) {
         let buffers_per_frame = self.storage_buffers.take_gpu_only(gpu_only_buffer);
         for raw_storage_buffer in buffers_per_frame {
             self.destroy_storage_buffer(raw_storage_buffer);

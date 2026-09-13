@@ -14,7 +14,7 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
-use crate::renderer::gpu_write::GPUWrite;
+use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
@@ -122,6 +122,14 @@ pub struct ParamsData {
 #[derive(Debug, Clone, Copy)]
 pub struct ParamsBindings {
     pub items: BufferBinding<HostileData>,
+}
+
+impl GraphParamBindingSet for ParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for ParamsBindings {

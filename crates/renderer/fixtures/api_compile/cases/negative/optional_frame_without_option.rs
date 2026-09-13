@@ -10,7 +10,7 @@
 
 use glam::Vec2;
 use mltrs_renderer::renderer::render_graph::{
-    OptionalNode, RenderGraph, UploadNode, optional, upload,
+    OptionalNode, PreparedRenderGraph, StorageSlot, UploadNode, optional, upload,
 };
 use mltrs_renderer::renderer::{DrawError, FrameRenderer, StorageBufferHandle};
 
@@ -19,11 +19,14 @@ use render_graph_api_checks::generated::shader_atlas::particle::Particle;
 type Graph = OptionalNode<UploadNode<Particle>>;
 
 fn graph(points: &StorageBufferHandle<Particle>) -> Graph {
-    optional(upload(points))
+    optional(upload(StorageSlot::from(points)))
 }
 
-fn execute(graph: &mut RenderGraph<Graph>, frame: FrameRenderer<'_>) -> Result<(), DrawError> {
-    graph.execute(
+fn execute(
+    prepared: &mut PreparedRenderGraph<Graph>,
+    frame: FrameRenderer<'_>,
+) -> Result<(), DrawError> {
+    prepared.execute(
         frame,
         &vec![Particle {
             position: Vec2::ZERO,

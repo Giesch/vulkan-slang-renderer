@@ -56,6 +56,10 @@ render-graph API. It runs inside `just test` and `just pre-commit`.
   operation. The harness requires the expected error code, the expected type
   names, and the case file name in the diagnostic. A case that fails on an
   unresolved import or a missing dependency fails the harness.
+- Compute builder cases cover omitted, wrong, and duplicate parameter bindings,
+  both attachment orders with push constants, and parameter blocks with unit bindings.
+- Trait cases check that public graph bounds satisfy backend APIs and that
+  backend traits cannot be imported through either renderer path.
 - No case constructs a `Renderer` or allocates a GPU. Every case type-checks
   a function that takes renderer handles as parameters.
 

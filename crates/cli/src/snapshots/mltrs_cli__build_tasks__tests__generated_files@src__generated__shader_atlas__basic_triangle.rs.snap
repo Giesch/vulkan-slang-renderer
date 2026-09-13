@@ -15,7 +15,7 @@ use ash::vk;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
-use crate::renderer::gpu_write::GPUWrite;
+use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;

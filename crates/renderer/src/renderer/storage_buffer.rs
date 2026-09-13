@@ -165,6 +165,7 @@ impl StorageBufferStorage {
         raw_storage_buffer.mapped_mem as *mut T
     }
 
+    #[expect(dead_code)]
     pub fn take<T>(
         &mut self,
         handle: StorageBufferHandle<T>,
@@ -251,6 +252,7 @@ impl StorageBufferStorage {
         raw_storage_buffer.mapped_mem as *mut T
     }
 
+    #[expect(dead_code)]
     pub fn take_immutable<T>(
         &mut self,
         handle: ImmutableBufferHandle<T>,
@@ -294,6 +296,7 @@ impl StorageBufferStorage {
         raw_storage_buffer.mapped_mem as *mut T
     }
 
+    #[expect(dead_code)]
     pub fn take_gpu_only<T>(
         &mut self,
         handle: GpuOnlyBufferHandle<T>,
@@ -367,6 +370,7 @@ impl SingletonBufferStorage {
         ImmutableAddr::from_raw(address)
     }
 
+    #[expect(dead_code)]
     pub fn take<T>(&mut self, handle: SingletonBufferHandle<T>) -> RawStorageBuffer {
         self.0[handle.index].take().unwrap()
     }

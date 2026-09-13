@@ -12,7 +12,7 @@ use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
 pub use super::tev::{GXAlphaCompare, GXLights, GXTevColorOverride, TevParams};
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
@@ -156,6 +156,14 @@ pub struct MultiDrawBindings {
     pub individual_draws: ImmutableBufferBinding<IndividualDraw>,
 }
 
+impl GraphParamBindingSet for MultiDrawBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
+}
+
 impl GraphBindingSet for MultiDrawBindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.individual_draws.erased()));
@@ -229,7 +237,7 @@ impl GraphBindingSet for ToonLinkParamsInput {
     fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
-impl mltrs::renderer::gpu_write::PushConstantBlock for MultiDraw {}
+impl mltrs::renderer::render_graph::PushConstantBlock for MultiDraw {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<MultiDraw>() <= 128);
 

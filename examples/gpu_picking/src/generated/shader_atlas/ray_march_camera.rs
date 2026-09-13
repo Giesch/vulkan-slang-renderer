@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::mltrs::Projection;
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);

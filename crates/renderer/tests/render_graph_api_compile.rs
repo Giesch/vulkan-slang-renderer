@@ -68,6 +68,43 @@ struct Case {
 const UNRELATED_FAILURES: [&str; 3] = ["error[E0432]", "error[E0433]", "error[E0463]"];
 
 const CASES: &[Case] = &[
+    Case {
+        bin: "positive_param_bindings",
+        file: "param_bindings.rs",
+        expectation: Expectation::Compiles,
+    },
+    Case {
+        bin: "negative_missing_param_bindings",
+        file: "missing_param_bindings.rs",
+        expectation: Expectation::Fails {
+            code: "E0277",
+            snippets: &["PendingParamBindings", "GraphNode"],
+        },
+    },
+    Case {
+        bin: "negative_push_without_param_bindings",
+        file: "push_without_param_bindings.rs",
+        expectation: Expectation::Fails {
+            code: "E0277",
+            snippets: &["PendingParamBindings", "GraphNode"],
+        },
+    },
+    Case {
+        bin: "negative_wrong_param_bindings",
+        file: "wrong_param_bindings.rs",
+        expectation: Expectation::Fails {
+            code: "E0308",
+            snippets: &["ScaleParamsBindings", "TexParamsBindings"],
+        },
+    },
+    Case {
+        bin: "negative_duplicate_param_bindings",
+        file: "duplicate_param_bindings.rs",
+        expectation: Expectation::Fails {
+            code: "E0599",
+            snippets: &["with_param_bindings"],
+        },
+    },
     // The complete frame tuple reaches `execute` unchanged.
     Case {
         bin: "positive_complete_tuple",
@@ -150,6 +187,118 @@ const CASES: &[Case] = &[
         bin: "positive_nested_tuples",
         file: "nested_tuples.rs",
         expectation: Expectation::Compiles,
+    },
+    // Every constructor family is reachable through the graph-owned
+    // vocabulary: keys/slots minted from renderer handles, push variants,
+    // picking, upload, and GPU-free logical construction.
+    Case {
+        bin: "positive_construction_families",
+        file: "construction_families.rs",
+        expectation: Expectation::Compiles,
+    },
+    // The logical/prepared lifecycle: GPU-free construction, consuming
+    // preparation, execute only on the prepared type.
+    Case {
+        bin: "positive_prepared_lifecycle",
+        file: "prepared_lifecycle.rs",
+        expectation: Expectation::Compiles,
+    },
+    // Graph traits reach renderer traits one-way through the blankets;
+    // renderer-only direct impls stay usable on renderer paths.
+    Case {
+        bin: "positive_trait_bridge",
+        file: "trait_bridge.rs",
+        expectation: Expectation::Compiles,
+    },
+    // Pipeline families are distinct key types, so a handle or key of one
+    // family has no `Into` conversion to another family's key.
+    Case {
+        bin: "negative_wrong_pipeline_kind",
+        file: "wrong_pipeline_kind.rs",
+        expectation: Expectation::Fails {
+            code: "E0277",
+            snippets: &["DrawVertexCountKey", "DrawIndexedKey"],
+        },
+    },
+    // The push interface is part of the pipeline's type: a no-push command
+    // has no push completion method.
+    Case {
+        bin: "negative_wrong_push_block",
+        file: "wrong_push_block.rs",
+        expectation: Expectation::Fails {
+            code: "E0599",
+            snippets: &["with_push_constant", "ComputeNode"],
+        },
+    },
+    // A push pipeline accepts only its own push block, not any push type.
+    Case {
+        bin: "negative_wrong_push_block_type",
+        file: "wrong_push_block_type.rs",
+        expectation: Expectation::Fails {
+            code: "E0308",
+            snippets: &["ScalePushInput", "OtherPushInput"],
+        },
+    },
+    // A pending-push command cannot enter a graph.
+    Case {
+        bin: "negative_missing_push",
+        file: "missing_push.rs",
+        expectation: Expectation::Fails {
+            code: "E0277",
+            snippets: &["PendingPush", "GraphPush"],
+        },
+    },
+    // Indirect arguments carry the command element type.
+    Case {
+        bin: "negative_wrong_indirect_element",
+        file: "wrong_indirect_element.rs",
+        expectation: Expectation::Fails {
+            code: "E0277",
+            snippets: &["ImmutableSlot", "DrawIndexedIndirectCommand"],
+        },
+    },
+    // Only the prepared type executes.
+    Case {
+        bin: "negative_logical_no_execute",
+        file: "logical_no_execute.rs",
+        expectation: Expectation::Fails {
+            code: "E0599",
+            snippets: &["execute", "RenderGraph"],
+        },
+    },
+    // Preparation consumes the logical graph.
+    Case {
+        bin: "negative_consumed_after_prepare",
+        file: "consumed_after_prepare.rs",
+        expectation: Expectation::Fails {
+            code: "E0382",
+            snippets: &["prepare", "moved"],
+        },
+    },
+    // Backend traits cannot be named or implemented outside the renderer crate.
+    Case {
+        bin: "negative_private_backend_traits",
+        file: "private_backend_traits.rs",
+        expectation: Expectation::Fails {
+            code: "E0603",
+            snippets: &[
+                "trait `GPUWrite` is private",
+                "trait `PushConstantBlock` is private",
+                "BackendGPUWrite",
+                "BackendPushConstantBlock",
+                "RootGPUWrite",
+                "RootPushConstantBlock",
+            ],
+        },
+    },
+    // The graph push marker requires the graph GPUWrite supertrait.
+    Case {
+        bin: "negative_push_requires_graph_gpu_write",
+        file: "push_requires_graph_gpu_write.rs",
+        expectation: Expectation::Fails {
+            code: "E0277",
+            snippets: &["PushConstantBlock", "GPUWrite"],
+        },
     },
 ];
 

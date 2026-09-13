@@ -1,9 +1,32 @@
 # Render graph
 
-A `RenderGraph` is built once in `Game::setup` and stored in game state. Each
-frame, `graph.execute(renderer, &params)` takes a tuple of per-frame values,
-performs every CPU buffer write itself, and submits the frame. The graph is
-the terminal call: it consumes the `FrameRenderer`.
+The game builds and logically validates a render graph once in `Game::setup`.
+This step does not use the renderer. Calling `graph.prepare(&mut renderer)`
+consumes the logical graph against a live renderer, checking device limits.
+It allocates, clears, and aliases every physical texture, and returns the
+prepared graph. Only the prepared graph has an `execute` method. Each frame,
+`prepared.execute(renderer, &params)` takes a tuple of per-frame values. It
+performs every CPU buffer write, and submits the frame.
+`execute` consumes the `FrameRenderer`.
+
+Store the prepared graph in game state:
+
+```rust
+type Graph = PreparedRenderGraph<(ComputeNode<SpecificShaderParams>, /* ... */)>;
+
+struct GameState {
+    graph: Graph
+}
+```
+
+Construction inputs are graph-owned values. Typed adapters mint them from
+live renderer handles. Node constructors take `impl Into<Key>`, so a
+pipeline handle reference (`&pipeline`) converts at the call site. Mint
+buffer slots with `UniformSlot::from(&buffer)`, `StorageSlot::from(&buffer)`,
+or `(&buffer).into()` inline. The keys are `Copy`. Each key carries the
+pipeline's family and push interface in its type. A vertex-count pipeline
+cannot drive an indexed draw. A push-constant pipeline cannot build a
+no-push command.
 
 The graph fixes two ordering hazards of the manual API:
 
@@ -15,6 +38,44 @@ The graph fixes two ordering hazards of the manual API:
 `examples/particles` is the minimal graph example. `examples/watercolor` is
 the full one: a conditional node, a runtime-count loop, per-iteration push
 blocks, a storage upload, and 14 logical textures.
+
+## Error staging
+
+Errors arrive in three stages, each with its own scope:
+
+- `RenderGraph::new` — logical validation, GPU-free. Every logical problem
+  is reported in one aggregated error (see below). A logical graph can be
+  built and validated in tests with no renderer at all.
+- `graph.prepare(&mut renderer)` — device limits and resource creation:
+  texture extents against `maxImageDimension2D` (checked before any
+  allocation), then texture allocation, clear, and sampled-alias creation.
+  A failure produces no executable graph. Resources the renderer already
+  registered before the failure stay registered — the renderer's existing
+  ownership rules destroy them at teardown; preparation has no rollback.
+- `prepared.execute` — runtime conditions on live resources: dropped buffer
+  slots and oversized uploads. These are re-checked on every execution, so
+  resources dropped after preparation are rejected rather than
+  dereferenced.
+
+The stages report independently; a prepare-time error does not re-aggregate
+logical errors, which were already ruled out by construction.
+
+## Graph-local GPU-data traits
+
+Generated shader types implement the graph's own marker traits,
+`render_graph::GPUWrite` and `render_graph::PushConstantBlock` (the push
+marker requires the data marker). The renderer's
+`renderer::gpu_write::{GPUWrite, PushConstantBlock}` are distinct traits
+that are private to the renderer crate and cover every graph implementor
+through one-way blanket impls. The public traits are available only under
+`renderer::render_graph`, not directly under `renderer`. There is
+no blanket in the other direction: a type implementing only the renderer
+trait directly cannot enter graph construction. Renderer-owned types that
+never enter the graph (like `NoVertex`) keep direct renderer-trait impls.
+
+Game-owned types implement the graph traits. Only code inside the renderer
+crate can implement the backend traits directly; public renderer APIs accept
+graph implementors through the blanket impls.
 
 ## Generated types
 
@@ -38,12 +99,12 @@ name collisions produce errors naming the source shader. User fields with an
 
 ## Logical textures
 
-Declare textures on `GraphResources`; reference them in bindings structs
+Declare textures on `ResourcePlanner`; reference them in bindings structs
 with an access mode:
 
 ```rust
-let mut res = GraphResources::new();
-let wet_mask = res.texture(W, H, GraphFormat::R32Float);
+let mut res = ResourcePlanner::new();
+let wet_mask = res.texture("wet_mask", W, H, GraphFormat::R32Float);
 
 // in a *ParamsBindings literal:
 wet_mask.read()           // sampled; sees the most recent write
@@ -96,42 +157,78 @@ let table = SingletonSlot::from(&singleton_buffer);
 table.addr_at(i)     // ImmutableAddr<T> of element i; bounds-checked here
 ```
 
-`upload(&buffer)` is a node that copies a `Vec<T>` from the params tuple
-into the buffer each frame. An oversized vector returns an error identifying
+`upload(slot)` is a node that copies a `Vec<T>` from the params tuple
+into the buffer each frame; the slot is a `StorageSlot<T>`, or the storage
+buffer handle it is minted from. An oversized vector returns an error identifying
 the storage slot and capacity, before any staged writes reach GPU memory.
 
 ## Nodes
 
 Nodes are plain values passed to `RenderGraph::new` as one tuple, in
 execution order. Compute nodes precede draw nodes. Pipelines and uniform
-buffers are created as usual and referenced by the constructors:
+buffers are created as usual; each constructor takes `impl Into<..>` for its
+pipeline and its buffers, so a handle reference passes directly. An explicit
+key or slot (`ComputePipelineKey::from(&pipeline)`,
+`StorageSlot::from(&buffer)`, …) is `Copy` and names one resource across many
+nodes:
 
 ```rust
-dispatch(&pipeline, &params_buffer, group_count, bindings)
-dispatch_with_push(&pipeline, &params_buffer, group_count, bindings,
-    push_bindings, push_data)
+dispatch(&compute_pipeline, &params_buffer, group_count).with_param_bindings(bindings)
+dispatch(&compute_push_pipeline, &params_buffer, group_count)
+    .with_param_bindings(bindings)
+    .with_push_constant(push_input)
 upload(&storage_buffer)
 optional(node_or_tuple)          // frame element becomes Option<...>
 repeat((body,))                  // frame element becomes (LoopCount, (body,))
-draw_vertex_count(&pipeline, &params_buffer, n, bindings)
-draw_indexed(&pipeline, &params_buffer, bindings)
-draw_index_range(&pipeline, &params_buffer, first, count, bindings)
-draw_indexed_indirect(&pipeline, &params_buffer, &args, first, count, bindings)
+draw_vertex_count(&vertex_count_pipeline, &params_buffer, n, bindings)
+draw_indexed(&indexed_pipeline, &params_buffer, bindings)
+draw_index_range(&indexed_pipeline, &params_buffer, first, count, bindings)
+draw_indexed_indirect(&indirect_pipeline, &params_buffer,
+    &args_buffer, first, count, bindings)
+draw_indexed(&indexed_push_pipeline, &params_buffer, bindings)
+    .with_push_constant(push_input)
 picking::<Cursor>(&picking_pipeline)
 ```
 
-Every draw form has a `_with_push` variant taking
-`push_values::<B>(bindings, data)`. A push block resolves per dispatch, so
-inside a `repeat` its texture references rotate per iteration. The push
-block's data half is fixed at build time.
+Compute parameter blocks with resource bindings require
+`.with_param_bindings(bindings)` before the command can enter a graph.
+Blocks whose `Bindings` type is `()` need no attachment or unit argument.
+Parameter bindings and push constants can be attached in either order; each
+attachment completes its own pending state and can only be supplied once.
+Handwritten binding sets used with `dispatch` implement `GraphParamBindingSet`,
+using `PendingParamBindings<Self>` as their `Pending` type, as generated sets do.
+
+Every command form attaches its push block with `.with_push_constant(input)`.
+The input is the generated `<Block>Input` struct. Write it as a literal, or
+build it from the split halves with
+`GraphShaderParams::input(&data, &bindings)`. A push block resolves per
+dispatch, so inside a `repeat` its texture references rotate per iteration.
+The push block's data half is fixed at build time. A command built from a
+push-constant pipeline is not a node until its complete push input is
+attached; a missing attachment is a compile error.
+
+`render_graph::DrawIndexedIndirectCommand` is the indirect argument record.
+Its `repr(C)` layout has five 32-bit fields, 20 bytes, and alignment 4,
+matching Vulkan. It is GPU-writable, so it is both the construction input and
+the buffer element type. `Renderer::create_indirect_buffer` creates an
+argument buffer and initializes every flight slot from a command slice.
+`Renderer::write_immutable_all_frames` and `Gpu::write_immutable` update one.
+The buffer handle converts to an `ImmutableSlot<DrawIndexedIndirectCommand>`;
+the slot retains the uploaded record size for byte offsets. Out-of-range
+command counts and ranges panic at
+construction, release builds included, because the command processor fetches
+these records outside the descriptor model, where `robustBufferAccess` does
+not apply. The same construction-time bounds discipline applies to `addr_at`
+on `ImmutableSlot` and `SingletonSlot`.
 
 Repeat counts and expansion budgets are the application's responsibility. The
 render graph executes the supplied `LoopCount` without an aggregate iteration limit.
 
 ## Build-time validation
 
-`RenderGraph::new` lowers and validates the complete graph before creating
-its logical textures. It returns all detected problems in one error:
+`RenderGraph::new` lowers and logically validates the complete graph; no
+renderer, device limit, or allocation is involved. It returns all detected
+logical problems in one error:
 
 ```text
 render graph validation failed:
@@ -139,9 +236,9 @@ render graph validation failed:
   - second problem
 ```
 
-Texture-access diagnostics identify the `res.texture(...)` call site. Access
-hazards are checked per dispatch or draw, so independent draws in the main
-raster pass do not interfere with each other's checks.
+Texture-access diagnostics name the declared texture. Access hazards are
+checked per dispatch or draw, so independent draws in the main raster pass do
+not interfere with each other's checks.
 
 The validator enforces these rules:
 
@@ -170,8 +267,9 @@ The validator enforces these rules:
 - An upload must target a storage buffer, and its declared maximum element
   count must fit the buffer. Indirect draw arguments must use an immutable
   buffer. Buffer byte offsets must fit in `u32`.
-- Fixed texture dimensions must be nonzero and no larger than the device's
-  `maxImageDimension2D`.
+- Fixed texture dimensions must be nonzero. Extents beyond the device's
+  `maxImageDimension2D` are not logical errors: preparation checks them
+  against the live device before allocating.
 
 The phase-1 description also rejects features reserved for later phases:
 window-relative texture sizes, color/depth attachment texture usages,
@@ -195,10 +293,11 @@ Positions that carry a bare number require a newtype:
 Neither position accepts a bare primitive, so a count cannot swap with an
 adjacent scalar silently.
 
-The graph's type names the node tuple once, in the game struct:
+The graph's type names the node tuple once, in the game struct; after
+`prepare` the stored value is the prepared graph:
 
 ```rust
-type WcGraph = RenderGraph<(ComputeNode<BrushParams>, /* ... */)>;
+type WcGraph = PreparedRenderGraph<(ComputeNode<BrushParams>, /* ... */)>;
 ```
 
 ## Barriers and synchronization
@@ -223,8 +322,8 @@ cursors. A presentation failure after submission keeps the committed versions.
   block so codegen can implement `GraphShaderParams` for it.
 - Logical textures support `GraphFormat::R32Float` and
   `GraphFormat::Rgba32Float`.
-- Texture dimensions are at least 1 and at most the device's
-  `maxImageDimension2D`.
+- Texture dimensions are at least 1 (a logical check) and at most the
+  device's `maxImageDimension2D` (a preparation-time check).
 - `read_previous` requires that some node `write()` the texture. A mutate
   edits the current version in place, so mutate-only producers are rejected.
 - Draw order is declaration order inside one render pass; there are no

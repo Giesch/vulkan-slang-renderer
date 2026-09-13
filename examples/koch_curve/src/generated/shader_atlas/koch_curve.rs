@@ -9,7 +9,7 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
@@ -73,6 +73,14 @@ pub struct KochCurveParamsData {
 #[derive(Debug, Clone, Copy)]
 pub struct KochCurveParamsBindings {
     pub reflection_map: SampledTexBinding,
+}
+
+impl GraphParamBindingSet for KochCurveParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for KochCurveParamsBindings {

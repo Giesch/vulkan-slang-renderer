@@ -7,6 +7,18 @@ use std::marker::PhantomData;
 use super::addr::{Addr, ImmutableAddr, ReadAddr};
 use super::bindless::{BindlessHandle, RwTexture2D, Sampler2D};
 
+// The graph's own GPU-data marker traits, mirroring the real
+// renderer::render_graph definitions. Generated code implements these; it
+// reaches the renderer-side traits only through the one-way blankets in
+// super::gpu_write.
+pub trait GPUWrite {}
+
+pub trait PushConstantBlock: GPUWrite {}
+
+impl GPUWrite for u8 {}
+impl GPUWrite for f32 {}
+impl GPUWrite for u32 {}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SampledTexBinding;
 
@@ -88,6 +100,19 @@ pub trait GraphBindingSet {
 
 impl GraphBindingSet for () {
     fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
+}
+
+pub trait GraphParamBindingSet: GraphBindingSet {
+    type Pending;
+    fn pending() -> Self::Pending;
+}
+
+pub struct PendingParamBindings<B>(PhantomData<B>);
+
+impl<B> PendingParamBindings<B> {
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
 }
 
 pub struct BindingResolver<'a>(PhantomData<&'a ()>);

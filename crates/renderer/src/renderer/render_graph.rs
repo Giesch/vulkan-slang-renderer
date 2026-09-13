@@ -59,23 +59,159 @@ use lower::{LowerCtx, LowerDrawCall, PushInput, UniformInput};
 
 use super::addr::{Addr, ImmutableAddr, ReadAddr};
 use super::bindless::{BindlessHandle, RwTexture2D, Sampler2D};
-use super::gpu_write::{GPUWrite, PushConstantBlock};
 use super::pipeline::{
-    Compute, ComputePipelineIndex, DrawIndexed, DrawIndexedIndirect, DrawIndexedIndirectCommand,
-    DrawVertexCount, GraphicsPipelineIndex, NoPush, PickingPipelineHandle, PipelineHandle,
-    PipelineIndex, PushBlock, VertexPipelineConfig,
+    Compute, ComputePipelineIndex, DrawIndexed, DrawIndexedIndirect, DrawVertexCount,
+    GraphicsPipelineIndex, PickingPipelineHandle, PipelineHandle, PipelineIndex,
+    VertexPipelineConfig,
 };
+use super::pipeline::{NoPush as RendererNoPush, PushBlock as RendererPushBlock};
 use super::storage_buffer::{
     GpuOnlyBufferHandle, ImmutableBufferHandle, SingletonBufferHandle, StorageBufferHandle,
-    StorageBufferStorage, element_byte_offset,
+    StorageBufferStorage,
 };
 use super::storage_texture::StorageTextureHandle;
 use super::texture::TextureHandle;
 use super::uniform_buffer::UniformBufferHandle;
 use super::{
     DrawCallConfig, DrawError, FrameRenderer, Gpu, MAX_FRAMES_IN_FLIGHT, PendingDrawCommand,
-    PickingDrawConfig, PushConstantBytes, Renderer, SingletonBufferStorage, ToVk, range_in_bounds,
+    PickingDrawConfig, PushConstantBytes, Renderer, SingletonBufferStorage, ToVk,
 };
+
+/// A marker for types that may be written to GPU memory during graph
+/// construction: GPU data elements and generated shader parameter blocks.
+pub trait GPUWrite {}
+
+/// A generated `[[vk::push_constant]]` block used as a graph push input.
+///
+/// A shader's generated instance of this is 128 initialized std430 bytes.
+pub trait PushConstantBlock: GPUWrite {}
+
+impl GPUWrite for u8 {} // image bytes
+impl GPUWrite for f32 {} // storage texture data
+impl GPUWrite for u32 {} // index buffers
+
+/// One `cmd_draw_indexed_indirect` argument record.
+///
+/// The C layout matches Vulkan's tightly packed indirect argument buffer.
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct DrawIndexedIndirectCommand {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub vertex_offset: i32,
+    pub first_instance: u32,
+}
+
+impl GPUWrite for DrawIndexedIndirectCommand {}
+
+const _: () = assert!(
+    std::mem::align_of::<DrawIndexedIndirectCommand>()
+        == std::mem::align_of::<vk::DrawIndexedIndirectCommand>()
+);
+
+const _: () = assert!(
+    std::mem::size_of::<DrawIndexedIndirectCommand>()
+        == std::mem::size_of::<vk::DrawIndexedIndirectCommand>()
+);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, index_count) == 0);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, instance_count) == 4);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, first_index) == 8);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, vertex_offset) == 12);
+const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, first_instance) == 16);
+
+/// A pipeline whose shader declares no `[[vk::push_constant]]` block.
+#[derive(Debug)]
+pub struct NoPush;
+
+/// A pipeline whose shader declares `B` as its push constant block.
+pub struct PushBlock<B: GraphShaderParams + PushConstantBlock>(PhantomData<B>);
+
+/// A `Copy` construction key for one pipeline family.
+macro_rules! graph_pipeline_key {
+    ($($name:ident),+ $(,)?) => {$(
+        pub struct $name<P = NoPush> {
+            index: usize,
+            _push: PhantomData<fn() -> P>,
+        }
+
+        // manual impls: derives would add spurious `P: ...` bounds
+        impl<P> Clone for $name<P> {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+        impl<P> Copy for $name<P> {}
+        impl<P> $name<P> {
+            fn new(index: usize) -> Self {
+                Self {
+                    index,
+                    _push: PhantomData,
+                }
+            }
+
+            fn index(self) -> usize {
+                self.index
+            }
+        }
+    )+};
+}
+
+graph_pipeline_key!(
+    ComputePipelineKey,
+    DrawVertexCountKey,
+    DrawIndexedKey,
+    DrawIndexedIndirectKey,
+);
+
+/// A `Copy` construction key for a picking pipeline.
+/// Picking pipelines have no push interface.
+#[derive(Clone, Copy)]
+pub struct PickingPipelineKey {
+    index: usize,
+}
+
+impl PickingPipelineKey {
+    fn new(index: usize) -> Self {
+        Self { index }
+    }
+
+    fn index(self) -> usize {
+        self.index
+    }
+}
+
+/// The graph's id for a fixed external texture the graph does not track
+/// ie, a bindless heap slot
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ExternalTexId(u64);
+
+impl ExternalTexId {
+    pub(crate) fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+/// offset of element `index` in a buffer of `len` elements of `stride` bytes.
+/// buffer device addresses bypass `robustBufferAccess` clamping,
+/// so an out-of-range element address is undefined behavior
+fn element_byte_offset(index: u32, len: u32, stride: usize) -> u64 {
+    assert!(
+        index < len,
+        "element index {index} out of bounds for buffer of {len} element(s)"
+    );
+
+    index as u64 * stride as u64
+}
+
+/// true if [first, first + count) fits in a buffer of `total` elements,
+fn range_in_bounds(first: u32, count: u32, total: u32) -> bool {
+    first.checked_add(count).is_some_and(|end| end <= total)
+}
 
 /// A logical graph texture. Physical images and versioning are graph-internal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -112,41 +248,35 @@ impl GraphTex {
     }
 }
 
-/// The logical texture declarations a graph is built from.
+/// The logical resource declarations a graph is built from.
+/// In practice, only textures (at least for now).
 #[derive(Default)]
-pub struct GraphResources {
+pub struct ResourcePlanner {
     decls: Vec<TexDecl>,
 }
 
-impl GraphResources {
+impl ResourcePlanner {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Declare a logical texture. It persists across frames; each physical
-    /// image is created cleared.
-    #[track_caller]
-    pub fn texture(&mut self, width: u32, height: u32, format: GraphFormat) -> GraphTex {
-        let loc = std::panic::Location::caller();
+    /// Declare a logical texture.
+    pub fn texture(
+        &mut self,
+        name: &str,
+        width: u32,
+        height: u32,
+        format: GraphFormat,
+    ) -> GraphTex {
         let tex = GraphTex(self.decls.len() as u32);
         self.decls.push(TexDecl {
-            name: format!("tex{} ({}:{})", tex.0, loc.file(), loc.line()),
+            name: name.to_string(),
             size: SizeClass::Fixed(width, height),
             format,
             usage: TexUsage::Storage,
         });
 
         tex
-    }
-}
-
-impl ToVk for GraphFormat {
-    type Vk = vk::Format;
-    fn to_vk(&self) -> Self::Vk {
-        match self {
-            Self::R32Float => vk::Format::R32_SFLOAT,
-            Self::Rgba32Float => vk::Format::R32G32B32A32_SFLOAT,
-        }
     }
 }
 
@@ -161,13 +291,15 @@ pub struct SampledTexBinding {
 enum SampledRef {
     Graph(GraphTex),
     GraphPrevious(GraphTex),
-    External(BindlessHandle<Sampler2D>),
+    External(ExternalTexId),
 }
 
+/// The normal input for an external sampled texture: a renderer-side
+/// adapter that captures the handle's bindless slot as a graph-owned id.
 impl From<BindlessHandle<Sampler2D>> for SampledTexBinding {
     fn from(handle: BindlessHandle<Sampler2D>) -> Self {
         Self {
-            inner: SampledRef::External(handle),
+            inner: SampledRef::External(ExternalTexId::from_raw(handle.to_raw())),
         }
     }
 }
@@ -190,7 +322,7 @@ enum StorageRef {
     Graph(GraphTex, StorageTexAccess),
     // Kept for defensive lowering tests; no public constructor accepts this.
     #[cfg_attr(not(test), expect(dead_code))]
-    External(BindlessHandle<RwTexture2D>),
+    External(ExternalTexId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -351,6 +483,7 @@ pub struct GpuOnlySlot<T> {
 pub struct ImmutableSlot<T> {
     index: usize,
     len: u32,
+    element_size: usize,
     _elem: PhantomData<fn() -> T>,
 }
 
@@ -426,6 +559,7 @@ impl<T> From<&ImmutableBufferHandle<T>> for ImmutableSlot<T> {
         Self {
             index: handle.index(),
             len: handle.len(),
+            element_size: std::mem::size_of::<T>(),
             _elem: PhantomData,
         }
     }
@@ -471,7 +605,7 @@ impl<T> ImmutableSlot<T> {
     }
 
     pub fn addr_at(self, index: u32) -> ImmutableBufferBinding<T> {
-        let byte_offset = element_byte_offset(index, self.len, std::mem::size_of::<T>());
+        let byte_offset = element_byte_offset(index, self.len, self.element_size);
         ImmutableBufferBinding::new(BufferBindingKind::Immutable, self.index, byte_offset)
     }
 }
@@ -548,7 +682,7 @@ impl BindingResolver<'_> {
                 let phys = self.tex[tex.0 as usize].prev_phys();
                 self.phys[tex.0 as usize].images[phys as usize].sampled
             }
-            SampledRef::External(handle) => handle,
+            SampledRef::External(id) => BindlessHandle::from_raw(id.raw()),
         }
     }
 
@@ -562,7 +696,7 @@ impl BindingResolver<'_> {
                 };
                 self.phys[tex.0 as usize].images[phys as usize].storage
             }
-            StorageRef::External(handle) => handle,
+            StorageRef::External(id) => BindlessHandle::from_raw(id.raw()),
         }
     }
 
@@ -636,26 +770,72 @@ pub trait GraphNode {
 }
 
 /// A compute dispatch writing one uniform params buffer per frame.
-pub struct ComputeNode<S: GraphShaderParams, P = ()> {
-    pipeline_index: ComputePipelineIndex,
+pub struct ComputeNode<S: GraphShaderParams, P = (), Bindings = <S as GraphShaderParams>::Bindings>
+{
+    pipeline_index: usize,
     uniform: UniformSlot<S>,
     group_count: [u32; 3],
-    bindings: S::Bindings,
+    bindings: Bindings,
     push: P,
 }
 
-pub fn dispatch<S: GraphShaderParams, P: GraphPipelinePush>(
-    pipeline: &PipelineHandle<Compute, P>,
-    params_buffer: &UniformBufferHandle<S>,
+/// Selects the initial binding state for a compute command.
+/// Unit bindings are already complete; generated resource bindings start pending.
+pub trait GraphParamBindingSet: GraphBindingSet {
+    type Pending;
+
+    fn pending() -> Self::Pending;
+}
+
+impl GraphParamBindingSet for () {
+    type Pending = ();
+
+    fn pending() {}
+}
+
+/// A compute command that still requires its parameter block bindings.
+pub struct PendingParamBindings<B>(PhantomData<B>);
+
+impl<B> PendingParamBindings<B> {
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<B> Default for PendingParamBindings<B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn dispatch<S, P>(
+    pipeline: impl Into<ComputePipelineKey<P>>,
+    params_buffer: impl Into<UniformSlot<S>>,
     group_count: [u32; 3],
-    bindings: S::Bindings,
-) -> ComputeNode<S, P::Pending> {
+) -> ComputeNode<S, P::Pending, <S::Bindings as GraphParamBindingSet>::Pending>
+where
+    S: GraphShaderParams,
+    S::Bindings: GraphParamBindingSet,
+    P: GraphPipelinePush,
+{
     ComputeNode {
-        pipeline_index: pipeline.index(),
+        pipeline_index: pipeline.into().index(),
         uniform: params_buffer.into(),
         group_count,
-        bindings,
+        bindings: S::Bindings::pending(),
         push: P::pending(),
+    }
+}
+
+impl<S: GraphShaderParams, P> ComputeNode<S, P, PendingParamBindings<S::Bindings>> {
+    pub fn with_param_bindings(self, bindings: S::Bindings) -> ComputeNode<S, P> {
+        ComputeNode {
+            pipeline_index: self.pipeline_index,
+            uniform: self.uniform,
+            group_count: self.group_count,
+            bindings,
+            push: self.push,
+        }
     }
 }
 
@@ -664,7 +844,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for ComputeNode<S,
 
     fn lower(&self, cx: &mut LowerCtx) {
         cx.dispatch(
-            self.pipeline_index.raw(),
+            self.pipeline_index,
             self.group_count,
             UniformInput {
                 slot: self.uniform.index,
@@ -681,8 +861,11 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for ComputeNode<S,
         let value = S::assemble(frame_data, &self.bindings, &resolver);
         let push = self.push.payload(&resolver);
         cx.stage_uniform(self.uniform, &value);
-        cx.dispatches
-            .push((self.pipeline_index, self.group_count, push.bytes));
+        cx.dispatches.push((
+            ComputePipelineIndex::from_raw(self.pipeline_index),
+            self.group_count,
+            push.bytes,
+        ));
         commit_writes(&mut cx.tex, |visit| {
             self.bindings.visit(visit);
             self.push.visit_bindings(visit);
@@ -696,27 +879,6 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for ComputeNode<S,
 /// `repeat`, that is what lets its texture references rotate per iteration.
 /// The push block's data half is fixed at build time.
 pub type ComputeNodeWithPush<S, B> = ComputeNode<S, PushValues<B>>;
-
-pub fn dispatch_with_push<S, B>(
-    pipeline: &PipelineHandle<Compute, PushBlock<B>>,
-    params_buffer: &UniformBufferHandle<S>,
-    group_count: [u32; 3],
-    bindings: S::Bindings,
-    push_bindings: B::Bindings,
-    push_data: B::Data,
-) -> ComputeNodeWithPush<S, B>
-where
-    S: GraphShaderParams,
-    B: GraphShaderParams + PushConstantBlock,
-{
-    ComputeNode {
-        pipeline_index: pipeline.index(),
-        uniform: params_buffer.into(),
-        group_count,
-        bindings,
-        push: push_values(push_bindings, push_data),
-    }
-}
 
 /// An opaque command push payload; the wrapper keeps the byte type out of
 /// the public trait signature.
@@ -749,21 +911,12 @@ pub struct PushValues<B: GraphShaderParams + PushConstantBlock> {
     input: B::Input,
 }
 
-pub fn push_values<B: GraphShaderParams + PushConstantBlock>(
-    bindings: B::Bindings,
-    data: B::Data,
-) -> PushValues<B> {
-    PushValues {
-        input: B::input(&data, &bindings),
-    }
-}
-
 /// A command that still needs its pipeline's complete push input.
 ///
 /// Both command forms become graph nodes after the complete input is attached:
 /// ```
 /// use mltrs_renderer::renderer::render_graph::*;
-/// use mltrs_renderer::renderer::gpu_write::{GPUWrite, PushConstantBlock};
+/// use mltrs_renderer::renderer::render_graph::{GPUWrite, PushConstantBlock};
 /// fn complete<S, B>(compute: ComputeNode<S, PendingPush<B>>,
 ///                   draw: DrawNode<S, PendingPush<B>>, input: B::Input)
 /// where S: GraphShaderParams + GPUWrite,
@@ -776,7 +929,7 @@ pub fn push_values<B: GraphShaderParams + PushConstantBlock>(
 /// Missing push input cannot enter the graph:
 /// ```compile_fail,E0277
 /// use mltrs_renderer::renderer::render_graph::*;
-/// use mltrs_renderer::renderer::gpu_write::{GPUWrite, PushConstantBlock};
+/// use mltrs_renderer::renderer::render_graph::{GPUWrite, PushConstantBlock};
 /// fn incomplete<S: GraphShaderParams + GPUWrite, B: GraphShaderParams + PushConstantBlock>(
 ///     command: ComputeNode<S, PendingPush<B>>,
 /// ) {
@@ -787,7 +940,7 @@ pub fn push_values<B: GraphShaderParams + PushConstantBlock>(
 /// Draws enforce the same restriction:
 /// ```compile_fail,E0277
 /// use mltrs_renderer::renderer::render_graph::*;
-/// use mltrs_renderer::renderer::gpu_write::{GPUWrite, PushConstantBlock};
+/// use mltrs_renderer::renderer::render_graph::{GPUWrite, PushConstantBlock};
 /// fn incomplete<S: GraphShaderParams + GPUWrite, B: GraphShaderParams + PushConstantBlock>(
 ///     command: DrawNode<S, PendingPush<B>>,
 /// ) {
@@ -798,7 +951,7 @@ pub fn push_values<B: GraphShaderParams + PushConstantBlock>(
 /// A different push interface is not accepted:
 /// ```compile_fail,E0308
 /// use mltrs_renderer::renderer::render_graph::*;
-/// use mltrs_renderer::renderer::gpu_write::PushConstantBlock;
+/// use mltrs_renderer::renderer::render_graph::PushConstantBlock;
 /// fn wrong<S, B, Other>(command: DrawNode<S, PendingPush<B>>, input: Other::Input)
 /// where S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock,
 ///       Other: GraphShaderParams {
@@ -835,10 +988,10 @@ impl<B: GraphShaderParams + PushConstantBlock> GraphPipelinePush for PushBlock<B
     }
 }
 
-impl<S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock>
-    ComputeNode<S, PendingPush<B>>
+impl<S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock, Bindings>
+    ComputeNode<S, PendingPush<B>, Bindings>
 {
-    pub fn with_push_constant(self, input: B::Input) -> ComputeNode<S, PushValues<B>> {
+    pub fn with_push_constant(self, input: B::Input) -> ComputeNode<S, PushValues<B>, Bindings> {
         ComputeNode {
             pipeline_index: self.pipeline_index,
             uniform: self.uniform,
@@ -884,7 +1037,7 @@ impl<B: GraphShaderParams + PushConstantBlock> GraphPush for PushValues<B> {
 /// A draw writing one uniform params buffer per frame. Declaration order is
 /// draw order; draw nodes follow every compute node.
 pub struct DrawNode<S: GraphShaderParams, P = ()> {
-    pipeline_index: GraphicsPipelineIndex,
+    pipeline_index: usize,
     uniform: UniformSlot<S>,
     call: LowerDrawCall,
     bindings: S::Bindings,
@@ -894,82 +1047,43 @@ pub struct DrawNode<S: GraphShaderParams, P = ()> {
 pub type DrawVertexCountNode<S> = DrawNode<S, ()>;
 
 pub fn draw_vertex_count<S: GraphShaderParams, P: GraphPipelinePush>(
-    pipeline: &PipelineHandle<DrawVertexCount, P>,
-    params_buffer: &UniformBufferHandle<S>,
+    pipeline: impl Into<DrawVertexCountKey<P>>,
+    params_buffer: impl Into<UniformSlot<S>>,
     vertex_count: u32,
     bindings: S::Bindings,
 ) -> DrawNode<S, P::Pending> {
     DrawNode {
-        pipeline_index: pipeline.index(),
+        pipeline_index: pipeline.into().index(),
         uniform: params_buffer.into(),
         call: LowerDrawCall::VertexCount(vertex_count),
         bindings,
         push: P::pending(),
-    }
-}
-
-pub fn draw_vertex_count_with_push<S, B>(
-    pipeline: &PipelineHandle<DrawVertexCount, PushBlock<B>>,
-    params_buffer: &UniformBufferHandle<S>,
-    vertex_count: u32,
-    bindings: S::Bindings,
-    push: PushValues<B>,
-) -> DrawNode<S, PushValues<B>>
-where
-    S: GraphShaderParams,
-    B: GraphShaderParams + PushConstantBlock,
-{
-    DrawNode {
-        pipeline_index: pipeline.index(),
-        uniform: params_buffer.into(),
-        call: LowerDrawCall::VertexCount(vertex_count),
-        bindings,
-        push,
     }
 }
 
 pub fn draw_indexed<S: GraphShaderParams, P: GraphPipelinePush>(
-    pipeline: &PipelineHandle<DrawIndexed, P>,
-    params_buffer: &UniformBufferHandle<S>,
+    pipeline: impl Into<DrawIndexedKey<P>>,
+    params_buffer: impl Into<UniformSlot<S>>,
     bindings: S::Bindings,
 ) -> DrawNode<S, P::Pending> {
     DrawNode {
-        pipeline_index: pipeline.index(),
+        pipeline_index: pipeline.into().index(),
         uniform: params_buffer.into(),
         call: LowerDrawCall::WholeIndexed,
         bindings,
         push: P::pending(),
-    }
-}
-
-pub fn draw_indexed_with_push<S, B>(
-    pipeline: &PipelineHandle<DrawIndexed, PushBlock<B>>,
-    params_buffer: &UniformBufferHandle<S>,
-    bindings: S::Bindings,
-    push: PushValues<B>,
-) -> DrawNode<S, PushValues<B>>
-where
-    S: GraphShaderParams,
-    B: GraphShaderParams + PushConstantBlock,
-{
-    DrawNode {
-        pipeline_index: pipeline.index(),
-        uniform: params_buffer.into(),
-        call: LowerDrawCall::WholeIndexed,
-        bindings,
-        push,
     }
 }
 
 pub fn draw_index_range<S: GraphShaderParams, P: GraphPipelinePush>(
-    pipeline: &PipelineHandle<DrawIndexed, P>,
-    params_buffer: &UniformBufferHandle<S>,
+    pipeline: impl Into<DrawIndexedKey<P>>,
+    params_buffer: impl Into<UniformSlot<S>>,
     first_index: u32,
     index_count: u32,
     bindings: S::Bindings,
 ) -> DrawNode<S, P::Pending> {
     DrawNode {
-        pipeline_index: pipeline.index(),
+        pipeline_index: pipeline.into().index(),
         uniform: params_buffer.into(),
         call: LowerDrawCall::IndexRange {
             first_index,
@@ -977,30 +1091,6 @@ pub fn draw_index_range<S: GraphShaderParams, P: GraphPipelinePush>(
         },
         bindings,
         push: P::pending(),
-    }
-}
-
-pub fn draw_index_range_with_push<S, B>(
-    pipeline: &PipelineHandle<DrawIndexed, PushBlock<B>>,
-    params_buffer: &UniformBufferHandle<S>,
-    first_index: u32,
-    index_count: u32,
-    bindings: S::Bindings,
-    push: PushValues<B>,
-) -> DrawNode<S, PushValues<B>>
-where
-    S: GraphShaderParams,
-    B: GraphShaderParams + PushConstantBlock,
-{
-    DrawNode {
-        pipeline_index: pipeline.index(),
-        uniform: params_buffer.into(),
-        call: LowerDrawCall::IndexRange {
-            first_index,
-            index_count,
-        },
-        bindings,
-        push,
     }
 }
 
@@ -1025,51 +1115,25 @@ fn indirect_call(
 
     LowerDrawCall::IndexedIndirect {
         args_index: args.index,
-        byte_offset: element_byte_offset(
-            first_command,
-            args.len,
-            std::mem::size_of::<DrawIndexedIndirectCommand>(),
-        ),
+        byte_offset: element_byte_offset(first_command, args.len, args.element_size),
         draw_count,
     }
 }
 
 pub fn draw_indexed_indirect<S: GraphShaderParams, P: GraphPipelinePush>(
-    pipeline: &PipelineHandle<DrawIndexedIndirect, P>,
-    params_buffer: &UniformBufferHandle<S>,
-    args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
+    pipeline: impl Into<DrawIndexedIndirectKey<P>>,
+    params_buffer: impl Into<UniformSlot<S>>,
+    args: impl Into<ImmutableSlot<DrawIndexedIndirectCommand>>,
     first_command: u32,
     draw_count: u32,
     bindings: S::Bindings,
 ) -> DrawNode<S, P::Pending> {
     DrawNode {
-        pipeline_index: pipeline.index(),
+        pipeline_index: pipeline.into().index(),
         uniform: params_buffer.into(),
         call: indirect_call(args.into(), first_command, draw_count),
         bindings,
         push: P::pending(),
-    }
-}
-
-pub fn draw_indexed_indirect_with_push<S, B>(
-    pipeline: &PipelineHandle<DrawIndexedIndirect, PushBlock<B>>,
-    params_buffer: &UniformBufferHandle<S>,
-    args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
-    first_command: u32,
-    draw_count: u32,
-    bindings: S::Bindings,
-    push: PushValues<B>,
-) -> DrawNode<S, PushValues<B>>
-where
-    S: GraphShaderParams,
-    B: GraphShaderParams + PushConstantBlock,
-{
-    DrawNode {
-        pipeline_index: pipeline.index(),
-        uniform: params_buffer.into(),
-        call: indirect_call(args.into(), first_command, draw_count),
-        bindings,
-        push,
     }
 }
 
@@ -1078,7 +1142,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for DrawNode<S, P>
 
     fn lower(&self, cx: &mut LowerCtx) {
         cx.draw(
-            self.pipeline_index.raw(),
+            self.pipeline_index,
             self.call,
             UniformInput {
                 slot: self.uniform.index,
@@ -1091,13 +1155,14 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for DrawNode<S, P>
     }
 
     fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+        let pipeline_index = GraphicsPipelineIndex::from_raw(self.pipeline_index);
         let value = S::assemble(frame_data, &self.bindings, &cx.resolver());
         cx.stage_uniform(self.uniform, &value);
         let push_constants = self.push.payload(&cx.resolver()).bytes;
         let draw_call = match self.call {
             LowerDrawCall::VertexCount(vertex_count) => DrawCallConfig::VertexCount(vertex_count),
             LowerDrawCall::WholeIndexed => {
-                DrawCallConfig::IndexCount(cx.whole_index_count(self.pipeline_index))
+                DrawCallConfig::IndexCount(cx.whole_index_count(pipeline_index))
             }
             LowerDrawCall::IndexRange {
                 first_index,
@@ -1109,11 +1174,11 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for DrawNode<S, P>
                     range_in_bounds(
                         first_index,
                         index_count,
-                        cx.whole_index_count(self.pipeline_index)
+                        cx.whole_index_count(pipeline_index)
                     ),
                     "index range [{first_index}, {first_index} + {index_count}) out of bounds \
                      (index count {})",
-                    cx.whole_index_count(self.pipeline_index),
+                    cx.whole_index_count(pipeline_index),
                 );
                 DrawCallConfig::IndexRange {
                     first_index,
@@ -1134,7 +1199,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for DrawNode<S, P>
             },
         };
         cx.draws.push(PendingDrawCommand::Draw {
-            pipeline_index: self.pipeline_index,
+            pipeline_index,
             draw_call,
             push_constants,
         });
@@ -1153,13 +1218,13 @@ pub trait PickingCursor: Copy {
 /// Reads back the object id under the cursor; the result stays on
 /// `FrameRenderer::picked_object_id` (a two-frame-old readback).
 pub struct PickingNode<C: PickingCursor> {
-    pipeline_index: GraphicsPipelineIndex,
+    pipeline_index: usize,
     _cursor: PhantomData<fn() -> C>,
 }
 
-pub fn picking<C: PickingCursor>(pipeline: &PickingPipelineHandle) -> PickingNode<C> {
+pub fn picking<C: PickingCursor>(pipeline: impl Into<PickingPipelineKey>) -> PickingNode<C> {
     PickingNode {
-        pipeline_index: pipeline.index,
+        pipeline_index: pipeline.into().index(),
         _cursor: PhantomData,
     }
 }
@@ -1168,7 +1233,7 @@ impl<C: PickingCursor> GraphNode for PickingNode<C> {
     type Frame = C;
 
     fn lower(&self, cx: &mut LowerCtx) {
-        cx.picking(self.pipeline_index.raw())
+        cx.picking(self.pipeline_index)
     }
 
     fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
@@ -1176,7 +1241,7 @@ impl<C: PickingCursor> GraphNode for PickingNode<C> {
         let position = frame_data.position();
         cx.picking = Some(PickingDrawConfig {
             picking_handle: PickingPipelineHandle {
-                index: self.pipeline_index,
+                index: GraphicsPipelineIndex::from_raw(self.pipeline_index),
             },
             mouse_pixel: [
                 (position[0] * render_scale) as u32,
@@ -1193,10 +1258,8 @@ pub struct UploadNode<T> {
     slot: StorageSlot<T>,
 }
 
-pub fn upload<T: GPUWrite>(buffer: &StorageBufferHandle<T>) -> UploadNode<T> {
-    UploadNode {
-        slot: buffer.into(),
-    }
+pub fn upload<T: GPUWrite>(slot: impl Into<StorageSlot<T>>) -> UploadNode<T> {
+    UploadNode { slot: slot.into() }
 }
 
 impl<T: GPUWrite> GraphNode for UploadNode<T> {
@@ -1510,54 +1573,86 @@ impl PlanCtx<'_> {
     }
 }
 
-/// A build-once graph over a node tuple `N`. `execute` takes `N::Frame` — one
-/// per-frame value per data-bearing node, in node order — performs every CPU
-/// buffer write itself, and submits the frame.
+/// A validated graph made from a node tuple `N`, before any renderer
+/// resources are created.
+///
+/// [`RenderGraph::prepare`] converts this logical graph into an
+/// executbale [`PreparedRenderGraph`] using a renderer.
 pub struct RenderGraph<N: GraphNode> {
     nodes: N,
     uniform_slots: Vec<usize>,
     buffer_slots: Vec<(desc::BufferKind, usize, String)>,
+    /// the logical texture declarations
+    texture_decls: Vec<TexDecl>,
+    /// analyzed physical-image count per logical texture
+    tex_phys: Vec<u32>,
+    /// initial version cursors
     tex: Vec<TexRunState>,
-    phys: Vec<PhysTex>,
-    /// the physical images and sampled aliases backing the logical textures
-    _keep_alive: Vec<(StorageTextureHandle, TextureHandle)>,
 }
 
 impl<N: GraphNode> RenderGraph<N> {
-    pub fn new(
-        renderer: &mut Renderer,
-        resources: GraphResources,
-        nodes: N,
-    ) -> anyhow::Result<Self> {
+    /// Validate and create the graph.
+    pub fn new(resources: ResourcePlanner, nodes: N) -> anyhow::Result<Self> {
         let mut lower = LowerCtx::new(resources.decls);
         nodes.lower(&mut lower);
         let lowered = lower.finish();
         let analysis = validate::validate(&lowered.desc, &lowered.schemas);
         let mut errors = lowered.errors;
-        let analysis = match analysis {
-            Ok(analysis) => analysis,
+        let tex_phys = match analysis {
+            Ok(analysis) => analysis.tex_phys,
             Err(mut validation) => {
                 errors.append(&mut validation);
-                validate::Analysis { tex_phys: vec![] }
+                vec![]
             }
         };
-        let max = renderer
-            .physical_device_properties
-            .limits
-            .max_image_dimension2_d;
-        errors.append(&mut validate::extent_limit_errors(
-            &lowered.desc.textures,
-            max,
-        ));
         if !errors.is_empty() {
             anyhow::bail!(validate::validation_message(&errors));
         }
 
-        let mut tex = vec![];
+        let buffer_slots = lowered
+            .desc
+            .buffers
+            .into_iter()
+            .zip(lowered.buffer_indices)
+            .map(|(decl, index)| (decl.kind, index, decl.name))
+            .collect();
+
+        Ok(Self {
+            nodes,
+            uniform_slots: lowered.uniform_slots,
+            buffer_slots,
+            texture_decls: lowered.desc.textures,
+            tex: tex_phys.iter().copied().map(TexRunState::new).collect(),
+            tex_phys,
+        })
+    }
+
+    /// Prepare the validated logical graph against a live renderer.
+    /// Device limits are checked, then physical textures created,
+    /// cleared (a blocking graphics-queue submission), and given a
+    /// sampled alias.
+    ///
+    /// A partially-created graph can have stray created resources.
+    ///
+    /// Error staging: logical validation problems are reported by
+    /// [`RenderGraph::new`]; this step reports device-limit and
+    /// allocation/clear/alias failures; runtime execution problems
+    /// (dropped buffers, oversized uploads) are reported by
+    /// [`PreparedRenderGraph::execute`].
+    pub fn prepare(self, renderer: &mut Renderer) -> anyhow::Result<PreparedRenderGraph<N>> {
+        let max = renderer
+            .physical_device_properties
+            .limits
+            .max_image_dimension2_d;
+        let extent_errors = validate::extent_limit_errors(&self.texture_decls, max);
+        if !extent_errors.is_empty() {
+            anyhow::bail!(validate::validation_message(&extent_errors));
+        }
+
         let mut phys = vec![];
         let mut keep_alive = vec![];
-        for (i, decl) in lowered.desc.textures.iter().enumerate() {
-            let phys_count = analysis.tex_phys[i];
+        for (i, decl) in self.texture_decls.iter().enumerate() {
+            let phys_count = self.tex_phys[i];
             let mut images = vec![];
             for _ in 0..phys_count {
                 let SizeClass::Fixed(width, height) = decl.size else {
@@ -1573,26 +1668,37 @@ impl<N: GraphNode> RenderGraph<N> {
                 });
                 keep_alive.push((storage, sampled));
             }
-            tex.push(TexRunState::new(phys_count));
             phys.push(PhysTex { images });
         }
 
-        Ok(Self {
-            nodes,
-            uniform_slots: lowered.uniform_slots,
-            buffer_slots: lowered
-                .desc
-                .buffers
-                .into_iter()
-                .zip(lowered.buffer_indices)
-                .map(|(decl, index)| (decl.kind, index, decl.name))
-                .collect(),
-            tex,
+        Ok(PreparedRenderGraph {
+            nodes: self.nodes,
+            uniform_slots: self.uniform_slots,
+            buffer_slots: self.buffer_slots,
+            tex: self.tex,
             phys,
             _keep_alive: keep_alive,
         })
     }
+}
 
+/// An executable render graph, returned by [`RenderGraph::prepare`]
+/// Includes a validated logical graph plus the renderer resources backing it.
+pub struct PreparedRenderGraph<N: GraphNode> {
+    nodes: N,
+    uniform_slots: Vec<usize>,
+    buffer_slots: Vec<(desc::BufferKind, usize, String)>,
+    tex: Vec<TexRunState>,
+    phys: Vec<PhysTex>,
+    /// the physical images and sampled aliases backing the logical textures
+    _keep_alive: Vec<(StorageTextureHandle, TextureHandle)>,
+}
+
+impl<N: GraphNode> PreparedRenderGraph<N> {
+    // NOTE This is necessary because the graph uses copied slot keys,
+    // instead of references to owned ones.
+    // TODO An alternative would be to use reference counted handles
+    // that keep resources alive while a graph referencing them is alive.
     fn validate_buffers(
         &self,
         uniforms: &super::uniform_buffer::UniformBufferStorage,
@@ -1661,9 +1767,66 @@ impl<N: GraphNode> RenderGraph<N> {
     }
 }
 
+// Renderer adapters
+//
+// These adapters are the only place where live renderer handles enter a
+// render graph. Each adapter converts an affine (non-Copy) renderer handle
+// into one of the graph's (Copy) keys or slots defined above. The resulting
+// type keeps the pipeline family and push interface. The graph itself does
+// not use renderer types.
+//
+// Node constructors accept `impl Into<Key>` and `impl Into<Slot>`. Callers
+// pass a handle reference directly, and the adapter converts it at the call:
+//
+//     dispatch(&pipeline, &params_buffer, ...)
+//     draw_vertex_count(&pipeline, &params_buffer, ...)
+
+macro_rules! renderer_pipeline_adapters {
+    ($(($kind:ty, $key:ident)),+ $(,)?) => {$(
+        impl From<&PipelineHandle<$kind, RendererNoPush>> for $key<NoPush> {
+            fn from(handle: &PipelineHandle<$kind, RendererNoPush>) -> Self {
+                Self::new(handle.index().raw())
+            }
+        }
+
+        impl<B: GraphShaderParams + PushConstantBlock>
+            From<&PipelineHandle<$kind, RendererPushBlock<B>>> for $key<PushBlock<B>>
+        {
+            fn from(handle: &PipelineHandle<$kind, RendererPushBlock<B>>) -> Self {
+                Self::new(handle.index().raw())
+            }
+        }
+    )+};
+}
+
+renderer_pipeline_adapters! {
+    (Compute, ComputePipelineKey),
+    (DrawVertexCount, DrawVertexCountKey),
+    (DrawIndexed, DrawIndexedKey),
+    (DrawIndexedIndirect, DrawIndexedIndirectKey),
+}
+
+impl From<&PickingPipelineHandle> for PickingPipelineKey {
+    fn from(handle: &PickingPipelineHandle) -> Self {
+        Self::new(handle.index.raw())
+    }
+}
+
+// format translation used at preparation time
+impl ToVk for GraphFormat {
+    type Vk = vk::Format;
+    fn to_vk(&self) -> Self::Vk {
+        match self {
+            Self::R32Float => vk::Format::R32_SFLOAT,
+            Self::Rgba32Float => vk::Format::R32G32B32A32_SFLOAT,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{GraphFormat, GraphResources};
+    use super::*;
+    use std::marker::PhantomData;
 
     #[test]
     fn cursor_commits_only_follow_graph_writes() {
@@ -1677,7 +1840,7 @@ mod tests {
             GraphBinding::StorageTex(GraphTex(0).mutate()),
             GraphBinding::SampledTex(BindlessHandle::from_slot(BindlessIndex::from_raw(5)).into()),
             GraphBinding::StorageTex(StorageTexBinding {
-                inner: StorageRef::External(BindlessHandle::from_slot(BindlessIndex::from_raw(6))),
+                inner: StorageRef::External(ExternalTexId::from_raw(6)),
             }),
             GraphBinding::Buffer(BufferBinding::<u32>::new(BufferBindingKind::Storage, 9).erased()),
         ];
@@ -1771,13 +1934,15 @@ mod tests {
             read: GraphTex(1).read(),
             write: GraphTex(0).write(),
         };
-        let push = push_values::<Block>(
-            Bindings {
-                read: GraphTex(0).read(),
-                write: GraphTex(1).write(),
-            },
-            73,
-        );
+        let push = PushValues::<Block> {
+            input: Block::input(
+                &73,
+                &Bindings {
+                    read: GraphTex(0).read(),
+                    write: GraphTex(1).write(),
+                },
+            ),
+        };
 
         for (iteration, expected) in [[10u64, 21, 73], [11, 20, 73], [11, 21, 73]]
             .into_iter()
@@ -1811,7 +1976,7 @@ mod tests {
 
     #[test]
     fn missing_captured_buffer_slots_return_named_errors() {
-        let mut graph = super::RenderGraph {
+        let mut graph = super::PreparedRenderGraph {
             nodes: (super::UploadNode::<u32> {
                 slot: super::StorageSlot {
                     index: 42,
@@ -1903,12 +2068,268 @@ mod tests {
     }
 
     #[test]
-    fn texture_names_carry_the_call_site() {
-        let mut resources = GraphResources::new();
-        resources.texture(8, 8, GraphFormat::R32Float);
+    fn texture_names_come_from_the_caller() {
+        let mut resources = ResourcePlanner::new();
+        resources.texture("height", 8, 8, GraphFormat::R32Float);
 
-        let name = &resources.decls[0].name;
-        assert!(name.starts_with("tex0 ("), "{name}");
-        assert!(name.contains("render_graph.rs:"), "{name}");
+        assert_eq!(resources.decls[0].name, "height");
+    }
+
+    // ---- GPU-free logical construction --------------------------------
+
+    /// A shader-params fixture for logical tests: two resource bindings and
+    /// no data half.
+    #[derive(Clone, Copy)]
+    struct LogicalBindings {
+        first: SampledTexBinding,
+        second: StorageTexBinding,
+    }
+
+    impl GraphParamBindingSet for LogicalBindings {
+        type Pending = PendingParamBindings<Self>;
+
+        fn pending() -> Self::Pending {
+            PendingParamBindings::new()
+        }
+    }
+
+    impl GraphBindingSet for LogicalBindings {
+        fn visit(&self, visit: &mut dyn FnMut(GraphBinding)) {
+            visit(GraphBinding::SampledTex(self.first));
+            visit(GraphBinding::StorageTex(self.second));
+        }
+    }
+
+    #[repr(C)]
+    struct LogicalParams {
+        _a: u64,
+        _b: u64,
+    }
+
+    impl GPUWrite for LogicalParams {}
+
+    impl GraphShaderParams for LogicalParams {
+        type Data = ();
+        type Bindings = LogicalBindings;
+        type Input = LogicalBindings;
+
+        fn input(_data: &(), bindings: &LogicalBindings) -> Self::Input {
+            *bindings
+        }
+
+        fn assemble_input(_input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+            Self { _a: 0, _b: 0 }
+        }
+    }
+
+    fn logical_dispatch(
+        first: SampledTexBinding,
+        second: StorageTexBinding,
+    ) -> ComputeNode<LogicalParams> {
+        let pipeline_key = ComputePipelineKey::<NoPush>::new(0);
+
+        dispatch(
+            pipeline_key,
+            UniformSlot {
+                index: 0,
+                _elem: PhantomData,
+            },
+            [1, 1, 1],
+        )
+        .with_param_bindings(LogicalBindings { first, second })
+    }
+
+    #[test]
+    fn logical_valid_without_renderer() {
+        let mut resources = ResourcePlanner::new();
+        let tex = resources.texture("tex", 8, 8, GraphFormat::R32Float);
+
+        let graph =
+            super::RenderGraph::new(resources, (logical_dispatch(tex.read(), tex.write()),))
+                .expect("a read+write ping-pong is logically valid");
+
+        // the analysis stays on the logical graph: 2 physical images
+        assert_eq!(graph.tex_phys, vec![2]);
+        assert_eq!(graph.texture_decls.len(), 1);
+    }
+
+    #[test]
+    fn logical_invalid_without_renderer() {
+        let mut resources = ResourcePlanner::new();
+        let ping = resources.texture("ping", 8, 8, GraphFormat::R32Float);
+
+        // one command both reads and mutates the same texture in place
+        let error =
+            super::RenderGraph::new(resources, (logical_dispatch(ping.read(), ping.mutate()),))
+                .err()
+                .expect("a mutate combined with a read must fail logical validation")
+                .to_string();
+        assert!(error.contains("render graph validation failed"), "{error}");
+    }
+
+    #[test]
+    fn logical_aggregated_callsite_errors() {
+        let mut resources = ResourcePlanner::new();
+        let tex = resources.texture("tex", 8, 8, GraphFormat::R32Float);
+        let other = resources.texture("other", 8, 8, GraphFormat::R32Float);
+
+        // two independent problems: a read_previous with no writer, and a
+        // mutate combined with a read of the same texture
+        let error = super::RenderGraph::new(
+            resources,
+            (
+                logical_dispatch(tex.read_previous(), other.write()),
+                logical_dispatch(tex.read(), tex.mutate()),
+            ),
+        )
+        .err()
+        .expect("two independent problems must fail logical validation")
+        .to_string();
+
+        let problems = error
+            .lines()
+            .filter(|line| line.trim_start().starts_with('-'))
+            .count();
+        assert!(problems >= 2, "expected aggregated problems, got: {error}");
+        assert!(error.contains("tex"), "texture name missing: {error}");
+    }
+
+    // ---- construction-time release-mode assertions --------------------
+
+    fn indirect_args(len: u32) -> ImmutableSlot<DrawIndexedIndirectCommand> {
+        ImmutableSlot {
+            index: 0,
+            len,
+            element_size: std::mem::size_of::<DrawIndexedIndirectCommand>(),
+            _elem: PhantomData,
+        }
+    }
+
+    #[test]
+    fn indirect_offsets_use_uploaded_record_size() {
+        let mut args = indirect_args(4);
+        // Deliberately differ from both command layouts to check that offsets
+        // use the slot's physical metadata, not its logical element type.
+        args.element_size = 32;
+        let call = indirect_call(args, 2, 1);
+        let LowerDrawCall::IndexedIndirect { byte_offset, .. } = call else {
+            panic!("expected indirect draw");
+        };
+
+        assert_eq!(byte_offset, 64);
+        assert_eq!(args.addr_at(2).erased().byte_offset, 64);
+    }
+
+    #[test]
+    #[should_panic(expected = "an indirect draw needs at least one command")]
+    fn indirect_zero_count_panics() {
+        indirect_call(indirect_args(4), 0, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn indirect_range_panics() {
+        indirect_call(indirect_args(4), 2, 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds for buffer of 2 element")]
+    fn immutable_addr_at_out_of_bounds_panics() {
+        let immutable = ImmutableSlot::<u32> {
+            index: 0,
+            len: 2,
+            element_size: std::mem::size_of::<u32>(),
+            _elem: PhantomData,
+        };
+        immutable.addr_at(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds for buffer of 2 element")]
+    fn singleton_addr_at_out_of_bounds_panics() {
+        let singleton = SingletonSlot::<u32> {
+            index: 0,
+            len: 2,
+            _elem: PhantomData,
+        };
+        singleton.addr_at(2);
+    }
+
+    #[test]
+    fn addr_at_last_valid_index_succeeds() {
+        let immutable = ImmutableSlot::<u32> {
+            index: 0,
+            len: 2,
+            element_size: std::mem::size_of::<u32>(),
+            _elem: PhantomData,
+        };
+        let binding = immutable.addr_at(1);
+        assert_eq!(
+            binding.erased().byte_offset,
+            std::mem::size_of::<u32>() as u64
+        );
+
+        let singleton = SingletonSlot::<u32> {
+            index: 0,
+            len: 2,
+            _elem: PhantomData,
+        };
+        assert_eq!(
+            singleton.addr_at(1).erased().byte_offset,
+            std::mem::size_of::<u32>() as u64
+        );
+    }
+
+    // ---- slot Copy/Clone without element bounds -----------------------
+
+    // The Clone calls are deliberate: this test exercises the manual
+    // Clone/Copy impls that omit element bounds.
+    #[test]
+    #[allow(clippy::clone_on_copy)]
+    fn slot_copy_non_copy_element() {
+        struct NotCopy;
+
+        fn copied<T>(slot: UniformSlot<T>) -> (usize, usize) {
+            let first = slot.index;
+            let clone = slot;
+            (first, clone.index)
+        }
+
+        let uniform = UniformSlot::<NotCopy> {
+            index: 1,
+            _elem: PhantomData,
+        };
+        assert_eq!(copied(uniform), (1, 1));
+
+        let storage = StorageSlot::<NotCopy> {
+            index: 2,
+            len: 3,
+            _elem: PhantomData,
+        };
+        let storage_copy = storage;
+        assert_eq!((storage.index, storage_copy.len), (2, 3));
+
+        let gpu_only = GpuOnlySlot::<NotCopy> {
+            index: 4,
+            _elem: PhantomData,
+        };
+        let gpu_only_copy = gpu_only.clone();
+        assert_eq!(gpu_only.index, gpu_only_copy.index);
+
+        let immutable = ImmutableSlot::<NotCopy> {
+            index: 5,
+            len: 6,
+            element_size: std::mem::size_of::<NotCopy>(),
+            _elem: PhantomData,
+        };
+        assert_eq!(immutable.clone().len, 6);
+
+        let singleton = SingletonSlot::<NotCopy> {
+            index: 7,
+            len: 8,
+            _elem: PhantomData,
+        };
+        let (a, b) = (singleton, singleton);
+        assert_eq!((a.index, b.len), (7, 8));
     }
 }

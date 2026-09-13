@@ -14,9 +14,11 @@ use mltrs::editor::{Label, Slider};
 use mltrs::game::*;
 use mltrs::renderer::{
     ComputeNode, ComputeNodeWithPush, DrawError, DrawVertexCountNode, FrameRenderer, GraphFormat,
-    GraphResources, LoopCount, OptionalNode, RenderGraph, Renderer, RepeatNode,
-    StorageBufferHandle, StorageSlot, StorageTextureHandle, TextureHandle, UniformBufferHandle,
-    UploadNode, dispatch, draw_vertex_count, optional, repeat, upload,
+    LoopCount, OptionalNode, PreparedRenderGraph, RenderGraph, Renderer, RepeatNode,
+    ResourcePlanner, StorageBufferHandle, StorageSlot, StorageTextureHandle, TextureHandle,
+    UniformBufferHandle, UploadNode, optional,
+    render_graph::{dispatch, draw_vertex_count},
+    repeat, upload,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -65,19 +67,19 @@ const CAPILLARY_CAPACITY: f32 = 1.0;
 const CAPILLARY_SIGMA: f32 = 0.3;
 const DRY_THRESHOLD: f32 = 0.05;
 
-type WcGraph = RenderGraph<(
+type WcGraph = PreparedRenderGraph<(
     OptionalNode<(
         UploadNode<paint_brush_compute::StrokePoint>,
         ComputeNode<paint_brush_compute::BrushParams>,
     )>,
     ComputeNode<wc_update_velocity_compute::Params>,
     ComputeNode<wc_divergence_compute::Params>,
-    RepeatNode<(
+    RepeatNode<
         ComputeNodeWithPush<
             wc_pressure_jacobi_compute::Params,
             wc_pressure_jacobi_compute::JacobiDispatch,
         >,
-    )>,
+    >,
     ComputeNode<wc_project_velocity_compute::Params>,
     ComputeNodeWithPush<wc_gaussian_blur_compute::Params, wc_gaussian_blur_compute::BlurDispatch>,
     ComputeNodeWithPush<wc_gaussian_blur_compute::Params, wc_gaussian_blur_compute::BlurDispatch>,
@@ -330,23 +332,23 @@ impl Game for Watercolor {
     fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
         // Logical simulation textures; the graph derives which ones need two
         // physical images and rotates them itself
-        let mut res = GraphResources::new();
+        let mut res = ResourcePlanner::new();
         let r32 = GraphFormat::R32Float;
         let rgba32 = GraphFormat::Rgba32Float;
-        let velocity_u = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
-        let velocity_v = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
-        let pressure = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
-        let pigment_0_3 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
-        let pigment_4_7 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
-        let pigment_8_11 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
-        let saturation = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
-        let wet_mask = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
-        let deposit_0_3 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
-        let deposit_4_7 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
-        let deposit_8_11 = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
-        let divergence = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
-        let blur_temp = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
-        let blurred_mask = res.texture(CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let velocity_u = res.texture("velocity_u", CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let velocity_v = res.texture("velocity_v", CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let pressure = res.texture("pressure", CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let pigment_0_3 = res.texture("pigment_0_3", CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let pigment_4_7 = res.texture("pigment_4_7", CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let pigment_8_11 = res.texture("pigment_8_11", CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let saturation = res.texture("saturation", CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let wet_mask = res.texture("wet_mask", CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let deposit_0_3 = res.texture("deposit_0_3", CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let deposit_4_7 = res.texture("deposit_4_7", CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let deposit_8_11 = res.texture("deposit_8_11", CANVAS_WIDTH, CANVAS_HEIGHT, rgba32);
+        let divergence = res.texture("divergence", CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let blur_temp = res.texture("blur_temp", CANVAS_WIDTH, CANVAS_HEIGHT, r32);
+        let blurred_mask = res.texture("blurred_mask", CANVAS_WIDTH, CANVAS_HEIGHT, r32);
 
         // Paper height map
         let paper_height =
@@ -467,16 +469,17 @@ impl Game for Watercolor {
         let stroke_points = StorageSlot::from(&stroke_points_buffer);
 
         let graph = RenderGraph::new(
-            renderer,
             res,
             (
                 // 1. Brush input: in-place stamps into the current versions
                 optional((
-                    upload(&stroke_points_buffer),
+                    upload(stroke_points),
                     dispatch(
                         &brush_pipeline,
                         &brush_params_buffer,
                         workgroups(paint_brush_compute::WORKGROUP_SIZE),
+                    )
+                    .with_param_bindings(
                         paint_brush_compute::BrushParamsBindings {
                             wet_mask: wet_mask.mutate(),
                             pressure: pressure.mutate(),
@@ -493,61 +496,62 @@ impl Game for Watercolor {
                     &update_velocity_pipeline,
                     &update_vel_params_buffer,
                     workgroups(wc_update_velocity_compute::WORKGROUP_SIZE),
-                    wc_update_velocity_compute::ParamsBindings {
-                        u_in: velocity_u.read(),
-                        v_in: velocity_v.read(),
-                        pressure: pressure.read(),
-                        wet_mask: wet_mask.read(),
-                        u_out: velocity_u.write(),
-                        v_out: velocity_v.write(),
-                        paper_height: paper.into(),
-                    },
-                ),
+                )
+                .with_param_bindings(wc_update_velocity_compute::ParamsBindings {
+                    u_in: velocity_u.read(),
+                    v_in: velocity_v.read(),
+                    pressure: pressure.read(),
+                    wet_mask: wet_mask.read(),
+                    u_out: velocity_u.write(),
+                    v_out: velocity_v.write(),
+                    paper_height: paper.into(),
+                }),
                 // 3. Divergence of the updated velocity
                 dispatch(
                     &divergence_pipeline,
                     &divergence_params_buffer,
                     workgroups(wc_divergence_compute::WORKGROUP_SIZE),
-                    wc_divergence_compute::ParamsBindings {
-                        u_in: velocity_u.read(),
-                        v_in: velocity_v.read(),
-                        divergence: divergence.write(),
-                    },
-                ),
+                )
+                .with_param_bindings(wc_divergence_compute::ParamsBindings {
+                    u_in: velocity_u.read(),
+                    v_in: velocity_v.read(),
+                    divergence: divergence.write(),
+                }),
                 // 4. Pressure Jacobi iterations; the push block rotates
                 //    pressure per iteration, so odd trip counts are legal
-                repeat((dispatch(
-                    &pressure_jacobi_pipeline,
-                    &pressure_jacobi_params_buffer,
-                    workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE),
-                    wc_pressure_jacobi_compute::ParamsBindings {
+                repeat(
+                    dispatch(
+                        &pressure_jacobi_pipeline,
+                        &pressure_jacobi_params_buffer,
+                        workgroups(wc_pressure_jacobi_compute::WORKGROUP_SIZE),
+                    )
+                    .with_param_bindings(wc_pressure_jacobi_compute::ParamsBindings {
                         divergence: divergence.read(),
-                    },
-                )
-                .with_push_constant(
-                    wc_pressure_jacobi_compute::JacobiDispatchInput {
-                        pressure_in: pressure.read(),
-                        pressure_out: pressure.write(),
-                    },
-                ),)),
+                    })
+                    .with_push_constant(
+                        wc_pressure_jacobi_compute::JacobiDispatchInput {
+                            pressure_in: pressure.read(),
+                            pressure_out: pressure.write(),
+                        },
+                    ),
+                ),
                 // 5. Project velocity in place
                 dispatch(
                     &project_velocity_pipeline,
                     &project_vel_params_buffer,
                     workgroups(wc_project_velocity_compute::WORKGROUP_SIZE),
-                    wc_project_velocity_compute::ParamsBindings {
-                        u: velocity_u.mutate(),
-                        v: velocity_v.mutate(),
-                        wet_mask: wet_mask.read(),
-                        pressure: pressure.read(),
-                    },
-                ),
+                )
+                .with_param_bindings(wc_project_velocity_compute::ParamsBindings {
+                    u: velocity_u.mutate(),
+                    v: velocity_v.mutate(),
+                    wet_mask: wet_mask.read(),
+                    pressure: pressure.read(),
+                }),
                 // 6. Gaussian blur H (pre-capillary wet mask -> blur_temp)
                 dispatch(
                     &blur_h_pipeline,
                     &blur_h_params_buffer,
                     workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
-                    (),
                 )
                 .with_push_constant(wc_gaussian_blur_compute::BlurDispatchInput {
                     input_tex: wet_mask.read(),
@@ -559,7 +563,6 @@ impl Game for Watercolor {
                     &blur_v_pipeline,
                     &blur_v_params_buffer,
                     workgroups(wc_gaussian_blur_compute::WORKGROUP_SIZE),
-                    (),
                 )
                 .with_push_constant(wc_gaussian_blur_compute::BlurDispatchInput {
                     input_tex: blur_temp.read(),
@@ -572,19 +575,21 @@ impl Game for Watercolor {
                     &flow_outward_pipeline,
                     &flow_outward_params_buffer,
                     workgroups(wc_flow_outward_compute::WORKGROUP_SIZE),
-                    wc_flow_outward_compute::ParamsBindings {
-                        wet_mask: wet_mask.read(),
-                        saturation: saturation.mutate(),
-                        blurred_mask: blurred_mask.read(),
-                        pressure: pressure.mutate(),
-                    },
-                ),
+                )
+                .with_param_bindings(wc_flow_outward_compute::ParamsBindings {
+                    wet_mask: wet_mask.read(),
+                    saturation: saturation.mutate(),
+                    blurred_mask: blurred_mask.read(),
+                    pressure: pressure.mutate(),
+                }),
                 // 9. Advect + transfer pigment; advects by the pre-update
                 //    velocity, exactly as the parity code did
                 dispatch(
                     &advect_and_transfer_pipeline,
                     &advect_and_transfer_params_buffer,
                     workgroups(wc_advect_and_transfer_pigment_compute::WORKGROUP_SIZE),
+                )
+                .with_param_bindings(
                     wc_advect_and_transfer_pigment_compute::ParamsBindings {
                         pigment_in_0_3: pigment_0_3.read(),
                         pigment_in_4_7: pigment_4_7.read(),
@@ -609,13 +614,13 @@ impl Game for Watercolor {
                     &capillary_flow_pipeline,
                     &capillary_flow_params_buffer,
                     workgroups(wc_capillary_flow_compute::WORKGROUP_SIZE),
-                    wc_capillary_flow_compute::ParamsBindings {
-                        saturation_in: saturation.read(),
-                        wet_mask_in: wet_mask.read(),
-                        saturation_out: saturation.write(),
-                        wet_mask_out: wet_mask.write(),
-                    },
-                ),
+                )
+                .with_param_bindings(wc_capillary_flow_compute::ParamsBindings {
+                    saturation_in: saturation.read(),
+                    wet_mask_in: wet_mask.read(),
+                    saturation_out: saturation.write(),
+                    wet_mask_out: wet_mask.write(),
+                }),
                 // 11. Display; the wet mask is shown pre-capillary, exactly
                 //     as the parity code did
                 draw_vertex_count(
@@ -631,7 +636,8 @@ impl Game for Watercolor {
                     },
                 ),
             ),
-        )?;
+        )?
+        .prepare(renderer)?;
 
         Ok(Self {
             graph,
@@ -814,7 +820,7 @@ impl Game for Watercolor {
                 wc_divergence_compute::ParamsData { grid_size },
                 (
                     LoopCount(JACOBI_ITERATIONS),
-                    (wc_pressure_jacobi_compute::ParamsData { grid_size },),
+                    wc_pressure_jacobi_compute::ParamsData { grid_size },
                 ),
                 wc_project_velocity_compute::ParamsData { grid_size },
                 wc_gaussian_blur_compute::Params {

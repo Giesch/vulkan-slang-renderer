@@ -9,7 +9,7 @@ use ash::util::read_spv;
 use serde::Serialize;
 
 pub use super::particle::Particle;
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use mltrs::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
@@ -48,6 +48,14 @@ pub struct SimParamsData {
 pub struct SimParamsBindings {
     pub particles_in: ReadBufferBinding<Particle>,
     pub particles_out: BufferBinding<Particle>,
+}
+
+impl GraphParamBindingSet for SimParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for SimParamsBindings {

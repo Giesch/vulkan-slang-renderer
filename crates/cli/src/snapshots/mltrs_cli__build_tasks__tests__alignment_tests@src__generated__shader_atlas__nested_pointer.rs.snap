@@ -14,7 +14,7 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
-use crate::renderer::gpu_write::GPUWrite;
+use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
@@ -93,6 +93,14 @@ pub struct NestedDrawBindings {
     pub slots: BufferBinding<NestedSlot>,
 }
 
+impl GraphParamBindingSet for NestedDrawBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
+}
+
 impl GraphBindingSet for NestedDrawBindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.slots.erased()));
@@ -156,7 +164,7 @@ impl GraphBindingSet for NestedParamsInput {
     fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
-impl crate::renderer::gpu_write::PushConstantBlock for NestedDraw {}
+impl crate::renderer::render_graph::PushConstantBlock for NestedDraw {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<NestedDraw>() <= 128);
 

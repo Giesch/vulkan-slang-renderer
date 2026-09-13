@@ -8,7 +8,7 @@ use std::io::Cursor;
 use ash::util::read_spv;
 use serde::Serialize;
 
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use mltrs::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
@@ -176,6 +176,14 @@ pub struct ParamsBindings {
     pub deposit_out_4_7: StorageTexBinding,
     pub deposit_out_8_11: StorageTexBinding,
     pub paper_height: SampledTexBinding,
+}
+
+impl GraphParamBindingSet for ParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for ParamsBindings {

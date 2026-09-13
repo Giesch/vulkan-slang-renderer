@@ -10,7 +10,7 @@ use ash::vk;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
@@ -69,6 +69,14 @@ pub struct SuzanneParamsBindings {
     pub texture0: SampledTexBinding,
     pub texture1: SampledTexBinding,
     pub texture2: SampledTexBinding,
+}
+
+impl GraphParamBindingSet for SuzanneParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for SuzanneParamsBindings {

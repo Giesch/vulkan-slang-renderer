@@ -8,7 +8,7 @@ use std::io::Cursor;
 use ash::util::read_spv;
 use serde::Serialize;
 
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use mltrs::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
@@ -52,6 +52,14 @@ pub struct Resources<'a> {
 pub struct JacobiDispatchBindings {
     pub pressure_in: SampledTexBinding,
     pub pressure_out: StorageTexBinding,
+}
+
+impl GraphParamBindingSet for JacobiDispatchBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for JacobiDispatchBindings {
@@ -104,6 +112,14 @@ pub struct ParamsBindings {
     pub divergence: SampledTexBinding,
 }
 
+impl GraphParamBindingSet for ParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
+}
+
 impl GraphBindingSet for ParamsBindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.divergence));
@@ -142,7 +158,7 @@ impl GraphBindingSet for ParamsInput {
     }
 }
 
-impl mltrs::renderer::gpu_write::PushConstantBlock for JacobiDispatch {}
+impl mltrs::renderer::render_graph::PushConstantBlock for JacobiDispatch {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<JacobiDispatch>() <= 128);
 

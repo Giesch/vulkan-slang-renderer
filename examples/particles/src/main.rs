@@ -7,7 +7,8 @@ use glam::{Vec2, Vec4};
 use mltrs::game::*;
 use mltrs::renderer::{
     ComputeNode, DrawError, DrawVertexCountNode, FrameRenderer, GpuOnlyBufferHandle, GpuOnlySlot,
-    GraphResources, RenderGraph, Renderer, UniformBufferHandle, dispatch, draw_vertex_count,
+    PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, UniformBufferHandle,
+    render_graph::{dispatch, draw_vertex_count},
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -21,7 +22,7 @@ fn main() -> Result<(), anyhow::Error> {
 
 const NUM_PARTICLES: u32 = 4096;
 
-type ParticlesGraph = RenderGraph<(
+type ParticlesGraph = PreparedRenderGraph<(
     ComputeNode<particles_compute::SimParams>,
     DrawVertexCountNode<particle_render::RenderParams>,
 )>;
@@ -79,19 +80,19 @@ impl Game for Particles {
         let vertex_count = NUM_PARTICLES * 6; // 6 vertices per particle quad
 
         let particles = GpuOnlySlot::from(&particle_buffer);
+
         let graph = RenderGraph::new(
-            renderer,
-            GraphResources::new(),
+            ResourcePlanner::new(),
             (
                 dispatch(
                     &compute_pipeline,
                     &sim_params_buffer,
                     [workgroup_count, 1, 1],
-                    particles_compute::SimParamsBindings {
-                        particles_in: particles.previous(),
-                        particles_out: particles.current(),
-                    },
-                ),
+                )
+                .with_param_bindings(particles_compute::SimParamsBindings {
+                    particles_in: particles.previous(),
+                    particles_out: particles.current(),
+                }),
                 draw_vertex_count(
                     &render_pipeline,
                     &render_params_buffer,
@@ -101,7 +102,8 @@ impl Game for Particles {
                     },
                 ),
             ),
-        )?;
+        )?
+        .prepare(renderer)?;
 
         let last_frame = Instant::now();
 

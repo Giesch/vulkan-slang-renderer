@@ -10,7 +10,7 @@ use ash::vk;
 use serde::Serialize;
 
 pub use super::mltrs::Projection;
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
@@ -87,6 +87,14 @@ pub struct SpriteBatchParamsData {
 pub struct SpriteBatchParamsBindings {
     pub sprites: ImmutableBufferBinding<Sprite>,
     pub texture: SampledTexBinding,
+}
+
+impl GraphParamBindingSet for SpriteBatchParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for SpriteBatchParamsBindings {

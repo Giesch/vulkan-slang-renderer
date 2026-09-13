@@ -9,7 +9,7 @@ use ash::util::read_spv;
 use serde::Serialize;
 
 pub use super::shared::Solution;
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use mltrs::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
@@ -48,6 +48,14 @@ pub struct IngredientParamsData {
 #[derive(Debug, Clone, Copy)]
 pub struct IngredientParamsBindings {
     pub solution: BufferBinding<Solution>,
+}
+
+impl GraphParamBindingSet for IngredientParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for IngredientParamsBindings {

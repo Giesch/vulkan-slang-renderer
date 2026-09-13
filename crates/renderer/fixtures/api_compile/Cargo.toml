@@ -63,7 +63,75 @@ path = "cases/positive/tuple_twelve_elements.rs"
 name = "positive_nested_tuples"
 path = "cases/positive/nested_tuples.rs"
 
+[[bin]]
+name = "positive_construction_families"
+path = "cases/positive/construction_families.rs"
+
+[[bin]]
+name = "positive_prepared_lifecycle"
+path = "cases/positive/prepared_lifecycle.rs"
+
+[[bin]]
+name = "positive_trait_bridge"
+path = "cases/positive/trait_bridge.rs"
+
+[[bin]]
+name = "negative_wrong_pipeline_kind"
+path = "cases/negative/wrong_pipeline_kind.rs"
+
+[[bin]]
+name = "negative_wrong_push_block"
+path = "cases/negative/wrong_push_block.rs"
+
+[[bin]]
+name = "negative_wrong_push_block_type"
+path = "cases/negative/wrong_push_block_type.rs"
+
+[[bin]]
+name = "negative_missing_push"
+path = "cases/negative/missing_push.rs"
+
+[[bin]]
+name = "negative_wrong_indirect_element"
+path = "cases/negative/wrong_indirect_element.rs"
+
+[[bin]]
+name = "negative_logical_no_execute"
+path = "cases/negative/logical_no_execute.rs"
+
+[[bin]]
+name = "negative_consumed_after_prepare"
+path = "cases/negative/consumed_after_prepare.rs"
+
+[[bin]]
+name = "negative_private_backend_traits"
+path = "cases/negative/private_backend_traits.rs"
+
+[[bin]]
+name = "negative_push_requires_graph_gpu_write"
+path = "cases/negative/push_requires_graph_gpu_write.rs"
+
 # keep this fixture out of the real workspace (it is also in root `exclude`).
 # `src/generated` exists only while the harness runs, and the negative bins
 # never compile, so no workspace-wide build can include this crate.
+[[bin]]
+name = "negative_missing_param_bindings"
+path = "cases/negative/missing_param_bindings.rs"
+
+[[bin]]
+name = "negative_push_without_param_bindings"
+path = "cases/negative/push_without_param_bindings.rs"
+
+[[bin]]
+name = "negative_wrong_param_bindings"
+path = "cases/negative/wrong_param_bindings.rs"
+
+[[bin]]
+name = "negative_duplicate_param_bindings"
+path = "cases/negative/duplicate_param_bindings.rs"
+
+[[bin]]
+name = "positive_param_bindings"
+path = "cases/positive/param_bindings.rs"
+
 [workspace]

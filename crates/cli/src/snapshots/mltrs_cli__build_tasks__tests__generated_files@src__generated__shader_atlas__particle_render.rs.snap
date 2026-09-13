@@ -15,7 +15,7 @@ use ash::vk;
 use serde::Serialize;
 
 pub use super::particle::Particle;
-use crate::renderer::gpu_write::GPUWrite;
+use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
@@ -52,6 +52,14 @@ pub struct RenderParamsData {
 #[derive(Debug, Clone, Copy)]
 pub struct RenderParamsBindings {
     pub particles: ReadBufferBinding<Particle>,
+}
+
+impl GraphParamBindingSet for RenderParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for RenderParamsBindings {

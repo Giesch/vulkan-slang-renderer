@@ -306,6 +306,7 @@ pub(crate) fn extent_limit_errors(textures: &[TexDecl], max: u32) -> Vec<GraphEr
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Analysis {
+    /// physical textures per logical texture, by index
     pub(crate) tex_phys: Vec<u32>,
 }
 

@@ -13,7 +13,7 @@ use std::io::Cursor;
 use ash::util::read_spv;
 use serde::Serialize;
 
-use crate::renderer::gpu_write::GPUWrite;
+use crate::renderer::render_graph::GPUWrite;
 use crate::renderer::*;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
@@ -87,6 +87,14 @@ pub struct DispatchConstantsData {
 pub struct DispatchConstantsBindings {
     pub tex: SampledTexBinding,
     pub target: StorageTexBinding,
+}
+
+impl GraphParamBindingSet for DispatchConstantsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for DispatchConstantsBindings {
@@ -167,7 +175,7 @@ impl GraphBindingSet for ParamsInput {
     fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
-impl crate::renderer::gpu_write::PushConstantBlock for DispatchConstants {}
+impl crate::renderer::render_graph::PushConstantBlock for DispatchConstants {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<DispatchConstants>() <= 128);
 

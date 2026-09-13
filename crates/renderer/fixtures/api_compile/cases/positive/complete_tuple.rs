@@ -8,7 +8,8 @@
 
 use mltrs_renderer::renderer::pipeline::{Compute, DrawIndexed, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, DrawNode, GpuOnlySlot, RenderGraph, dispatch, draw_indexed,
+    ComputeNode, ComputePipelineKey, DrawIndexedKey, DrawNode, GpuOnlySlot, PreparedRenderGraph,
+    RenderGraph, dispatch, draw_indexed,
 };
 use mltrs_renderer::renderer::{
     DrawError, FrameRenderer, GpuOnlyBufferHandle, UniformBufferHandle,
@@ -31,19 +32,18 @@ fn graph(
     render_pipeline: &PipelineHandle<DrawIndexed, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
 ) -> Graph {
+    let sim_pipeline_key = ComputePipelineKey::from(sim_pipeline);
+    let render_pipeline_key = DrawIndexedKey::from(render_pipeline);
+
     let slots = GpuOnlySlot::from(particles);
+
     (
-        dispatch(
-            sim_pipeline,
-            sim_params,
-            [1, 1, 1],
-            SimParamsBindings {
-                particles_in: slots.previous(),
-                particles_out: slots.current(),
-            },
-        ),
+        dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(SimParamsBindings {
+            particles_in: slots.previous(),
+            particles_out: slots.current(),
+        }),
         draw_indexed(
-            render_pipeline,
+            render_pipeline_key,
             render_params,
             RenderParamsBindings {
                 particles: slots.current().into(),
@@ -52,8 +52,11 @@ fn graph(
     )
 }
 
-fn execute(graph: &mut RenderGraph<Graph>, frame: FrameRenderer<'_>) -> Result<(), DrawError> {
-    graph.execute(
+fn execute(
+    prepared: &mut PreparedRenderGraph<Graph>,
+    frame: FrameRenderer<'_>,
+) -> Result<(), DrawError> {
+    prepared.execute(
         frame,
         &(
             SimParamsData { delta_time: 0.016 },

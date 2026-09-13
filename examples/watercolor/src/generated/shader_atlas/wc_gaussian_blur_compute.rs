@@ -8,7 +8,7 @@ use std::io::Cursor;
 use ash::util::read_spv;
 use serde::Serialize;
 
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
 use mltrs::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
@@ -58,6 +58,14 @@ pub struct BlurDispatchData {
 pub struct BlurDispatchBindings {
     pub input_tex: SampledTexBinding,
     pub output_tex: StorageTexBinding,
+}
+
+impl GraphParamBindingSet for BlurDispatchBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for BlurDispatchBindings {
@@ -132,7 +140,7 @@ impl GraphBindingSet for ParamsInput {
     fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
-impl mltrs::renderer::gpu_write::PushConstantBlock for BlurDispatch {}
+impl mltrs::renderer::render_graph::PushConstantBlock for BlurDispatch {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<BlurDispatch>() <= 128);
 

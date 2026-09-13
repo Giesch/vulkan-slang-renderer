@@ -10,7 +10,7 @@ use ash::vk;
 use serde::Serialize;
 
 pub use super::particle::Particle;
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
@@ -47,6 +47,14 @@ pub struct RenderParamsData {
 #[derive(Debug, Clone, Copy)]
 pub struct RenderParamsBindings {
     pub particles: ReadBufferBinding<Particle>,
+}
+
+impl GraphParamBindingSet for RenderParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for RenderParamsBindings {

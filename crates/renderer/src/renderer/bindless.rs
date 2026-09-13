@@ -26,6 +26,16 @@ impl<T> BindlessHandle<T> {
         }
     }
 
+    /// Rebuilds a handle from [`BindlessHandle::to_raw`] output. Used by the
+    /// render graph's execution bridge to turn the graph-local external
+    /// texture id back into a live handle at resolve time.
+    pub(super) fn from_raw(raw: u64) -> Self {
+        Self {
+            raw,
+            _shape: PhantomData,
+        }
+    }
+
     pub fn to_raw(self) -> u64 {
         self.raw
     }

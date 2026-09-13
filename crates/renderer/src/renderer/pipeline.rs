@@ -4,7 +4,7 @@ use ash::vk;
 
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, ShaderAtlasEntry};
 
-use super::gpu_write::{GPUWrite, PushConstantBlock};
+use super::gpu_write::PushConstantBlock;
 use super::vertex_description::{NoVertex, VertexDescription};
 use super::{
     ComputeShaderPipelineLayout, RawUniformBufferHandle, ShaderPipelineLayout,
@@ -90,33 +90,6 @@ pub struct DrawIndexedIndirect;
 impl DrawCall for DrawIndexedIndirect {
     type Index = GraphicsPipelineIndex;
 }
-
-/// One `cmd_draw_indexed_indirect` argument record.
-///
-/// The layout is Vulkan's, so this is `repr(C)` at 4-byte alignment rather
-/// than the `align(16)` a generated std430 block uses. The renderer records a
-/// stride of `size_of::<Self>()`, so an argument buffer is tightly packed.
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct DrawIndexedIndirectCommand {
-    pub index_count: u32,
-    pub instance_count: u32,
-    pub first_index: u32,
-    pub vertex_offset: i32,
-    pub first_instance: u32,
-}
-
-impl GPUWrite for DrawIndexedIndirectCommand {}
-
-const _: () = assert!(
-    std::mem::size_of::<DrawIndexedIndirectCommand>()
-        == std::mem::size_of::<vk::DrawIndexedIndirectCommand>()
-);
-const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, index_count) == 0);
-const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, instance_count) == 4);
-const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, first_index) == 8);
-const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, vertex_offset) == 12);
-const _: () = assert!(std::mem::offset_of!(DrawIndexedIndirectCommand, first_instance) == 16);
 
 /// A marker for compute pipelines
 #[derive(Debug)]

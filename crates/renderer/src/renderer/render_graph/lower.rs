@@ -172,9 +172,7 @@ impl LowerCtx {
                 SampledRef::GraphPrevious(tex) => {
                     ResourceRef::Tex(TexId(tex.0), TexAccess::ReadPrevious)
                 }
-                SampledRef::External(handle) => {
-                    ResourceRef::External(self.intern_import(handle.to_raw()))
-                }
+                SampledRef::External(id) => ResourceRef::External(self.intern_import(id.raw())),
             },
             GraphBinding::StorageTex(storage) => match storage.inner {
                 StorageRef::Graph(tex, StorageTexAccess::Write) => {
@@ -590,7 +588,7 @@ impl LowerCtx {
 
 #[cfg(test)]
 mod tests {
-    use crate::renderer::bindless::{BindlessHandle, RwTexture2D, Sampler2D};
+    use crate::renderer::bindless::{BindlessHandle, Sampler2D};
     use crate::renderer::descriptor_heap::BindlessIndex;
 
     use super::super::desc::{
@@ -647,9 +645,9 @@ mod tests {
 
     fn external_storage(slot: u32) -> GraphBinding {
         GraphBinding::StorageTex(super::super::StorageTexBinding {
-            inner: super::StorageRef::External(BindlessHandle::<RwTexture2D>::from_slot(
-                BindlessIndex::from_raw(slot),
-            )),
+            inner: super::StorageRef::External(super::super::ExternalTexId::from_raw(u64::from(
+                slot,
+            ))),
         })
     }
 

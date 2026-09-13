@@ -10,7 +10,7 @@ use ash::vk;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
@@ -57,6 +57,14 @@ pub struct DepthTextureParamsData {
 #[derive(Debug, Clone, Copy)]
 pub struct DepthTextureParamsBindings {
     pub texture: SampledTexBinding,
+}
+
+impl GraphParamBindingSet for DepthTextureParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for DepthTextureParamsBindings {

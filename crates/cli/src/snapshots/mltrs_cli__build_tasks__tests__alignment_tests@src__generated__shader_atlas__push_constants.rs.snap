@@ -14,7 +14,7 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
-use crate::renderer::gpu_write::GPUWrite;
+use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
 use crate::renderer::*;
@@ -86,6 +86,14 @@ pub struct DrawConstantsData {
 #[derive(Debug, Clone, Copy)]
 pub struct DrawConstantsBindings {
     pub tex: SampledTexBinding,
+}
+
+impl GraphParamBindingSet for DrawConstantsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for DrawConstantsBindings {
@@ -161,7 +169,7 @@ impl GraphBindingSet for ParamsInput {
     fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }
 
-impl crate::renderer::gpu_write::PushConstantBlock for DrawConstants {}
+impl crate::renderer::render_graph::PushConstantBlock for DrawConstants {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<DrawConstants>() <= 128);
 

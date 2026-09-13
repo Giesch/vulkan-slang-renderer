@@ -11,7 +11,7 @@ use serde::Serialize;
 
 pub use super::gpu_picking_common::Cube;
 pub use super::ray_march_camera::RayMarchCamera;
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
@@ -55,6 +55,14 @@ pub struct GpuPickingParamsData {
 #[derive(Debug, Clone, Copy)]
 pub struct GpuPickingParamsBindings {
     pub cubes: ReadBufferBinding<Cube>,
+}
+
+impl GraphParamBindingSet for GpuPickingParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
 }
 
 impl GraphBindingSet for GpuPickingParamsBindings {

@@ -15,6 +15,14 @@ pub struct {{ params_type }}Bindings {
 {%- endfor %}
 }
 
+impl GraphParamBindingSet for {{ params_type }}Bindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
+}
+
 impl GraphBindingSet for {{ params_type }}Bindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
 {%- for (field, kind) in binding_fields %}

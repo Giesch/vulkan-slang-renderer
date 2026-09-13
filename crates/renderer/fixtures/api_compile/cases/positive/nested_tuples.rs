@@ -10,8 +10,9 @@
 use glam::Vec2;
 use mltrs_renderer::renderer::pipeline::{Compute, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, GpuOnlySlot, GraphFormat, GraphNode, GraphResources, LoopCount, OptionalNode,
-    RenderGraph, RepeatNode, UploadNode, dispatch, optional, repeat, upload,
+    ComputeNode, ComputePipelineKey, GpuOnlySlot, GraphFormat, GraphNode, ResourcePlanner,
+    LoopCount, OptionalNode, PreparedRenderGraph, RenderGraph, RepeatNode, StorageSlot, UploadNode,
+    dispatch, optional, repeat, upload,
 };
 use mltrs_renderer::renderer::{
     DrawError, FrameRenderer, GpuOnlyBufferHandle, StorageBufferHandle, UniformBufferHandle,
@@ -34,10 +35,10 @@ type Graph = (
     ),
 );
 
-// `RenderGraph::new` consumes the `GraphResources` the textures were declared
+// `RenderGraph::new` consumes the `ResourcePlanner` the textures were declared
 // in, so the caller owns it and the graph function borrows it.
 fn graph(
-    resources: &mut GraphResources,
+    resources: &mut ResourcePlanner,
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
     particles: &GpuOnlyBufferHandle<Particle>,
@@ -45,33 +46,33 @@ fn graph(
     tex_params: &UniformBufferHandle<TexParams>,
     points: &StorageBufferHandle<Particle>,
 ) -> Graph {
+    let sim_pipeline_key = ComputePipelineKey::from(sim_pipeline);
+    let tex_pipeline_key = ComputePipelineKey::from(tex_pipeline);
+
     let slots = GpuOnlySlot::from(particles);
-    let height_in = resources.texture(8, 8, GraphFormat::R32Float);
-    let height_out = resources.texture(8, 8, GraphFormat::R32Float);
+    let height_in = resources.texture("height_in", 8, 8, GraphFormat::R32Float);
+    let height_out = resources.texture("height_out", 8, 8, GraphFormat::R32Float);
+
     (
         (
-            dispatch(
-                sim_pipeline,
-                sim_params,
-                [1, 1, 1],
+            dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(
                 SimParamsBindings {
                     particles_in: slots.previous(),
                     particles_out: slots.current(),
                 },
             ),
-            upload(points),
+            upload(StorageSlot::from(points)),
         ),
         (
-            repeat(dispatch(
-                tex_pipeline,
-                tex_params,
-                [1, 1, 1],
-                TexParamsBindings {
-                    height_in: height_in.read(),
-                    height_out: height_out.write(),
-                },
-            )),
-            optional(upload(points)),
+            repeat(
+                dispatch(tex_pipeline_key, tex_params, [1, 1, 1]).with_param_bindings(
+                    TexParamsBindings {
+                        height_in: height_in.read(),
+                        height_out: height_out.write(),
+                    },
+                ),
+            ),
+            optional(upload(StorageSlot::from(points))),
         ),
     )
 }
@@ -89,14 +90,17 @@ fn frame_contract() {
     frame_is::<Graph>();
 }
 
-fn execute(graph: &mut RenderGraph<Graph>, frame: FrameRenderer<'_>) -> Result<(), DrawError> {
+fn execute(
+    prepared: &mut PreparedRenderGraph<Graph>,
+    frame: FrameRenderer<'_>,
+) -> Result<(), DrawError> {
     let points = || {
         vec![Particle {
             position: Vec2::ZERO,
             velocity: Vec2::ZERO,
         }]
     };
-    graph.execute(
+    prepared.execute(
         frame,
         &(
             (SimParamsData { delta_time: 0.016 }, points()),

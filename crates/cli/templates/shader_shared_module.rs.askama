@@ -14,7 +14,7 @@ use {{ import.use_path() }};
 {% endfor -%}
 {# a module holding only enums has no GPUWrite impl to emit -#}
 #[allow(unused_imports)]
-use {{ import_root }}::renderer::gpu_write::GPUWrite;
+use {{ import_root }}::renderer::render_graph::GPUWrite;
 {% if graph_split_defs.len() > 0 -%}
 use {{ import_root }}::renderer::render_graph::*;
 {% endif %}

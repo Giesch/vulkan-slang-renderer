@@ -1,3 +1,6 @@
+// Mirror the renderer's private backend bounds on public APIs.
+#![allow(private_bounds)]
+
 pub mod addr;
 pub mod bindless;
 pub mod gpu_write;
@@ -6,8 +9,11 @@ pub mod vertex_description;
 
 pub use addr::*;
 pub use bindless::*;
-pub use gpu_write::*;
-pub use render_graph::*;
+pub use render_graph::{
+    BindingResolver, BufferBinding, GraphBinding, GraphBindingSet, GraphParamBindingSet,
+    GraphShaderParams, ImmutableBufferBinding, PendingParamBindings, RawBufferBinding,
+    ReadBufferBinding, SampledTexBinding, StorageTexBinding,
+};
 pub use vertex_description::*;
 
 use std::marker::PhantomData;
@@ -24,7 +30,7 @@ impl RawUniformBufferHandle {
 }
 
 pub struct NoPush;
-pub struct PushBlock<P: PushConstantBlock>(PhantomData<P>);
+pub struct PushBlock<P: self::gpu_write::PushConstantBlock>(PhantomData<P>);
 
 pub struct PipelineConfig<'a, V, D, P = NoPush>(PhantomData<(&'a (), V, D, P)>);
 

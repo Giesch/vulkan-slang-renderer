@@ -17,7 +17,7 @@ use serde::Serialize;
 {% for import in shared_module_imports -%}
 pub use {{ import.use_path() }};
 {% endfor -%}
-use {{ import_root }}::renderer::gpu_write::GPUWrite;
+use {{ import_root }}::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use {{ import_root }}::renderer::vertex_description::{NoVertex, VertexDescription};
 use {{ import_root }}::renderer::*;
@@ -99,7 +99,7 @@ const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 {% endfor %}
 {%- match shader_impl.push_constant_type_name -%}
 {%- when Some with (push_constant_type_name) +%}
-impl {{ import_root }}::renderer::gpu_write::PushConstantBlock for {{ push_constant_type_name }} {}
+impl {{ import_root }}::renderer::render_graph::PushConstantBlock for {{ push_constant_type_name }} {}
 // {{ push_constant_budget }} bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<{{ push_constant_type_name }}>() <= {{ push_constant_budget }});
 {% when None -%}
