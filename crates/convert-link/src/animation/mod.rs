@@ -65,11 +65,23 @@ pub fn j3d_single_chunk(
             expected_chunk
         );
     }
-    let chunk_size = u32_at(data, 0x24, "chunk size")? as usize;
+    let chunk_size = u32_at(data, 0x24, "chunk size")? as u64;
     if chunk_size < 0x18 {
         bail!("{what}: chunk size {chunk_size} is smaller than its own header");
     }
-    Ok(ChunkHeader { chunk_size })
+    // u64 arithmetic: a hostile 0xFFFFFFFF size word must not wrap on 32-bit
+    // hosts before the bound is applied.
+    let chunk_end = 0x20u64 + chunk_size;
+    if chunk_end > data.len() as u64 + 0x20 {
+        bail!(
+            "{what}: chunk claims {chunk_size} bytes, ending {} bytes past the {}-byte file",
+            chunk_end - data.len() as u64,
+            data.len()
+        );
+    }
+    Ok(ChunkHeader {
+        chunk_size: chunk_size as usize,
+    })
 }
 
 /// The chunk-local slice: clamped to the file, since vanilla chunk-size words

@@ -321,13 +321,15 @@ def rarc(members: dict[str, bytes], *, compress: set[str] | None = None) -> byte
     compress = compress or set()
     dirs: dict[str, list[str]] = {"": []}
     for rel in members:
+        if "/" not in rel:
+            # Root-level member: partition("/") would return the whole name
+            # as the "directory" and drop the file.
+            dirs[""].append(rel)
+            continue
         head, _, name = rel.partition("/")
-        if head:
-            dirs.setdefault(head, [])
-            if name:
-                dirs[head].append(name)
-        else:
-            dirs[""].append(name)
+        dirs.setdefault(head, [])
+        if name:
+            dirs[head].append(name)
 
     nodes: list[dict] = [{"name": "archive", "files": dirs[""]}]
     for d in sorted(set(dirs) - {""}):
@@ -339,8 +341,7 @@ def rarc(members: dict[str, bytes], *, compress: set[str] | None = None) -> byte
         if n["name"] not in ordered:
             ordered.append(n["name"])
     for rel in sorted(members):
-        head, _, name = rel.partition("/")
-        nm = name if head else rel
+        nm = rel.partition("/")[2] if "/" in rel else rel
         if nm not in ordered:
             ordered.append(nm)
     strings: dict[str, int] = {}

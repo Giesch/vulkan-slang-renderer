@@ -89,6 +89,28 @@ fn run(args: &[String]) -> Result<bool> {
     }
     let raw_dir = Path::new(&positional[0]);
     let out_dir = Path::new(&positional[1]);
+    // Reject overlapping raw/out trees: publishing into (or inside) the raw
+    // tree would destroy the verified inputs, and reading the out tree as
+    // raw input is always a mistake.
+    let raw_canon = raw_dir
+        .canonicalize()
+        .with_context(|| format!("raw dir {} is not readable", raw_dir.display()))?;
+    let out_parent_canon = out_dir
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .canonicalize()
+        .with_context(|| format!("out dir {} is not writable", out_dir.display()))?;
+    let out_canon = out_parent_canon.join(out_dir.file_name().unwrap_or_default());
+    if raw_canon == out_canon
+        || raw_canon.starts_with(&out_canon)
+        || out_canon.starts_with(&raw_canon)
+    {
+        bail!(
+            "raw dir ({}) and out dir ({}) overlap; conversion would destroy its own input",
+            raw_dir.display(),
+            out_dir.display()
+        );
+    }
 
     let clips = load_and_verify(raw_dir)?;
     if dump_canonical {
@@ -125,8 +147,23 @@ fn load_and_verify(raw_dir: &Path) -> Result<Vec<AnimationClip>> {
     }
 
     let mut expected: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut entry_ids: BTreeSet<(String, u32)> = BTreeSet::new();
     for entry in &inventory.entries {
-        expected.insert(PathBuf::from(format!("{}/{}", entry.archive, entry.member)));
+        let rel = PathBuf::from(format!("{}/{}", entry.archive, entry.member));
+        if !expected.insert(rel) {
+            bail!(
+                "inventory lists {}/{} more than once",
+                entry.archive,
+                entry.member
+            );
+        }
+        if !entry_ids.insert((entry.archive.clone(), entry.entry_index)) {
+            bail!(
+                "inventory reuses entry index {} in {}",
+                entry.entry_index,
+                entry.archive
+            );
+        }
     }
     // Reject extra raw files: the set of files on disk must be exactly the
     // inventory plus inventory.json itself.
@@ -200,21 +237,20 @@ fn collect_files(root: &Path, dir: &Path, out: &mut BTreeSet<PathBuf>) -> Result
 }
 
 /// Write catalog + clip documents into a staging dir next to `out_dir`, then
-/// swap it in, so a failure never publishes partial output.
+/// swap it in. The previous output is moved aside first and restored if the
+/// swap fails, so a failure never destroys the last valid tree and never
+/// publishes partial output.
 fn write_outputs(clips: &[AnimationClip], out_dir: &Path) -> Result<()> {
     let parent = out_dir.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let staging = parent.join(format!(".staging-converted-{}", std::process::id()));
+    let backup = parent.join(format!(".backup-converted-{}", std::process::id()));
     if staging.exists() {
         fs::remove_dir_all(&staging)?;
     }
-    let publish = |staging: &Path| -> Result<()> {
-        if out_dir.exists() {
-            fs::remove_dir_all(out_dir)?;
-        }
-        fs::rename(staging, out_dir)?;
-        Ok(())
-    };
+    if backup.exists() {
+        fs::remove_dir_all(&backup)?;
+    }
     let result = (|| -> Result<()> {
         fs::create_dir_all(&staging)?;
         let catalog = output::build_catalog(clips);
@@ -230,16 +266,45 @@ fn write_outputs(clips: &[AnimationClip], out_dir: &Path) -> Result<()> {
         }
         Ok(())
     })();
+
     match result {
         Ok(()) => {
-            publish(&staging)?;
-            Ok(())
+            // Swap with rollback: previous tree aside, new tree in, previous
+            // deleted only after the new tree is in place.
+            if out_dir.exists() {
+                fs::rename(out_dir, &backup).with_context(|| {
+                    format!("moving previous output aside from {}", out_dir.display())
+                })?;
+            }
+            match fs::rename(&staging, out_dir) {
+                Ok(()) => {
+                    let _ = fs::remove_dir_all(&backup);
+                    Ok(())
+                }
+                Err(err) => {
+                    // Restore the previous tree; the staged tree is cleaned
+                    // up below either way.
+                    if backup.exists() && !out_dir.exists() {
+                        fs::rename(&backup, out_dir).with_context(|| {
+                            format!("restoring previous output into {}", out_dir.display())
+                        })?;
+                    }
+                    Err(err).with_context(|| {
+                        format!("publishing new output into {}", out_dir.display())
+                    })
+                }
+            }
         }
         Err(err) => {
             let _ = fs::remove_dir_all(&staging);
             Err(err)
         }
     }
+    .inspect_err(|_| {
+        // Best-effort cleanup of leftovers; a surviving backup is kept (it
+        // may be the only copy of the previous output).
+        let _ = fs::remove_dir_all(&staging);
+    })
 }
 
 pub fn sha256_hex(data: &[u8]) -> String {

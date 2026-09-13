@@ -189,13 +189,103 @@ class GclibAgreement(unittest.TestCase):
         data = fx.j3d_file(b"btk1", fx.btk_chunk([t]))
         oracle.cross_check(data, "btk", "t.btk")  # deep agreement incl. tracks
 
-        # Non-identity remap: gclib's own assert fires; the walk covers it.
+        # Non-identity remap: gclib's own assert fires on load, so the
+        # cross-check skips gclib (documented limitation) and the struct
+        # walk stands alone for these clips.
         t2 = dict(t, remap=9)
         data2 = fx.j3d_file(b"btk1", fx.btk_chunk([t2]))
         dump = oracle.dump_btk(data2, "t2.btk")
         self.assertIn("remap=9", dump)
-        with self.assertRaises(oracle.OracleError):
-            oracle.cross_check(data2, "btk", "t2.btk")
+        oracle.cross_check(data2, "btk", "t2.btk")  # returns without raising
+
+
+class RustOracleDifferential(unittest.TestCase):
+    """Edge fixtures that real clips (and gclib) cannot reach, compared
+    byte-for-byte between the Rust converter's canonical dump and the
+    oracle's: nonstandard tangent words, non-identity BTK remaps, post
+    track sets, duplicate BTP materials with sample-count != duration.
+    Requires CONVERT_LINK_ANIMATIONS (the recipe builds the binary first).
+    """
+
+    def _run_differential(self, members: dict[str, bytes]) -> None:
+        import hashlib
+        import json
+        import os
+        import subprocess
+        import tempfile
+
+        converter = os.environ.get("CONVERT_LINK_ANIMATIONS")
+        if not converter:
+            self.fail("CONVERT_LINK_ANIMATIONS is unset; the recipe must build the converter first")
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp) / "raw"
+            entries = []
+            for rel, data in sorted(members.items()):
+                archive, _, member = rel.partition("/")
+                path = raw / archive / member
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                fmt = {"bck": "bck", "btp": "btp", "btk": "btk"}[member.rsplit(".", 1)[1]]
+                entries.append(
+                    {
+                        "archive": archive,
+                        "member": member,
+                        "entry_index": len(entries),
+                        "resource_id": len(entries),
+                        "format": fmt,
+                        "size": len(data),
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                    }
+                )
+            (raw / "inventory.json").write_text(
+                json.dumps({"version": 1, "disc": "GZLE01", "entries": entries})
+            )
+            rust = subprocess.run(
+                [converter, str(raw), str(Path(tmp) / "out"), "--dump-canonical"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(rust.returncode, 0, rust.stderr)
+            self.assertEqual(rust.stdout, oracle.dump_all(raw))
+
+    def test_nonstandard_tangent_word(self) -> None:
+        joints = [[axis((2, 0, 7), (0, 0, 0), (0, 0, 0))] * 3]
+        chunk = fx.bck_chunk(joints, scale_pool=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])
+        self._run_differential({"LkAnm/bcks/tangent7.bck": fx.j3d_file(b"bck1", chunk)})
+
+    def test_btk_non_identity_remap_and_post_set(self) -> None:
+        keyed = axis((2, 0, 1), (1, 0, 0), (2, 0, 0))
+        main = dict(
+            material="eyeL",
+            remap=37,  # non-identity: gclib refuses, both walks must agree
+            texgen=2,
+            center=[0.5, -0.5, 0.25],
+            axes=[keyed, keyed, keyed],
+            scale_pool=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+            rotation_pool=[0x4000],
+            translation_pool=[0.0, 1.0, 9.9, 2.0, 3.0, 4.0],
+        )
+        post = dict(
+            material="eyeR",
+            remap=11,
+            texgen=1,
+            center=[0.0, 0.0, 0.0],
+            axes=[axis((0, 0, 5), (0, 0, 0), (0, 0, 0))] * 3,
+            scale_pool=[],
+            rotation_pool=[],
+            translation_pool=[],
+        )
+        data = fx.j3d_file(b"btk1", fx.btk_chunk([main], post_targets=[post], matrix_calc=1))
+        self._run_differential({"LkD01/btk/remap_post.btk": data})
+
+    def test_btp_duplicates_and_sample_count(self) -> None:
+        rows = [
+            {"material": "mouth", "remap": 14, "texno": 0, "samples": [27, 7, 7]},
+            {"material": "mouth", "remap": 99, "texno": 1, "samples": [4]},
+            {"material": "eyeL", "remap": 1, "texno": 0, "samples": [0, 1, 2, 3, 4]},
+        ]
+        data = fx.j3d_file(b"btp1", fx.btp_chunk(rows, duration=10))
+        self._run_differential({"LkAnm/btp/dupes.btp": data})
 
 
 class FixtureSelfTest(unittest.TestCase):
@@ -218,7 +308,7 @@ class FixtureSelfTest(unittest.TestCase):
         from gclib.rarc import RARC
         import tempfile
 
-        members = {"bcks/a.bck": b"J3D1bytes", "btp/x.btp": b"more"}
+        members = {"bcks/a.bck": b"J3D1bytes", "btp/x.btp": b"more", "root.bin": b"toplevel"}
         with tempfile.NamedTemporaryFile(suffix=".arc", delete=False) as tmp:
             tmp.write(fx.rarc(members, compress={"bcks/a.bck"}))
             path = tmp.name
@@ -229,8 +319,10 @@ class FixtureSelfTest(unittest.TestCase):
                 continue
             by_dir[(e.parent_node.name, e.name)] = e.data.getvalue()
         # Uncompressed members come back raw; compressed ones stay as the
-        # Yaz0 stream (the extraction reader decompresses by magic).
+        # Yaz0 stream (the extraction reader decompresses by magic); a
+        # root-level member lives directly under the root node.
         self.assertEqual(by_dir[("btp", "x.btp")], b"more")
+        self.assertEqual(by_dir[("archive", "root.bin")], b"toplevel")
         self.assertEqual(by_dir[("bcks", "a.bck")], fx.yaz0_compress(b"J3D1bytes"))
         self.assertEqual(fx.yaz0_roundtrip(b"J3D1bytes"), b"J3D1bytes")
 
