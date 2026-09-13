@@ -59,6 +59,7 @@ pub mod pipeline;
 pub use pipeline::*;
 
 pub mod render_graph;
+mod submission;
 // GPU-data traits and graph push markers are exposed only under render_graph.
 pub use render_graph::{
     BindingResolver, BufferBinding, ComputeNode, ComputeNodeWithPush, ComputePipelineKey,
@@ -2644,7 +2645,8 @@ impl Renderer {
         let wait_info = vk::SemaphoreWaitInfo::default()
             .semaphores(&semaphores)
             .values(&values);
-        unsafe { self.device.wait_semaphores(&wait_info, u64::MAX)? };
+        let waited = submission::BeforeWait
+            .wait(|| unsafe { self.device.wait_semaphores(&wait_info, u64::MAX) })?;
 
         // 2. Acquire swapchain image (can block on vsync)
         let (image_index, swapchain_was_suboptimal_on_image_acquire) = unsafe {
@@ -2679,7 +2681,7 @@ impl Renderer {
             storage_buffers: &mut self.storage_buffers,
             singleton_buffers: &self.singleton_buffers,
         };
-        gpu_update(&mut gpu);
+        let written = waited.write(|| gpu_update(&mut gpu));
 
         // 3a. Read picking result from staging buffer (written 2 frames ago, now safe to read)
         if let Some(picking) = &self.picking {
@@ -2729,12 +2731,13 @@ impl Renderer {
             .wait_semaphore_infos(&wait_semaphores)
             .command_buffer_infos(&submit_command_buffers)
             .signal_semaphore_infos(&signal_semaphores);
-        unsafe {
-            self.device
-                .queue_submit2(self.graphics_queue, &[submit_info], vk::Fence::null())?;
-        }
-
-        on_submitted();
+        let submitted = written.submit(
+            || unsafe {
+                self.device
+                    .queue_submit2(self.graphics_queue, &[submit_info], vk::Fence::null())
+            },
+            on_submitted,
+        )?;
 
         // 6. Advance the frame slot BEFORE present
         //    This ensures that if present triggers swapchain recreation (early return),
@@ -2753,10 +2756,10 @@ impl Renderer {
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         unsafe {
-            match self
-                .swapchain_device_ext
-                .queue_present(self.presentation_queue, &present_info)
-            {
+            match submitted.present(|| {
+                self.swapchain_device_ext
+                    .queue_present(self.presentation_queue, &present_info)
+            }) {
                 Ok(false) => {
                     // not suboptimal, aka fine, or optimal i guess
                 }
