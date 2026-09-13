@@ -2,8 +2,8 @@
 
 Goal: a new example (`examples/toon_link.rs`) that renders a **static, cel-shaded
 Toon Link** from *The Legend of Zelda: The Wind Waker*, using assets extracted from
-the decompilation project at `../tww`. Companion to
-[`../tww/docs/link-rendering.md`](../../tww/docs/link-rendering.md), which maps the
+the decompilation project at `tww`. Companion to
+`tww/docs/link-rendering.md`, which maps the
 original game's code and asset paths; this document plans the port into this
 renderer.
 
@@ -24,7 +24,7 @@ with no landing phase, accepted limitations, verification debt).
    *(P2 measured the actual surface: 24 material slots sharing 11 distinct
    configs, and the frozen subset is small — see §3.)*
 2. **Asset storage — gitignored + extraction script.** Assets are pulled from the
-   user's disc image in `../tww` via `dtk` and converted locally. Nothing
+   user's disc image in `tww` via `dtk` and converted locally. Nothing
    Nintendo-copyrighted is ever committed; anyone with the disc image can
    reproduce.
 3. **Renderer extension — queue-based multi-draw + index-range draws.** The
@@ -41,9 +41,9 @@ with no landing phase, accepted limitations, verification debt).
 
 **tww side** (all verified against the working tree):
 
-- Disc image: `../tww/orig/GZLE01/Legend of Zelda, The - The Wind Waker (USA,
+- Disc image: `tww/orig/GZLE01/Legend of Zelda, The - The Wind Waker (USA,
   Canada).ciso` (1.1 GiB). Only the USA region is populated.
-- `../tww/build/tools/dtk` is a working built binary; `dtk vfs ls/cp` descends
+- `tww/build/tools/dtk` is a working built binary; `dtk vfs ls/cp` descends
   CISO→Yaz0→RARC with `:`-separated nested paths. Confirmed locations:
   - `Link.arc` at `/files/res/Object/Link.arc` — contains `bdl/cl.bdl` (356 KiB,
     the skinned body) and `tex/linktexbci4.bti` (7.5 KiB, casual-clothes body
@@ -63,13 +63,13 @@ with no landing phase, accepted limitations, verification debt).
   textures in GX formats).
 - Toon shading: materials sample the toon ramps via a texgen derived from
   normal·light; the ramps are injected **by texture name** at runtime
-  (`setToonTex` in `../tww/src/d/d_resorce.cpp`). Light/ambient colors flow into
+  (`setToonTex` in `tww/src/d/d_resorce.cpp`). Light/ambient colors flow into
   TEV registers C0/K0/K1 per frame from `dKy_tevstr_c`
-  (`../tww/include/d/d_kankyo.h`). For a static render we hardcode a daytime
+  (`tww/include/d/d_kankyo.h`). For a static render we hardcode a daytime
   context.
-- Useful references: `../tww/src/JSystem/J3DGraphLoader/J3DModelLoader.cpp` /
+- Useful references: `tww/src/JSystem/J3DGraphLoader/J3DModelLoader.cpp` /
   `J3DShapeFactory.cpp` / `J3DMaterialFactory.cpp` (chunk offsets/semantics),
-  `../tww/tools/converters/matDL_dis.py` (GX register meanings),
+  `tww/tools/converters/matDL_dis.py` (GX register meanings),
   noclip.website's J3D renderer (TypeScript; the proven J3D→modern-GPU port).
 
 **Converter side** (established by P1/P2/P3 implementation; authoritative
@@ -176,7 +176,7 @@ post-BDA-migration — descriptor-based storage buffers no longer exist):
 just extract-link                 just convert-link                just shaders (unchanged)
 ──────────────────►  assets/link/raw/  ──────────────►  assets/link/converted/
   scripts/extract_link.sh              src/bin/convert_link/         link.manifest.json
-  (dtk vfs cp from ../tww ciso)        (BDL parse, GX tex decode,    tex/*.png
+  (dtk vfs cp from tww ciso)        (BDL parse, GX tex decode,    tex/*.png
                                         pose bake, TEV subset gate)  link.{vtx,idx,skin}.bin
                                                                      mat3_dump.txt
                                                        │
@@ -198,8 +198,9 @@ untouched by asset conversion.
 ### 2.1 Extraction — `scripts/extract_link.sh`, `just extract-link`
 
 ```sh
-DISC="../tww/orig/GZLE01/Legend of Zelda, The - The Wind Waker (USA, Canada).ciso"
-DTK=../tww/build/tools/dtk
+: "${TWW_DIR:?Set TWW_DIR to the absolute path of your tww checkout}"
+DISC="$TWW_DIR/orig/GZLE01/Legend of Zelda, The - The Wind Waker (USA, Canada).ciso"
+DTK="$TWW_DIR/build/tools/dtk"
 mkdir -p assets/link/raw
 "$DTK" vfs cp "$DISC:/files/res/Object/Link.arc:bdl/cl.bdl"          assets/link/raw/cl.bdl
 "$DTK" vfs cp "$DISC:/files/res/Object/System.arc:dat/toon.bti"      assets/link/raw/toon.bti
@@ -631,7 +632,7 @@ frame.
   light seeds with exact `dKy_tevstr_c` values read from emulated RAM is now
   an optional follow-up, not a P8 gate — see risk #8.)* ~~Fed into
   `reg[0]`/konst slots the way `setLightTevColorType` does (C0 = light color,
-  K0/K1 = ambient; see `../tww/src/d/d_kankyo.cpp`).~~ **Superseded by P8 as
+  K0/K1 = ambient; see `tww/src/d/d_kankyo.cpp`).~~ **Superseded by P8 as
   built**: the TEV register and konst colors come from the manifest verbatim,
   and the light direction/color are separate uniforms feeding a real GX color
   channel — which is what the hardware does and what noclip does. Overwriting
@@ -741,7 +742,7 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
    all ops are ADD/scale-1 and the unclamped stage's values stay inside [0,1].
 7. ~~**Fog**~~ — *resolved*: declared LINEAR but disabled on all 24
    materials; the warn-and-force-off path never fires.
-8. ~~**Lighting values**~~ — **closed 2026-07-27 by reading `../tww`.** The risk
+8. ~~**Lighting values**~~ — **closed 2026-07-27 by reading `tww`.** The risk
    assumed the daytime `dKy_tevstr_c` values were only reachable out of emulated
    RAM (dolphin-memory-engine + decomp symbol addresses). They were not, and the
    hand-tuned seeds P8 shipped are gone. Three separate findings:

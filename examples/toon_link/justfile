@@ -10,7 +10,15 @@ _default:
     @ just --list --unsorted
 
 
-# extract Link assets from the tww disc image (needs a tww checkout beside the repo; override with TWW_DIR)
+# prepare and verify all Wind Waker assets for a new clone (requires TWW_DIR)
+[unix]
+tww-assets:
+    just extract-link convert-link
+    just link-verify-p1 link-verify-p2 link-verify-p3 link-verify-animations
+    @echo "TWW ASSETS VERIFIED"
+
+
+# extract Link assets from the tww disc image (requires TWW_DIR)
 [unix]
 extract-link:
     ./scripts/extract_link.sh
@@ -78,7 +86,7 @@ link-env-colors *args:
 
 # extract Link body/face animations (BCK/BTP/BTK) from the GZLE01 disc into
 # assets/link/animations/raw; verifies against the frozen goldens in scripts/
-# (needs the tww checkout beside the repo; override with TWW_DIR). Bootstrap
+# (requires TWW_DIR). Bootstrap
 # candidate manifests for review with `just toon_link extract-link-animations --bootstrap`
 [unix]
 extract-link-animations *args:

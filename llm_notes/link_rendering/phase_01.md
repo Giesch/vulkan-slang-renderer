@@ -29,8 +29,8 @@ parsing any chunk interiors.
 
 ## File-format facts this phase relies on
 
-Verified against `../tww/include/JSystem/JUtility/JUTDataHeader.h` and
-`../tww/src/JSystem/J3DGraphLoader/J3DModelLoader.cpp`:
+Verified against `tww/include/JSystem/JUtility/JUTDataHeader.h` and
+`tww/src/JSystem/J3DGraphLoader/J3DModelLoader.cpp`:
 
 - File header: `0x00` u32 magic `'J3D2'`, `0x04` u32 type `'bdl4'`, `0x08`
   u32 fileSize, `0x0C` u32 blockNum, `0x10..0x20` padding; first block at

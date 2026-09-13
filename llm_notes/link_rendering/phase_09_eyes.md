@@ -51,7 +51,7 @@ unmoved.*
 P7 traced the black quad (`phase_07.md:413-433`) and P8 restated the trace
 (`phase_08.md:1014-1019`); both attribute it to "**missing BTP plus P9's
 deferred `DstAlpha` pass**". Reading
-`../tww/src/d/actor/d_a_player_main.cpp:1811-1868` (`daPy_lk_c::draw`) and
+`tww/src/d/actor/d_a_player_main.cpp:1811-1868` (`daPy_lk_c::draw`) and
 `:12150-12178` (`playerInit`) shows all three parts of that sentence are wrong,
 and the corrections are what make this phase small:
 
@@ -127,17 +127,17 @@ TEV output alpha per role, from `mat3_dump.txt`:
 ### What the game does
 
 The write-mask packets are `mDoExt_offCupOnAupPacket` / `mDoExt_onCupOffAupPacket`
-(`../tww/src/m_Do/m_Do_ext.cpp:1845-1853`), which call `GFSetBlendModeEtc` with
+(`tww/src/m_Do/m_Do_ext.cpp:1845-1853`), which call `GFSetBlendModeEtc` with
 `colorUpdate`/`alphaUpdate` of `(0,1)` and `(1,0)`. They survive intervening
 material loads because `J3DGDSetBlendMode`
-(`../tww/include/JSystem/J3DGraphBase/J3DGD.h:106-129`) writes BP register
+(`tww/include/JSystem/J3DGraphBase/J3DGD.h:106-129`) writes BP register
 `0x41` through a mask (`0xFE001FE3`) that excludes bits 3 and 4 — exactly the
 cup/aup bits.
 
 `J3DDrawBuffer::entryImm`/`entryNonSort`
-(`../tww/src/JSystem/J3DGraphBase/J3DDrawBuffer.cpp:182,193`) **prepend**, and
+(`tww/src/JSystem/J3DGraphBase/J3DDrawBuffer.cpp:182,193`) **prepend**, and
 the buffer is walked head→tail, and Link's P0 list is a single non-sorted bucket
-(`../tww/src/d/d_drawlist.cpp:2088,2107`). So GPU order is the *reverse* of the
+(`tww/src/d/d_drawlist.cpp:2088,2107`). So GPU order is the *reverse* of the
 source order in `draw()`. Resolved:
 
 | # | pass | writes | our batches |
@@ -155,7 +155,7 @@ underneath them. Step 3 composites `out = eye·dstA + fb·(1−dstA)` with the d
 test off, which is how **the eyes read through the hair**. Step 4 zeroes the mask
 so it cannot leak into later alpha-buffer effects.
 
-`hideHatAndBackle` (`../tww/src/d/actor/d_a_player_main.cpp:1509-1531`) then
+`hideHatAndBackle` (`tww/src/d/actor/d_a_player_main.cpp:1509-1531`) then
 hides `face` and `ear(2)` for P1 so they draw exactly once — which is why those
 two are pulled out of the opaque group and drawn early. Its comment names both
 material strings verbatim (`:1512-1514`), so matching by manifest name is the
@@ -448,7 +448,7 @@ Runtime gates — **confirmed by eye 2026-08-28.** No capture harness exists
 ## Risks / open questions
 
 1. **Clear alpha is 1.0; GX's is 0.** `src/renderer.rs:1754` vs
-   `../tww/src/JSystem/JFramework/JFWDisplay.cpp:41`, with the framebuffer at
+   `tww/src/JSystem/JFramework/JFWDisplay.cpp:41`, with the framebuffer at
    `GX_PF_RGBA6_Z24` (`:210`). The mask pass computes
    `A = a² + (1−a)·A_dst`, so our partial-coverage rim gets `1 − a(1−a)` where a
    zero-alpha background would give `a²` — a slightly stronger composite,

@@ -87,6 +87,7 @@ class Harness(unittest.TestCase):
 
     def run_extract(self, *args: str, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
         env = dict(os.environ)
+        env["TWW_DIR"] = str(self.root)
         env["FAKE_DTK_ROOT"] = str(self.fake_root)
         if env_extra:
             env.update(env_extra)
@@ -94,8 +95,6 @@ class Harness(unittest.TestCase):
             [
                 sys.executable,
                 str(SCRIPTS_DIR / "extract_link_animations.py"),
-                "--tww-dir",
-                str(self.root),
                 "--disc",
                 str(self.disc),
                 "--dtk",
@@ -115,6 +114,28 @@ class Harness(unittest.TestCase):
         proc = self.run_extract("--bootstrap")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads((self.out / "candidate" / "selection.json").read_text())
+
+
+class CheckoutEnvironment(Harness):
+    def test_empty_checkout_fails_before_extraction(self) -> None:
+        proc = self.run_extract("--bootstrap", env_extra={"TWW_DIR": ""})
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Set TWW_DIR", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertFalse(self.out.exists())
+
+    def test_missing_checkout_environment_fails(self) -> None:
+        env = dict(os.environ)
+        env.pop("TWW_DIR", None)
+        for command in (
+            [sys.executable, str(SCRIPTS_DIR / "extract_link_animations.py")],
+            ["bash", str(SCRIPTS_DIR / "extract_link.sh")],
+        ):
+            with self.subTest(command=command):
+                proc = subprocess.run(command, env=env, capture_output=True, text=True)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn("Set TWW_DIR", proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
 
 
 class ExtractionScopeAndIdentity(Harness):

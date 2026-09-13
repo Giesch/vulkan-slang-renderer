@@ -4,7 +4,7 @@ Detailed plan for P0 of [`../link_rendering.md`](../link_rendering.md) §6.
 Estimated: ½ day. Verification strategy follows [`tests.md`](tests.md) §P0.
 
 **Goal**: a one-command, self-verifying, idempotent extraction of the four
-Nintendo asset files from the disc image in `../tww` into the gitignored
+Nintendo asset files from the disc image in `tww` into the gitignored
 `assets/link/raw/` tree, with committed golden hashes so every future run (and
 every future machine) proves byte-identical inputs before any converter work
 begins.
@@ -59,7 +59,7 @@ executable bit set (precedent: `scripts/extract_beats.py`). Shape:
 set -euo pipefail
 cd "$(dirname "$0")/.."                      # repo root, works from anywhere
 
-TWW_DIR="${TWW_DIR:-../tww}"
+: "${TWW_DIR:?Set TWW_DIR to the absolute path of your tww checkout}"
 DISC="$TWW_DIR/orig/GZLE01/Legend of Zelda, The - The Wind Waker (USA, Canada).ciso"
 DTK="$TWW_DIR/build/tools/dtk"
 RAW=assets/link/raw
@@ -136,7 +136,7 @@ extraction aborts the chain.
 Match house style (comment line + `[unix]` attribute):
 
 ```just
-# extract Link assets from the tww disc image (needs ../tww; override with TWW_DIR)
+# extract Link assets from the tww disc image (requires TWW_DIR)
 [unix]
 extract-link:
     ./scripts/extract_link.sh
@@ -147,7 +147,7 @@ extract-link:
 After the first successful run, paste into the **Recorded facts** section
 below: the `dtk vfs ls` listings for `Link.arc` and `System.arc` (name + size
 per member), the four exact byte sizes, and the four hashes. That gives P1 a
-checked-in reference for expected sizes without needing `../tww` on hand.
+checked-in reference for expected sizes without needing `tww` on hand.
 
 ## Verification
 
