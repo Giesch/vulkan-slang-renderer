@@ -10,8 +10,8 @@
 use glam::Vec2;
 use mltrs_renderer::renderer::pipeline::{Compute, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, ComputePipelineKey, GpuOnlySlot, GraphFormat, GraphNode, ResourcePlanner,
-    LoopCount, OptionalNode, PreparedRenderGraph, RenderGraph, RepeatNode, StorageSlot, UploadNode,
+    ComputeNode, ComputePipelineKey, GpuOnlySlot, GraphFormat, GraphNode, LoopCount, OptionalNode,
+    PreparedRenderGraph, RenderGraph, RepeatNode, ResourcePlanner, StorageSlot, UploadNode,
     dispatch, optional, repeat, upload,
 };
 use mltrs_renderer::renderer::{

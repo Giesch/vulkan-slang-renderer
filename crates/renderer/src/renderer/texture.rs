@@ -17,7 +17,7 @@ impl TextureHandle {
     /// This texture as a shader-visible handle, to write into a param struct
     /// declaring a `Sampler2D.Handle` field.
     pub fn bindless_handle(&self) -> BindlessHandle<Sampler2D> {
-        BindlessHandle::from_slot(self.bindless_slot)
+        super::bindless::from_slot(self.bindless_slot)
     }
 }
 

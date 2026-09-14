@@ -13,6 +13,7 @@ gx = { path = "crates/gx" }
 mltrs = { path = "crates/mltrs" }
 mltrs-cli = { path = "crates/cli" }
 mltrs-renderer = { path = "crates/renderer" }
+mltrs-render-graph = { path = "crates/render-graph" }
 mltrs-slang-reflection = { path = "crates/slang-reflection" }
 
 # external

@@ -58,6 +58,8 @@ pub use storage_texture::*;
 pub mod pipeline;
 pub use pipeline::*;
 
+mod graph_backend;
+mod indirect;
 pub mod render_graph;
 // GPU-data traits and graph push markers are exposed only under render_graph.
 pub use render_graph::{
@@ -1049,6 +1051,7 @@ impl Renderer {
 
             buffers_per_frame[i] = Some(RawUniformBuffer {
                 buffer,
+                byte_size: buffer_size,
                 allocation,
                 mapped_mem,
             });
@@ -1171,6 +1174,8 @@ impl Renderer {
 
         Ok(RawStorageBuffer {
             buffer,
+            byte_size: buffer_size,
+            graph_upload: false,
             allocation,
             mapped_mem,
             device_address,

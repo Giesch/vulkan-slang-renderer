@@ -1,10 +1,6 @@
 //! Plain-data description consumed by render-graph validation and compilation.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GraphFormat {
-    R32Float,
-    Rgba32Float,
-}
+pub use mltrs_render_graph::backend::GraphFormat;
 
 macro_rules! id {
     ($($name:ident),+ $(,)?) => {$(

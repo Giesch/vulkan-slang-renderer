@@ -1,6 +1,6 @@
 //! Lowering from sealed typed nodes into the plain-data description.
 use super::desc::*;
-use super::validate::GraphError;
+use super::validate::{GraphError, ScopeKind};
 use super::{BufferBindingKind, GraphBinding, SampledRef, StorageRef, StorageTexAccess};
 use std::collections::HashMap;
 
@@ -39,6 +39,7 @@ pub(crate) enum LowerDrawCall {
         args_index: usize,
         byte_offset: u64,
         draw_count: u32,
+        request: crate::commands::IndirectRequest,
     },
 }
 
@@ -425,6 +426,7 @@ impl LowerCtx {
                 args_index,
                 byte_offset,
                 draw_count,
+                ..
             } => {
                 let args_buffer = self.intern_buffer(BufferKind::Immutable, args_index, None, None);
                 DrawCall::IndexedIndirect {
@@ -482,61 +484,61 @@ impl LowerCtx {
         })
     }
 
-    fn begin(&mut self, which: &'static str) {
-        if !matches!(self.scope, Scope::Top) {
-            let outer = match self.scope {
-                Scope::Repeat { .. } => "repeat",
-                Scope::Optional { .. } => "optional",
-                Scope::Top => unreachable!(),
-            };
-            self.errors.push(GraphError::NestedControlFlow {
-                outer,
-                inner: which,
-            });
+    fn begin(&mut self, kind: ScopeKind) {
+        let outer = match self.scope {
+            Scope::Repeat { .. } => Some(ScopeKind::Repeat),
+            Scope::Optional { .. } => Some(ScopeKind::Optional),
+            Scope::Top => None,
+        };
+        if let Some(outer) = outer {
+            self.errors
+                .push(GraphError::NestedControlFlow { outer, inner: kind });
             self.ignored += 1;
             return;
         }
-        self.scope = if which == "repeat" {
-            let count = self.value(
-                format!("repeat{}.count", self.desc.passes.len()),
-                ValueKind::Count,
-            );
-            Scope::Repeat {
-                body: vec![],
-                count,
+
+        self.scope = match kind {
+            ScopeKind::Repeat => {
+                let count = self.value(
+                    format!("repeat{}.count", self.desc.passes.len()),
+                    ValueKind::Count,
+                );
+                Scope::Repeat {
+                    body: vec![],
+                    count,
+                }
             }
-        } else {
-            Scope::Optional {
+            ScopeKind::Optional => Scope::Optional {
                 body: vec![],
                 first: None,
-            }
+            },
         }
     }
 
     pub(crate) fn begin_repeat(&mut self) {
-        self.begin("repeat")
+        self.begin(ScopeKind::Repeat)
     }
 
     pub(crate) fn begin_optional(&mut self) {
-        self.begin("optional")
+        self.begin(ScopeKind::Optional)
     }
 
-    fn end(&mut self, which: &'static str) {
+    fn end(&mut self, kind: ScopeKind) {
         if self.ignored > 0 {
             self.ignored -= 1;
             return;
         }
         let old = std::mem::replace(&mut self.scope, Scope::Top);
 
-        match old {
-            Scope::Repeat { body, count } if which == "repeat" => {
+        match (old, kind) {
+            (Scope::Repeat { body, count }, ScopeKind::Repeat) => {
                 self.desc.passes.push(PassDesc::Repeat {
                     name: format!("repeat{}", self.desc.passes.len()),
                     count,
                     body,
                 })
             }
-            Scope::Optional { body, first } if which == "optional" => {
+            (Scope::Optional { body, first }, ScopeKind::Optional) => {
                 if let Some(value) = first {
                     if !body.is_empty() {
                         self.desc.passes.push(PassDesc::When {
@@ -549,16 +551,16 @@ impl LowerCtx {
                     self.errors.push(GraphError::EmptyOptionalScope)
                 }
             }
-            other => self.scope = other,
+            (other, _) => self.scope = other,
         }
     }
 
     pub(crate) fn end_repeat(&mut self) {
-        self.end("repeat")
+        self.end(ScopeKind::Repeat)
     }
 
     pub(crate) fn end_optional(&mut self) {
-        self.end("optional")
+        self.end(ScopeKind::Optional)
     }
 
     pub(crate) fn picking(&mut self, index: usize) {
@@ -588,15 +590,14 @@ impl LowerCtx {
 
 #[cfg(test)]
 mod tests {
-    use crate::renderer::bindless::{BindlessHandle, Sampler2D};
-    use crate::renderer::descriptor_heap::BindlessIndex;
+    use crate::bindless::{BindlessHandle, Sampler2D};
 
     use super::super::desc::{
         BufferKind, DrawCall, FieldKey, GraphFormat, LeafPass, PassDesc, PipelineKind,
         ResourceFieldKind, ResourceRef, SizeClass, SlotSel, TexAccess, TexDecl, TexId, TexUsage,
         UniformId, ValueKind,
     };
-    use super::super::validate::{GraphError, validate};
+    use super::super::validate::{GraphError, ScopeKind, validate};
     use super::super::{BufferBindingKind, GraphBinding, GraphTex, RawBufferBinding};
     use super::{LowerCtx, LowerDrawCall, LowerOutput, PushInput, UniformInput};
 
@@ -638,9 +639,7 @@ mod tests {
     }
 
     fn external_sampled(slot: u32) -> GraphBinding {
-        GraphBinding::SampledTex(
-            BindlessHandle::<Sampler2D>::from_slot(BindlessIndex::from_raw(slot)).into(),
-        )
+        GraphBinding::SampledTex(BindlessHandle::<Sampler2D>::from_raw(u64::from(slot)).into())
     }
 
     fn external_storage(slot: u32) -> GraphBinding {
@@ -685,8 +684,8 @@ mod tests {
         let out = cx.finish();
 
         assert!(out.errors.contains(&GraphError::NestedControlFlow {
-            outer: "repeat",
-            inner: "repeat",
+            outer: ScopeKind::Repeat,
+            inner: ScopeKind::Repeat,
         }));
     }
 
@@ -811,8 +810,8 @@ mod tests {
         let out = cx.finish();
 
         assert!(out.errors.contains(&GraphError::NestedControlFlow {
-            outer: "repeat",
-            inner: "optional",
+            outer: ScopeKind::Repeat,
+            inner: ScopeKind::Optional,
         }));
     }
 
@@ -827,8 +826,8 @@ mod tests {
         let out = cx.finish();
 
         assert!(out.errors.contains(&GraphError::NestedControlFlow {
-            outer: "optional",
-            inner: "repeat",
+            outer: ScopeKind::Optional,
+            inner: ScopeKind::Repeat,
         }));
     }
 
@@ -843,8 +842,8 @@ mod tests {
         let out = cx.finish();
 
         assert!(out.errors.contains(&GraphError::NestedControlFlow {
-            outer: "optional",
-            inner: "optional",
+            outer: ScopeKind::Optional,
+            inner: ScopeKind::Optional,
         }));
     }
 
@@ -1075,6 +1074,9 @@ mod tests {
                 args_index: 7,
                 byte_offset: 32,
                 draw_count: 5,
+                request: crate::commands::IndirectRequest::new::<
+                    crate::runtime::tests::DrawIndexedIndirectCommand,
+                >(7, 32, 5),
             },
             uni(3, vec![]),
             None,
