@@ -1,8 +1,14 @@
 # toon_link_modern
 
+> **Superseded historical plan.** The implemented design adds an independent
+> `ToonLinkModern` game and a thin selector host inside `examples/toon_link`;
+> it does not create a separate crate. The API sketches and visual assertions
+> below are stale and are preserved only as planning history. Use
+> [`docs/toon_link.md`](../docs/toon_link.md) and current source as authority.
+
 Plan for a second Toon Link example, `examples/toon_link_modern`. It renders
 the same converted assets as `examples/toon_link` with direct shader code
-instead of a TEV interpreter. Status: planned, not implemented.
+instead of a TEV interpreter. Status: superseded; not implemented as written.
 
 ## Settled decisions
 
