@@ -1653,6 +1653,7 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
                 "render graph: uniform buffer slot {index} was dropped"
             );
         }
+
         for slot in &self.buffer_slots {
             let live = match slot.kind {
                 desc::BufferKind::Singleton => lookup.singleton_live(slot.index),
@@ -1705,6 +1706,7 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
                 staged,
                 picking,
             },
+            // only cycle textures if the frame submission succeeded
             || self.tex = tex,
         )
     }

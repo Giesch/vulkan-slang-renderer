@@ -34,6 +34,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 15. [`Game::draw` takes `&mut self`, so a frame-scoped GPU address can be stashed across frames](#15-gamedraw-takes-mut-self-so-a-frame-scoped-gpu-address-can-be-stashed-across-frames) — latent **silent-wrong-data** hazard, nothing in the type system prevents it
 16. [Typed device-address minting is split across two layers](#16-typed-device-address-minting-is-split-across-two-layers) — an invariant held by convention that could be held by the compiler
 17. [Picking is a second rendering path rather than a pass, so every new capability must be re-implemented or refused](#17-picking-is-a-second-rendering-path-rather-than-a-pass-so-every-new-capability-must-be-re-implemented-or-refused) — recurring per-feature carve-outs; the cost lands on whoever adds the *next* feature
+18. [Reference-counted handles instead of copied buffer slot keys](#18-reference-counted-handles-instead-of-copied-buffer-slot-keys) — execute-time liveness checks delete
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -1422,3 +1423,16 @@ threaded through the record path, and no mutual exclusion with the draw queue.
 The `debug_assert!` at `:5983` and the `ensure!` at `:1283` both delete
 themselves rather than being relocated. `gpu_picking` still picks, and
 `just sweep` still passes.
+
+## 18. Reference-counted handles instead of copied buffer slot keys
+
+Address the TODO on `PreparedRenderGraph::validate_buffers` in
+`crates/render-graph/src/runtime.rs`. The graph captures `Copy` slot keys
+(`UniformSlot`, `StorageSlot`, …) instead of references to owned handles, so
+`execute` re-checks every captured buffer slot against `FrameLookup` liveness
+every frame and errors on any dropped buffer. The TODO names the alternative:
+reference-counted handles that keep resources alive while a graph referencing
+them is alive.
+
+**Done means.** Dropping a handle cannot invalidate a live graph;
+`validate_buffers` and the `FrameLookup` liveness methods delete.
