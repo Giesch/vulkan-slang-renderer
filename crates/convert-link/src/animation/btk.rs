@@ -1,4 +1,8 @@
-//! BTK (J3D1btk1 / TTK1) decoding: keyed face texture SRT animation.
+//! BTK (likely Binary Texture Key; J3D1btk1 / TTK1) decoding: keyed face
+//! texture SRT (Scale, Rotation, Translation) animation.
+//!
+//! TTK1 can be read as Texture Transform Key, version 1. Both BTK and TTK1
+//! expansions are inferred, not verified official names.
 //!
 //! TTK1 (single chunk at 0x20), a 0x60 header. Main set: loop u8@0x08,
 //! decimal shift u8@0x09, duration u16@0x0A, track count u16@0x0C (three

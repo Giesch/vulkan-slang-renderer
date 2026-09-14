@@ -1,5 +1,9 @@
 //! BCK (J3D1bck1 / ANK1) decoding: Link's body animation.
 //!
+//! BCK stores keyframed joint transforms (`J3DAnmTransformKey`); its full
+//! acronym expansion is unverified (B likely means Binary, K means Key).
+//! ANK1 can be read as Animation Key, version 1 (inferred expansion).
+//!
 //! Layout notes (verified against the GZLE01 data and the J3D loader):
 //! - File header is 0x20 bytes; the u32 at 0x1C is the BAS sound-trailer
 //!   offset or the 0xFFFFFFFF "absent" sentinel. The trailer lives *after*
