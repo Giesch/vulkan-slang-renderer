@@ -304,19 +304,23 @@ fn validate_indirect_layout(
 
 impl IndexedIndirectArgs for DrawIndexedIndirectCommand {
     fn index_count(&self) -> u32 {
-        (*self).index_count()
+        self.index_count
     }
+
     fn instance_count(&self) -> u32 {
-        (*self).instance_count()
+        self.instance_count
     }
+
     fn first_index(&self) -> u32 {
-        (*self).first_index()
+        self.first_index
     }
+
     fn vertex_offset(&self) -> i32 {
-        (*self).vertex_offset()
+        self.vertex_offset
     }
+
     fn first_instance(&self) -> u32 {
-        (*self).first_instance()
+        self.first_instance
     }
 }
 

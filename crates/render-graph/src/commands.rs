@@ -6,6 +6,7 @@ pub struct PushConstantBytes {
     bytes: [u8; 128],
     len: usize,
 }
+
 impl PushConstantBytes {
     pub(crate) fn from_value<P: crate::PushConstantBlock>(value: &P) -> Self {
         const {
@@ -24,10 +25,12 @@ impl PushConstantBytes {
             len: std::mem::size_of::<P>(),
         }
     }
+
     pub fn as_slice(&self) -> &[u8] {
         &self.bytes[..self.len]
     }
 }
+
 #[derive(Clone, Copy)]
 pub enum DrawCallConfig {
     VertexCount(u32),
@@ -35,6 +38,7 @@ pub enum DrawCallConfig {
     IndexRange { first_index: u32, index_count: u32 },
     IndexedIndirect(IndirectRequest),
 }
+
 /// A typed indirect request erased only inside graph planning.
 #[derive(Clone, Copy, Debug)]
 pub struct IndirectRequest {
@@ -44,6 +48,7 @@ pub struct IndirectRequest {
     element_size: usize,
     alignment: usize,
 }
+
 impl IndirectRequest {
     pub(crate) fn new<I: crate::backend::IndexedIndirectArgs>(
         buffer: usize,
@@ -58,53 +63,67 @@ impl IndirectRequest {
             alignment: align_of::<I>(),
         }
     }
+
     pub fn buffer(self) -> usize {
         self.buffer
     }
+
     pub fn offset(self) -> u64 {
         self.offset
     }
+
     pub fn draw_count(self) -> u32 {
         self.draw_count
     }
+
     pub fn element_size(self) -> usize {
         self.element_size
     }
+
     pub fn alignment(self) -> usize {
         self.alignment
     }
+
     pub fn stride(self) -> usize {
         self.element_size
     }
 }
+
 pub struct PendingDrawCommand {
     pub(crate) pipeline_index: usize,
     pub(crate) draw_call: DrawCallConfig,
     pub(crate) push_constants: Option<PushConstantBytes>,
 }
+
 impl PendingDrawCommand {
     pub fn pipeline_index(&self) -> usize {
         self.pipeline_index
     }
+
     pub fn draw_call(&self) -> DrawCallConfig {
         self.draw_call
     }
+
     pub fn push_constants(&self) -> Option<&PushConstantBytes> {
         self.push_constants.as_ref()
     }
 }
+
 pub struct PickingDrawConfig {
     pub(crate) pipeline_index: usize,
     pub(crate) position: [f32; 2],
 }
+
 impl PickingDrawConfig {
     pub fn pipeline_index(&self) -> usize {
         self.pipeline_index
     }
+
     pub fn position(&self) -> [f32; 2] {
         self.position
     }
 }
+
 /// Constructed only by graph execution. Backends must retain prior queued work.
 pub struct CommandBatch {
     pub(crate) dispatches: Vec<(usize, [u32; 3], Option<PushConstantBytes>)>,
@@ -112,16 +131,20 @@ pub struct CommandBatch {
     pub(crate) staged: crate::runtime::StagedWrites,
     pub(crate) picking: Option<PickingDrawConfig>,
 }
+
 impl CommandBatch {
     pub fn dispatches(&self) -> &[(usize, [u32; 3], Option<PushConstantBytes>)] {
         &self.dispatches
     }
+
     pub fn draws(&self) -> &[PendingDrawCommand] {
         &self.draws
     }
+
     pub fn picking(&self) -> Option<&PickingDrawConfig> {
         self.picking.as_ref()
     }
+
     /// Inspect writes for validation before submission; apply them only after the
     /// destination flight-slot wait. Padding remains uninitialized. The backend
     /// must validate actual destination capacity, mapping, and upload access;

@@ -143,9 +143,6 @@ path = "cases/positive/direct_graph_import.rs"
 name = "positive_extracted_type_identity"
 path = "cases/positive/extracted_type_identity.rs"
 [[bin]]
-name = "positive_opaque_indirect_command"
-path = "cases/positive/opaque_indirect_command.rs"
-[[bin]]
 name = "positive_same_indirect_backend"
 path = "cases/positive/same_indirect_backend.rs"
 [[bin]]
@@ -160,9 +157,6 @@ path = "cases/negative/wrong_prepared_frame_backend.rs"
 [[bin]]
 name = "negative_external_compatible_with_impl"
 path = "cases/negative/external_compatible_with_impl.rs"
-[[bin]]
-name = "negative_indirect_command_fields"
-path = "cases/negative/indirect_command_fields.rs"
 [[bin]]
 name = "negative_indirect_request_fields"
 path = "cases/negative/indirect_request_fields.rs"

@@ -694,13 +694,17 @@ pub trait GraphShaderParams: Sized {
 #[derive(Debug, Clone, Copy)]
 pub struct LoopCount(pub u32);
 
-/// One node of the graph. Implemented by the node types below and by tuples
-/// of nodes; games compose values, they do not implement this.
+/// One node of the graph.
+/// Implemented by the node types below and by tuples of nodes.
+/// Games compose values, they do not implement this.
 pub trait GraphNode {
     /// The per-frame value this node consumes from the params tuple.
     type Frame;
 
+    /// Lowers this node into the graph's build-time representation.
     fn lower(&self, cx: &mut LowerCtx);
+
+    /// Plans this node's commands and data writes for the current frame.
     fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()>;
 }
 
@@ -1026,14 +1030,14 @@ pub fn draw_index_range<S: GraphShaderParams, P: GraphPipelinePush>(
     }
 }
 
-/// `assert!`, not `debug_assert!`, on the argument range: the command
-/// processor fetches these records outside the descriptor model, so
-/// `robustBufferAccess` does not clamp a fetch past the allocation.
 fn indirect_call<I: crate::backend::IndexedIndirectArgs>(
     args: ImmutableSlot<I>,
     first_command: u32,
     draw_count: u32,
 ) -> LowerDrawCall {
+    // `assert!`, not `debug_assert!`, on the argument range: the command
+    // processor fetches these records outside the descriptor model, so
+    // `robustBufferAccess` does not clamp a fetch past the allocation.
     assert!(
         draw_count > 0,
         "an indirect draw needs at least one command"
@@ -1061,6 +1065,7 @@ pub struct IndirectDrawNode<S: GraphShaderParams, P, I> {
     draw: DrawNode<S, P>,
     args: ImmutableSlot<I>,
 }
+
 impl<S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock, I>
     IndirectDrawNode<S, PendingPush<B>, I>
 {
@@ -1071,6 +1076,7 @@ impl<S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock, I>
         }
     }
 }
+
 impl<S: GraphShaderParams + GPUWrite, P: GraphPush, I: crate::backend::IndexedIndirectArgs>
     GraphNode for IndirectDrawNode<S, P, I>
 {
@@ -1082,6 +1088,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush, I: crate::backend::IndexedIn
         self.draw.plan(data, cx)
     }
 }
+
 pub fn draw_indexed_indirect<
     S: GraphShaderParams,
     P: GraphPipelinePush,
@@ -1095,12 +1102,14 @@ pub fn draw_indexed_indirect<
     bindings: S::Bindings,
 ) -> IndirectDrawNode<S, P::Pending, I> {
     let args = args.into();
+    let call = indirect_call(args, first_command, draw_count);
+
     IndirectDrawNode {
         args,
         draw: DrawNode {
             pipeline_index: pipeline.into().index(),
             uniform: params_buffer.into(),
-            call: indirect_call(args, first_command, draw_count),
+            call,
             bindings,
             push: P::pending(),
         },
@@ -1510,6 +1519,12 @@ impl PlanCtx<'_> {
     }
 }
 
+struct CapturedBufferSlot {
+    kind: desc::BufferKind,
+    index: usize,
+    name: String,
+}
+
 /// A validated graph made from a node tuple `N`, before any renderer
 /// resources are created.
 ///
@@ -1518,7 +1533,7 @@ impl PlanCtx<'_> {
 pub struct RenderGraph<N: GraphNode> {
     nodes: N,
     uniform_slots: Vec<usize>,
-    buffer_slots: Vec<(desc::BufferKind, usize, String)>,
+    buffer_slots: Vec<CapturedBufferSlot>,
     /// the logical texture declarations
     texture_decls: Vec<TexDecl>,
     /// analyzed physical-image count per logical texture
@@ -1551,7 +1566,11 @@ impl<N: GraphNode> RenderGraph<N> {
             .buffers
             .into_iter()
             .zip(lowered.buffer_indices)
-            .map(|(decl, index)| (decl.kind, index, decl.name))
+            .map(|(decl, index)| CapturedBufferSlot {
+                kind: decl.kind,
+                index,
+                name: decl.name,
+            })
             .collect();
 
         Ok(Self {
@@ -1624,7 +1643,7 @@ impl<N: GraphNode> RenderGraph<N> {
 pub struct PreparedRenderGraph<N: GraphNode, B: BackendTypes> {
     nodes: N,
     uniform_slots: Vec<usize>,
-    buffer_slots: Vec<(desc::BufferKind, usize, String)>,
+    buffer_slots: Vec<CapturedBufferSlot>,
     tex: Vec<TexRunState>,
     phys: Vec<PhysTex>,
     /// the physical images and sampled aliases backing the logical textures
@@ -1643,14 +1662,18 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
                 "render graph: uniform buffer slot {index} was dropped"
             );
         }
-        for (kind, index, name) in &self.buffer_slots {
-            let live = match kind {
-                desc::BufferKind::Singleton => lookup.singleton_live(*index),
-                _ => lookup.storage_live(*index),
+
+        for slot in &self.buffer_slots {
+            let live = match slot.kind {
+                desc::BufferKind::Singleton => lookup.singleton_live(slot.index),
+                _ => lookup.storage_live(slot.index),
             };
             anyhow::ensure!(
                 live,
-                "render graph: {name} ({kind:?}, slot {index}) was dropped"
+                "render graph: {} ({:?}, slot {}) was dropped",
+                slot.name,
+                slot.kind,
+                slot.index,
             );
         }
 
@@ -1692,6 +1715,7 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
                 staged,
                 picking,
             },
+            // only cycle textures if the frame submission succeeded
             || self.tex = tex,
         )
     }
@@ -1924,7 +1948,11 @@ mod tests {
             super::desc::BufferKind::GpuOnlyFlight,
             super::desc::BufferKind::Singleton,
         ] {
-            graph.buffer_slots = vec![(kind, 42, "captured buffer".into())];
+            graph.buffer_slots = vec![super::CapturedBufferSlot {
+                kind,
+                index: 42,
+                name: "captured buffer".into(),
+            }];
             let error = graph
                 .validate_buffers(&EmptyBackend)
                 .unwrap_err()

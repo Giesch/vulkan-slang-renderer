@@ -1,4 +1,6 @@
-//! BTP (J3D1btp1 / TPT1) decoding: stepped face texture-pattern animation.
+//! BTP (likely Binary Texture Pattern; J3D1btp1 / TPT1) decoding: stepped
+//! face texture-pattern animation. The BTP expansion is inferred, not a
+//! verified official name; TPT1 identifies the texture-pattern chunk.
 //!
 //! TPT1 (single chunk at 0x20): loop u8@0x08, pad u8@0x09, duration u16@0x0A,
 //! anim count u16@0x0C, texture-index pool count u16@0x0E, then chunk-relative

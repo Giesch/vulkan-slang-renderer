@@ -73,10 +73,10 @@ Renderer unit tests separately prove the opaque Vulkan indirect ABI and buffer
 range checks. Graph-driven upload regressions exercise the production adapter's
 batch preflight helper with forged storage capacity, wrong uniform payload sizes,
 unmapped/missing destinations, and incompatible upload access kinds. Invalid
-batches must fail before any write, submission, or cursor commit. Submission-order tests inject failures into the same coordinator
-used by production submission: writes follow the flight wait, and cursor commits
-follow submission but precede presentation. These CPU tests complement, rather
-than replace, the real Vulkan validation sweep below.
+batches must fail before any write, submission, or cursor commit. The renderer
+directly sequences the flight wait, writes, queue submission, cursor commit, and
+presentation in `draw_frame`. These CPU tests complement, rather than replace,
+the real Vulkan validation sweep below.
 
 ## Render-graph API compile checks
 
