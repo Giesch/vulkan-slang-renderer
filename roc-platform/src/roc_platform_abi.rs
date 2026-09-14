@@ -5,7 +5,12 @@
 //!
 //! Hosted argument ownership:
 //! - Roc transfers ownership of refcounted arguments to the hosted function.
-//! - The hosted function must decref owned refcounted arguments when done.
+//! - The hosted function must release owned refcounted arguments when done, using
+//!   the release call named in each hosted symbol's doc comment below.
+//! - Releasing a container releases its elements only when the container's own
+//!   count reaches zero, which is what compiled Roc code does when it drops one
+//!   it owns. Releasing the elements unconditionally double-frees them whenever
+//!   the Roc caller still holds the container.
 //! - If the host stores or returns an argument, it must retain or transfer ownership explicitly.
 //!
 //! Import this module from the platform host and implement the listed hosted symbols
@@ -822,7 +827,13 @@ impl<T, const ELEMENTS_REFCOUNTED: bool> RocListWith<T, ELEMENTS_REFCOUNTED> {
         list
     }
 
-    /// Decrement the reference count; frees the allocation when it reaches zero.
+    /// Drop this reference to the list allocation, freeing it when this was the
+    /// last one.
+    ///
+    /// Shallow: it never touches the elements. To release an owned list whose
+    /// elements are refcounted, call that list's generated `decref_list_of_...`
+    /// helper instead, which drops the elements when this reference is the last
+    /// one and then calls this.
     ///
     /// # Safety
     /// `self` must own one live Roc list reference. Calling this more than once
@@ -848,6 +859,46 @@ impl<T, const ELEMENTS_REFCOUNTED: bool> RocListWith<T, ELEMENTS_REFCOUNTED> {
             unsafe {
                 roc_host.dealloc(base, align);
             }
+        }
+    }
+
+    /// Recursively release this list and its elements.
+    ///
+    /// The reference-count decrement claims the final reference atomically
+    /// before reading any elements, so concurrent releases cannot skip or
+    /// duplicate element teardown.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc list reference, and `P` must exactly
+    /// describe how Roc releases one initialized `T` element.
+    pub unsafe fn release_with<P>(self, roc_host: &RocHost)
+    where
+        P: RocRelease<T>,
+    {
+        if self.elements.is_null() {
+            return;
+        }
+        let alloc_ptr = self.get_allocation_ptr();
+        if alloc_ptr.is_null() {
+            return;
+        }
+        let align = core::mem::align_of::<T>().max(core::mem::align_of::<usize>());
+        let header_bytes = Self::header_bytes();
+        let rc = unsafe { (alloc_ptr as *mut AtomicIsize).sub(1) };
+        if unsafe { (*rc).load(Ordering::Relaxed) } == 0 {
+            return; // REFCOUNT_STATIC_DATA—elements are in read-only memory
+        }
+        let prev = unsafe { (*rc).fetch_sub(1, Ordering::Release) };
+        if prev == 1 {
+            fence(Ordering::Acquire);
+            if ELEMENTS_REFCOUNTED {
+                for item_ref in self.allocation_items() {
+                    let item = unsafe { core::ptr::read(item_ref) };
+                    unsafe { P::release(item, roc_host); }
+                }
+            }
+            let base = unsafe { alloc_ptr.sub(header_bytes) } as *mut c_void;
+            unsafe { roc_host.dealloc(base, align); }
         }
     }
 
@@ -905,12 +956,154 @@ impl<T: core::fmt::Debug, const ELEMENTS_REFCOUNTED: bool> core::fmt::Debug for 
     }
 }
 
+/// Statically describes how to release one owned Roc ABI value of type `T`.
+///
+/// # Safety
+/// Implementations must match Roc's exact allocation and nested ownership layout.
+pub unsafe trait RocRelease<T> {
+    unsafe fn release(value: T, roc_host: &RocHost);
+}
+
+/// An owning host-language wrapper around a value returned by Roc.
+///
+/// The release policy is zero-sized, so this wrapper adds no runtime metadata.
+/// Dropping it recursively releases the value through the host's direct Roc
+/// runtime symbols. Use `into_raw` to transfer ownership elsewhere.
+#[repr(transparent)]
+pub struct RocOwned<T, P: RocRelease<T>> {
+    value: core::mem::ManuallyDrop<T>,
+    policy: core::marker::PhantomData<P>,
+}
+
+impl<T, P: RocRelease<T>> RocOwned<T, P> {
+    /// Take ownership of a raw value returned by a Roc-provided entrypoint.
+    ///
+    /// # Safety
+    /// `value` must be one live owned result whose concrete release plan is `P`.
+    pub unsafe fn from_raw(value: T) -> Self {
+        Self { value: core::mem::ManuallyDrop::new(value), policy: core::marker::PhantomData }
+    }
+
+    pub fn as_ref(&self) -> &T {
+        &self.value
+    }
+
+    /// Transfer ownership back to raw host code without releasing the value.
+    pub fn into_raw(self) -> T {
+        let mut this = core::mem::ManuallyDrop::new(self);
+        unsafe { core::mem::ManuallyDrop::take(&mut this.value) }
+    }
+}
+
+impl<T, P: RocRelease<T>> core::ops::Deref for RocOwned<T, P> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.as_ref()
+    }
+}
+
+impl<T, P: RocRelease<T>> Drop for RocOwned<T, P> {
+    fn drop(&mut self) {
+        let value = unsafe { core::mem::ManuallyDrop::take(&mut self.value) };
+        let roc_host = direct_roc_host();
+        unsafe { P::release(value, &roc_host); }
+    }
+}
+
+pub struct RocNoopRelease;
+
+unsafe impl<T> RocRelease<T> for RocNoopRelease {
+    unsafe fn release(_value: T, _roc_host: &RocHost) {}
+}
+
+pub struct RocStrRelease;
+
+unsafe impl RocRelease<RocStr> for RocStrRelease {
+    unsafe fn release(value: RocStr, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+pub struct RocListRelease<P>(core::marker::PhantomData<P>);
+
+unsafe impl<T, P> RocRelease<RocListWith<T, true>> for RocListRelease<P>
+where
+    P: RocRelease<T>,
+{
+    unsafe fn release(value: RocListWith<T, true>, roc_host: &RocHost) {
+        unsafe { value.release_with::<P>(roc_host); }
+    }
+}
+
+pub struct RocListSpineRelease;
+
+unsafe impl<T> RocRelease<RocListWith<T, false>> for RocListSpineRelease {
+    unsafe fn release(value: RocListWith<T, false>, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+pub struct RocErasedCallableRelease;
+
+unsafe impl RocRelease<RocErasedCallable> for RocErasedCallableRelease {
+    unsafe fn release(value: RocErasedCallable, roc_host: &RocHost) {
+        unsafe { decref_erased_callable(value, roc_host); }
+    }
+}
+
+pub struct RocBoxRelease<T, P>(core::marker::PhantomData<(T, P)>);
+
+extern "C" fn release_box_payload<T, P>(data_ptr: *mut c_void, roc_host: *mut RocHost)
+where
+    P: RocRelease<T>,
+{
+    if data_ptr.is_null() || roc_host.is_null() {
+        return;
+    }
+    let value = unsafe { core::ptr::read(data_ptr as *const T) };
+    unsafe { P::release(value, &*roc_host); }
+}
+
+unsafe impl<T, P> RocRelease<*mut T> for RocBoxRelease<T, P>
+where
+    P: RocRelease<T>,
+{
+    unsafe fn release(value: *mut T, roc_host: &RocHost) {
+        unsafe {
+            decref_box_with(
+                value as RocBox,
+                core::mem::align_of::<T>(),
+                true,
+                Some(release_box_payload::<T, P>),
+                roc_host,
+            );
+        }
+    }
+}
+
+pub struct RocBoxSpineRelease<T>(core::marker::PhantomData<T>);
+
+unsafe impl<T> RocRelease<*mut T> for RocBoxSpineRelease<T> {
+    unsafe fn release(value: *mut T, roc_host: &RocHost) {
+        unsafe {
+            decref_box_with(
+                value as RocBox,
+                core::mem::align_of::<T>(),
+                false,
+                None,
+                roc_host,
+            );
+        }
+    }
+}
+
 /// Element type for __AnonStruct_621dc7eda441df2f
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct AnonStruct621dc7eda441df2f {
-    pub init_bang: *mut c_void,
+    pub init_bang: RocErasedCallable,
 }
 
 /// Element type for __AnonStruct_621dc7eda441df2f
@@ -918,7 +1111,7 @@ pub struct AnonStruct621dc7eda441df2f {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct AnonStruct621dc7eda441df2f {
-    pub init_bang: *mut c_void,
+    pub init_bang: RocErasedCallable,
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -1319,6 +1512,14 @@ impl HostStderrLineResult {
     }
 }
 
+pub struct HostStderrLineResultRelease;
+
+unsafe impl RocRelease<HostStderrLineResult> for HostStderrLineResultRelease {
+    unsafe fn release(value: HostStderrLineResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl HostStdinLineResult {
     /// Recursively decrement Roc-owned payloads.
     ///
@@ -1360,6 +1561,14 @@ impl HostStdinLineResult {
     }
 }
 
+pub struct HostStdinLineResultRelease;
+
+unsafe impl RocRelease<HostStdinLineResult> for HostStdinLineResultRelease {
+    unsafe fn release(value: HostStdinLineResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl HostStdoutLineResult {
     /// Recursively decrement Roc-owned payloads.
     ///
@@ -1395,6 +1604,14 @@ impl HostStdoutLineResult {
     }
 }
 
+pub struct HostStdoutLineResultRelease;
+
+unsafe impl RocRelease<HostStdoutLineResult> for HostStdoutLineResultRelease {
+    unsafe fn release(value: HostStdoutLineResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl AnonStruct621dc7eda441df2f {
     /// Recursively decrement Roc-owned fields.
     ///
@@ -1402,8 +1619,7 @@ impl AnonStruct621dc7eda441df2f {
     /// `self` must own one live Roc reference for each refcounted field.
     pub unsafe fn decref(self, roc_host: &RocHost) {
         let value = self;
-        let _ = value;
-        let _ = roc_host;
+        unsafe { decref_erased_callable(value.init_bang, roc_host); }
     }
 
     /// Increment Roc-owned fields.
@@ -1413,8 +1629,15 @@ impl AnonStruct621dc7eda441df2f {
     /// be balanced by later decrefs.
     pub unsafe fn incref(self, amount: isize) {
         let value = self;
-        let _ = value;
-        let _ = amount;
+        unsafe { incref_erased_callable(value.init_bang, amount); }
+    }
+}
+
+pub struct AnonStruct621dc7eda441df2fRelease;
+
+unsafe impl RocRelease<AnonStruct621dc7eda441df2f> for AnonStruct621dc7eda441df2fRelease {
+    unsafe fn release(value: AnonStruct621dc7eda441df2f, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
     }
 }
 
@@ -1439,6 +1662,14 @@ impl InitConfig {
     }
 }
 
+pub struct InitConfigRelease;
+
+unsafe impl RocRelease<InitConfig> for InitConfigRelease {
+    unsafe fn release(value: InitConfig, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 
 // Runtime Symbols
 //
@@ -1454,6 +1685,42 @@ unsafe extern "C" {
     pub fn roc_crashed(bytes: *const u8, len: usize);
 }
 
+extern "C" fn direct_roc_alloc(_host: *mut RocHost, length: usize, alignment: usize) -> *mut c_void {
+    unsafe { roc_alloc(length, alignment) }
+}
+
+extern "C" fn direct_roc_dealloc(_host: *mut RocHost, ptr: *mut c_void, alignment: usize) {
+    unsafe { roc_dealloc(ptr, alignment); }
+}
+
+extern "C" fn direct_roc_realloc(_host: *mut RocHost, ptr: *mut c_void, new_length: usize, alignment: usize) -> *mut c_void {
+    unsafe { roc_realloc(ptr, new_length, alignment) }
+}
+
+extern "C" fn direct_roc_dbg(_host: *mut RocHost, bytes: *const u8, len: usize) {
+    unsafe { roc_dbg(bytes, len); }
+}
+
+extern "C" fn direct_roc_expect_failed(_host: *mut RocHost, bytes: *const u8, len: usize) {
+    unsafe { roc_expect_failed(bytes, len); }
+}
+
+extern "C" fn direct_roc_crashed(_host: *mut RocHost, bytes: *const u8, len: usize) {
+    unsafe { roc_crashed(bytes, len); }
+}
+
+fn direct_roc_host() -> RocHost {
+    RocHost {
+        env: core::ptr::null_mut(),
+        roc_alloc: direct_roc_alloc,
+        roc_dealloc: direct_roc_dealloc,
+        roc_realloc: direct_roc_realloc,
+        roc_dbg: direct_roc_dbg,
+        roc_expect_failed: direct_roc_expect_failed,
+        roc_crashed: direct_roc_crashed,
+    }
+}
+
 // Hosted Symbols
 //
 // The platform host must export these symbols with the exact direct C ABI signatures.
@@ -1463,14 +1730,23 @@ unsafe extern "C" {
 unsafe extern "C" {
     /// Hosted symbol for Host.stderr_line!
     /// Roc signature: Str => Try({}, [StderrErr(Str)])
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_stderr_line(arg0: RocStr) -> HostStderrLineResult;
 
     /// Hosted symbol for Host.stdin_line!
     /// Roc signature: {} => Try(Str, [StdinErr(Str)])
+    /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_stdin_line() -> HostStdinLineResult;
 
     /// Hosted symbol for Host.stdout_line!
     /// Roc signature: Str => Try({}, [StdoutErr(Str)])
+    /// Owned arguments. Release each exactly once before returning, unless it is
+    /// moved into storage or into the result:
+    ///     unsafe { arg0.decref(roc_host); }
+    /// The result is owned by Roc: return exactly one owned reference.
     pub fn roc_stdout_line(arg0: RocStr) -> HostStdoutLineResult;
 
 }
@@ -1611,3 +1887,17 @@ unsafe extern "C" {
     pub fn roc_init() -> InitConfig;
 
 }
+
+const _: () = assert!(core::mem::size_of::<RocOwned<InitConfig, InitConfigRelease>>() == core::mem::size_of::<InitConfig>(), "roc_init owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<InitConfig, InitConfigRelease>>() == core::mem::align_of::<InitConfig>(), "roc_init owned result alignment mismatch");
+
+/// Owning wrapper for `roc_init`. The returned value is recursively
+/// released on Drop with no runtime descriptor or extra storage.
+///
+/// # Safety
+/// The raw entrypoint and its arguments must satisfy the generated host ABI.
+pub unsafe fn roc_init_owned() -> RocOwned<InitConfig, InitConfigRelease> {
+    let value = unsafe { roc_init() };
+    unsafe { RocOwned::from_raw(value) }
+}
+
