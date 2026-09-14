@@ -1510,6 +1510,12 @@ impl PlanCtx<'_> {
     }
 }
 
+struct CapturedBufferSlot {
+    kind: desc::BufferKind,
+    index: usize,
+    name: String,
+}
+
 /// A validated graph made from a node tuple `N`, before any renderer
 /// resources are created.
 ///
@@ -1518,7 +1524,7 @@ impl PlanCtx<'_> {
 pub struct RenderGraph<N: GraphNode> {
     nodes: N,
     uniform_slots: Vec<usize>,
-    buffer_slots: Vec<(desc::BufferKind, usize, String)>,
+    buffer_slots: Vec<CapturedBufferSlot>,
     /// the logical texture declarations
     texture_decls: Vec<TexDecl>,
     /// analyzed physical-image count per logical texture
@@ -1551,7 +1557,11 @@ impl<N: GraphNode> RenderGraph<N> {
             .buffers
             .into_iter()
             .zip(lowered.buffer_indices)
-            .map(|(decl, index)| (decl.kind, index, decl.name))
+            .map(|(decl, index)| CapturedBufferSlot {
+                kind: decl.kind,
+                index,
+                name: decl.name,
+            })
             .collect();
 
         Ok(Self {
@@ -1624,7 +1634,7 @@ impl<N: GraphNode> RenderGraph<N> {
 pub struct PreparedRenderGraph<N: GraphNode, B: BackendTypes> {
     nodes: N,
     uniform_slots: Vec<usize>,
-    buffer_slots: Vec<(desc::BufferKind, usize, String)>,
+    buffer_slots: Vec<CapturedBufferSlot>,
     tex: Vec<TexRunState>,
     phys: Vec<PhysTex>,
     /// the physical images and sampled aliases backing the logical textures
@@ -1643,14 +1653,17 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
                 "render graph: uniform buffer slot {index} was dropped"
             );
         }
-        for (kind, index, name) in &self.buffer_slots {
-            let live = match kind {
-                desc::BufferKind::Singleton => lookup.singleton_live(*index),
-                _ => lookup.storage_live(*index),
+        for slot in &self.buffer_slots {
+            let live = match slot.kind {
+                desc::BufferKind::Singleton => lookup.singleton_live(slot.index),
+                _ => lookup.storage_live(slot.index),
             };
             anyhow::ensure!(
                 live,
-                "render graph: {name} ({kind:?}, slot {index}) was dropped"
+                "render graph: {} ({:?}, slot {}) was dropped",
+                slot.name,
+                slot.kind,
+                slot.index,
             );
         }
 
@@ -1924,7 +1937,11 @@ mod tests {
             super::desc::BufferKind::GpuOnlyFlight,
             super::desc::BufferKind::Singleton,
         ] {
-            graph.buffer_slots = vec![(kind, 42, "captured buffer".into())];
+            graph.buffer_slots = vec![super::CapturedBufferSlot {
+                kind,
+                index: 42,
+                name: "captured buffer".into(),
+            }];
             let error = graph
                 .validate_buffers(&EmptyBackend)
                 .unwrap_err()
