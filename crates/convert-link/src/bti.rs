@@ -1,6 +1,6 @@
 //! ResTIMG — the 0x20-byte BTI texture header — shared by TEX1 entries and
 //! standalone `.bti` files. Layout verified against
-//! ../tww/include/JSystem/JUtility/JUTTexture.h:14–37. The image/palette
+//! tww/include/JSystem/JUtility/JUTTexture.h:14–37. The image/palette
 //! offsets are relative to the header's own start (gclib BTI.read agrees).
 
 use crate::be::BeReader;

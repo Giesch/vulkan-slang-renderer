@@ -10,6 +10,22 @@ Two checks cover different things. A renderer change needs both.
 `just test` says nothing about whether the renderer works. The sweep says
 nothing about whether codegen is correct.
 
+## Link animations
+
+The toon_link animation pipeline carries its own two-level checks
+([link_animations.md](link_animations.md) has the full picture):
+
+- `just toon_link link-test-animations` — asset-free: Rust parser/schema
+  unit tests, CLI integration tests on synthetic raw inventories, and
+  Python unittests that drive the extraction script against a fake `dtk`
+  with generated RARC/J3D fixtures. Needs `uv` (it resolves the pinned
+  gclib dependency) but no game assets.
+- `just toon_link link-verify-animations` — real-asset gate: raw-tree and
+  golden-hash checks, byte-identical parity between the Rust converter and
+  the independent Python oracle over every clip, conversion repeatability,
+  tamper detection, and a model-gate isolation check. Fails loudly when
+  the assets or prerequisites are missing; it is never cargo-discovered.
+
 ## Snapshot tests
 
 [insta](https://insta.rs) holds the snapshots of the generated code.
@@ -235,8 +251,10 @@ break this, and the script uses neither. A run that dies on a signal reports 143
 gitignored and derived from a disc image. The script tests for the assets and
 skips the example where they are absent, so one invocation is correct on a dev
 machine and in a bare container: 16 ok / 0 skip locally, 15 ok / 1 skip in a
-container. Run `just toon_link extract-link && just toon_link convert-link` to
-make the example sweepable. Every other example loads from tracked assets
+container. Run `just toon_link tww-assets` to extract, convert, and verify all
+Wind Waker assets and make the example sweepable (see
+[`link_animations.md`](link_animations.md#prerequisites) for prerequisites).
+Every other example loads from tracked assets
 inside its own `examples/<name>/` crate.
 
 ### If you change the script

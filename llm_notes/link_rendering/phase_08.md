@@ -147,7 +147,7 @@ light changes the eyes or brows, something is wrong by construction.
 The doc comment on `src/model_manifest.rs:341` says the four `reg_colors` slots
 are `(PREV/REG0/REG1/REG2)`. **That is wrong**, and getting it wrong silently
 makes the toon band vanish. From the decomp
-(`../tww/src/JSystem/J3DGraphBase/J3DMatBlock.cpp:810-811`, and the same
+(`tww/src/JSystem/J3DGraphBase/J3DMatBlock.cpp:810-811`, and the same
 shift in the `loadTevColor` helper at :42-44):
 
 ```cpp
@@ -436,7 +436,7 @@ Interpreter functions, in evaluation order:
    deliberate approximation, not an oversight~~ — **and it turned out to be
    exact.** The game sets every actor light's coefficients to the identity,
    `mCosAtten = (1,0,0)` and `mDistAtten = (1,0,0)`
-   (`../tww/src/d/d_kankyo.cpp:1548-1553`, `:3413-3418`), which makes GX's
+   (`tww/src/d/d_kankyo.cpp:1548-1553`, `:3413-3418`), which makes GX's
    attenuation term 1 whatever the geometry. The comment at the call site says
    so rather than apologising.
    `lit_mask` is 3 on every lit material, so **two** lights are needed; the
@@ -762,7 +762,7 @@ reflection:               TevParams 1328 bytes, ToonLinkParams 1552. Offsets
                           before accepting; the atlas diff is one added line.
 
 reg_colors mapping:       Confirmed three ways, and the decomp trace is the
-                          strongest. (1) `../tww/.../J3DMatBlock.cpp`:
+                          strongest. (1) `tww/.../J3DMatBlock.cpp`:
                           `loadTevColor(reg, c)` is
                           `J3DGDSetTevColorS10(GXTevRegID(reg + 1), c)`, and
                           `patchTevReg`'s loop runs to ARRAY_SIZE - 1, with
@@ -807,7 +807,7 @@ cel bands vs noclip:      Bands render, and they are unambiguously *banded*:
                           **No konst or reg value was tuned to make the picture
                           look better** -- they are the manifest's, verbatim.
 
-                          **RESOLVED 2026-07-27, by reading ../tww.** The first
+                          **RESOLVED 2026-07-27, by reading tww.** The first
                           explanation, and it is not a matter of degree: the two
                           GX lights are *single-channel by construction*.
                           Light 0 is red-only -- d_kankyo.cpp:1494-1499 sets
@@ -1048,7 +1048,7 @@ outstanding:              None. The per-feature noclip side-by-side (skin,
 The phase's second commit, 2026-07-27, same machine. It exists because
 decision 7 turned out to be wrong in a good way: the plan scoped the lighting
 values as *reasoned, not measured*, on the belief that ground truth lived in
-emulated RAM. It did not. Every value below came out of the `../tww` decomp or
+emulated RAM. It did not. Every value below came out of the `tww` decomp or
 off the disc, and the hand-tuned seeds are gone.
 
 No shader logic, no converter change, no generated code: the only `.slang`

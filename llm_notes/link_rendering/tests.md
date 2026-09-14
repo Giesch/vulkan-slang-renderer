@@ -42,7 +42,7 @@ Recurring external references, in rough order of automation strength:
   via dolphin-memory-engine + tww decomp symbols. *None of it has been set up,
   and after P8 the software-renderer tiebreaker (risk #6) is the only remaining
   thing it would buy.*
-- **The `../tww` decomp itself** — added to this list after P8, where it did
+- **The `tww` decomp itself** — added to this list after P8, where it did
   the work Dolphin was scoped for. Reading it settled the light model, the
   attenuation coefficients and the per-frame TEV register overrides directly,
   and it is grep-able rather than needing a running emulator. Reach for it

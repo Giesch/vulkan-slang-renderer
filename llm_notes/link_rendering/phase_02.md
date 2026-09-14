@@ -38,7 +38,7 @@ scope. After P2, every input to the renderer except geometry is ground truth.
 ## File-format facts this phase relies on
 
 **BTI header is tww's `ResTIMG`** — 0x20 bytes, layout verified at
-`../tww/include/JSystem/JUtility/JUTTexture.h:14–37`:
+`tww/include/JSystem/JUtility/JUTTexture.h:14–37`:
 
 ```
 0x00 u8  format        0x08 u8  paletteEnabled   0x10 u8  mipmapEnabled   0x18 u8  mipmapCount
@@ -57,7 +57,7 @@ chunk (verified in gclib `BTI.read`: `header_offset + image_data_offset`).
 A standalone `.bti` file is exactly one ResTIMG at offset 0 + data, same
 relative-offset convention.
 
-**Toon-ramp injection rule** (`../tww/src/d/d_resorce.cpp:70–82`, `setToonTex`):
+**Toon-ramp injection rule** (`tww/src/d/d_resorce.cpp:70–82`, `setToonTex`):
 texture names starting `"ZA"` get the runtime toon image, `"ZB"` the toonEX
 image. `cl.bdl` contains exactly one such entry — `ZBtoonEX` (8×8 I4
 placeholder) — and **no `ZA*` entry**, so `toon.bti` is not used by Link's body
@@ -107,8 +107,8 @@ Palette entries are BE u16 in one of IA8/RGB565/RGB5A3.
 (`J3DModelLoader.h:43–75`, confirmed in P1): u16 count at +8, then ~30 u32
 chunk-relative offsets to per-property lists; each material's init data is
 indices into those lists. Semantic references, in precedence order:
-`../tww/src/JSystem/J3DGraphLoader/J3DMaterialFactory.cpp` (the loader itself),
-`../tww/tools/converters/matDL_dis.py` (register meanings), noclip's
+`tww/src/JSystem/J3DGraphLoader/J3DMaterialFactory.cpp` (the loader itself),
+`tww/tools/converters/matDL_dis.py` (register meanings), noclip's
 `J3DLoader.ts`/`gx_material.ts`. gclib parses all of it into typed objects
 (verified by probe: `tev_stages`, `tev_orders`, konst colors/selects, texgens,
 tex matrices, blend/z/alpha-compare/fog, channels — with `asdict()`), which is
@@ -133,7 +133,7 @@ impl TryFrom<u8> for ImageFormat {
 }
 ```
 
-Numeric values from GX headers (`../tww/include/dolphin/gx/GXEnum.h`) — cite
+Numeric values from GX headers (`tww/include/dolphin/gx/GXEnum.h`) — cite
 in code comments. Running the converter is then a fuzz-by-real-data test:
 every byte in the real file must map to a known variant or the parse fails
 with the field name and value (tests.md §P2 "parse-don't-validate").
@@ -184,7 +184,7 @@ against Dolphin's `TextureDecoder` and record.
 
 - Parse count/offsets, the name table (P1's `str` handling; names are
   null-terminated in a JUTNameTab — hash u16 + offset u16 pairs; confirm
-  layout against `../tww/include/JSystem/JUtility/JUTNameTab.h`), then each
+  layout against `tww/include/JSystem/JUtility/JUTNameTab.h`), then each
   ResTIMG via `bti::parse`.
 - Emit per entry: `tex/{i:02}_{name}.png` (decoded) and
   `tex/{i:02}_{name}.bti` (standalone re-emit). Also decode the three

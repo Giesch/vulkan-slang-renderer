@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Extract Toon Link assets from the Wind Waker disc image in the repo's sibling
-# tww checkout. TWW_DIR below sets the default location.
+# Extract Toon Link assets from the Wind Waker disc image in the tww checkout
+# selected by the required TWW_DIR environment variable.
 # Plan and verification checklist: llm_notes/link_rendering/phase_00.md
 set -euo pipefail
 # examples/toon_link -- every path below is relative to this example's crate dir
 cd "$(dirname "$0")/.."
 
-# two levels down from the repo root, so the repo's sibling is ../../../tww
-TWW_DIR="${TWW_DIR:-../../../tww}"
+: "${TWW_DIR:?Set TWW_DIR to the absolute path of your tww checkout}"
 DISC="$TWW_DIR/orig/GZLE01/Legend of Zelda, The - The Wind Waker (USA, Canada).ciso"
 DTK="$TWW_DIR/build/tools/dtk"
 RAW=assets/link/raw
