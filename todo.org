@@ -3,10 +3,9 @@
 * Now
 - [ ] render graph
 
-- [ ] get toon link animations working
-  - convert to gltf?
-    this is not workable; maybe gltf plus an extension?
-  - do a more direct version first
+- [-] get toon link animations working
+  - [X] convert files
+  - [ ] animate them in ui
 
 - [ ] idiomatic wind waker toon shading in vulkan
   - [ ] check if using ramp textures is more performant than calculating
