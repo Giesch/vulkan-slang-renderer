@@ -5,7 +5,7 @@
 use serde::Serialize;
 
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_write::GPUWrite;
+use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::render_graph::*;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
