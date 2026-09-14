@@ -238,16 +238,20 @@ fn pupil_offset(material: &MaterialEntry) -> anyhow::Result<Vec2> {
             material.name
         )
     };
+
     let texgen = material.texgens.get(1).ok_or_else(error)?;
     if texgen.ty != 1 || texgen.src != 4 {
         return Err(error());
     }
+
     if texgen.matrix == 60 {
         return Ok(Vec2::ZERO);
     }
+
     if texgen.matrix < 30 || !(texgen.matrix - 30).is_multiple_of(3) {
         return Err(error());
     }
+
     let slot = (texgen.matrix - 30) / 3;
     let matrices: Vec<_> = material
         .tex_matrices
@@ -257,27 +261,32 @@ fn pupil_offset(material: &MaterialEntry) -> anyhow::Result<Vec2> {
     let [matrix] = matrices.as_slice() else {
         return Err(error());
     };
+
+    let finite_center_translation = matrix
+        .center
+        .iter()
+        .chain(matrix.translation.iter())
+        .all(|v| v.is_finite());
     if matrix.scale != [1.0, 1.0]
         || matrix.rotation != 0
         || matrix.effect_matrix != Mat4::IDENTITY.to_cols_array()
-        || !matrix
-            .center
-            .iter()
-            .chain(matrix.translation.iter())
-            .all(|v| v.is_finite())
+        || !finite_center_translation
     {
         return Err(error());
     }
+
     Ok(Vec2::from_array(matrix.translation))
 }
 
 const FEATURE_POSITION_TOLERANCE: f32 = 2.0e-5;
 
 fn feature_vertices_match(mask: &crate::ModelVertex, composite: &crate::ModelVertex) -> bool {
-    mask.uv0 == composite.uv0
-        && mask
-            .position
-            .abs_diff_eq(composite.position, FEATURE_POSITION_TOLERANCE)
+    let uv_eq = mask.uv0 == composite.uv0;
+    let pos_eq = mask
+        .position
+        .abs_diff_eq(composite.position, FEATURE_POSITION_TOLERANCE);
+
+    uv_eq && pos_eq
 }
 
 struct PreparedMaterial {
@@ -286,6 +295,7 @@ struct PreparedMaterial {
     pupil: Option<usize>,
     pupil_offset: Vec2,
 }
+
 struct Prepared {
     materials: Vec<PreparedMaterial>,
     ramp: usize,
@@ -300,12 +310,14 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
         .filter(|(_, t)| t.runtime_substitution.as_deref() == Some("toonex"))
         .map(|(i, _)| i)
         .collect();
+
     let [ramp] = ramps.as_slice() else {
         anyhow::bail!(
             "Modern resource toonex: expected exactly one runtime substitution, found {}",
             ramps.len()
         );
     };
+
     let mut materials = Vec::new();
     for material in &manifest.materials {
         let role = role(material)?;
@@ -373,6 +385,7 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
             },
         });
     }
+
     let mut order = Vec::new();
     for (index, batch) in manifest.batches.iter().enumerate() {
         anyhow::ensure!(
@@ -381,6 +394,7 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
             batch.material
         );
     }
+
     let batches_for = |role| {
         manifest
             .batches
@@ -390,10 +404,12 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
             .map(|(i, _)| i)
             .collect::<Vec<_>>()
     };
+
     anyhow::ensure!(
         batches_for(Role::Bangs).len() == 1,
         "Modern material ear(2): expected exactly one bangs batch"
     );
+
     anyhow::ensure!(
         manifest
             .batches
@@ -403,7 +419,9 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
             == 1,
         "Modern material face: expected exactly one occluding face batch"
     );
+
     order.extend(batches_for(Role::Opaque));
+
     for reference in 1..=4 {
         let masks = batches_for(Role::Mask(reference));
         let composites = batches_for(Role::Composite(reference));
@@ -421,10 +439,12 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
         );
         order.extend(masks);
     }
+
     order.extend(batches_for(Role::Bangs));
     for reference in 1..=4 {
         order.extend(batches_for(Role::Composite(reference)));
     }
+
     Ok(Prepared {
         materials,
         ramp: *ramp,
@@ -439,6 +459,7 @@ fn prepare_geometry(
 ) -> anyhow::Result<Prepared> {
     let prepared = prepare(manifest)?;
     crate::validate_manifest(manifest, vertices, indices)?;
+
     // Validate duplicated geometry before any GPU upload.
     for reference in 1..=4 {
         let find_batch = |role| {
@@ -448,11 +469,13 @@ fn prepare_geometry(
                 .find(|batch| prepared.materials[batch.material as usize].role == role)
                 .unwrap()
         };
+
         let mask = find_batch(Role::Mask(reference));
         let composite = find_batch(Role::Composite(reference));
         let range = |batch: &mm::Batch| {
             batch.first_index as usize..(batch.first_index + batch.index_count) as usize
         };
+
         for (&mask_index, &composite_index) in
             indices[range(mask)].iter().zip(&indices[range(composite)])
         {
@@ -479,6 +502,7 @@ fn modern_texture_options(
     } else {
         TextureColorSpace::Srgb
     };
+
     Ok(options)
 }
 
@@ -500,9 +524,11 @@ impl ToonLinkModern {
     pub fn set_spin(&mut self, spin: f32) {
         self.host_spin = Some(spin);
     }
+
     pub fn edit_state(&self) -> &ModernEditState {
         &self.edit_state
     }
+
     pub fn edit_state_mut(&mut self) -> &mut ModernEditState {
         &mut self.edit_state
     }
@@ -511,15 +537,19 @@ impl ToonLinkModern {
 impl Game for ToonLinkModern {
     type EditState = ModernEditState;
     type Atlas = ShaderAtlas;
+
     fn window_title() -> &'static str {
         "Toon Link Modern"
     }
+
     fn needs_stencil() -> bool {
         true
     }
+
     fn editor_ui(&mut self) -> Option<(&str, &mut Self::EditState)> {
         Some(("Modern", &mut self.edit_state))
     }
+
     fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
         let dir = crate::converted_dir();
         let manifest = crate::load_manifest(&dir)?;
@@ -543,15 +573,17 @@ impl Game for ToonLinkModern {
         let mesh = renderer.create_mesh(&vertices, &indices)?;
         let mut textures = Vec::new();
         for (i, entry) in manifest.textures.iter().enumerate() {
-            let needed = i == prepared.ramp
-                || prepared
-                    .materials
-                    .iter()
-                    .any(|m| m.albedo == i || m.pupil == Some(i));
+            let matches_albedo_or_pupil = prepared
+                .materials
+                .iter()
+                .any(|m| m.albedo == i || m.pupil == Some(i));
+            let needed = i == prepared.ramp || matches_albedo_or_pupil;
+
             if !needed {
                 textures.push(None);
                 continue;
             }
+
             let image = image::ImageReader::open(dir.join(&entry.file))
                 .with_context(|| {
                     format!("Modern texture {:?}: opening {}", entry.name, entry.file)
@@ -561,16 +593,21 @@ impl Game for ToonLinkModern {
                     format!("Modern texture {:?}: decoding {}", entry.name, entry.file)
                 })?
                 .to_rgba8();
-            textures.push(Some(renderer.create_texture_with_options(
+
+            let texture_handle = renderer.create_texture_with_options(
                 format!("modern_{}", entry.name),
                 RgbaPixels::new(image.width(), image.height(), &image)?,
                 modern_texture_options(entry, i == prepared.ramp)?,
-            )?));
+            )?;
+
+            textures.push(Some(texture_handle));
         }
+
         let params_buffer = renderer.create_uniform_buffer::<ModernParams>()?;
         let stencil = renderer
             .stencil_support()
             .context("Modern requires host Game::needs_stencil() = true")?;
+
         let mut pipelines = Vec::new();
         let mut gpu_materials = Vec::new();
         for (material, prepared) in manifest.materials.iter().zip(&prepared.materials) {
@@ -582,6 +619,7 @@ impl Game for ToonLinkModern {
                     anyhow::bail!("Modern material {:?}: unsupported Cull_All", material.name)
                 }
             };
+
             let (blend, depth_test, depth_write, color_write, stencil_mode) = match prepared.role {
                 Role::Mask(reference) => (
                     BlendMode::Opaque,
@@ -605,29 +643,31 @@ impl Game for ToonLinkModern {
                     StencilMode::DISABLED,
                 ),
             };
-            pipelines.push(
-                renderer.create_pipeline(
-                    shaders
-                        .toon_link_modern
-                        .pipeline_config(Resources {
-                            params_buffer: &params_buffer,
-                        })
-                        .with_shared_mesh(&mesh)
-                        .with_raster_state(RasterState {
-                            blend,
-                            cull,
-                            depth_test,
-                            depth_write,
-                            color_write,
-                            stencil: stencil_mode,
-                        })
-                        .indirect(),
-                )?,
-            );
+
+            let pipeline = renderer.create_pipeline(
+                shaders
+                    .toon_link_modern
+                    .pipeline_config(Resources {
+                        params_buffer: &params_buffer,
+                    })
+                    .with_shared_mesh(&mesh)
+                    .with_raster_state(RasterState {
+                        blend,
+                        cull,
+                        depth_test,
+                        depth_write,
+                        color_write,
+                        stencil: stencil_mode,
+                    })
+                    .indirect(),
+            )?;
+            pipelines.push(pipeline);
+
             let albedo = textures[prepared.albedo]
                 .as_ref()
                 .unwrap()
                 .bindless_handle();
+
             gpu_materials.push(ModernMaterial {
                 albedo,
                 pupil: textures[prepared.pupil.unwrap_or(prepared.albedo)]
@@ -639,6 +679,7 @@ impl Game for ToonLinkModern {
                 lighting_mix: lighting_mix(&material.name, prepared.role),
             });
         }
+
         let materials_buffer = renderer.create_singleton_buffer(&gpu_materials)?;
         let mut commands = Vec::new();
         let mut draws = Vec::new();
@@ -657,8 +698,10 @@ impl Game for ToonLinkModern {
             });
             pipeline_order.push(batch.material as usize);
         }
+
         let args_buffer = renderer.create_indirect_buffer(&commands)?;
         let draws = renderer.create_singleton_buffer(&draws)?;
+
         Ok(Self {
             start_time: Instant::now(),
             host_spin: None,
@@ -671,10 +714,12 @@ impl Game for ToonLinkModern {
             ramp: textures[prepared.ramp].take().unwrap(),
         })
     }
+
     fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
         let spin = self
             .host_spin
             .unwrap_or_else(|| self.start_time.elapsed().as_secs_f32() * crate::MODEL_SPIN);
+
         let model = Mat4::from_rotation_y(spin) * Mat4::from_scale(Vec3::splat(crate::MODEL_SCALE));
         let target = Vec3::new(0.0, 0.62, 0.0);
         let view = glam::camera::rh::view::look_at_mat4(
@@ -682,12 +727,14 @@ impl Game for ToonLinkModern {
             target,
             Vec3::Y,
         );
+
         let proj = glam::camera::rh::proj::directx::perspective(
             45f32.to_radians(),
             renderer.aspect_ratio(),
             0.1,
             20.0,
         );
+
         let data = self.edit_state.params_data(spin);
         let params = ModernParams {
             mvp: MVPMatrices { model, view, proj },
@@ -701,6 +748,7 @@ impl Game for ToonLinkModern {
             ramp: data.ramp,
             diagnostic: data.diagnostic,
         };
+
         for (index, &pipeline) in self.pipeline_order.iter().enumerate() {
             let first = index as u32;
             renderer.queue_draw_indexed_indirect_with_push_constants(
@@ -713,6 +761,7 @@ impl Game for ToonLinkModern {
                 },
             );
         }
+
         renderer.submit_draws(|gpu| gpu.write_uniform(&mut self.params_buffer, params))
     }
 }

@@ -87,8 +87,7 @@ float modernBand(float cosine) {
 [shader("fragment")]
 float4 fragMain(ModernFragment fragment) : SV_TARGET {
     let material = multiDraw.individualDraws[fragment.drawIndex].material;
-    Sampler2D albedoTexture = material.albedo;
-    var albedo = albedoTexture.Sample(fragment.uv0);
+    var albedo = material.albedo.Sample(fragment.uv0);
     // Coverage is raw alpha, including in every diagnostic and invisible mask.
     let invisible = albedo.a <= 0.0;
     if (invisible) {
@@ -97,8 +96,8 @@ float4 fragMain(ModernFragment fragment) : SV_TARGET {
 
     let hasPupil = material.hasPupil != 0;
     if (hasPupil) {
-        Sampler2D pupilTexture = material.pupil;
-        albedo.rgb *= pupilTexture.Sample(fragment.uv0 + material.pupilOffset).rgb;
+        let pupilUv = fragment.uv0 + material.pupilOffset;
+        albedo.rgb *= material.pupil.Sample(pupilUv).rgb;
     }
 
     let normal = normalize(fragment.normal);
