@@ -1,6 +1,6 @@
 //! Lowering from sealed typed nodes into the plain-data description.
 use super::desc::*;
-use super::validate::GraphError;
+use super::validate::{GraphError, ScopeKind};
 use super::{BufferBindingKind, GraphBinding, SampledRef, StorageRef, StorageTexAccess};
 use std::collections::HashMap;
 
@@ -53,21 +53,6 @@ enum Scope {
         body: Vec<LeafPass>,
         first: Option<ValueId>,
     },
-}
-
-#[derive(Clone, Copy)]
-enum ScopeKind {
-    Repeat,
-    Optional,
-}
-
-impl ScopeKind {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Repeat => "repeat",
-            Self::Optional => "optional",
-        }
-    }
 }
 
 pub struct LowerCtx {
@@ -502,14 +487,12 @@ impl LowerCtx {
     fn begin(&mut self, kind: ScopeKind) {
         if !matches!(self.scope, Scope::Top) {
             let outer = match self.scope {
-                Scope::Repeat { .. } => "repeat",
-                Scope::Optional { .. } => "optional",
+                Scope::Repeat { .. } => ScopeKind::Repeat,
+                Scope::Optional { .. } => ScopeKind::Optional,
                 Scope::Top => unreachable!(),
             };
-            self.errors.push(GraphError::NestedControlFlow {
-                outer,
-                inner: kind.name(),
-            });
+            self.errors
+                .push(GraphError::NestedControlFlow { outer, inner: kind });
             self.ignored += 1;
             return;
         }
@@ -614,7 +597,7 @@ mod tests {
         ResourceFieldKind, ResourceRef, SizeClass, SlotSel, TexAccess, TexDecl, TexId, TexUsage,
         UniformId, ValueKind,
     };
-    use super::super::validate::{GraphError, validate};
+    use super::super::validate::{GraphError, ScopeKind, validate};
     use super::super::{BufferBindingKind, GraphBinding, GraphTex, RawBufferBinding};
     use super::{LowerCtx, LowerDrawCall, LowerOutput, PushInput, UniformInput};
 
@@ -701,8 +684,8 @@ mod tests {
         let out = cx.finish();
 
         assert!(out.errors.contains(&GraphError::NestedControlFlow {
-            outer: "repeat",
-            inner: "repeat",
+            outer: ScopeKind::Repeat,
+            inner: ScopeKind::Repeat,
         }));
     }
 
@@ -827,8 +810,8 @@ mod tests {
         let out = cx.finish();
 
         assert!(out.errors.contains(&GraphError::NestedControlFlow {
-            outer: "repeat",
-            inner: "optional",
+            outer: ScopeKind::Repeat,
+            inner: ScopeKind::Optional,
         }));
     }
 
@@ -843,8 +826,8 @@ mod tests {
         let out = cx.finish();
 
         assert!(out.errors.contains(&GraphError::NestedControlFlow {
-            outer: "optional",
-            inner: "repeat",
+            outer: ScopeKind::Optional,
+            inner: ScopeKind::Repeat,
         }));
     }
 
@@ -859,8 +842,8 @@ mod tests {
         let out = cx.finish();
 
         assert!(out.errors.contains(&GraphError::NestedControlFlow {
-            outer: "optional",
-            inner: "optional",
+            outer: ScopeKind::Optional,
+            inner: ScopeKind::Optional,
         }));
     }
 

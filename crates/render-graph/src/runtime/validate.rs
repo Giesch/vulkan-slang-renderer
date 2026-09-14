@@ -53,6 +53,21 @@ impl fmt::Display for UnsupportedFeature {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScopeKind {
+    Repeat,
+    Optional,
+}
+
+impl fmt::Display for ScopeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Repeat => "repeat",
+            Self::Optional => "optional",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum GraphError {
     IdOutOfRange {
@@ -143,8 +158,8 @@ pub(crate) enum GraphError {
         at: String,
     },
     NestedControlFlow {
-        outer: &'static str,
-        inner: &'static str,
+        outer: ScopeKind,
+        inner: ScopeKind,
     },
     UniformSourceConflict {
         slot: usize,
