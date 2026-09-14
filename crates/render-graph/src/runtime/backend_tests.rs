@@ -19,6 +19,13 @@ use std::{cell::RefCell, rc::Rc};
 
 type Events = Rc<RefCell<Vec<String>>>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FailPoint {
+    Wait,
+    Submit,
+    Present,
+}
+
 struct Resource {
     id: usize,
     events: Events,
@@ -35,7 +42,7 @@ struct Fake {
     max: u32,
     allocated: usize,
     fail_allocation: Option<usize>,
-    fail: &'static str,
+    fail: Option<FailPoint>,
     live: bool,
     registered: Vec<Rc<Resource>>,
 }
@@ -47,7 +54,7 @@ impl Default for Fake {
             max: 64,
             allocated: 0,
             fail_allocation: None,
-            fail: "",
+            fail: None,
             live: true,
             registered: vec![],
         }
@@ -142,7 +149,7 @@ impl FrameBackend for Frame<'_> {
     ) -> anyhow::Result<()> {
         let event = |name: &str| self.0.events.borrow_mut().push(name.to_owned());
         event("wait");
-        anyhow::ensure!(self.0.fail != "wait", "wait failed");
+        anyhow::ensure!(self.0.fail != Some(FailPoint::Wait), "wait failed");
         batch.visit_writes(|uniform, index, bytes| {
             event(&format!("write:{uniform}:{index}:{}", bytes.len()))
         });
@@ -183,11 +190,11 @@ impl FrameBackend for Frame<'_> {
             ));
         }
         event("submit");
-        anyhow::ensure!(self.0.fail != "submit", "submit failed");
+        anyhow::ensure!(self.0.fail != Some(FailPoint::Submit), "submit failed");
         on_submitted();
         event("commit");
         event("present");
-        anyhow::ensure!(self.0.fail != "present", "present failed");
+        anyhow::ensure!(self.0.fail != Some(FailPoint::Present), "present failed");
 
         Ok(())
     }
@@ -355,9 +362,9 @@ fn backend_upload_capacity_rejected() {
 
 #[test]
 fn backend_cursor_unchanged_on_submission_failure() {
-    for fail in ["wait", "submit"] {
+    for fail in [FailPoint::Wait, FailPoint::Submit] {
         let mut backend = Fake {
-            fail,
+            fail: Some(fail),
             ..Default::default()
         };
         let mut prepared = graph(8).prepare(&mut backend).unwrap();
@@ -370,7 +377,7 @@ fn backend_cursor_unchanged_on_submission_failure() {
 #[test]
 fn backend_cursor_advances_despite_presentation_failure() {
     let mut backend = Fake {
-        fail: "present",
+        fail: Some(FailPoint::Present),
         ..Default::default()
     };
     let mut prepared = graph(8).prepare(&mut backend).unwrap();

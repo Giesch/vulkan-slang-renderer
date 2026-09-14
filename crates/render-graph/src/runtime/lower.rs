@@ -55,6 +55,21 @@ enum Scope {
     },
 }
 
+#[derive(Clone, Copy)]
+enum ScopeKind {
+    Repeat,
+    Optional,
+}
+
+impl ScopeKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Repeat => "repeat",
+            Self::Optional => "optional",
+        }
+    }
+}
+
 pub struct LowerCtx {
     desc: GraphDesc,
     schemas: SchemaTable,
@@ -484,7 +499,7 @@ impl LowerCtx {
         })
     }
 
-    fn begin(&mut self, which: &'static str) {
+    fn begin(&mut self, kind: ScopeKind) {
         if !matches!(self.scope, Scope::Top) {
             let outer = match self.scope {
                 Scope::Repeat { .. } => "repeat",
@@ -493,52 +508,54 @@ impl LowerCtx {
             };
             self.errors.push(GraphError::NestedControlFlow {
                 outer,
-                inner: which,
+                inner: kind.name(),
             });
             self.ignored += 1;
             return;
         }
-        self.scope = if which == "repeat" {
-            let count = self.value(
-                format!("repeat{}.count", self.desc.passes.len()),
-                ValueKind::Count,
-            );
-            Scope::Repeat {
-                body: vec![],
-                count,
+
+        self.scope = match kind {
+            ScopeKind::Repeat => {
+                let count = self.value(
+                    format!("repeat{}.count", self.desc.passes.len()),
+                    ValueKind::Count,
+                );
+                Scope::Repeat {
+                    body: vec![],
+                    count,
+                }
             }
-        } else {
-            Scope::Optional {
+            ScopeKind::Optional => Scope::Optional {
                 body: vec![],
                 first: None,
-            }
+            },
         }
     }
 
     pub(crate) fn begin_repeat(&mut self) {
-        self.begin("repeat")
+        self.begin(ScopeKind::Repeat)
     }
 
     pub(crate) fn begin_optional(&mut self) {
-        self.begin("optional")
+        self.begin(ScopeKind::Optional)
     }
 
-    fn end(&mut self, which: &'static str) {
+    fn end(&mut self, kind: ScopeKind) {
         if self.ignored > 0 {
             self.ignored -= 1;
             return;
         }
         let old = std::mem::replace(&mut self.scope, Scope::Top);
 
-        match old {
-            Scope::Repeat { body, count } if which == "repeat" => {
+        match (old, kind) {
+            (Scope::Repeat { body, count }, ScopeKind::Repeat) => {
                 self.desc.passes.push(PassDesc::Repeat {
                     name: format!("repeat{}", self.desc.passes.len()),
                     count,
                     body,
                 })
             }
-            Scope::Optional { body, first } if which == "optional" => {
+            (Scope::Optional { body, first }, ScopeKind::Optional) => {
                 if let Some(value) = first {
                     if !body.is_empty() {
                         self.desc.passes.push(PassDesc::When {
@@ -551,16 +568,16 @@ impl LowerCtx {
                     self.errors.push(GraphError::EmptyOptionalScope)
                 }
             }
-            other => self.scope = other,
+            (other, _) => self.scope = other,
         }
     }
 
     pub(crate) fn end_repeat(&mut self) {
-        self.end("repeat")
+        self.end(ScopeKind::Repeat)
     }
 
     pub(crate) fn end_optional(&mut self) {
-        self.end("optional")
+        self.end(ScopeKind::Optional)
     }
 
     pub(crate) fn picking(&mut self, index: usize) {

@@ -1580,20 +1580,33 @@ mod tests {
     fn compute_and_draw_push_data_require_declared_bytes() {
         use super::super::desc::{PushDesc, ValueId};
 
+        #[derive(Clone, Copy, Debug)]
+        enum PushDataCase {
+            Missing,
+            WrongKind,
+            Bytes,
+            None,
+        }
+
         for graphics in [false, true] {
-            for case in ["missing", "wrong kind", "bytes", "none"] {
+            for case in [
+                PushDataCase::Missing,
+                PushDataCase::WrongKind,
+                PushDataCase::Bytes,
+                PushDataCase::None,
+            ] {
                 let mut builder = DescBuilder::new(0);
                 let mut dispatch = builder.dispatch("dispatch", &[]);
                 let schema = builder.desc.uniforms[dispatch.uniform.0 as usize].schema;
                 let (data, expected) = match case {
-                    "missing" => (
+                    PushDataCase::Missing => (
                         Some(ValueId(99)),
                         Some(GraphError::IdOutOfRange {
                             table: TableKind::Value,
                             id: 99,
                         }),
                     ),
-                    "wrong kind" => {
+                    PushDataCase::WrongKind => {
                         let value = builder.value(ValueKind::Count, false);
 
                         (
@@ -1605,12 +1618,11 @@ mod tests {
                             }),
                         )
                     }
-                    "bytes" => (
+                    PushDataCase::Bytes => (
                         Some(builder.value(ValueKind::Bytes { schema }, false)),
                         None,
                     ),
-                    "none" => (None, None),
-                    _ => unreachable!(),
+                    PushDataCase::None => (None, None),
                 };
                 let push = Some(PushDesc {
                     data,
@@ -1627,8 +1639,10 @@ mod tests {
                 }
 
                 match expected {
-                    Some(error) => assert_eq!(builder.errors(), vec![error], "{graphics}: {case}"),
-                    None => assert!(builder.validate().is_ok(), "{graphics}: {case}"),
+                    Some(error) => {
+                        assert_eq!(builder.errors(), vec![error], "{graphics}: {case:?}")
+                    }
+                    None => assert!(builder.validate().is_ok(), "{graphics}: {case:?}"),
                 }
             }
         }
