@@ -1,0 +1,480 @@
+{
+  "sourceFileName": "toon_link_modern.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "ModernParams",
+        "fields": [
+          {
+            "kind": "struct",
+            "fieldName": "mvp",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 192
+            },
+            "structType": {
+              "typeName": "MVPMatrices",
+              "fields": [
+                {
+                  "kind": "matrix",
+                  "fieldName": "model",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "matrix",
+                  "fieldName": "view",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 64,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "matrix",
+                  "fieldName": "proj",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 128,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "mainDirection",
+            "binding": {
+              "kind": "uniform",
+              "offset": 192,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "secondaryDirection",
+            "binding": {
+              "kind": "uniform",
+              "offset": 208,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "shadowColor",
+            "binding": {
+              "kind": "uniform",
+              "offset": 224,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "litColor",
+            "binding": {
+              "kind": "uniform",
+              "offset": 240,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "secondaryColor",
+            "binding": {
+              "kind": "uniform",
+              "offset": 256,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "controls",
+            "binding": {
+              "kind": "uniform",
+              "offset": 272,
+              "size": 16
+            },
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "descriptorHandle",
+            "fieldName": "rampTexture",
+            "binding": {
+              "kind": "uniform",
+              "offset": 288,
+              "size": 8
+            },
+            "shape": "sampler2D"
+          },
+          {
+            "kind": "enum",
+            "fieldName": "ramp",
+            "binding": {
+              "kind": "uniform",
+              "offset": 296,
+              "size": 4
+            },
+            "enumType": {
+              "typeName": "ModernRamp",
+              "tagType": "uint32",
+              "cases": [
+                {
+                  "name": "Analytic",
+                  "value": 0
+                },
+                {
+                  "name": "Texture",
+                  "value": 1
+                }
+              ]
+            }
+          },
+          {
+            "kind": "enum",
+            "fieldName": "diagnostic",
+            "binding": {
+              "kind": "uniform",
+              "offset": 300,
+              "size": 4
+            },
+            "enumType": {
+              "typeName": "ModernDiagnostic",
+              "tagType": "uint32",
+              "cases": [
+                {
+                  "name": "Final",
+                  "value": 0
+                },
+                {
+                  "name": "WorldNormals",
+                  "value": 1
+                },
+                {
+                  "name": "Uv0",
+                  "value": 2
+                },
+                {
+                  "name": "NDotL",
+                  "value": 3
+                },
+                {
+                  "name": "BandOnly",
+                  "value": 4
+                },
+                {
+                  "name": "AlbedoOnly",
+                  "value": 5
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "pushConstant",
+      "parameterName": "multiDraw",
+      "elementType": {
+        "typeName": "ModernMultiDraw",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "individualDraws",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "ModernIndividualDraw",
+              "fields": [
+                {
+                  "kind": "pointer",
+                  "fieldName": "material",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 8
+                  },
+                  "pointeeType": {
+                    "typeName": "ModernMaterial",
+                    "fields": [
+                      {
+                        "kind": "descriptorHandle",
+                        "fieldName": "albedo",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 0,
+                          "size": 8
+                        },
+                        "shape": "sampler2D"
+                      },
+                      {
+                        "kind": "descriptorHandle",
+                        "fieldName": "pupil",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 8,
+                          "size": 8
+                        },
+                        "shape": "sampler2D"
+                      },
+                      {
+                        "kind": "vector",
+                        "fieldName": "pupilOffset",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 16,
+                          "size": 8
+                        },
+                        "elementCount": 2,
+                        "elementType": {
+                          "kind": "scalar",
+                          "scalarType": "float32"
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "fieldName": "hasPupil",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 24,
+                          "size": 4
+                        },
+                        "scalarType": "uint32"
+                      },
+                      {
+                        "kind": "scalar",
+                        "fieldName": "lightingMix",
+                        "binding": {
+                          "kind": "uniform",
+                          "offset": 28,
+                          "size": 4
+                        },
+                        "scalarType": "float32"
+                      }
+                    ]
+                  },
+                  "pointeeSize": 32,
+                  "access": "immutable"
+                }
+              ]
+            },
+            "pointeeSize": 8,
+            "access": "immutable"
+          }
+        ]
+      },
+      "elementSize": 8
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "vertex",
+        "binding": {
+          "kind": "varyingInput",
+          "index": 0,
+          "count": 3
+        },
+        "typeName": "ModernVertex",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 0,
+              "count": 1
+            },
+            "elementCount": 3,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "normal",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 1,
+              "count": 1
+            },
+            "elementCount": 3,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "uv0",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 2,
+              "count": 1
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "scalar",
+        "parameterName": "drawIndex",
+        "semanticName": "SV_DRAWINDEX",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": [
+      {
+        "kind": "struct",
+        "parameterName": "fragment",
+        "binding": {
+          "kind": "varyingInput",
+          "index": 0,
+          "count": 3
+        },
+        "typeName": "ModernFragment",
+        "fields": [
+          {
+            "kind": "vector",
+            "fieldName": "position",
+            "semanticName": "SV_POSITION",
+            "elementCount": 4,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "normal",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 0,
+              "count": 1
+            },
+            "elementCount": 3,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "vector",
+            "fieldName": "uv0",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 1,
+              "count": 1
+            },
+            "elementCount": 2,
+            "elementType": {
+              "kind": "scalar",
+              "scalarType": "float32"
+            }
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "drawIndex",
+            "binding": {
+              "kind": "varyingInput",
+              "index": 2,
+              "count": 1
+            },
+            "scalarType": "uint32"
+          }
+        ]
+      }
+    ]
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 304
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": [
+      {
+        "stageFlags": "all",
+        "offset": 0,
+        "size": 8
+      }
+    ],
+    "bindlessHeapSet": 1
+  }
+}
