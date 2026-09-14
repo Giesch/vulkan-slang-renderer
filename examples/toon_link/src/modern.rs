@@ -138,7 +138,7 @@ fn lighting_mix(material_name: &str, role: Role) -> f32 {
         1.0
     } else if matches!(material_name, "face" | "mouth") {
         // The mouth texture includes skin that must match the surrounding face.
-        0.35
+        0.1
     } else {
         0.0
     }
@@ -728,8 +728,10 @@ mod tests {
         assert_eq!(state.diagnostic, ModernDiagnostic::Final);
         assert_eq!(state.band_softness.value, 0.05);
         assert_eq!(lighting_mix("sleeve", Role::Opaque), 0.0);
-        assert_eq!(lighting_mix("face", Role::Opaque), 0.35);
-        assert_eq!(lighting_mix("mouth", Role::Opaque), 0.35);
+        assert_eq!(
+            lighting_mix("face", Role::Opaque),
+            lighting_mix("mouth", Role::Opaque),
+        );
         assert_eq!(lighting_mix("eyeL", Role::Composite(1)), 1.0);
         assert_eq!(lighting_mix("mayuR", Role::Composite(4)), 1.0);
         assert_eq!(lighting_mix("eyeLdamA", Role::Mask(1)), 0.0);
