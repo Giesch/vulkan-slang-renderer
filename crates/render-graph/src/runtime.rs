@@ -1030,14 +1030,14 @@ pub fn draw_index_range<S: GraphShaderParams, P: GraphPipelinePush>(
     }
 }
 
-/// `assert!`, not `debug_assert!`, on the argument range: the command
-/// processor fetches these records outside the descriptor model, so
-/// `robustBufferAccess` does not clamp a fetch past the allocation.
 fn indirect_call<I: crate::backend::IndexedIndirectArgs>(
     args: ImmutableSlot<I>,
     first_command: u32,
     draw_count: u32,
 ) -> LowerDrawCall {
+    // `assert!`, not `debug_assert!`, on the argument range: the command
+    // processor fetches these records outside the descriptor model, so
+    // `robustBufferAccess` does not clamp a fetch past the allocation.
     assert!(
         draw_count > 0,
         "an indirect draw needs at least one command"
@@ -1065,6 +1065,7 @@ pub struct IndirectDrawNode<S: GraphShaderParams, P, I> {
     draw: DrawNode<S, P>,
     args: ImmutableSlot<I>,
 }
+
 impl<S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock, I>
     IndirectDrawNode<S, PendingPush<B>, I>
 {
@@ -1075,6 +1076,7 @@ impl<S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock, I>
         }
     }
 }
+
 impl<S: GraphShaderParams + GPUWrite, P: GraphPush, I: crate::backend::IndexedIndirectArgs>
     GraphNode for IndirectDrawNode<S, P, I>
 {
@@ -1086,6 +1088,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush, I: crate::backend::IndexedIn
         self.draw.plan(data, cx)
     }
 }
+
 pub fn draw_indexed_indirect<
     S: GraphShaderParams,
     P: GraphPipelinePush,
@@ -1099,12 +1102,14 @@ pub fn draw_indexed_indirect<
     bindings: S::Bindings,
 ) -> IndirectDrawNode<S, P::Pending, I> {
     let args = args.into();
+    let call = indirect_call(args, first_command, draw_count);
+
     IndirectDrawNode {
         args,
         draw: DrawNode {
             pipeline_index: pipeline.into().index(),
             uniform: params_buffer.into(),
-            call: indirect_call(args, first_command, draw_count),
+            call,
             bindings,
             push: P::pending(),
         },
