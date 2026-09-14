@@ -694,13 +694,17 @@ pub trait GraphShaderParams: Sized {
 #[derive(Debug, Clone, Copy)]
 pub struct LoopCount(pub u32);
 
-/// One node of the graph. Implemented by the node types below and by tuples
-/// of nodes; games compose values, they do not implement this.
+/// One node of the graph.
+/// Implemented by the node types below and by tuples of nodes.
+/// Games compose values, they do not implement this.
 pub trait GraphNode {
     /// The per-frame value this node consumes from the params tuple.
     type Frame;
 
+    /// Lowers this node into the graph's build-time representation.
     fn lower(&self, cx: &mut LowerCtx);
+
+    /// Plans this node's commands and data writes for the current frame.
     fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()>;
 }
 
