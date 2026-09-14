@@ -1,3 +1,7 @@
+# list this example's recipes
+_default:
+    @ just --list --unsorted
+
 # build the host archive and link the system libraries roc needs
 build:
     bash build.sh
