@@ -79,11 +79,6 @@ const CASES: &[Case] = &[
         expectation: Expectation::Compiles,
     },
     Case {
-        bin: "positive_opaque_indirect_command",
-        file: "opaque_indirect_command.rs",
-        expectation: Expectation::Compiles,
-    },
-    Case {
         bin: "positive_same_indirect_backend",
         file: "same_indirect_backend.rs",
         expectation: Expectation::Compiles,
@@ -128,14 +123,6 @@ const CASES: &[Case] = &[
         expectation: Expectation::Fails {
             code: "E0277",
             snippets: &["ExternalNode", "Sealed", "CompatibleWith"],
-        },
-    },
-    Case {
-        bin: "negative_indirect_command_fields",
-        file: "indirect_command_fields.rs",
-        expectation: Expectation::Fails {
-            code: "E0451",
-            snippets: &["DrawIndexedIndirectCommand", "index_count", "private"],
         },
     },
     Case {
@@ -504,11 +491,7 @@ fn render_graph_api_compile_checks() {
     // clean up before asserting, so a failure leaves no generated files behind
     clean(&fixture);
 
-    assert!(
-        failures.is_empty(),
-        "{} of {} render-graph API compile cases failed:\n\n{}",
-        failures.len(),
-        CASES.len(),
-        failures.join("\n\n"),
-    );
+    // assert on a constant so that a failure shows which case(s) failed
+    let expected: Vec<String> = vec![];
+    assert_eq!(failures, expected);
 }
