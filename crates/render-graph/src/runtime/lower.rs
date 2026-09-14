@@ -485,12 +485,12 @@ impl LowerCtx {
     }
 
     fn begin(&mut self, kind: ScopeKind) {
-        if !matches!(self.scope, Scope::Top) {
-            let outer = match self.scope {
-                Scope::Repeat { .. } => ScopeKind::Repeat,
-                Scope::Optional { .. } => ScopeKind::Optional,
-                Scope::Top => unreachable!(),
-            };
+        let outer = match self.scope {
+            Scope::Repeat { .. } => Some(ScopeKind::Repeat),
+            Scope::Optional { .. } => Some(ScopeKind::Optional),
+            Scope::Top => None,
+        };
+        if let Some(outer) = outer {
             self.errors
                 .push(GraphError::NestedControlFlow { outer, inner: kind });
             self.ignored += 1;
