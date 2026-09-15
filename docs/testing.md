@@ -8,7 +8,10 @@ Two checks cover different things. A renderer change needs both.
 | validation sweep | every example running, checked for Vulkan validation output. | `just sweep` |
 
 `just test` says nothing about whether the renderer works. The sweep says
-nothing about whether codegen is correct.
+nothing about whether codegen is correct. The unchanged sweep starts
+`toon_link` in its default GameCube mode; it does not select Modern and is not
+Modern GPU or visual evidence. See [`toon_link.md`](toon_link.md) for the
+separate interactive coverage matrix.
 
 ## Link animations
 

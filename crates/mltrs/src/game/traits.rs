@@ -81,6 +81,15 @@ pub trait Game {
         None
     }
 
+    /// Render the contents of the debug window returned by [`Self::editor_ui`].
+    ///
+    /// The default implementation renders the state's reflected fields. Override
+    /// this method to provide custom controls or layout. The runtime creates the
+    /// window and calls this hook only when `editor_ui` returns `Some`.
+    fn render_editor_ui(ui: &mut egui::Ui, debug_state: &mut Self::EditState) {
+        crate::renderer::facet_egui::render_facet_ui(ui, debug_state);
+    }
+
     fn run() -> anyhow::Result<()>
     where
         Self: Sized + 'static,
@@ -314,7 +323,163 @@ where
         };
 
         egui::Window::new(window_name).show(ctx, |ui| {
-            crate::renderer::facet_egui::render_facet_ui(ui, debug_state);
+            Self::render_editor_ui(ui, debug_state);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EmptyAtlas;
+
+    impl ShaderAtlasRoot for EmptyAtlas {
+        const SHADERS_SOURCE_DIR: &'static str = "";
+
+        fn init() -> Self {
+            Self
+        }
+    }
+
+    #[derive(Facet)]
+    struct EditorState {
+        reflected_value: crate::editor::Label,
+        hook_calls: u32,
+    }
+
+    impl Default for EditorState {
+        fn default() -> Self {
+            Self {
+                reflected_value: crate::editor::Label::new("Reflected widget content"),
+                hook_calls: 0,
+            }
+        }
+    }
+
+    struct CustomEditorGame {
+        state: EditorState,
+        show_editor: bool,
+    }
+
+    impl Game for CustomEditorGame {
+        type EditState = EditorState;
+        type Atlas = EmptyAtlas;
+
+        fn setup(_renderer: &mut Renderer, _shaders: Self::Atlas) -> anyhow::Result<Self> {
+            unreachable!("CPU editor tests do not initialize a renderer")
+        }
+
+        fn draw(&mut self, _renderer: FrameRenderer) -> Result<(), DrawError> {
+            unreachable!("CPU editor tests do not draw GPU frames")
+        }
+
+        fn editor_ui(&mut self) -> Option<(&str, &mut Self::EditState)> {
+            if !self.show_editor {
+                return None;
+            }
+
+            Some(("Custom editor window", &mut self.state))
+        }
+
+        fn render_editor_ui(ui: &mut egui::Ui, debug_state: &mut Self::EditState) {
+            debug_state.hook_calls += 1;
+            ui.label("Custom editor content");
+        }
+    }
+
+    #[derive(Default)]
+    struct DefaultEditorGame {
+        state: EditorState,
+    }
+
+    impl Game for DefaultEditorGame {
+        type EditState = EditorState;
+        type Atlas = EmptyAtlas;
+
+        fn setup(_renderer: &mut Renderer, _shaders: Self::Atlas) -> anyhow::Result<Self> {
+            unreachable!("CPU editor tests do not initialize a renderer")
+        }
+
+        fn draw(&mut self, _renderer: FrameRenderer) -> Result<(), DrawError> {
+            unreachable!("CPU editor tests do not draw GPU frames")
+        }
+
+        fn editor_ui(&mut self) -> Option<(&str, &mut Self::EditState)> {
+            Some(("Reflected editor window", &mut self.state))
+        }
+    }
+
+    fn editor_output(game: &mut dyn RuntimeGame) -> egui::FullOutput {
+        let context = egui::Context::default();
+        // Let egui finish the first window sizing pass before inspecting paint.
+        let _ = context.run(egui::RawInput::default(), |context| {
+            game.draw_edit_ui(context);
+        });
+
+        context.run(egui::RawInput::default(), |context| {
+            game.draw_edit_ui(context);
+        })
+    }
+
+    fn painted_text(output: &egui::FullOutput) -> Vec<String> {
+        fn collect_text(shape: &egui::epaint::Shape, text: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(shape) => text.push(shape.galley.text().to_owned()),
+                egui::epaint::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect_text(shape, text);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut text = Vec::new();
+        for clipped_shape in &output.shapes {
+            collect_text(&clipped_shape.shape, &mut text);
+        }
+
+        text
+    }
+
+    #[test]
+    fn editor_dispatch_uses_custom_hook() {
+        let mut game = CustomEditorGame {
+            state: EditorState::default(),
+            show_editor: true,
+        };
+        let output = editor_output(&mut game);
+        let text = painted_text(&output);
+
+        assert!(game.state.hook_calls > 0);
+        assert!(text.iter().any(|text| text == "Custom editor window"));
+        assert!(text.iter().any(|text| text == "Custom editor content"));
+        assert!(!text.iter().any(|text| text == "reflected_value"));
+    }
+
+    #[test]
+    fn default_editor_hook_renders_reflected_fields() {
+        let mut game = DefaultEditorGame::default();
+        let output = editor_output(&mut game);
+        let text = painted_text(&output);
+
+        assert!(text.iter().any(|text| text == "Reflected editor window"));
+        assert!(text.iter().any(|text| text == "reflected_value"));
+        assert!(text.iter().any(|text| text == "Reflected widget content"));
+        assert_eq!(game.state.hook_calls, 0);
+    }
+
+    #[test]
+    fn absent_editor_state_has_no_window() {
+        let mut game = CustomEditorGame {
+            state: EditorState::default(),
+            show_editor: false,
+        };
+        let output = editor_output(&mut game);
+
+        assert_eq!(game.state.hook_calls, 0);
+        assert!(painted_text(&output).is_empty());
+        assert!(output.shapes.is_empty());
     }
 }

@@ -6,6 +6,9 @@ Last verified: 2026-09-13
 
 - **`docs/`** — current reference material, kept up to date. Trust it, and update
   it when you change what it describes.
+- **[`docs/toon_link.md`](docs/toon_link.md)** — Toon Link's independent GameCube
+  and Modern rendering modes, controls, color policy, verification boundary,
+  and hot-reload limitation.
 - **`llm_notes/`** — historical plans and phase records, written before or during
   a piece of work. **Treat as possibly out of date**: much of it is a snapshot of
   what was believed at the time, some of it was superseded by the work it

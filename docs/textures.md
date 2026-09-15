@@ -110,9 +110,12 @@ dependency. `examples/space_invaders/justfile` does `sprites: && textures`.
   convert. A single level suits it: a mip chain would average the checkerboard to
   flat gray at distance and destroy the wrap/filter test its panels exist for.
 - **`toon_link`** — needs more than a recipe. Its 44 PNGs are gitignored and
-  produced by `convert_link`. It needs `BC7_UNORM_BLOCK` rather than sRGB. It
-  needs per-entry `wrap_u`/`wrap_v`, which `ktx::load_ktx2` plus
-  `create_texture_with_mips` carries through `SamplerOptions`.
+  produced by `convert_link`, outside the KTX2 workflow. The GameCube mode
+  uploads them as UNORM because its shader preserves GX raw-value math and
+  compensates for the sRGB target. The independent Modern mode uploads albedo
+  and pupil images as sRGB but keeps the `toonex` ramp as UNORM data. Both modes
+  preserve each entry's `wrap_u`/`wrap_v` and filter settings. See
+  [`toon_link.md`](toon_link.md).
 
 ## Determinism
 

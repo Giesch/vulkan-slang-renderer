@@ -2176,6 +2176,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "egui",
  "facet",
  "glam",
  "gx",
