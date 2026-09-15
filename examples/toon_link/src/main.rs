@@ -1178,8 +1178,8 @@ fn selected_mode(index: usize) -> SelectedMode {
     }
 }
 
-/// The example-local selector. Both concrete games are initialized once and
-/// retained; this host only owns shared time and delegates one draw per frame.
+/// Switches between displaying the two versions of the Game implementation.
+/// Delegates to one or the other based on HostEditState.
 pub struct ToonLinkHost {
     start_time: Instant,
     classic: ToonLink,
@@ -1195,6 +1195,33 @@ pub struct HostEditState {
 }
 
 impl HostEditState {
+    fn render_ui(&mut self, ui: &mut egui::Ui) {
+        let changed = ui
+            .horizontal(|ui| {
+                ui.label("Mode");
+                self.mode.render_ui(ui)
+            })
+            .inner;
+
+        let game_cube = self.selected() == SelectedMode::GameCube;
+
+        egui::CollapsingHeader::new("GameCube")
+            .id_salt("game_cube_settings")
+            .default_open(game_cube)
+            .open(changed.then_some(game_cube))
+            .show(ui, |ui| {
+                mltrs::renderer::facet_egui::render_facet_ui(ui, &mut self.game_cube);
+            });
+
+        egui::CollapsingHeader::new("Modern")
+            .id_salt("modern_settings")
+            .default_open(!game_cube)
+            .open(changed.then_some(!game_cube))
+            .show(ui, |ui| {
+                mltrs::renderer::facet_egui::render_facet_ui(ui, &mut self.modern);
+            });
+    }
+
     fn selected(&self) -> SelectedMode {
         selected_mode(self.mode.selected)
     }
@@ -1233,6 +1260,10 @@ impl Game for ToonLinkHost {
 
     fn editor_ui(&mut self) -> Option<(&str, &mut Self::EditState)> {
         Some(("Toon Link", &mut self.edit_state))
+    }
+
+    fn render_editor_ui(ui: &mut egui::Ui, debug_state: &mut Self::EditState) {
+        debug_state.render_ui(ui);
     }
 
     fn frame_delay(&self) -> Duration {
@@ -1313,6 +1344,200 @@ mod host_tests {
             game_cube: classic_settings(),
             modern: modern::ModernEditState::default(),
         }
+    }
+
+    struct EditorHarness {
+        ctx: egui::Context,
+        labels: Vec<(String, egui::Rect)>,
+        header_ids: [egui::Id; 2],
+    }
+
+    impl EditorHarness {
+        fn new(settings: &mut HostEditState) -> Self {
+            let ctx = egui::Context::default();
+            ctx.style_mut(|style| style.animation_time = 0.0);
+            let mut harness = Self {
+                ctx,
+                labels: Vec::new(),
+                header_ids: [egui::Id::NULL; 2],
+            };
+            harness.frame(settings, Vec::new());
+            harness.frame(settings, Vec::new());
+
+            harness
+        }
+
+        fn frame(&mut self, settings: &mut HostEditState, events: Vec<egui::Event>) {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 1600.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let output = self.ctx.run(input, |ctx| {
+                egui::Window::new("Toon Link").show(ctx, |ui| {
+                    // CollapsingHeader::show creates a vertical child scope before
+                    // combining its id_salt with the UI's persistent ID.
+                    let header_scope = ui.id().with(egui::Id::new("child"));
+                    self.header_ids = [
+                        header_scope.with(egui::Id::new("game_cube_settings")),
+                        header_scope.with(egui::Id::new("modern_settings")),
+                    ];
+                    <ToonLinkHost as Game>::render_editor_ui(ui, settings);
+                });
+            });
+            self.labels.clear();
+            for shape in &output.shapes {
+                collect_labels(&shape.shape, &mut self.labels);
+            }
+        }
+
+        fn target(&self, label: &str, radio: bool) -> egui::Rect {
+            let rows: Vec<_> = self
+                .labels
+                .iter()
+                .filter(|(text, _)| text == "Mode")
+                .collect();
+            assert_eq!(rows.len(), 1, "missing or ambiguous Mode row");
+            let row = rows[0].1;
+            let targets: Vec<_> = self
+                .labels
+                .iter()
+                .filter(|(text, bounds)| {
+                    text == label
+                        && if radio {
+                            bounds.center().y >= row.top() && bounds.center().y <= row.bottom()
+                        } else {
+                            bounds.top() > row.bottom()
+                        }
+                })
+                .collect();
+            assert_eq!(
+                targets.len(),
+                1,
+                "missing or ambiguous {label} target (radio={radio})"
+            );
+
+            targets[0].1
+        }
+
+        fn click(&mut self, settings: &mut HostEditState, label: &str, radio: bool) {
+            let pos = self.target(label, radio).center();
+            for pressed in [true, false] {
+                self.frame(
+                    settings,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            self.frame(settings, Vec::new());
+        }
+
+        fn assert_sections(&self, game_cube: bool, modern: bool) {
+            for (id, expected) in self.header_ids.into_iter().zip([game_cube, modern]) {
+                let state = egui::collapsing_header::CollapsingState::load(&self.ctx, id)
+                    .expect("header state was not persisted");
+                assert_eq!(state.is_open(), expected);
+            }
+            assert_eq!(
+                self.labels.iter().any(|(text, _)| text == "FPS: --"),
+                game_cube
+            );
+            assert_eq!(
+                self.labels.iter().any(|(text, _)| text == "band_center"),
+                modern
+            );
+            self.target("GameCube", false);
+            self.target("Modern", false);
+        }
+    }
+
+    fn collect_labels(shape: &egui::epaint::Shape, labels: &mut Vec<(String, egui::Rect)>) {
+        match shape {
+            egui::epaint::Shape::Text(text) => labels.push((
+                text.galley.text().to_owned(),
+                text.galley.rect.translate(text.pos.to_vec2()),
+            )),
+            egui::epaint::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect_labels(shape, labels);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn mode_radio_switches_section_visibility() {
+        let mut settings = mode_settings();
+        let mut ui = EditorHarness::new(&mut settings);
+        ui.assert_sections(true, false);
+        assert_eq!(settings.selected(), SelectedMode::GameCube);
+        assert_ne!(ui.target("GameCube", true), ui.target("GameCube", false));
+        assert_ne!(ui.target("Modern", true), ui.target("Modern", false));
+        ui.click(&mut settings, "Modern", true);
+        assert_eq!(settings.selected(), SelectedMode::Modern);
+        ui.assert_sections(false, true);
+        ui.click(&mut settings, "GameCube", true);
+        assert_eq!(settings.selected(), SelectedMode::GameCube);
+        ui.assert_sections(true, false);
+    }
+
+    #[test]
+    fn manual_section_state_persists_until_mode_change() {
+        let mut settings = mode_settings();
+        let mut ui = EditorHarness::new(&mut settings);
+        for (label, game_cube, modern) in [
+            ("Modern", true, true),
+            ("GameCube", false, true),
+            ("Modern", false, false),
+            ("GameCube", true, false),
+            ("Modern", true, true),
+        ] {
+            ui.click(&mut settings, label, false);
+            ui.frame(&mut settings, Vec::new());
+            ui.assert_sections(game_cube, modern);
+            assert_eq!(settings.selected(), SelectedMode::GameCube);
+        }
+        ui.click(&mut settings, "GameCube", true);
+        ui.assert_sections(true, true);
+        ui.click(&mut settings, "Modern", true);
+        ui.assert_sections(false, true);
+        assert_eq!(settings.selected(), SelectedMode::Modern);
+    }
+
+    #[test]
+    fn section_switching_preserves_mode_settings() {
+        let mut settings = mode_settings();
+        settings.game_cube.eflight.checked = true;
+        settings.game_cube.eflight_falloff.value = 0.37;
+        settings.modern.band_center.value = 0.73;
+        settings.modern.secondary.checked = true;
+        let mut ui = EditorHarness::new(&mut settings);
+        for (label, radio, selected) in [
+            ("Modern", false, SelectedMode::GameCube),
+            ("GameCube", false, SelectedMode::GameCube),
+            ("Modern", true, SelectedMode::Modern),
+            ("Modern", false, SelectedMode::Modern),
+            ("GameCube", true, SelectedMode::GameCube),
+        ] {
+            ui.click(&mut settings, label, radio);
+            assert_eq!(settings.selected(), selected);
+            assert!(settings.game_cube.eflight.checked);
+            assert_eq!(settings.game_cube.eflight_falloff.value, 0.37);
+            assert_eq!(settings.modern.band_center.value, 0.73);
+            assert!(settings.modern.secondary.checked);
+        }
+        ui.assert_sections(true, false);
     }
 
     #[test]

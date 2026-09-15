@@ -16,7 +16,7 @@ just toon_link convert-link
 
 ## Debug controls
 
-Use the top-level **GameCube / Modern** radio buttons to select the active renderer. The nested GameCube and Modern sections keep their settings independently; inactive settings do not affect the selected draw.
+Use the top-level **GameCube / Modern** radio buttons to select the active renderer. Initially, GameCube is selected and expanded, and Modern is collapsed. Changing the selection opens the selected mode's section and closes the other. Both headers remain available for manual expansion or collapse; manual choices persist until the next mode change. The nested GameCube and Modern sections keep their settings independently; inactive settings do not affect the selected draw.
 
 Modern starts with the **Analytic** ramp. Its controls are:
 

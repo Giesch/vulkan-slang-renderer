@@ -13,6 +13,7 @@ gx.workspace = true
 
 anyhow.workspace = true
 ash.workspace = true
+egui.workspace = true
 facet.workspace = true
 glam.workspace = true
 image.workspace = true
