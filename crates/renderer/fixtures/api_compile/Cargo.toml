@@ -6,6 +6,8 @@ publish = false
 
 [dependencies]
 mltrs-renderer = { path = "../.." }
+mltrs-render-graph = { path = "../../../render-graph" }
+anyhow = "1"
 
 ash = "0.38"
 glam = { version = "0.33", features = ["serde"] }
@@ -133,5 +135,30 @@ path = "cases/negative/duplicate_param_bindings.rs"
 [[bin]]
 name = "positive_param_bindings"
 path = "cases/positive/param_bindings.rs"
+
+[[bin]]
+name = "positive_direct_graph_import"
+path = "cases/positive/direct_graph_import.rs"
+[[bin]]
+name = "positive_extracted_type_identity"
+path = "cases/positive/extracted_type_identity.rs"
+[[bin]]
+name = "positive_same_indirect_backend"
+path = "cases/positive/same_indirect_backend.rs"
+[[bin]]
+name = "negative_wrong_indirect_backend"
+path = "cases/negative/wrong_indirect_backend.rs"
+[[bin]]
+name = "negative_wrong_indirect_backend_nested"
+path = "cases/negative/wrong_indirect_backend_nested.rs"
+[[bin]]
+name = "negative_wrong_prepared_frame_backend"
+path = "cases/negative/wrong_prepared_frame_backend.rs"
+[[bin]]
+name = "negative_external_compatible_with_impl"
+path = "cases/negative/external_compatible_with_impl.rs"
+[[bin]]
+name = "negative_indirect_request_fields"
+path = "cases/negative/indirect_request_fields.rs"
 
 [workspace]

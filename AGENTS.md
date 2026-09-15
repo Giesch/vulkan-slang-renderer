@@ -24,6 +24,10 @@ Last verified: 2026-09-13
   type appears in its public API: `OptimizationLevel` and `ShaderStage` are
   ours, not re-exports. Keep it free of `ash`, `vk-mem` and `sdl3` — that is
   what lets `mltrs shaders compile` build without a graphics stack.
+- `crates/render-graph` (package `mltrs-render-graph`) — backend-neutral graph
+  construction, validation, scheduling, staging, and execution. Renderer depends
+  on graph, not the reverse. Keep its dependency closure free of ash, vk-mem,
+  SDL, and shader-slang. See `crates/render-graph/AGENTS.md` for backend contracts.
 - `crates/renderer` (package `mltrs-renderer`) — the renderer, editor widgets,
   env_config, and the shader watcher. `shaders.rs` is a façade over
   `mltrs-slang-reflection` plus the vulkan-facing pieces: the `atlas` traits,
@@ -37,9 +41,14 @@ Last verified: 2026-09-13
   owns the askama templates, the vendored engine slang modules, and the
   snapshot-test fixtures. Depends on `mltrs-slang-reflection`, _not_ the
   renderer — keep it that way.
-- `crates/gx` — GameCube manifest schema shared by `convert-link` and the
-  `toon_link` example.
-- `crates/convert-link` (binary `convert_link`) — Wind Waker asset converter.
+- `crates/gx` — GameCube manifest schemas shared by the converters and the
+  example: `model_manifest` (converted models) and `animation_manifest`
+  (converted Link animations, read/written by `convert_link_animations`).
+  Serde-only, no graphics dependencies.
+- `crates/convert-link` (package `convert-link`) — Wind Waker asset
+  converters: `convert_link` (models/textures) and `convert_link_animations`
+  (Link BCK/BTP/BTK animations from the extracted raw tree; see
+  `docs/link_animations.md`).
 - `examples/<name>/` — one crate per example, each with its own
   `shaders/source/`, committed `shaders/compiled/` + `src/generated/`
   bindings, and its own assets. The examples are the first consumers of the

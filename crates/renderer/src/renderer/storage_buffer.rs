@@ -112,6 +112,9 @@ impl<T> GpuOnlyBufferHandle<T> {
 
 pub(super) struct RawStorageBuffer {
     pub(super) buffer: vk::Buffer,
+    pub(super) byte_size: u64,
+    /// Set only when registered as CPU-writable storage, never for immutable/GPU-only handles.
+    pub(super) graph_upload: bool,
     pub(super) allocation: vk_mem::Allocation,
     /// cached from the persistently-mapped allocation's info
     pub(super) mapped_mem: *mut c_void,
@@ -137,6 +140,10 @@ impl StorageBufferStorage {
         buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
     ) -> StorageBufferHandle<T> {
+        let buffers_per_frame = buffers_per_frame.map(|mut raw| {
+            raw.graph_upload = true;
+            raw
+        });
         let handle = StorageBufferHandle {
             index: self.0.len(),
             len,
@@ -178,6 +185,10 @@ impl StorageBufferStorage {
         buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
     ) -> ImmutableBufferHandle<T> {
+        let buffers_per_frame = buffers_per_frame.map(|mut raw| {
+            raw.graph_upload = false;
+            raw
+        });
         let handle = ImmutableBufferHandle {
             index: self.0.len(),
             len,
@@ -268,6 +279,10 @@ impl StorageBufferStorage {
         buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
     ) -> GpuOnlyBufferHandle<T> {
+        let buffers_per_frame = buffers_per_frame.map(|mut raw| {
+            raw.graph_upload = false;
+            raw
+        });
         let handle = GpuOnlyBufferHandle {
             index: self.0.len(),
             len,
@@ -315,12 +330,26 @@ impl StorageBufferStorage {
         self.0[index].as_ref().unwrap()[frame].device_address
     }
 
-    pub(super) fn mapped_mem_by_index(&mut self, index: usize, frame: usize) -> *mut c_void {
-        self.0[index].as_mut().unwrap()[frame].mapped_mem
+    pub(super) fn upload_target(
+        &self,
+        index: usize,
+        frame: usize,
+    ) -> Option<super::graph_backend::UploadTarget> {
+        let raw = self.0.get(index)?.as_ref()?.get(frame)?;
+        Some(super::graph_backend::UploadTarget {
+            byte_size: raw.byte_size,
+            mapped_mem: raw.mapped_mem,
+            kind: if raw.graph_upload {
+                super::graph_backend::UploadKind::Storage
+            } else {
+                super::graph_backend::UploadKind::ReadOnly
+            },
+        })
     }
 
-    pub(super) fn vk_buffer_by_index(&self, index: usize, frame: usize) -> vk::Buffer {
-        self.0[index].as_ref().unwrap()[frame].buffer
+    pub(super) fn live_buffer(&self, index: usize, frame: usize) -> Option<(vk::Buffer, u64)> {
+        let raw = self.0.get(index)?.as_ref()?.get(frame)?;
+        Some((raw.buffer, raw.byte_size))
     }
 }
 

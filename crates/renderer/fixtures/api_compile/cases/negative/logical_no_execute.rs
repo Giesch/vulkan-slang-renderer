@@ -5,7 +5,7 @@
 
 use mltrs_renderer::renderer::pipeline::{Compute, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, ComputePipelineKey, ResourcePlanner, RenderGraph, dispatch,
+    ComputeNode, ComputePipelineKey, RenderGraph, ResourcePlanner, dispatch,
 };
 use mltrs_renderer::renderer::{GpuOnlyBufferHandle, GpuOnlySlot, UniformBufferHandle};
 

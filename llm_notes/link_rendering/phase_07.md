@@ -630,7 +630,7 @@ deviations discovered:    1. `BatchIndex::raw` takes `self` by value, so
 
    Every clause of that is wrong. The twelve batches are **3 passes × 4
    features**, not 12 BTP frames, and `playerInit`
-   (`../tww/src/d/actor/d_a_player_main.cpp:12150-12178`) classifies them into
+   (`tww/src/d/actor/d_a_player_main.cpp:12150-12178`) classifies them into
    three arrays of four and asserts `zon_cnt == 4 && zoff_none_cnt == 4 &&
    zoff_blend_cnt == 4` — **the game draws all twelve every frame too**. All
    three passes of a feature sample the *same* default texture; BTP swaps that

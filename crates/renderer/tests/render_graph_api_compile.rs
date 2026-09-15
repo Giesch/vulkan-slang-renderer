@@ -69,6 +69,71 @@ const UNRELATED_FAILURES: [&str; 3] = ["error[E0432]", "error[E0433]", "error[E0
 
 const CASES: &[Case] = &[
     Case {
+        bin: "positive_direct_graph_import",
+        file: "direct_graph_import.rs",
+        expectation: Expectation::Compiles,
+    },
+    Case {
+        bin: "positive_extracted_type_identity",
+        file: "extracted_type_identity.rs",
+        expectation: Expectation::Compiles,
+    },
+    Case {
+        bin: "positive_same_indirect_backend",
+        file: "same_indirect_backend.rs",
+        expectation: Expectation::Compiles,
+    },
+    Case {
+        bin: "negative_wrong_indirect_backend",
+        file: "wrong_indirect_backend.rs",
+        expectation: Expectation::Fails {
+            code: "E0271",
+            snippets: &[
+                "OtherCommand",
+                "DrawIndexedIndirectCommand",
+                "CompatibleWith",
+                "prepare",
+            ],
+        },
+    },
+    Case {
+        bin: "negative_wrong_indirect_backend_nested",
+        file: "wrong_indirect_backend_nested.rs",
+        expectation: Expectation::Fails {
+            code: "E0271",
+            snippets: &[
+                "OtherCommand",
+                "DrawIndexedIndirectCommand",
+                "CompatibleWith",
+                "prepare",
+            ],
+        },
+    },
+    Case {
+        bin: "negative_wrong_prepared_frame_backend",
+        file: "wrong_prepared_frame_backend.rs",
+        expectation: Expectation::Fails {
+            code: "E0271",
+            snippets: &["OtherBackend", "Renderer", "execute"],
+        },
+    },
+    Case {
+        bin: "negative_external_compatible_with_impl",
+        file: "external_compatible_with_impl.rs",
+        expectation: Expectation::Fails {
+            code: "E0277",
+            snippets: &["ExternalNode", "Sealed", "CompatibleWith"],
+        },
+    },
+    Case {
+        bin: "negative_indirect_request_fields",
+        file: "indirect_request_fields.rs",
+        expectation: Expectation::Fails {
+            code: "E0451",
+            snippets: &["IndirectRequest", "element_size", "alignment", "private"],
+        },
+    },
+    Case {
         bin: "positive_param_bindings",
         file: "param_bindings.rs",
         expectation: Expectation::Compiles,
@@ -77,7 +142,7 @@ const CASES: &[Case] = &[
         bin: "negative_missing_param_bindings",
         file: "missing_param_bindings.rs",
         expectation: Expectation::Fails {
-            code: "E0277",
+            code: "E0271",
             snippets: &["PendingParamBindings", "GraphNode"],
         },
     },
@@ -85,7 +150,7 @@ const CASES: &[Case] = &[
         bin: "negative_push_without_param_bindings",
         file: "push_without_param_bindings.rs",
         expectation: Expectation::Fails {
-            code: "E0277",
+            code: "E0271",
             snippets: &["PendingParamBindings", "GraphNode"],
         },
     },
@@ -254,7 +319,11 @@ const CASES: &[Case] = &[
         file: "wrong_indirect_element.rs",
         expectation: Expectation::Fails {
             code: "E0277",
-            snippets: &["ImmutableSlot", "DrawIndexedIndirectCommand"],
+            snippets: &[
+                "OtherElement",
+                "IndexedIndirectArgs",
+                "draw_indexed_indirect",
+            ],
         },
     },
     // Only the prepared type executes.
@@ -378,20 +447,28 @@ fn check(case: &Case, manifest: &Path, target_dir: &Path) -> Option<String> {
                 return report(format!("negative case failed outside `{}`", case.file));
             }
             let expected_code = format!("error[{code}]");
-            if !diagnostics.contains(&expected_code) {
+            let intended: Vec<&str> = diagnostics
+                .split("error[")
+                .skip(1)
+                .filter(|diagnostic| {
+                    diagnostic.starts_with(&format!("{code}]"))
+                        && diagnostic.contains(&format!("{}:", case.file))
+                })
+                .collect();
+            let matches_intended = !intended.is_empty()
+                && snippets.iter().all(|snippet| {
+                    intended
+                        .iter()
+                        .any(|diagnostic| diagnostic.contains(snippet))
+                });
+            if !matches_intended {
                 return report(format!(
-                    "negative case failed, but not with `{expected_code}`"
+                    "`{expected_code}` diagnostics at `{}` do not contain all intended snippets",
+                    case.file
                 ));
             }
-            let missing = snippets
-                .iter()
-                .find(|snippet| !diagnostics.contains(*snippet));
-            match missing {
-                Some(snippet) => report(format!(
-                    "negative case failed, but the diagnostics do not contain `{snippet}`"
-                )),
-                None => None,
-            }
+
+            None
         }
     }
 }
@@ -414,11 +491,7 @@ fn render_graph_api_compile_checks() {
     // clean up before asserting, so a failure leaves no generated files behind
     clean(&fixture);
 
-    assert!(
-        failures.is_empty(),
-        "{} of {} render-graph API compile cases failed:\n\n{}",
-        failures.len(),
-        CASES.len(),
-        failures.join("\n\n"),
-    );
+    // assert on a constant so that a failure shows which case(s) failed
+    let expected: Vec<String> = vec![];
+    assert_eq!(failures, expected);
 }

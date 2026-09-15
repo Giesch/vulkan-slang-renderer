@@ -883,14 +883,13 @@ fn build_draw_list(
         );
 
         let command_idx = commands.len() as u32;
-        let indirect_command = DrawIndexedIndirectCommand {
+        commands.push(DrawIndexedIndirectCommand {
             index_count: batch.index_count,
             instance_count: 1,
             first_index: batch.first_index,
             vertex_offset: 0,
             first_instance: 0,
-        };
-        commands.push(indirect_command);
+        });
         let material = renderer.singleton_addr_at(materials_buffer, slot.raw() as u32);
         individual_draws.push(IndividualDraw { material });
 

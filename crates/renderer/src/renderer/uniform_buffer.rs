@@ -19,6 +19,8 @@ impl<T> UniformBufferHandle<T> {
 
 pub(super) struct RawUniformBuffer {
     pub(super) buffer: vk::Buffer,
+    /// Logical per-flight payload size, not the allocator's padded size.
+    pub(super) byte_size: u64,
     pub(super) allocation: vk_mem::Allocation,
     /// cached from the persistently-mapped allocation's info
     pub(super) mapped_mem: *mut c_void,
@@ -68,8 +70,17 @@ impl UniformBufferStorage {
         unsafe { &mut *mut_ptr }
     }
 
-    pub(super) fn mapped_mem_by_index(&mut self, index: usize, frame: usize) -> *mut c_void {
-        self.0[index].as_mut().unwrap()[frame].mapped_mem
+    pub(super) fn upload_target(
+        &self,
+        index: usize,
+        frame: usize,
+    ) -> Option<super::graph_backend::UploadTarget> {
+        let raw = self.0.get(index)?.as_ref()?.get(frame)?;
+        Some(super::graph_backend::UploadTarget {
+            byte_size: raw.byte_size,
+            mapped_mem: raw.mapped_mem,
+            kind: super::graph_backend::UploadKind::Uniform,
+        })
     }
 
     #[expect(dead_code)]

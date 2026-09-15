@@ -10,7 +10,15 @@ _default:
     @ just --list --unsorted
 
 
-# extract Link assets from the tww disc image (needs a tww checkout beside the repo; override with TWW_DIR)
+# prepare and verify all Wind Waker assets for a new clone (requires TWW_DIR)
+[unix]
+tww-assets:
+    just extract-link convert-link
+    just link-verify-p1 link-verify-p2 link-verify-p3 link-verify-animations
+    @echo "TWW ASSETS VERIFIED"
+
+
+# extract Link assets from the tww disc image (requires TWW_DIR)
 [unix]
 extract-link:
     ./scripts/extract_link.sh
@@ -74,3 +82,49 @@ link-verify-p3: link-verify-geometry
 [unix]
 link-env-colors *args:
     ./scripts/link_env_colors.py assets/link/raw/sea_stage.dzs {{args}}
+
+
+# extract Link body/face animations (BCK/BTP/BTK) from the GZLE01 disc into
+# assets/link/animations/raw; verifies against the frozen goldens in scripts/
+# (requires TWW_DIR). Bootstrap
+# candidate manifests for review with `just toon_link extract-link-animations --bootstrap`
+[unix]
+extract-link-animations *args:
+    uv run --no-project scripts/extract_link_animations.py {{args}}
+
+
+# convert the extracted animation raws into the shared gx JSON schema
+# (assets/link/animations/raw -> assets/link/animations/converted)
+[unix]
+convert-link-animations *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p convert-link --bin convert_link_animations
+    ../../target/debug/convert_link_animations assets/link/animations/raw assets/link/animations/converted {{args}}
+
+
+# asset-free animation tests: synthetic fixtures only, no game assets.
+# Needs uv to resolve the pinned gclib dependency for the python harness.
+[unix]
+link-test-animations:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo test -p gx
+    cargo test -p convert-link animation
+    cargo test -p convert-link --test animation_cli
+    cargo build -p convert-link --bin convert_link_animations
+    CONVERT_LINK_ANIMATIONS=../../target/debug/convert_link_animations uv run --no-project scripts/tests/run_tests.py
+    echo "ANIMATION TESTS OK"
+
+
+# real-asset animation gate: extraction + raw checks, full oracle parity,
+# converted hashes + repeatability, tamper detection, model-gate isolation.
+# Fails when the assets or prerequisites are missing (run extract first).
+[unix]
+link-verify-animations:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just extract-link-animations
+    cargo build -p convert-link --bin convert_link_animations
+    uv run --no-project scripts/link_animation_verify.py --converter ../../target/debug/convert_link_animations
+    echo "ANIMATIONS VERIFIED"

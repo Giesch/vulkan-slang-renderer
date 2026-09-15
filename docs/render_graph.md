@@ -1,5 +1,55 @@
 # Render graph
 
+## Crate ownership and backend contract
+
+`mltrs-render-graph` owns construction, validation, scheduling, staging, and
+execution orchestration. It has no renderer, Vulkan, SDL, or Slang dependency.
+`mltrs-renderer` implements its backend interfaces and retains Vulkan allocation,
+synchronization, and command recording. Existing `renderer::render_graph` paths
+(and the corresponding `mltrs` reexports) remain a compatibility facade.
+`Addr`, `ReadAddr`, `ImmutableAddr`, `BindlessHandle`, and texture markers are
+single graph-owned types, not matching copies. The bindless sampled-handle to
+`SampledTexBinding` conversion is available through either import path.
+
+`PreparationBackend` allocates physical images and returns shader metadata plus
+backend-owned keepalives. `PreparedRenderGraph<N, B>` retains those keepalives;
+the renderer facade specializes `B` to `Renderer`. `BindingLookup` resolves
+current, previous, and singleton addresses without exposing backend storage.
+`FrameBackend` consumes a frame of the same backend family as preparation.
+Backend-facing raw key/slot constructors require live resources of the declared
+type and capacity; an integer alone does not establish resource validity.
+
+Graph uploads retain `MaybeUninit` staging so padding is not read as initialized
+bytes. Before queueing graph work, the renderer validates every staged destination
+against backend-owned liveness, mapping, upload access, and logical byte capacity.
+Uniform payload sizes must match exactly; storage payloads must fit. Allocation
+padding is not writable payload capacity. Forged slot metadata cannot authorize
+uploads to immutable/GPU-only storage or bypass these checks; rejection returns
+`DrawError` without applying any writes, submitting, or committing graph state.
+The renderer applies writes after the flight-slot wait and preserves
+previously queued work. The submission callback commits texture cursors exactly
+once after successful queue submission, before presentation. A pre-submit error
+does not commit; a presentation error after submission does not roll back cursors.
+
+### Indexed-indirect records
+
+The renderer's `DrawIndexedIndirectCommand` has private fields. Construct it with
+`DrawIndexedIndirectCommand::new(index_count, instance_count, first_index,
+vertex_offset, first_instance)` and use its named accessors or setters. Its Vulkan
+ABI is 20 bytes, alignment 4, with field offsets 0, 4, 8, 12, and 16.
+
+`IndexedIndirectArgs` describes field values, not memory-layout compatibility.
+Each `BackendTypes` implementation names its exact `IndirectCommand` type.
+`IndirectDrawNode<S, P, I>` retains the argument element type, and the sealed
+`CompatibleWith<B>` proof checks that exact type at preparation, recursively
+through tuples, repeats, and optional nodes. External code cannot implement the
+proof to bypass this check. A prepared graph also rejects another backend's frame.
+
+Only graph planning can construct an erased `IndirectRequest` or command batch.
+Backends receive read-only buffer, offset, count, element-size, and alignment
+metadata derived from the concrete record. The renderer checks buffer liveness,
+byte ranges, layout, and device indirect-draw restrictions before recording.
+
 The game builds and logically validates a render graph once in `Game::setup`.
 This step does not use the renderer. Calling `graph.prepare(&mut renderer)`
 consumes the logical graph against a live renderer, checking device limits.
@@ -67,8 +117,8 @@ Generated shader types implement the graph's own marker traits,
 marker requires the data marker). The renderer's
 `renderer::gpu_write::{GPUWrite, PushConstantBlock}` are distinct traits
 that are private to the renderer crate and cover every graph implementor
-through one-way blanket impls. The public traits are available only under
-`renderer::render_graph`, not directly under `renderer`. There is
+through one-way blanket impls. The public traits are defined at the `mltrs_render_graph` crate root and
+reexported under `renderer::render_graph`, not directly under `renderer`. There is
 no blanket in the other direction: a type implementing only the renderer
 trait directly cannot enter graph construction. Renderer-owned types that
 never enter the graph (like `NoVertex`) keep direct renderer-trait impls.
