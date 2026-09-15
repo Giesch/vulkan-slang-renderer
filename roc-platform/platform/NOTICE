@@ -1,0 +1,73 @@
+NOTICE
+
+This archive is the mltrs Roc platform for Linux x86-64. It carries the
+platform's own code, four generated stub libraries, and copies of files from
+the toolchain that built it. Each section below names the files it covers and
+the licence text in LICENSES/ that applies.
+
+LICENSES/SOURCES.txt records the source package and version of every
+third-party file. LICENSES/rust-crates.txt records every rust crate in the
+dependency graph with the licence its manifest declares.
+
+--------------------------------------------------------------------------
+1. The platform
+--------------------------------------------------------------------------
+Files:  main.roc, Game.roc, Host.roc, InitConfig.roc, Stdin.roc, Stdout.roc,
+        Stderr.roc, targets/x64glibc/libc_forward.a
+Licence: The Universal Permissive License (UPL), Version 1.0
+Text:   LICENSES/platform-UPL-1.0.txt
+Source: https://github.com/Giesch/vulkan-slang-renderer
+
+--------------------------------------------------------------------------
+2. The stub shared objects
+--------------------------------------------------------------------------
+Files:  targets/x64glibc/libc.so, libm.so, libgcc_s.so, libvulkan.so
+
+These carry no upstream code. The generator reads each symbol name and each
+data-object size from the system libraries, then emits a `ret` for every
+function and a zero-filled block for every object. Section 1 licenses them.
+
+--------------------------------------------------------------------------
+3. libstdc++.a
+--------------------------------------------------------------------------
+File:    targets/x64glibc/libstdc++.a
+Licence: GPL-3.0-or-later WITH GCC-exception-3.1
+Text:    LICENSES/libstdc++-gcc.txt
+Source:  `apt-get source gcc-13` on Ubuntu 24.04, or https://gcc.gnu.org/
+
+The GCC Runtime Library Exception permits this redistribution. The exception
+text sits inside LICENSES/libstdc++-gcc.txt beside the GPL-3.0 text.
+
+--------------------------------------------------------------------------
+4. The C runtime startup objects
+--------------------------------------------------------------------------
+Files:   targets/x64glibc/Scrt1.o, crti.o, crtn.o
+Licence: LGPL-2.1-or-later, with the additional permissions glibc's csu/
+         sources carry
+Text:    LICENSES/glibc.txt
+Source:  `apt-get source glibc` on Ubuntu 24.04, or
+         https://sourceware.org/glibc/
+
+--------------------------------------------------------------------------
+5. Libraries linked into libhost.a
+--------------------------------------------------------------------------
+File: targets/x64glibc/libhost.a
+
+The host archive statically links C, C++ and rust libraries. The archive
+therefore contains their object code.
+
+  SDL3                     Zlib
+                           LICENSES/SDL3-Zlib.txt
+  slang                    Apache-2.0 WITH LLVM-exception
+                           LICENSES/slang-slang-LICENSE
+  glslang, SPIRV-Tools,    bundled inside slang; each licence text is a
+  SPIRV-Headers, miniz,    LICENSES/slang-* file
+  lz4, cmark-gfm,
+  fast_float,
+  unordered_dense
+  rust crates              MIT, Apache-2.0, Zlib, BSD-3-Clause and
+                           Unlicense, per crate
+                           LICENSES/rust-crates.txt
+
+The Vulkan loader is not linked. The host reaches it through the
+`libvulkan.so` stub in section 2 and the system's own `libvulkan.so.1`.

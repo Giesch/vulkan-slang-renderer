@@ -16,6 +16,11 @@ mod toon_link 'examples/toon_link'
 mod viking_room 'examples/viking_room'
 mod watercolor 'examples/watercolor'
 
+# The roc platform is its own cargo workspace and needs roc on PATH, so it
+# stays out of the workspace-wide recipes below. Reach it as
+# `just roc-platform <recipe>`, e.g. `just roc-platform run`.
+mod roc-platform 'roc-platform'
+
 
 # list all available just recipes, including the per-example modules
 _default:
@@ -86,12 +91,12 @@ textures:
     # source image -- it is deliberately not part of `just pre-commit`.
     for e in {{examples_with_textures}}; do just "$e" textures; done
 
-# re-seed every example's vendored engine slang modules from the cli's canonical copies
+# re-seed the examples and Roc platform with the cli's canonical engine slang module
 [unix]
 vendor-shaders:
     #!/usr/bin/env bash
     set -euo pipefail
-    for d in examples/*/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
+    for d in examples/*/ roc-platform/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
     cargo fmt
 
 # e.g. `just mltrs shaders compile --crate-dir examples/sdf_2d`

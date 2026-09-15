@@ -1,0 +1,528 @@
+# Build, test, bundle and publish the Roc platform in roc-platform/.
+#
+# The runner is the glibc floor. stubs/generate.sh asserts glibc 2.39 and gcc
+# 13, and ubuntu-24.04 supplies both, so a host symbol above glibc 2.39 fails
+# the release link before publication. See llm_notes/tech_debt.md section 18.
+name: roc platform release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version, e.g. 0.1.0"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - "roc-platform/**"
+      - ".github/workflows/roc-platform-release.yml"
+
+permissions:
+  contents: read
+
+# A dispatch run holds one global slot and never cancels. A pull-request run
+# groups per ref and cancels its predecessor.
+concurrency:
+  group: >-
+    ${{ github.event_name == 'workflow_dispatch'
+        && format('roc-platform-release-{0}', github.repository)
+        || format('roc-platform-release-validate-{0}-{1}', github.repository, github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ZIG_VERSION: "0.16.0"
+
+jobs:
+  build-and-test:
+    name: Build, test and bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      bundle_filename: ${{ steps.bundle.outputs.filename }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # stubs/generate.sh asserts the same two versions, but it asserts them
+      # after the cargo build. Assert them here so a runner-image change reads
+      # at the top of the log.
+      - name: Assert the floor toolchain
+        run: |
+          set -euo pipefail
+          ldd --version | sed -n 1p
+          gcc --version | sed -n 1p
+          ld --version | sed -n 1p
+
+          glibc=$(ldd --version | sed -n 1p | grep -oE '[0-9]+\.[0-9]+$')
+          if [ "$glibc" != "2.39" ]; then
+            echo "::error::runner glibc is $glibc. The floor is 2.39."
+            exit 1
+          fi
+
+          # cc-rs calls cc and c++, not gcc and g++, so a shim needs all four
+          # names. /usr/local/bin precedes /usr/bin on PATH.
+          if [ "$(gcc -dumpversion | cut -d. -f1)" != "13" ]; then
+            echo "::warning::runner gcc is $(gcc -dumpversion). Installing the gcc-13 shim."
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gcc-13 g++-13
+            for pair in gcc:gcc-13 g++:g++-13 cc:gcc-13 c++:g++-13; do
+              sudo ln -sf "/usr/bin/${pair#*:}" "/usr/local/bin/${pair%%:*}"
+            done
+            hash -r
+            [ "$(gcc -dumpversion | cut -d. -f1)" = "13" ]
+          fi
+          echo "PASS: glibc $glibc, gcc $(gcc -dumpversion)"
+
+      # This list mirrors the dev machine. SDL3 compiles a video or audio
+      # backend only when its headers are present, so an extra or a missing
+      # package changes the symbol set stubs/*.s records, and changes what the
+      # release ships.
+      #
+      # libegl1-mesa-dev pulls libglvnd-dev, which pulls libgl-dev,
+      # libgles-dev, libglx-dev and libopengl-dev as Depends, so
+      # --no-install-recommends keeps them.
+      #
+      # libvulkan1 is here for stubs/generate.sh, which runs
+      # `gcc -print-file-name=libvulkan.so.1` and needs an absolute answer.
+      # mesa-vulkan-drivers supplies the lavapipe ICD the tests run against.
+      # slang needs nothing: the pinned shader-slang tag vendors a static
+      # tarball and uses no bindgen.
+      - name: Install the SDL3 build dependencies and lavapipe
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config \
+            libasound2-dev \
+            libdbus-1-dev \
+            libstdc++-13-dev \
+            libdrm-dev \
+            libegl1-mesa-dev \
+            libudev-dev \
+            libwayland-dev wayland-protocols \
+            libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxi-dev \
+            libxkbcommon-dev libxrandr-dev libxss-dev \
+            libvulkan1 mesa-vulkan-drivers
+
+      # The runner image carries dev packages the dev machine does not have.
+      # libgbm-dev is the one that bites: SDL3 enables KMSDRM when libdrm, gbm
+      # and EGL are all present, and the other two already are. The rest of
+      # this list is defensive.
+      - name: Remove the packages that would add an SDL backend
+        run: |
+          set -euo pipefail
+          candidates=(
+            libgbm-dev
+            libpulse-dev
+            libpipewire-0.3-dev
+            libdecor-0-dev
+            libibus-1.0-dev
+            liburing-dev
+            libjack-jackd2-dev
+            libsndio-dev
+            libusb-1.0-0-dev
+            libsamplerate0-dev
+          )
+          installed=()
+          for p in "${candidates[@]}"; do
+            if [ "$(dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null || true)" = installed ]; then
+              installed+=("$p")
+            fi
+          done
+          if [ ${#installed[@]} -gt 0 ]; then
+            echo "Removing: ${installed[*]}"
+            sudo apt-get remove -y "${installed[@]}"
+          else
+            echo "Nothing to remove."
+          fi
+
+      - name: Read the roc pin
+        id: rocpin
+        run: |
+          set -euo pipefail
+          commit=$(tr -d '[:space:]' < roc-platform/ci/roc_commit.txt)
+          if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::ci/roc_commit.txt must hold one 40-character hash. Got '$commit'."
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      # No restore-keys. A partial match fails the version assert below, so a
+      # miss costs less than a wrong hit.
+      - name: Restore the roc binary
+        id: roccache
+        uses: actions/cache@v4
+        with:
+          path: ~/roc-bin
+          key: roc-${{ runner.os }}-${{ runner.arch }}-zig${{ env.ZIG_VERSION }}-${{ steps.rocpin.outputs.commit }}
+
+      - name: Install zig
+        if: steps.roccache.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Checkout roc at the pin
+        if: steps.roccache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: roc-lang/roc
+          ref: ${{ steps.rocpin.outputs.commit }}
+          path: .roc-src
+
+      # `zig build build-release` is the step the dev machine uses. It is
+      # ReleaseFast, stripped, and musl-static. Static matters:
+      # ci/bundle_test.sh bind-mounts this one file into an ubuntu:24.04
+      # container.
+      #
+      # roc's build.zig reads `git rev-parse --short=8 HEAD`, so the checkout
+      # stays a git repo until the copy. The checkout then goes: it holds
+      # about 1 GB of .zig-cache that nothing else needs.
+      - name: Build roc
+        if: steps.roccache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd .roc-src
+          zig build build-release
+          mkdir -p "$HOME/roc-bin"
+          cp zig-out/bin/roc "$HOME/roc-bin/roc"
+          cd ..
+          rm -rf .roc-src
+
+      # The assert catches a stale cache and a pin that does not name the
+      # binary. `git rev-parse --short=8` returns a minimum of 8 characters,
+      # so the reported hash is a prefix of the pin rather than a fixed
+      # 8-character string.
+      - name: Put roc on PATH and assert the version
+        env:
+          ROC_COMMIT: ${{ steps.rocpin.outputs.commit }}
+        run: |
+          set -euo pipefail
+          chmod +x "$HOME/roc-bin/roc"
+          echo "$HOME/roc-bin" >> "$GITHUB_PATH"
+
+          line=$("$HOME/roc-bin/roc" version)
+          echo "$line"
+          version=${line##* }
+          case "$version" in
+            release-fast-*) hash=${version#release-fast-} ;;
+            *)
+              echo "::error::roc reports '$version'. Expected a release-fast build."
+              exit 1
+              ;;
+          esac
+          case "$ROC_COMMIT" in
+            "$hash"*) echo "PASS: roc $version matches ci/roc_commit.txt" ;;
+            *)
+              echo "::error::roc reports $hash. ci/roc_commit.txt names $ROC_COMMIT."
+              exit 1
+              ;;
+          esac
+
+      - name: Install the pinned rust toolchain
+        working-directory: roc-platform
+        run: |
+          set -euo pipefail
+          rustup toolchain install --profile minimal
+          rustc --version
+          cargo --version
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: roc-platform
+          cache-on-failure: true
+
+      - name: Report disk before the build
+        run: df -h /
+
+      - name: Build the host archive
+        working-directory: roc-platform
+        run: bash build.sh
+
+      # An exact-set comparison, not a presence check. A presence check cannot
+      # see an extra backend, and an extra backend is what a runner package
+      # skew produces. It fires here, before the opaque stub diff below.
+      - name: Assert the SDL backend set
+        working-directory: roc-platform
+        run: |
+          set -euo pipefail
+          LC_ALL=C nm --defined-only platform/targets/x64glibc/libhost.a \
+            | awk 'NF>=2 && length($(NF-1))==1 && $NF ~ /_bootstrap$/ {print $NF}' \
+            | LC_ALL=C sort -u > "$RUNNER_TEMP/backends.txt"
+          if ! diff -u ci/expected_sdl_backends.txt "$RUNNER_TEMP/backends.txt"; then
+            echo "::error::the SDL backend set changed. A dev package on this runner differs from the dev machine."
+            exit 1
+          fi
+          echo "PASS: the SDL backend set matches ci/expected_sdl_backends.txt"
+
+      # generate.sh runs the same cargo command as build.sh into the same
+      # target directory, so this rebuild is a no-op. It rewrites the four .s
+      # sources, the nine committed link inputs, platform/LICENSES and
+      # built_with_toolchain.txt.
+      - name: Regenerate the committed link inputs
+        working-directory: roc-platform
+        run: bash stubs/generate.sh
+
+      # The gate. The .s sources are textual and deterministic, and they carry
+      # the drift signal: a new undefined symbol or a changed data-object size
+      # changes them. `git status --porcelain`, not `git diff`: a brand-new .s
+      # arrives untracked, and git diff cannot see it.
+      - name: Gate the stub sources
+        working-directory: roc-platform
+        run: |
+          set -euo pipefail
+          dirty=$(git status --porcelain -- stubs)
+          if [ -n "$dirty" ]; then
+            echo "::error::stubs/*.s changed. The measured symbol set drifted."
+            echo "$dirty"
+            git --no-pager diff -- stubs
+            exit 1
+          fi
+          echo "PASS: stubs/*.s match the committed sources"
+
+      # A warning, not a failure. These files are byte copies from apt
+      # packages and version-string records, so an Ubuntu point update would
+      # hold a byte diff red with no fix available from the dev machine.
+      - name: Report link-input, licence and toolchain drift
+        working-directory: roc-platform
+        run: |
+          set -euo pipefail
+          paths=(built_with_toolchain.txt platform/targets/x64glibc platform/LICENSES)
+          dirty=$(git status --porcelain -- "${paths[@]}")
+          if [ -z "$dirty" ]; then
+            echo "PASS: no drift in the committed link inputs, licences or toolchain record"
+          else
+            echo "::warning::this runner's toolchain artifacts differ from the committed bytes"
+            echo "$dirty"
+            git --no-pager diff -- built_with_toolchain.txt
+          fi
+
+      # Everything below runs against committed bytes. ci/bundle_test.sh
+      # asserts the same cleanliness, and the released bundle then carries the
+      # reviewed link inputs rather than the runner's.
+      #
+      # `git clean` without -x keeps libhost.a: .gitignore lists it, and
+      # build.sh wrote it above.
+      - name: Restore the committed tree
+        working-directory: roc-platform
+        run: |
+          set -euo pipefail
+          git checkout -- built_with_toolchain.txt platform/targets/x64glibc platform/LICENSES stubs
+          git clean -fd -- platform/targets/x64glibc platform/LICENSES stubs
+          dirty=$(git status --porcelain -- .)
+          if [ -n "$dirty" ]; then
+            echo "::error::roc-platform does not match HEAD after the restore. Cargo.lock is a likely cause."
+            echo "$dirty"
+            exit 1
+          fi
+          echo "PASS: roc-platform matches HEAD"
+
+      - name: Run the headless tests
+        working-directory: roc-platform
+        run: bash ci/all_tests.sh
+
+      - name: Run the container bundle proof
+        working-directory: roc-platform
+        run: bash ci/bundle_test.sh
+
+      # The glob, not stdout. bundle.sh asserts exactly one archive, so the
+      # glob is unambiguous and it cannot break on a print-format change.
+      - name: Resolve the bundle filename
+        id: bundle
+        working-directory: roc-platform
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*.tar.zst)
+          if [ ${#files[@]} -ne 1 ]; then
+            echo "::error::expected one archive in dist/. Found ${#files[@]}."
+            exit 1
+          fi
+          name=$(basename "${files[0]}")
+          echo "filename=$name" >> "$GITHUB_OUTPUT"
+          echo "Bundle: $name, $(stat -c %s "${files[0]}") bytes"
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: roc-platform-bundle
+          path: roc-platform/dist/*.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report disk after the build
+        if: always()
+        run: df -h /
+
+  release:
+    name: Publish the GitHub release
+    needs: build-and-test
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The version arrives through env, never through ${{ }} inside the
+      # script body. GitHub expands an expression into the script text before
+      # the shell parses it, which makes it an injection sink.
+      - name: Validate the version
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release_version must be X.Y.Z. Got '$RELEASE_VERSION'."
+            exit 1
+          fi
+          echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=roc-platform-$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+
+      # `git ls-remote --exit-code` exits 2 when it finds nothing, which is
+      # the success case here, so both checks sit inside an `if`.
+      - name: Check the tag is available
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
+            echo "::error::tag $TAG already exists on origin."
+            exit 1
+          fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::release $TAG already exists."
+            exit 1
+          fi
+          echo "PASS: $TAG is available"
+
+      - name: Download the bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: roc-platform-bundle
+          path: dist
+
+      # The tested bytes are the released bytes.
+      - name: Verify the bundle
+        id: asset
+        env:
+          EXPECTED: ${{ needs.build-and-test.outputs.bundle_filename }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*.tar.zst)
+          if [ ${#files[@]} -ne 1 ]; then
+            echo "::error::expected one archive. Found ${#files[@]}."
+            exit 1
+          fi
+          name=$(basename "${files[0]}")
+          if [ "$name" != "$EXPECTED" ]; then
+            echo "::error::artifact is $name. build-and-test reported $EXPECTED."
+            exit 1
+          fi
+          echo "path=${files[0]}" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      # The `### Default bundle` heading and the fenced roc block reproduce
+      # the shape roc-ray's release_helpers.py parses, so a later `roc bump`
+      # gate can read this URL back with the upstream helper.
+      #
+      # A quoted heredoc plus one sed: no shell expansion touches the body, so
+      # no backtick and no dollar sign needs an escape.
+      - name: Write the release notes
+        id: notes
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          BUNDLE: ${{ steps.asset.outputs.name }}
+          REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/$REPO/releases/download/$TAG/$BUNDLE"
+          notes="$RUNNER_TEMP/notes.md"
+
+          cat > "$notes" <<'EOF'
+          The mltrs Roc platform. It renders with Vulkan and compiles Slang shaders.
+          Linux x86-64 only.
+
+          ## Bundles
+
+          ### Default bundle
+
+          ```roc
+          app [game] { pf: platform "@URL@" }
+          ```
+
+          Build and run an app against it with one flag:
+
+          ```bash
+          roc --max-transitive-mb=0 main.roc
+          ```
+
+          ## Requirements
+
+          **`--max-transitive-mb=0` is required.** Roc exempts a platform package
+          from the 10 MB per-package limit. Roc does not exempt it from the 100 MB
+          per-direct-dependency transitive limit. This platform expands to about
+          154 MiB, so an app that names it by URL trips that limit. The
+          diagnostic reads `DEPENDENCY TREE TOO LARGE`. It names a
+          `--max-transitive-bytes` flag that the CLI does not accept; the accepted
+          spelling is `--max-transitive-mb`.
+
+          **glibc 2.39 or newer.** Every executable built against this platform
+          needs it. Ubuntu 24.04 and newer, Debian 13, Fedora 40 and newer, RHEL 10
+          and Arch are above the floor. Ubuntu 22.04 LTS, Debian 12, RHEL 9 and
+          Linux Mint 21 are below it. On those systems the loader stops the
+          executable with a `GLIBC_2.39 not found` error.
+
+          **A Vulkan loader and an ICD.** The executable needs `libvulkan.so.1`,
+          `libgcc_s.so.1`, `libm.so.6` and `libc.so.6`, and nothing else. SDL3, the
+          C++ runtime and the Slang compiler are all linked statically.
+
+          ## Provenance
+
+          - Source commit: @COMMIT@
+          - Roc compiler: @ROCVER@
+          - Toolchain: Ubuntu 24.04, glibc 2.39, gcc 13.3.0, binutils 2.42
+
+          ## Licences
+
+          The archive carries `NOTICE` and a `LICENSES/` directory. They record the
+          licence of the platform and of every redistributed file, including the
+          GCC Runtime Library Exception that covers `libstdc++.a`.
+          EOF
+
+          roc_commit=$(tr -d '[:space:]' < roc-platform/ci/roc_commit.txt)
+          sed -i \
+            -e "s|@URL@|$url|" \
+            -e "s|@COMMIT@|https://github.com/$REPO/commit/$COMMIT_SHA|" \
+            -e "s|@ROCVER@|release-fast-${roc_commit:0:8} (roc-lang/roc $roc_commit)|" \
+            "$notes"
+
+          echo "path=$notes" >> "$GITHUB_OUTPUT"
+          cat "$notes"
+
+      - name: Create the release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          ASSET: ${{ steps.asset.outputs.path }}
+          NOTES: ${{ steps.notes.outputs.path }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" "$ASSET" \
+            --title "$TAG" \
+            --notes-file "$NOTES" \
+            --target "$GITHUB_SHA"
+          echo "Released $TAG with $ASSET"
