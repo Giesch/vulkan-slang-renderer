@@ -9,8 +9,8 @@ use mltrs::game::Game;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
-    UniformBufferHandle,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -20,11 +20,16 @@ fn main() -> Result<(), anyhow::Error> {
     Suzanne::run()
 }
 
+type SuzanneGraph = PreparedRenderGraph<DrawNode<SuzanneParams>>;
+
 pub struct Suzanne {
     start_time: Instant,
-    pipeline: PipelineHandle<DrawIndexed>,
-    textures: Vec<TextureHandle>,
-    params_buffer: UniformBufferHandle<SuzanneParams>,
+    graph: SuzanneGraph,
+    /// Bound into the graph at build time; kept here for ownership.
+    _textures: Vec<TextureHandle>,
+    /// The graph captured this buffer's slot at build time; the handle stays
+    /// here to keep the buffer alive.
+    _params_buffer: UniformBufferHandle<SuzanneParams>,
 }
 
 impl Suzanne {
@@ -103,32 +108,39 @@ impl Game for Suzanne {
             .with_vertices(vertices, indices);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let graph = RenderGraph::new(
+            ResourcePlanner::new(),
+            draw_indexed(
+                &pipeline,
+                &params_buffer,
+                SuzanneParamsBindings {
+                    texture0: textures[0].bindless_handle().into(),
+                    texture1: textures[1].bindless_handle().into(),
+                    texture2: textures[2].bindless_handle().into(),
+                },
+            ),
+        )?
+        .prepare(renderer)?;
+
         let start_time = Instant::now();
 
         Ok(Self {
             start_time,
-            pipeline,
-            textures,
-            params_buffer,
+            graph,
+            _textures: textures,
+            _params_buffer: params_buffer,
         })
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let elapsed = Instant::now() - self.start_time;
         let aspect_ratio = renderer.aspect_ratio();
-        let mvp = make_mvp_matrices(elapsed, aspect_ratio);
-        let params = SuzanneParams {
-            mvp,
-            time: elapsed.as_secs_f32(),
-            _padding_0: Default::default(),
-            texture0: self.textures[0].bindless_handle(),
-            texture1: self.textures[1].bindless_handle(),
-            texture2: self.textures[2].bindless_handle(),
-        };
 
-        renderer.draw_indexed(&self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.params_buffer, params);
-        })
+        let mvp = make_mvp_matrices(elapsed, aspect_ratio);
+        let time = elapsed.as_secs_f32();
+        let params = SuzanneParamsData { mvp, time };
+
+        self.graph.execute(renderer, &params)
     }
 }
 

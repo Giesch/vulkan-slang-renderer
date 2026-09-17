@@ -10,8 +10,8 @@ use mltrs::game::{Game, Input, MouseButton};
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, TextureFilter,
-    TextureHandle, UniformBufferHandle,
+    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_vertex_count,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -30,12 +30,17 @@ pub struct EditState {
     pub rotation_speed: Slider,
 }
 
+type KochCurveGraph = PreparedRenderGraph<DrawVertexCountNode<KochCurveParams>>;
+
 pub struct KochCurve {
     start_time: Instant,
     edit_state: EditState,
-    pipeline: PipelineHandle<DrawVertexCount>,
-    params_buffer: UniformBufferHandle<KochCurveParams>,
-    reflection_map: TextureHandle,
+    graph: KochCurveGraph,
+    /// Bound into the graph at build time; kept here for ownership.
+    _reflection_map: TextureHandle,
+    /// The graph captured this buffer's slot at build time; the handle stays
+    /// here to keep the buffer alive.
+    _params_buffer: UniformBufferHandle<KochCurveParams>,
     mouse_down: bool,
     mouse_position: Vec2,
 }
@@ -69,6 +74,19 @@ impl Game for KochCurve {
         let pipeline_config = shaders.koch_curve.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let graph = RenderGraph::new(
+            ResourcePlanner::new(),
+            draw_vertex_count(
+                &pipeline,
+                &params_buffer,
+                3,
+                KochCurveParamsBindings {
+                    reflection_map: reflection_map.bindless_handle().into(),
+                },
+            ),
+        )?
+        .prepare(renderer)?;
+
         let edit_state = EditState {
             koch_iterations: Slider::new(4.0, 1.0, 8.0),
             scale_factor: Slider::new(3.0, 1.5, 5.0),
@@ -80,9 +98,9 @@ impl Game for KochCurve {
         Ok(Self {
             start_time: Instant::now(),
             edit_state,
-            pipeline,
-            params_buffer,
-            reflection_map,
+            graph,
+            _reflection_map: reflection_map,
+            _params_buffer: params_buffer,
             mouse_down: false,
             mouse_position: Vec2::ZERO,
         })
@@ -118,20 +136,18 @@ impl Game for KochCurve {
         let mut mouse = self.mouse_position;
         mouse.y = resolution.y - mouse.y;
 
-        let params = KochCurveParams {
-            resolution,
-            mouse,
-            time,
-            koch_iterations: self.edit_state.koch_iterations.value,
-            scale_factor: self.edit_state.scale_factor.value,
-            sphere_radius: self.edit_state.sphere_radius.value,
-            sphere_blend: self.edit_state.sphere_blend.value,
-            rotation_speed: self.edit_state.rotation_speed.value,
-            reflection_map: self.reflection_map.bindless_handle(),
-        };
-
-        renderer.draw_vertex_count(&self.pipeline, 3, |gpu| {
-            gpu.write_uniform(&mut self.params_buffer, params);
-        })
+        self.graph.execute(
+            renderer,
+            &KochCurveParamsData {
+                resolution,
+                mouse,
+                time,
+                koch_iterations: self.edit_state.koch_iterations.value,
+                scale_factor: self.edit_state.scale_factor.value,
+                sphere_radius: self.edit_state.sphere_radius.value,
+                sphere_blend: self.edit_state.sphere_blend.value,
+                rotation_speed: self.edit_state.rotation_speed.value,
+            },
+        )
     }
 }

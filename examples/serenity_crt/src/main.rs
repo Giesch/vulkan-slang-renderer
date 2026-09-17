@@ -6,8 +6,8 @@ use facet::Facet;
 use mltrs::editor::Slider;
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, TextureFilter,
-    TextureHandle, UniformBufferHandle,
+    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_vertex_count,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -19,12 +19,17 @@ fn main() -> Result<(), anyhow::Error> {
     SerenityCRT::run()
 }
 
+type SerenityGraph = PreparedRenderGraph<DrawVertexCountNode<SerenityCRTParams>>;
+
 struct SerenityCRT {
     start_time: Instant,
     edit_state: EditState,
-    pipeline: PipelineHandle<DrawVertexCount>,
-    params_buffer: UniformBufferHandle<SerenityCRTParams>,
-    texture: TextureHandle,
+    graph: SerenityGraph,
+    /// Bound into the graph at build time; kept here for ownership.
+    _texture: TextureHandle,
+    /// The graph captured this buffer's slot at build time; the handle stays
+    /// here to keep the buffer alive.
+    _params_buffer: UniformBufferHandle<SerenityCRTParams>,
 }
 
 #[derive(Facet)]
@@ -72,6 +77,19 @@ impl Game for SerenityCRT {
         let pipeline_config = shaders.serenity_crt.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let graph = RenderGraph::new(
+            ResourcePlanner::new(),
+            draw_vertex_count(
+                &pipeline,
+                &params_buffer,
+                3,
+                SerenityCRTParamsBindings {
+                    tex: texture.bindless_handle().into(),
+                },
+            ),
+        )?
+        .prepare(renderer)?;
+
         let edit_state = EditState {
             scanline_intensity: Slider::new(0.95, 0.0, 1.0),
             scanline_count: Slider::new(1100.0, 0.0, 2000.0),
@@ -91,38 +109,35 @@ impl Game for SerenityCRT {
         Ok(Self {
             start_time: Instant::now(),
             edit_state,
-            pipeline,
-            params_buffer,
-            texture,
+            graph,
+            _texture: texture,
+            _params_buffer: params_buffer,
         })
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let elapsed = (Instant::now() - self.start_time).as_secs_f32();
+        let resolution = renderer.window_resolution();
 
-        let params = SerenityCRTParams {
-            tex: self.texture.bindless_handle(),
-            resolution: renderer.window_resolution(),
-            time: elapsed,
-
-            scanline_intensity: self.edit_state.scanline_intensity.value,
-            scanline_count: self.edit_state.scanline_count.value,
-            y_offset: self.edit_state.y_offset.value,
-            brightness: self.edit_state.brightness.value,
-            contrast: self.edit_state.contrast.value,
-            saturation: self.edit_state.saturation.value,
-            bloom_intensity: self.edit_state.bloom_intensity.value,
-            bloom_threshold: self.edit_state.bloom_threshold.value,
-            rgb_shift: self.edit_state.rgb_shift.value,
-            adaptive_intensity: self.edit_state.adaptive_intensity.value,
-            vignette_strength: self.edit_state.vignette_strength.value,
-            curvature: self.edit_state.curvature.value,
-            flicker_strength: self.edit_state.flicker_strength.value,
-            _padding_0: Default::default(),
-        };
-
-        renderer.draw_vertex_count(&self.pipeline, 3, |gpu| {
-            gpu.write_uniform(&mut self.params_buffer, params);
-        })
+        self.graph.execute(
+            renderer,
+            &SerenityCRTParamsData {
+                resolution,
+                scanline_intensity: self.edit_state.scanline_intensity.value,
+                scanline_count: self.edit_state.scanline_count.value,
+                time: elapsed,
+                y_offset: self.edit_state.y_offset.value,
+                brightness: self.edit_state.brightness.value,
+                contrast: self.edit_state.contrast.value,
+                saturation: self.edit_state.saturation.value,
+                bloom_intensity: self.edit_state.bloom_intensity.value,
+                bloom_threshold: self.edit_state.bloom_threshold.value,
+                rgb_shift: self.edit_state.rgb_shift.value,
+                adaptive_intensity: self.edit_state.adaptive_intensity.value,
+                vignette_strength: self.edit_state.vignette_strength.value,
+                curvature: self.edit_state.curvature.value,
+                flicker_strength: self.edit_state.flicker_strength.value,
+            },
+        )
     }
 }

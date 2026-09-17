@@ -5,7 +5,8 @@ mod generated;
 
 use mltrs::game::Game;
 use mltrs::renderer::{
-    DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, UniformBufferHandle, draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -15,9 +16,13 @@ fn main() -> Result<(), anyhow::Error> {
     BasicTriangle::run()
 }
 
+type TriangleGraph = PreparedRenderGraph<DrawNode<MVPMatrices>>;
+
 pub struct BasicTriangle {
-    pipeline: PipelineHandle<DrawIndexed>,
-    uniform_buffer: UniformBufferHandle<MVPMatrices>,
+    graph: TriangleGraph,
+    /// The graph captured this buffer's slot at build time; the handle stays
+    /// here to keep the buffer alive.
+    _uniform_buffer: UniformBufferHandle<MVPMatrices>,
 }
 
 impl Game for BasicTriangle {
@@ -44,9 +49,15 @@ impl Game for BasicTriangle {
             .with_vertices(VERTICES.to_vec(), INDICES.to_vec());
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let graph = RenderGraph::new(
+            ResourcePlanner::new(),
+            draw_indexed(&pipeline, &uniform_buffer, ()),
+        )?
+        .prepare(renderer)?;
+
         Ok(Self {
-            pipeline,
-            uniform_buffer,
+            graph,
+            _uniform_buffer: uniform_buffer,
         })
     }
 
@@ -54,9 +65,7 @@ impl Game for BasicTriangle {
         let aspect_ratio = renderer.aspect_ratio();
         let mvp = make_basic_mvp_matrices(aspect_ratio);
 
-        renderer.draw_indexed(&self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.uniform_buffer, mvp);
-        })
+        self.graph.execute(renderer, &mvp)
     }
 }
 

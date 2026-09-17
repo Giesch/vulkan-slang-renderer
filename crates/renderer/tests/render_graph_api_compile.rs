@@ -253,6 +253,12 @@ const CASES: &[Case] = &[
         file: "nested_tuples.rs",
         expectation: Expectation::Compiles,
     },
+    // An array of one node type compiles past the tuple limit.
+    Case {
+        bin: "positive_array_nodes",
+        file: "array_nodes.rs",
+        expectation: Expectation::Compiles,
+    },
     // Every constructor family is reachable through the graph-owned
     // vocabulary: keys/slots minted from renderer handles, push variants,
     // picking, upload, and GPU-free logical construction.

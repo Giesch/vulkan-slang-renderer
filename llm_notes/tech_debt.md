@@ -35,6 +35,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 16. [Typed device-address minting is split across two layers](#16-typed-device-address-minting-is-split-across-two-layers) — an invariant held by convention that could be held by the compiler
 17. [Picking is a second rendering path rather than a pass, so every new capability must be re-implemented or refused](#17-picking-is-a-second-rendering-path-rather-than-a-pass-so-every-new-capability-must-be-re-implemented-or-refused) — recurring per-feature carve-outs; the cost lands on whoever adds the *next* feature
 18. [Reference-counted handles instead of copied buffer slot keys](#18-reference-counted-handles-instead-of-copied-buffer-slot-keys) — execute-time liveness checks delete
+19. [Borrow upload frame inputs instead of cloning into a Vec](#19-borrow-upload-frame-inputs-instead-of-cloning-into-a-vec) — unnecessary per-frame allocation and copy
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -1436,3 +1437,29 @@ them is alive.
 
 **Done means.** Dropping a handle cannot invalidate a live graph;
 `validate_buffers` and the `FrameLookup` liveness methods delete.
+
+## 19. Borrow upload frame inputs instead of cloning into a Vec
+
+**The problem.** `UploadNode<T>` in `crates/render-graph/src/runtime.rs`
+defines `GraphNode::Frame` as `Vec<T>`. This forces `frame_inputs` in
+`examples/ray_marching/src/main.rs` to call `boxes.to_vec()` every frame,
+allocating and copying data that the example already owns. The upload planner
+only needs a slice: `stage_storage` accepts `&[T]` and copies its contents into
+staging storage during `execute`. The intermediate owned vector is an API
+constraint, not a GPU lifetime requirement.
+
+**Why it's tolerable today.** The ray-marching example uploads one animated box,
+so the extra allocation and copy are small. The same API becomes wasteful for
+larger or more numerous uploads.
+
+**Fix.** Allow frame inputs to borrow for the duration of execution, for example
+through a lifetime-parameterized `GraphNode::Frame<'a>` with upload inputs of
+`&'a [T]`. Carry that lifetime through graph composition and execution, then
+pass the existing boxes slice directly. Preserve staging ownership after
+planning; this removes the intermediate clone, not the required staging copy.
+
+**Done means.** The ray-marching upload borrows `self.boxes` without allocating
+an intermediate vector. Borrowed inputs work through tuples, repeat nodes, and
+optional nodes. Update the example's test that currently requires a cloned
+snapshot to verify current-frame values and staging ownership instead, and
+verify that submitted upload bytes remain valid after the input borrow ends.

@@ -385,6 +385,17 @@ impl<T> From<BufferBinding<T>> for ReadBufferBinding<T> {
     }
 }
 
+// an immutable or singleton buffer provides strictly more guarantees
+// than the ReadAddr<T> requires
+impl<T> From<ImmutableBufferBinding<T>> for ReadBufferBinding<T> {
+    fn from(binding: ImmutableBufferBinding<T>) -> Self {
+        Self {
+            raw: binding.raw,
+            _elem: PhantomData,
+        }
+    }
+}
+
 impl<T> ImmutableBufferBinding<T> {
     fn new(kind: BufferBindingKind, index: usize, byte_offset: u64) -> Self {
         Self {
@@ -1324,6 +1335,25 @@ impl<C: PickingCursor, B: BackendTypes> compatible::Sealed<B> for PickingNode<C>
 impl<T: GPUWrite, B: BackendTypes> compatible::Sealed<B> for UploadNode<T> {}
 impl<N: CompatibleWith<B>, B: BackendTypes> compatible::Sealed<B> for RepeatNode<N> {}
 impl<N: CompatibleWith<B>, B: BackendTypes> compatible::Sealed<B> for OptionalNode<N> {}
+impl<N: CompatibleWith<B>, B: BackendTypes, const K: usize> compatible::Sealed<B> for [N; K] {}
+
+impl<N: GraphNode, const K: usize> GraphNode for [N; K] {
+    type Frame = [N::Frame; K];
+
+    fn lower(&self, cx: &mut LowerCtx) {
+        for node in self {
+            node.lower(cx);
+        }
+    }
+
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+        for (node, frame) in self.iter().zip(frame_data) {
+            node.plan(frame, cx)?;
+        }
+
+        Ok(())
+    }
+}
 
 macro_rules! impl_graph_node_for_tuple {
     ($(($n:ident, $f:tt)),+) => {
@@ -2235,6 +2265,38 @@ mod tests {
             singleton.addr_at(1).erased().byte_offset,
             std::mem::size_of::<u32>() as u64
         );
+    }
+
+    // ---- immutable/singleton buffers as read-only shader fields ----------
+
+    #[test]
+    fn immutable_binding_converts_to_read_binding_keeping_raw() {
+        // A shader field typed `ReadAddr<T>` can be fed from an immutable or
+        // singleton buffer: the conversion must preserve the raw kind, index,
+        // and byte offset so lowering and resolution stay on the immutable or
+        // singleton path rather than reinterpreting the buffer as storage.
+        fn assert_raw_equal(read: RawBufferBinding, expected: RawBufferBinding) {
+            assert_eq!(read.kind, expected.kind);
+            assert_eq!(read.index, expected.index);
+            assert_eq!(read.byte_offset, expected.byte_offset);
+        }
+
+        let immutable = ImmutableSlot::<u32> {
+            index: 3,
+            len: 4,
+            element_size: std::mem::size_of::<u32>(),
+            _elem: PhantomData,
+        };
+        let read: ReadBufferBinding<u32> = immutable.addr_at(1).into();
+        assert_raw_equal(read.erased(), immutable.addr_at(1).erased());
+
+        let singleton = SingletonSlot::<u32> {
+            index: 5,
+            len: 4,
+            _elem: PhantomData,
+        };
+        let read: ReadBufferBinding<u32> = singleton.addr().into();
+        assert_raw_equal(read.erased(), singleton.addr().erased());
     }
 
     // ---- slot Copy/Clone without element bounds -----------------------

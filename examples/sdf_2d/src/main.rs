@@ -5,7 +5,8 @@ mod generated;
 use mltrs::env_config::EnvConfig;
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
+    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, UniformBufferHandle, draw_vertex_count,
 };
 use serde::Deserialize;
 
@@ -28,13 +29,15 @@ fn main() -> Result<(), anyhow::Error> {
     SDF2D::run()
 }
 
+type Sdf2dGraph = PreparedRenderGraph<DrawVertexCountNode<SDF2DParams>>;
+
 struct SDF2D {
     start_time: Instant,
     beats: BeatsData,
-
-    pipeline: PipelineHandle<DrawVertexCount>,
-    params_buffer: UniformBufferHandle<SDF2DParams>,
-
+    graph: Sdf2dGraph,
+    /// The graph captured this buffer's slot at build time; the handle stays
+    /// here to keep the buffer alive.
+    _params_buffer: UniformBufferHandle<SDF2DParams>,
     /// Playback only — the visuals are driven by `beats` plus elapsed time, not
     /// by the audio stream — so this is `None` on a machine with no output
     /// device (containers, CI, `scripts/headless-sweep.sh`) and the example
@@ -90,6 +93,15 @@ impl Game for SDF2D {
         let pipeline_config = shaders.sdf_2d.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        // REVIEW could we modify draw_vertex_count to use a '.with_bindings()' method similar to how we do push constants elsewhere?
+        // `SDF2DParams` has no resource fields, so its bindings type is `()`
+        // and the whole struct is the per-frame value.
+        let graph = RenderGraph::new(
+            ResourcePlanner::new(),
+            draw_vertex_count(&pipeline, &params_buffer, 3, ()),
+        )?
+        .prepare(renderer)?;
+
         // eprintln! rather than log::warn! on purpose: with RUST_LOG unset,
         // env_logger keeps only error!, so a warning here would be invisible
         // exactly on the machines that hit this path.
@@ -103,8 +115,8 @@ impl Game for SDF2D {
 
         Ok(Self {
             start_time,
-            pipeline,
-            params_buffer,
+            graph,
+            _params_buffer: params_buffer,
             beats,
             audio,
         })
@@ -137,8 +149,6 @@ impl Game for SDF2D {
             beat_proximity,
         };
 
-        renderer.draw_vertex_count(&self.pipeline, 3, |gpu| {
-            gpu.write_uniform(&mut self.params_buffer, params);
-        })
+        self.graph.execute(renderer, &params)
     }
 }

@@ -42,8 +42,9 @@ ABI is 20 bytes, alignment 4, with field offsets 0, 4, 8, 12, and 16.
 Each `BackendTypes` implementation names its exact `IndirectCommand` type.
 `IndirectDrawNode<S, P, I>` retains the argument element type, and the sealed
 `CompatibleWith<B>` proof checks that exact type at preparation, recursively
-through tuples, repeats, and optional nodes. External code cannot implement the
-proof to bypass this check. A prepared graph also rejects another backend's frame.
+through tuples, arrays, repeats, and optional nodes. External code cannot
+implement the proof to bypass this check. A prepared graph also rejects another
+backend's frame.
 
 Only graph planning can construct an erased `IndirectRequest` or command batch.
 Backends receive read-only buffer, offset, count, element-size, and alignment
@@ -87,7 +88,13 @@ The graph fixes two ordering hazards of the manual API:
 
 `examples/particles` is the minimal graph example. `examples/watercolor` is
 the full one: a conditional node, a runtime-count loop, per-iteration push
-blocks, a storage upload, and 14 logical textures.
+blocks, a storage upload, and 14 logical textures. The everyday examples
+(`basic_triangle`, `depth_texture`, `dragon`, `koch_curve`, `ray_marching`,
+`recipes`, `sdf_2d`, `serenity_crt`, `suzanne`, `viking_room`) are graph-based
+too: each builds and prepares one graph in `Game::setup` and executes it with
+per-frame data in `Game::draw`. `examples/multi_mesh` shows 18 draws of
+one node type as a node array, `[DrawNode<_>; 18]`, with a frame array of the
+same length.
 
 ## Error staging
 
@@ -207,6 +214,13 @@ let table = SingletonSlot::from(&singleton_buffer);
 table.addr_at(i)     // ImmutableAddr<T> of element i; bounds-checked here
 ```
 
+A shader field declared `ReadAddr<T>` takes a `ReadBufferBinding<T>`. Besides
+`read_addr()` (storage) and `previous()` (GPU-only), an immutable or singleton
+buffer's `ImmutableBufferBinding<T>` converts with `.into()`: the binding keeps
+its immutable/singleton identity, so lowering still records the read-only
+access and the resolver still routes it to the immutable/singleton storage.
+`examples/ray_marching` binds its sphere singleton this way.
+
 `upload(slot)` is a node that copies a `Vec<T>` from the params tuple
 into the buffer each frame; the slot is a `StorageSlot<T>`, or the storage
 buffer handle it is minted from. An oversized vector returns an error identifying
@@ -239,6 +253,10 @@ draw_indexed(&indexed_push_pipeline, &params_buffer, bindings)
     .with_push_constant(push_input)
 picking::<Cursor>(&picking_pipeline)
 ```
+
+An array `[N; K]` of one node type is a node. It runs its elements in index
+order, and its frame element is `[N::Frame; K]`. `std::array::from_fn` builds
+both arrays from one table of per-node data.
 
 Compute parameter blocks with resource bindings require
 `.with_param_bindings(bindings)` before the command can enter a graph.
@@ -333,7 +351,8 @@ future phase and ledger item.
 per-shader `ParamsData` types, so the tuple literal is checked field-for-field
 and arity-for-arity: a forgotten parameter, a forgotten field, and a
 cross-shader transposition are all compile errors. The tuple is capped at 12
-elements per level; `repeat` and `optional` nest their bodies' elements.
+elements per level; `repeat` and `optional` nest their bodies' elements. A
+node array takes a frame array of the same length, which has no cap.
 
 Positions that carry a bare number require a newtype:
 
@@ -365,7 +384,7 @@ cursors. A presentation failure after submission keeps the committed versions.
 
 ## Limits
 
-- Tuple arity is 12 per nesting level.
+- Tuple arity is 12 per nesting level. A node array `[N; K]` has no length limit.
 - `repeat` and `optional` do not nest. A `repeat` holds compute and upload
   nodes only.
 - A shader used by a graph node must have a reflected uniform parameter

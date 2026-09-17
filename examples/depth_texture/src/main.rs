@@ -9,8 +9,8 @@ use mltrs::game::Game;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
-    UniformBufferHandle,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -20,11 +20,16 @@ fn main() -> Result<(), anyhow::Error> {
     DepthTextureGame::run()
 }
 
+type DepthTextureGraph = PreparedRenderGraph<DrawNode<DepthTextureParams>>;
+
 pub struct DepthTextureGame {
     start_time: Instant,
-    pipeline: PipelineHandle<DrawIndexed>,
-    texture: TextureHandle,
-    params_buffer: UniformBufferHandle<DepthTextureParams>,
+    graph: DepthTextureGraph,
+    /// Bound into the graph at build time; kept here for ownership.
+    _texture: TextureHandle,
+    /// The graph captured this buffer's slot at build time; the handle stays
+    /// here to keep the buffer alive.
+    _params_buffer: UniformBufferHandle<DepthTextureParams>,
 }
 
 // two squares at different z values,
@@ -106,13 +111,25 @@ impl Game for DepthTextureGame {
             .with_vertices(VERTICES.to_vec(), INDICES.to_vec());
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let graph = RenderGraph::new(
+            ResourcePlanner::new(),
+            draw_indexed(
+                &pipeline,
+                &params_buffer,
+                DepthTextureParamsBindings {
+                    texture: texture.bindless_handle().into(),
+                },
+            ),
+        )?
+        .prepare(renderer)?;
+
         let start_time = Instant::now();
 
         Ok(Self {
             start_time,
-            pipeline,
-            texture,
-            params_buffer,
+            graph,
+            _texture: texture,
+            _params_buffer: params_buffer,
         })
     }
 
@@ -120,15 +137,9 @@ impl Game for DepthTextureGame {
         let aspect_ratio = renderer.aspect_ratio();
         let elapsed = Instant::now() - self.start_time;
         let mvp = make_mvp_matrices(elapsed, aspect_ratio);
-        let params = DepthTextureParams {
-            mvp,
-            texture: self.texture.bindless_handle(),
-            _padding_0: Default::default(),
-        };
+        let params = DepthTextureParamsData { mvp };
 
-        renderer.draw_indexed(&self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.params_buffer, params);
-        })
+        self.graph.execute(renderer, &params)
     }
 }
 

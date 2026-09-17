@@ -11,8 +11,8 @@ use mltrs::game::Game;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, TextureFilter, TextureHandle,
-    UniformBufferHandle,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -22,11 +22,16 @@ fn main() -> Result<(), anyhow::Error> {
     VikingRoom::run()
 }
 
+type VikingRoomGraph = PreparedRenderGraph<DrawNode<DepthTextureParams>>;
+
 pub struct VikingRoom {
     start_time: Instant,
-    pipeline: PipelineHandle<DrawIndexed>,
-    texture: TextureHandle,
-    params_buffer: UniformBufferHandle<DepthTextureParams>,
+    graph: VikingRoomGraph,
+    /// Bound into the graph at build time; kept here for ownership.
+    _texture: TextureHandle,
+    /// The graph captured this buffer's slot at build time; the handle stays
+    /// here to keep the buffer alive.
+    _params_buffer: UniformBufferHandle<DepthTextureParams>,
 }
 
 impl VikingRoom {
@@ -105,29 +110,36 @@ impl Game for VikingRoom {
             .with_vertices(vertices, indices);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let graph = RenderGraph::new(
+            ResourcePlanner::new(),
+            draw_indexed(
+                &pipeline,
+                &params_buffer,
+                DepthTextureParamsBindings {
+                    texture: texture.bindless_handle().into(),
+                },
+            ),
+        )?
+        .prepare(renderer)?;
+
         let start_time = Instant::now();
 
         Ok(Self {
             start_time,
-            pipeline,
-            texture,
-            params_buffer,
+            graph,
+            _texture: texture,
+            _params_buffer: params_buffer,
         })
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let elapsed = Instant::now() - self.start_time;
         let aspect_ratio = renderer.aspect_ratio();
-        let mvp = make_mvp_matrices(elapsed, aspect_ratio);
-        let params = DepthTextureParams {
-            mvp,
-            texture: self.texture.bindless_handle(),
-            _padding_0: Default::default(),
-        };
 
-        renderer.draw_indexed(&self.pipeline, |gpu| {
-            gpu.write_uniform(&mut self.params_buffer, params);
-        })
+        let mvp = make_mvp_matrices(elapsed, aspect_ratio);
+        let params = DepthTextureParamsData { mvp };
+
+        self.graph.execute(renderer, &params)
     }
 }
 

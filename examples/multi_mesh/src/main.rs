@@ -28,9 +28,10 @@ use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 
 use mltrs::game::Game;
 use mltrs::renderer::{
-    BlendMode, CullMode, DrawError, DrawIndexed, FrameRenderer, MeshHandle, PipelineHandle,
-    RasterState, Renderer, RgbaPixels, SamplerOptions, TextureColorSpace, TextureFilter,
-    TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle,
+    BlendMode, CullMode, DrawError, DrawNode, FrameRenderer, MeshHandle, PreparedRenderGraph,
+    RasterState, RenderGraph, Renderer, ResourcePlanner, RgbaPixels, SamplerOptions,
+    TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
+    UniformBufferHandle, draw_index_range,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -325,16 +326,22 @@ const fn draws_total(draws: &[(u32, usize)]) -> u32 {
 // buffer exactly
 const _: () = assert!(draws_total(&DRAWS) == INDEX_COUNT);
 
+type MultiMeshGraph = PreparedRenderGraph<[DrawNode<MultiMeshParams>; DRAWS.len()]>;
+
+/// The per-frame values matching [`MultiMeshGraph`]
+type MultiMeshFrame = [MultiMeshParamsData; DRAWS.len()];
+
 pub struct MultiMesh {
     start_time: Instant,
+    graph: MultiMeshGraph,
     #[allow(unused)]
     mesh: MeshHandle<Vertex>,
     specs: Vec<PipelineSpec>,
-    textures: Vec<TextureHandle>,
-    pipelines: Vec<(
-        PipelineHandle<DrawIndexed>,
-        UniformBufferHandle<MultiMeshParams>,
-    )>,
+    /// The graph bound these at build time; kept here for ownership.
+    _textures: Vec<TextureHandle>,
+    /// The graph captured these buffers' slots at build time; the handles
+    /// stay here to keep the buffers alive.
+    _params_buffers: Vec<UniformBufferHandle<MultiMeshParams>>,
 }
 
 impl Game for MultiMesh {
@@ -362,7 +369,7 @@ impl Game for MultiMesh {
         let specs = pipeline_specs();
         assert_eq!(specs.len(), DRAWS.iter().map(|(_, p)| p + 1).max().unwrap());
 
-        let mut pipelines = vec![];
+        let mut pairs = vec![];
         for spec in &specs {
             let params_buffer = renderer.create_uniform_buffer::<MultiMeshParams>()?;
             let resources = Resources {
@@ -374,52 +381,97 @@ impl Game for MultiMesh {
                 .with_shared_mesh(&mesh)
                 .with_raster_state(spec.raster);
             let pipeline = renderer.create_pipeline(pipeline_config)?;
-            pipelines.push((pipeline, params_buffer));
+            pairs.push((pipeline, params_buffer));
         }
+
+        // One node per DRAWS entry, in declaration (= draw) order. The ranges
+        // come from the same running sum the queue-time code used.
+        let ranges = draw_ranges();
+        let node = |i: usize| {
+            let (first_index, index_count, pipeline_index) = ranges[i];
+            let (pipeline, params_buffer) = &pairs[pipeline_index];
+
+            draw_index_range(
+                pipeline,
+                params_buffer,
+                first_index,
+                index_count,
+                MultiMeshParamsBindings {
+                    texture: textures[specs[pipeline_index].texture]
+                        .bindless_handle()
+                        .into(),
+                },
+            )
+        };
+
+        let graph = RenderGraph::new(ResourcePlanner::new(), std::array::from_fn(node))?
+            .prepare(renderer)?;
+
+        let _params_buffers = pairs
+            .into_iter()
+            .map(|(_, params_buffer)| params_buffer)
+            .collect();
 
         Ok(Self {
             start_time: Instant::now(),
+            graph,
             mesh,
             specs,
-            textures,
-            pipelines,
+            _textures: textures,
+            _params_buffers,
         })
     }
 
-    fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let elapsed = (Instant::now() - self.start_time).as_secs_f32();
-        let orbit = orbit_angle(elapsed);
         let aspect_ratio = renderer.aspect_ratio();
-        let (view, proj) = camera(orbit, aspect_ratio);
-        let inverse_view = view.inverse();
-        let models = shape_models(elapsed);
 
-        let mut first_index = 0;
-        for (index_count, pipeline_index) in DRAWS {
-            let (pipeline, _) = &self.pipelines[pipeline_index];
-            renderer.queue_draw_index_range(pipeline, first_index, index_count);
-            first_index += index_count;
-        }
+        let frame = frame_inputs(&self.specs, elapsed, aspect_ratio);
+        self.graph.execute(renderer, &frame)
+    }
+}
 
-        renderer.submit_draws(|gpu| {
-            for ((_, params_buffer), spec) in self.pipelines.iter_mut().zip(&self.specs) {
-                let model = match &spec.placement {
-                    Placement::Shape(shape) => models[*shape],
-                    Placement::Panel(panel) => panel_model(inverse_view, aspect_ratio, panel),
-                };
-                let mvp = MVPMatrices { model, view, proj };
-                gpu.write_uniform(
-                    params_buffer,
-                    MultiMeshParams {
-                        mvp,
-                        tint: spec.tint,
-                        texture: self.textures[spec.texture].bindless_handle(),
-                        _padding_0: Default::default(),
-                    },
-                );
+/// Derives each draw's `(first_index, index_count, pipeline)` from `DRAWS`
+/// with the same running sum the queue-time code used, so the ranges stay
+/// contiguous, disjoint, and exactly cover `INDEX_COUNT`.
+fn draw_ranges() -> Vec<(u32, u32, usize)> {
+    let mut next_first_index = 0;
+    DRAWS
+        .iter()
+        .map(|&(index_count, pipeline)| {
+            let first_index = next_first_index;
+            next_first_index += index_count;
+            (first_index, index_count, pipeline)
+        })
+        .collect()
+}
+
+/// The per-frame value for every draw, in `DRAWS` order: each pipeline's
+/// params are computed exactly once (so the two cube draws — which share
+/// P_CUBE's pipeline, params buffer, and model matrix — receive identical
+/// current-frame data), then cloned per draw.
+fn frame_inputs(specs: &[PipelineSpec], elapsed: f32, aspect_ratio: f32) -> MultiMeshFrame {
+    let orbit = orbit_angle(elapsed);
+    let (view, proj) = camera(orbit, aspect_ratio);
+    let inverse_view = view.inverse();
+    let models = shape_models(elapsed);
+
+    let per_pipeline: Vec<MultiMeshParamsData> = specs
+        .iter()
+        .map(|spec| {
+            let model = match &spec.placement {
+                Placement::Shape(shape) => models[*shape],
+                Placement::Panel(panel) => panel_model(inverse_view, aspect_ratio, panel),
+            };
+            MultiMeshParamsData {
+                mvp: MVPMatrices { model, view, proj },
+                tint: spec.tint,
             }
         })
-    }
+        .collect();
+
+    // DRAWS maps each frame element to its pipeline's shared params value.
+    std::array::from_fn(|i| per_pipeline[DRAWS[i].1])
 }
 
 // --- textures ---
@@ -815,5 +867,86 @@ fn build_disc(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>) {
     for i in 0..WEDGES {
         // (center, rim i+1, rim i) is CCW viewed from above (+Y)
         indices.extend([base, base + 1 + i + 1, base + 1 + i]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AC3: the derived ranges tile the whole index buffer in DRAWS order
+    /// with the recorded pipeline associations.
+    #[test]
+    fn multi_mesh_draw_ranges_and_pipeline_order() {
+        let ranges = draw_ranges();
+        assert_eq!(ranges.len(), DRAWS.len());
+
+        // every draw starts where the previous one ended, carries DRAWS'
+        // index count, and uses DRAWS' pipeline
+        let mut first = 0;
+        for (i, &(count, pipeline)) in DRAWS.iter().enumerate() {
+            assert_eq!(
+                ranges[i],
+                (first, count, pipeline),
+                "draw {i} must keep DRAWS' range and pipeline association"
+            );
+            first += count;
+        }
+
+        // the ranges are contiguous and exactly cover the index buffer
+        assert_eq!(first, INDEX_COUNT);
+
+        // every association names a real pipeline spec
+        let specs = pipeline_specs();
+        for &(_, _, pipeline) in &ranges {
+            assert!(pipeline < specs.len());
+        }
+    }
+
+    /// AC2/AC3: the two cube draws share P_CUBE's pipeline and params buffer,
+    /// so their frame inputs must be identical — including the current-frame
+    /// animation — while every draw's tint still matches its pipeline's spec.
+    #[test]
+    fn multi_mesh_shared_cube_frame_inputs() {
+        let specs = pipeline_specs();
+        const ELAPSED: f32 = 1.25;
+        const ASPECT: f32 = 1.75;
+
+        let elements = frame_inputs(&specs, ELAPSED, ASPECT);
+
+        // frame element i carries pipeline DRAWS[i].1's tint
+        for (i, element) in elements.iter().enumerate() {
+            assert_eq!(element.tint, specs[DRAWS[i].1].tint, "draw {i}");
+        }
+
+        // the two P_CUBE draws receive identical current-frame data
+        assert_eq!(elements[0].mvp.model, elements[1].mvp.model);
+        assert_eq!(elements[0].mvp.view, elements[1].mvp.view);
+        assert_eq!(elements[0].mvp.proj, elements[1].mvp.proj);
+        assert_eq!(elements[0].tint, elements[1].tint);
+
+        // that shared value is the cube's current animation frame (computed
+        // once, not re-sampled), and it differs from the pyramid's draw
+        let models = shape_models(ELAPSED);
+        assert_eq!(elements[0].mvp.model, models[CUBE]);
+        assert_ne!(elements[0].mvp.model, models[PYRAMID]);
+
+        // every element shares this frame's view/projection
+        let (view, proj) = camera(orbit_angle(ELAPSED), ASPECT);
+        for (i, element) in elements.iter().enumerate() {
+            assert_eq!(element.mvp.view, view, "draw {i}");
+            assert_eq!(element.mvp.proj, proj, "draw {i}");
+        }
+
+        // each element carries its own pipeline's current model matrix: shape
+        // draws animate by elapsed time, panel draws are placed in view space
+        let inverse_view = view.inverse();
+        for (i, element) in elements.iter().enumerate() {
+            let expected = match &specs[DRAWS[i].1].placement {
+                Placement::Shape(shape) => models[*shape],
+                Placement::Panel(panel) => panel_model(inverse_view, ASPECT, panel),
+            };
+            assert_eq!(element.mvp.model, expected, "draw {i}");
+        }
     }
 }

@@ -4,7 +4,8 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
+    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, UniformBufferHandle, draw_vertex_count,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -14,10 +15,14 @@ fn main() -> Result<(), anyhow::Error> {
     Dragon::run()
 }
 
+type DragonGraph = PreparedRenderGraph<DrawVertexCountNode<DragonParams>>;
+
 struct Dragon {
     start_time: Instant,
-    params_buffer: UniformBufferHandle<DragonParams>,
-    pipeline: PipelineHandle<DrawVertexCount>,
+    graph: DragonGraph,
+    /// The graph captured this buffer's slot at build time; the handle stays
+    /// here to keep the buffer alive.
+    _params_buffer: UniformBufferHandle<DragonParams>,
 }
 
 impl Game for Dragon {
@@ -42,10 +47,16 @@ impl Game for Dragon {
         let pipeline_config = shaders.dragon.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let graph = RenderGraph::new(
+            ResourcePlanner::new(),
+            draw_vertex_count(&pipeline, &params_buffer, 3, ()),
+        )?
+        .prepare(renderer)?;
+
         Ok(Self {
             start_time,
-            params_buffer,
-            pipeline,
+            graph,
+            _params_buffer: params_buffer,
         })
     }
 
@@ -53,14 +64,12 @@ impl Game for Dragon {
         let time = (Instant::now() - self.start_time).as_secs_f32();
         let resolution = renderer.window_resolution();
 
-        let params = DragonParams {
+        let dragon_params = DragonParams {
             resolution,
             time,
             _padding_0: Default::default(),
         };
 
-        renderer.draw_vertex_count(&self.pipeline, 3, |gpu| {
-            gpu.write_uniform(&mut self.params_buffer, params);
-        })
+        self.graph.execute(renderer, &dragon_params)
     }
 }

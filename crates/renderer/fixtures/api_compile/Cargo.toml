@@ -66,6 +66,10 @@ name = "positive_nested_tuples"
 path = "cases/positive/nested_tuples.rs"
 
 [[bin]]
+name = "positive_array_nodes"
+path = "cases/positive/array_nodes.rs"
+
+[[bin]]
 name = "positive_construction_families"
 path = "cases/positive/construction_families.rs"
 

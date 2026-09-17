@@ -5,11 +5,12 @@ mod generated;
 use std::time::Instant;
 
 use glam::camera::rh::{proj::directx, view::look_at_mat4};
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, Renderer, SingletonBufferHandle,
-    StorageBufferHandle, UniformBufferHandle,
+    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, SingletonBufferHandle, SingletonSlot, StorageBufferHandle, StorageSlot,
+    UniformBufferHandle, UploadNode, draw_vertex_count, upload,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -24,15 +25,24 @@ const SHAPE_BUFFER_SIZE: u32 = 32;
 const MOON_START: Vec3 = Vec3::new(1.0, 0.0, 1.0);
 const SUN_START: Vec3 = Vec3::new(4.0, 5.0, 2.0);
 
+type RayMarchingGraph =
+    PreparedRenderGraph<(UploadNode<BoxRect>, DrawVertexCountNode<RayMarchingParams>)>;
+
 struct RayMarching {
     start_time: Instant,
-    params_buffer: UniformBufferHandle<RayMarchingParams>,
+    graph: RayMarchingGraph,
     sun_position: Vec3,
-    spheres_buffer: SingletonBufferHandle<Sphere>,
-    boxes_buffer: StorageBufferHandle<BoxRect>,
+    /// The graph captured this buffer's slot at build time; the handle stays
+    /// here to keep the buffer alive.
+    _params_buffer: UniformBufferHandle<RayMarchingParams>,
+    /// The graph reads this buffer every frame; the handle stays here to keep
+    /// the buffer alive.
+    _spheres_buffer: SingletonBufferHandle<Sphere>,
+    /// The graph uploads into this buffer every frame; the handle stays here
+    /// to keep the buffer alive.
+    _boxes_buffer: StorageBufferHandle<BoxRect>,
     spheres: Vec<Sphere>,
     boxes: Vec<BoxRect>,
-    pipeline: PipelineHandle<DrawVertexCount>,
     intent: Intent,
     camera_controller: RaymarchCameraController,
 }
@@ -85,17 +95,30 @@ impl Game for RayMarching {
             roll: 0.2,
         };
 
+        let bindings = RayMarchingParamsBindings {
+            spheres: SingletonSlot::from(&spheres_buffer).addr().into(),
+            boxes: StorageSlot::from(&boxes_buffer).read_addr(),
+        };
+
+        let graph = RenderGraph::new(
+            ResourcePlanner::new(),
+            (
+                upload(&boxes_buffer),
+                draw_vertex_count(&pipeline, &params_buffer, 3, bindings),
+            ),
+        )?
+        .prepare(renderer)?;
+
         Ok(Self {
             start_time,
-            params_buffer,
+            graph,
             sun_position: SUN_START,
-            spheres_buffer,
-            boxes_buffer,
+            _params_buffer: params_buffer,
+            _spheres_buffer: spheres_buffer,
+            _boxes_buffer: boxes_buffer,
             boxes,
 
             spheres,
-            pipeline,
-
             intent: Default::default(),
             camera_controller,
         })
@@ -153,25 +176,38 @@ impl Game for RayMarching {
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let camera = self.camera_controller.camera(renderer.aspect_ratio());
-
         let resolution = renderer.window_resolution();
 
-        renderer.draw_vertex_count(&self.pipeline, 3, |gpu| {
-            let params = RayMarchingParams {
-                camera,
-                light_position: self.sun_position,
-                sphere_count: self.spheres.len() as u32,
-                box_count: self.boxes.len() as u32,
-                _padding_0: Default::default(),
-                resolution,
-                spheres: gpu.singleton_addr(&self.spheres_buffer).into(),
-                boxes: gpu.addr(&self.boxes_buffer).into(),
-            };
+        let frame = frame_inputs(
+            &self.boxes,
+            &self.spheres,
+            self.sun_position,
+            camera,
+            resolution,
+        );
 
-            gpu.write_uniform(&mut self.params_buffer, params);
-            gpu.write_storage(&mut self.boxes_buffer, &self.boxes);
-        })
+        self.graph.execute(renderer, &frame)
     }
+}
+
+/// The per-frame graph inputs, in node order
+fn frame_inputs(
+    boxes: &[BoxRect],
+    spheres: &[Sphere],
+    sun_position: Vec3,
+    camera: RayMarchCamera,
+    resolution: Vec2,
+) -> (Vec<BoxRect>, RayMarchingParamsData) {
+    (
+        boxes.to_vec(),
+        RayMarchingParamsData {
+            camera,
+            light_position: sun_position,
+            sphere_count: spheres.len() as u32,
+            box_count: boxes.len() as u32,
+            resolution,
+        },
+    )
 }
 
 // Translated player camera controls
@@ -259,5 +295,99 @@ impl RaymarchCameraController {
             },
             _padding_0: Default::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spheres(n: usize) -> Vec<Sphere> {
+        vec![
+            Sphere {
+                center: Vec3::ZERO,
+                radius: 1.0,
+                color: Vec3::ONE,
+                _padding_0: Default::default(),
+            };
+            n
+        ]
+    }
+
+    fn box_rect(radii: f32) -> BoxRect {
+        BoxRect {
+            radii: Vec3::splat(radii),
+            color: Vec3::ONE,
+            transform: Projection {
+                matrix: Mat4::IDENTITY,
+            },
+            _padding_0: Default::default(),
+            _padding_1: Default::default(),
+        }
+    }
+
+    /// AC2/AC4: the frame inputs must track the current animated boxes and
+    /// the window resolution, and snapshot the boxes rather than alias them.
+    #[test]
+    fn ray_marching_frame_input_tracks_boxes_and_resolution() {
+        let controller = RaymarchCameraController {
+            position: Vec3::new(0.0, 0.0, -5.0),
+            yaw: 0.0,
+            pitch: 0.0,
+            roll: 0.2,
+        };
+        let camera = controller.camera(1.5);
+
+        let mut boxes = vec![box_rect(0.2)];
+        let frame = frame_inputs(
+            &boxes,
+            &spheres(3),
+            SUN_START,
+            camera,
+            Vec2::new(1024.0, 768.0),
+        );
+
+        assert_eq!(frame.0.len(), 1, "one box uploaded this frame");
+        assert_eq!(frame.0[0].radii, Vec3::splat(0.2));
+        assert_eq!(frame.0[0].color, Vec3::ONE);
+        assert_eq!(frame.0[0].transform.matrix, Mat4::IDENTITY);
+        assert_eq!(frame.1.box_count, 1);
+        assert_eq!(frame.1.sphere_count, 3);
+        assert_eq!(frame.1.light_position, SUN_START);
+        assert_eq!(frame.1.resolution, Vec2::new(1024.0, 768.0));
+        // the supplied camera reaches the draw params unchanged
+        assert_eq!(frame.1.camera.position, camera.position);
+        assert_eq!(
+            frame.1.camera.inverse_view_proj.matrix,
+            camera.inverse_view_proj.matrix
+        );
+
+        // changed boxes and resolution reach the next frame's inputs, and the
+        // captured upload is a snapshot, not an alias of the game state
+        boxes[0].radii = Vec3::splat(0.9);
+        boxes[0].color = Vec3::new(0.8, 0.1, 0.3);
+        boxes[0].transform.matrix = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        let next = frame_inputs(
+            &boxes,
+            &spheres(3),
+            SUN_START,
+            camera,
+            Vec2::new(640.0, 480.0),
+        );
+        assert_eq!(next.0[0].radii, Vec3::splat(0.9));
+        assert_eq!(next.0[0].color, Vec3::new(0.8, 0.1, 0.3));
+        assert_eq!(
+            next.0[0].transform.matrix,
+            Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0))
+        );
+        assert_eq!(next.1.resolution, Vec2::new(640.0, 480.0));
+        assert_eq!(frame.0[0].radii, Vec3::splat(0.2), "earlier snapshot kept");
+        assert_eq!(frame.0[0].color, Vec3::ONE, "earlier snapshot kept");
+
+        // boundary: an empty scene uploads nothing and reports zero counts
+        let empty = frame_inputs(&[], &spheres(0), SUN_START, camera, Vec2::ONE);
+        assert!(empty.0.is_empty());
+        assert_eq!(empty.1.box_count, 0);
+        assert_eq!(empty.1.sphere_count, 0);
     }
 }
