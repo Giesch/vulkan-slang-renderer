@@ -1,0 +1,7 @@
+{%- if hugging -%}
+{{ head }}({{ argument }})
+{%- else -%}
+{{ head }}(
+    {{ argument }},
+)
+{%- endif -%}

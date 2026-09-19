@@ -1,0 +1,15 @@
+# Generated logical values, not GPU layouts.
+# Fixed arrays are lists: required lengths are preserved in reflection.
+import pf.ShaderReflection
+
+{% if definitions.is_empty() -%}
+ShaderTypes := {}
+{% else -%}
+ShaderTypes := {}.{
+{%- for definition in definitions %}
+{%- if !loop.first %}
+{% endif %}
+{{ definition }}
+{%- endfor %}
+}
+{% endif -%}

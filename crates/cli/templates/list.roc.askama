@@ -1,0 +1,11 @@
+{%- if elements.is_empty() -%}
+[]
+{%- else if multiline -%}
+[
+{%- for element in elements %}
+    {{ element }},
+{%- endfor %}
+]
+{%- else -%}
+[{{ self.one_line() }}]
+{%- endif -%}

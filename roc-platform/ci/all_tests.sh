@@ -67,20 +67,21 @@ else
     echo "PASS: generate.sh refuses a mismatched glibc floor"
 fi
 
-for roc_file in examples/*.roc; do
-    name=$(basename "$roc_file" .roc)
+for roc_file in examples/*/main.roc; do
+    example_dir=$(dirname "$roc_file")
+    name=$(basename "$example_dir")
     echo ""
     echo "--- $name ---"
 
-    if ! roc build --no-cache "$roc_file"; then
+    if ! (cd "$example_dir" && roc build --no-cache main.roc); then
         echo "FAIL(build): $name"
         failed=1
         continue
     fi
 
-    timeout --signal=TERM --preserve-status "$RUN_TIMEOUT" "./$name"
+    timeout --signal=TERM --preserve-status "$RUN_TIMEOUT" "./$example_dir/main"
     code=$?
-    rm -f "./$name"
+    rm -f "./$example_dir/main"
 
     case $code in
         0)

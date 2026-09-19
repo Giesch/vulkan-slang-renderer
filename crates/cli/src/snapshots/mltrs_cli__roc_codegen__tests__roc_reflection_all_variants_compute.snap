@@ -1,0 +1,29 @@
+---
+source: crates/cli/src/roc_codegen.rs
+expression: "synthetic_module(\"GeneratedSyntheticCompute\", \"ComputeReflection\", &compute)"
+---
+# Generated; logical values are not GPU memory layouts.
+import pf.ShaderReflection
+
+GeneratedSyntheticCompute := {}.{
+    reflection : ShaderReflection.ComputeReflection
+    reflection = {
+        source_file_name: "synthetic.compute.slang",
+        global_parameters: [],
+        compute_entry_point: {
+            entry_point_name: "computeOriginal",
+            stage: Compute,
+            parameters: [],
+        },
+        workgroup_size: {
+            x: 0,
+            y: 1,
+            z: 4294967295,
+        },
+        pipeline_layout: {
+            descriptor_set_layouts: [],
+            push_constant_ranges: [],
+            bindless_heap_set: None,
+        },
+    }
+}

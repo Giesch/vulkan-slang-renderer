@@ -1,0 +1,9 @@
+{%- if fields.is_empty() -%}
+{}
+{%- else -%}
+{
+{%- for field in fields %}
+    {{ field.name }}: {{ field.value }},
+{%- endfor %}
+}
+{%- endif -%}

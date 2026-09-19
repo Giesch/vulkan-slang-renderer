@@ -5,8 +5,8 @@ generated-docs/
 # The host archive, rebuilt by build.sh
 platform/targets/*/libhost.a
 
-# Executables built by `roc build examples/<name>.roc`
-/basic_triangle
+# Executables built within each Roc example directory
+/examples/*/main
 
 # The floor-assertion probe ci/all_tests.sh writes beside generate.sh
 stubs/floor_probe.*

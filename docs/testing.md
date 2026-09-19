@@ -1,11 +1,13 @@
 # Testing
 
-Two checks cover different things. A renderer change needs both.
+Three checks cover different things. A renderer change needs the normal tests
+and validation sweep; Roc codegen changes also need the explicit Roc gate.
 
-| check            | what it covers                                               | command      |
-| ---------------- | ------------------------------------------------------------ | ------------ |
-| snapshot tests   | generated Rust and shader reflection JSON. No GPU.           | `just test`  |
-| validation sweep | every example running, checked for Vulkan validation output. | `just sweep` |
+| check             | what it covers                                                       | command                 |
+| ----------------- | -------------------------------------------------------------------- | ----------------------- |
+| normal tests      | generated Rust/JSON and compiler-independent Roc codegen. No GPU/Roc. | `just test`             |
+| Roc codegen gate  | generated modules, imports, values, bytes, and formatting in real Roc | `just roc-codegen-test` |
+| validation sweep  | every example running, checked for Vulkan validation output.          | `just sweep`            |
 
 `just test` says nothing about whether the renderer works. The sweep says
 nothing about whether codegen is correct. The unchanged sweep starts
@@ -39,8 +41,22 @@ just insta                             # interactive review
 cargo insta test --workspace --accept  # re-run and accept every changed snapshot
 ```
 
-Run `just test` after changing `crates/cli/src/build_tasks.rs` or
-`crates/cli/templates/*.askama`. Those are what the snapshots cover.
+Run `just test` after changing `crates/cli/src/build_tasks.rs`,
+`crates/cli/src/roc_codegen.rs`, or `crates/cli/templates/*.askama`. Normal tests
+cover Roc manifests, generated-source snapshots, schema values, CLI selection,
+name/path validation, and replacement safety without invoking a Roc compiler.
+
+`just roc-codegen-test [ROC]` is separate from `test`. `just pre-commit` runs it
+when `roc` is on `PATH` and skips it with a message otherwise. It reports the
+selected compiler path/version, generates fresh fixtures, checks and formats
+every generated module through Roc, and evaluates imported SPIR-V bytes and
+reflection values from a consumer. It also runs missing-file and false-byte
+negative controls. `ROC` defaults to `roc` on `PATH`; a missing or incompatible
+compiler is a failure, not a skip. Generation itself never invokes Roc. Roc
+shader codegen was verified locally with `/home/danknutson/.local/bin/roc`,
+`release-fast-42fbc4b0`. Compatibility with the platform's recorded
+`release-fast-62a50c46` build and CI source pin `40fe7ddc…` remains unverified;
+this gate does not change or upgrade either platform pin.
 
 `cargo insta accept` does nothing after `just test`. The recipe sets
 `INSTA_UPDATE=no`, so `just test` writes no `.snap.new` files for it to review.
@@ -61,6 +77,13 @@ cannot:
 Line width is decided in rust, not in the template. See
 `ShaderAtlasField::init_line` and `RUSTFMT_MAX_WIDTH` in
 `crates/cli/src/build_tasks.rs`.
+
+The `*.roc.askama` templates emit `roc fmt` canonical Roc in 4-space units.
+Each template renders its first line at column 0; the embedding site
+re-indents continuation lines. `canonical_roc_indentation` in
+`crates/cli/src/roc_codegen.rs` converts each leading group of 4 spaces to a
+tab at publication. `just roc-codegen-test` enforces the result with
+`roc fmt --check`.
 
 ## Extracted render-graph tests
 

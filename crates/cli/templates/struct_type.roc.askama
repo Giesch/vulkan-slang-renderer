@@ -1,0 +1,5 @@
+{{ name }} : ShaderReflection.StructType
+{{ name }} = ShaderReflection.StructType.{
+    type_name: {{ type_name }},
+    fields: {{ fields }},
+}

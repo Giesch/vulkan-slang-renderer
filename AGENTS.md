@@ -9,6 +9,9 @@ Last verified: 2026-09-13
 - **[`docs/toon_link.md`](docs/toon_link.md)** — Toon Link's independent GameCube
   and Modern rendering modes, controls, color policy, verification boundary,
   and hot-reload limitation.
+- **[`docs/roc_shader_codegen.md`](docs/roc_shader_codegen.md)** — Roc selection,
+  public API and logical-value mapping, managed paths, safety boundaries, and
+  compiler-independent versus real-Roc verification.
 - **`llm_notes/`** — historical plans and phase records, written before or during
   a piece of work. **Treat as possibly out of date**: much of it is a snapshot of
   what was believed at the time, some of it was superseded by the work it
@@ -112,9 +115,21 @@ unique across all of a crate's `shaders/source/`.
 cargo add mltrs            # path/git dep for now
 mltrs shaders init         # seeds shaders/source with mltrs.slang
 # write shaders/source/my_game.shader.slang
-mltrs shaders compile      # emits shaders/compiled + src/generated (imports `mltrs::…`)
+mltrs shaders compile      # Cargo.toml selects Rust: SPIR-V + JSON + src/generated
 # src/main.rs: mod generated; impl Game for MyGame; MyGame::run()
 ```
+
+For a Roc project, a directly contained `main.roc` selects Roc codegen: SPIR-V
+plus importable logical values and typed reflection in the tool-owned
+`Generated/` directory, rooted at `Generated/ShaderAtlas.roc`. Use
+`--language rust|roc` when both or neither project marker exists. Roc values do
+not promise shader-memory layout, valid GPU handles, dereference, upload, or
+runtime rendering integration; the separate `roc-platform` host continues to
+consume its generated Rust bindings. Generated Roc modules import
+`pf.ShaderReflection` from `roc-platform/platform/`, so the app header must bind
+the platform as `pf`. Keep separate `--compiled-dir` values when retaining both
+Rust and Roc artifacts, because successful generation replaces managed output
+directories.
 
 ## Textures
 

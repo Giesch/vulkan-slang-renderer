@@ -1,0 +1,499 @@
+---
+source: crates/cli/src/roc_codegen.rs
+expression: "synthetic_module(\"GeneratedSyntheticGraphics\", \"GraphicsReflection\",\n&graphics)"
+---
+# Generated; logical values are not GPU memory layouts.
+import pf.ShaderReflection
+
+GeneratedSyntheticGraphics := {}.{
+    nested_type : ShaderReflection.StructType
+    nested_type = ShaderReflection.StructType.{
+        type_name: "Nested",
+        fields: [
+            Scalar({
+                field_name: "inner",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                scalar_type: Int32,
+            }),
+        ],
+    }
+
+    params_type : ShaderReflection.StructType
+    params_type = ShaderReflection.StructType.{
+        type_name: "Params",
+        fields: [
+            Scalar({
+                field_name: "scalar",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                scalar_type: Uint64,
+            }),
+            Vector(
+                Bound({
+                    field_name: "bound_vec",
+                    binding: VaryingInput({
+                        index: 3,
+                        count: 1,
+                    }),
+                    element_count: 4,
+                    element_type: Scalar({
+                        scalar_type: Uint32,
+                    }),
+                }),
+            ),
+            Vector(
+                Semantic({
+                    field_name: "semantic_vec",
+                    semantic_name: "SV_POSITION",
+                    element_count: 3,
+                    element_type: Scalar({
+                        scalar_type: Float32,
+                    }),
+                }),
+            ),
+            Struct({
+                field_name: "nested",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                struct_type: nested_type,
+            }),
+            Matrix({
+                field_name: "matrix",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                row_count: 3,
+                column_count: 2,
+                element_type: Scalar({
+                    scalar_type: Int32,
+                }),
+            }),
+            Resource({
+                field_name: "scalar_resource",
+                binding: DescriptorTableSlot({
+                    index: 2,
+                    count: 0,
+                }),
+                resource_shape: Texture2D,
+                result_type: Scalar({
+                    scalar_type: Float32,
+                }),
+            }),
+            Resource({
+                field_name: "vector_resource",
+                binding: DescriptorTableSlot({
+                    index: 2,
+                    count: 0,
+                }),
+                resource_shape: RWTexture2D,
+                result_type: Vector({
+                    element_count: 4,
+                    element_type: Scalar({
+                        scalar_type: Uint32,
+                    }),
+                }),
+            }),
+            Resource({
+                field_name: "struct_resource",
+                binding: DescriptorTableSlot({
+                    index: 2,
+                    count: 0,
+                }),
+                resource_shape: Texture2D,
+                result_type: Struct(nested_type),
+            }),
+            Pointer({
+                field_name: "read_write_pointer",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                pointee_type: nested_type,
+                pointee_size: 4,
+                access: ReadWrite,
+            }),
+            Pointer({
+                field_name: "read_pointer",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                pointee_type: nested_type,
+                pointee_size: 4,
+                access: Read,
+            }),
+            Pointer({
+                field_name: "immutable_pointer",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                pointee_type: nested_type,
+                pointee_size: 4,
+                access: Immutable,
+            }),
+            Array({
+                field_name: "array",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                element_scalar_type: Int32,
+                element_count: 2,
+                element_stride: 16,
+            }),
+            Enum({
+                field_name: "signed_enum",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                enum_type: {
+                    type_name: "Signed",
+                    tag_type: Int32,
+                    cases: [
+                        {
+                            name: "Minimum",
+                            value: -2147483648,
+                        },
+                    ],
+                },
+            }),
+            Enum({
+                field_name: "unsigned_enum",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                enum_type: {
+                    type_name: "Unsigned",
+                    tag_type: Uint32,
+                    cases: [
+                        {
+                            name: "Maximum",
+                            value: 4294967295,
+                        },
+                    ],
+                },
+            }),
+            DescriptorHandle({
+                field_name: "sampled",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                shape: Sampler2D,
+            }),
+            DescriptorHandle({
+                field_name: "storage",
+                binding: Uniform({
+                    offset: 0,
+                    size: 4,
+                }),
+                shape: RwTexture2D,
+            }),
+        ],
+    }
+
+    push_type : ShaderReflection.StructType
+    push_type = ShaderReflection.StructType.{
+        type_name: "Push",
+        fields: [],
+    }
+
+    reflection : ShaderReflection.GraphicsReflection
+    reflection = {
+        source_file_name: "synthetic.shader.slang",
+        global_parameters: [
+            ParameterBlock({
+                parameter_name: "params",
+                element_type: params_type,
+            }),
+            PushConstant({
+                parameter_name: "push",
+                element_type: push_type,
+                element_size: 0,
+            }),
+        ],
+        vertex_entry_point: {
+            entry_point_name: "vertexOriginal",
+            stage: Vertex,
+            parameters: [
+                Struct({
+                    parameter_name: "vertex",
+                    binding: None,
+                    type_name: "Vertex",
+                    fields: [],
+                }),
+                Struct({
+                    parameter_name: "bound_vertex",
+                    binding: Some(
+                        VaryingInput({
+                            index: 3,
+                            count: 1,
+                        }),
+                    ),
+                    type_name: "BoundVertex",
+                    fields: [
+                        Scalar({
+                            field_name: "scalar",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            scalar_type: Uint64,
+                        }),
+                        Vector(
+                            Bound({
+                                field_name: "bound_vec",
+                                binding: VaryingInput({
+                                    index: 3,
+                                    count: 1,
+                                }),
+                                element_count: 4,
+                                element_type: Scalar({
+                                    scalar_type: Uint32,
+                                }),
+                            }),
+                        ),
+                        Vector(
+                            Semantic({
+                                field_name: "semantic_vec",
+                                semantic_name: "SV_POSITION",
+                                element_count: 3,
+                                element_type: Scalar({
+                                    scalar_type: Float32,
+                                }),
+                            }),
+                        ),
+                        Struct({
+                            field_name: "nested",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            struct_type: nested_type,
+                        }),
+                        Matrix({
+                            field_name: "matrix",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            row_count: 3,
+                            column_count: 2,
+                            element_type: Scalar({
+                                scalar_type: Int32,
+                            }),
+                        }),
+                        Resource({
+                            field_name: "scalar_resource",
+                            binding: DescriptorTableSlot({
+                                index: 2,
+                                count: 0,
+                            }),
+                            resource_shape: Texture2D,
+                            result_type: Scalar({
+                                scalar_type: Float32,
+                            }),
+                        }),
+                        Resource({
+                            field_name: "vector_resource",
+                            binding: DescriptorTableSlot({
+                                index: 2,
+                                count: 0,
+                            }),
+                            resource_shape: RWTexture2D,
+                            result_type: Vector({
+                                element_count: 4,
+                                element_type: Scalar({
+                                    scalar_type: Uint32,
+                                }),
+                            }),
+                        }),
+                        Resource({
+                            field_name: "struct_resource",
+                            binding: DescriptorTableSlot({
+                                index: 2,
+                                count: 0,
+                            }),
+                            resource_shape: Texture2D,
+                            result_type: Struct(nested_type),
+                        }),
+                        Pointer({
+                            field_name: "read_write_pointer",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            pointee_type: nested_type,
+                            pointee_size: 4,
+                            access: ReadWrite,
+                        }),
+                        Pointer({
+                            field_name: "read_pointer",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            pointee_type: nested_type,
+                            pointee_size: 4,
+                            access: Read,
+                        }),
+                        Pointer({
+                            field_name: "immutable_pointer",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            pointee_type: nested_type,
+                            pointee_size: 4,
+                            access: Immutable,
+                        }),
+                        Array({
+                            field_name: "array",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            element_scalar_type: Int32,
+                            element_count: 2,
+                            element_stride: 16,
+                        }),
+                        Enum({
+                            field_name: "signed_enum",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            enum_type: {
+                                type_name: "Signed",
+                                tag_type: Int32,
+                                cases: [
+                                    {
+                                        name: "Minimum",
+                                        value: -2147483648,
+                                    },
+                                ],
+                            },
+                        }),
+                        Enum({
+                            field_name: "unsigned_enum",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            enum_type: {
+                                type_name: "Unsigned",
+                                tag_type: Uint32,
+                                cases: [
+                                    {
+                                        name: "Maximum",
+                                        value: 4294967295,
+                                    },
+                                ],
+                            },
+                        }),
+                        DescriptorHandle({
+                            field_name: "sampled",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            shape: Sampler2D,
+                        }),
+                        DescriptorHandle({
+                            field_name: "storage",
+                            binding: Uniform({
+                                offset: 0,
+                                size: 4,
+                            }),
+                            shape: RwTexture2D,
+                        }),
+                    ],
+                }),
+                Scalar(
+                    Bound({
+                        parameter_name: "bound_scalar",
+                        binding: ConstantBuffer({
+                            index: 4,
+                            count: 18446744073709551615,
+                        }),
+                        scalar_type: Int32,
+                    }),
+                ),
+                Scalar(
+                    Semantic({
+                        parameter_name: "semantic_scalar",
+                        semantic_name: "SV_SAMPLEINDEX",
+                        scalar_type: Uint32,
+                    }),
+                ),
+            ],
+        },
+        fragment_entry_point: {
+            entry_point_name: "fragmentOriginal",
+            stage: Fragment,
+            parameters: [],
+        },
+        pipeline_layout: {
+            descriptor_set_layouts: [
+                {
+                    binding_ranges: [
+                        {
+                            binding: 0,
+                            descriptor_type: Sampler,
+                            descriptor_count: 0,
+                            stage_flags: Empty,
+                            size: 0,
+                        },
+                        {
+                            binding: 1,
+                            descriptor_type: Texture,
+                            descriptor_count: 1,
+                            stage_flags: Vertex,
+                            size: 1,
+                        },
+                        {
+                            binding: 2,
+                            descriptor_type: ConstantBuffer,
+                            descriptor_count: 2,
+                            stage_flags: Fragment,
+                            size: 2,
+                        },
+                        {
+                            binding: 3,
+                            descriptor_type: CombinedTextureSampler,
+                            descriptor_count: 3,
+                            stage_flags: Compute,
+                            size: 3,
+                        },
+                        {
+                            binding: 4,
+                            descriptor_type: StorageImage,
+                            descriptor_count: 4,
+                            stage_flags: All,
+                            size: 4,
+                        },
+                    ],
+                },
+            ],
+            push_constant_ranges: [
+                {
+                    stage_flags: All,
+                    offset: 0,
+                    size: 128,
+                },
+            ],
+            bindless_heap_set: Some(0),
+        },
+    }
+}

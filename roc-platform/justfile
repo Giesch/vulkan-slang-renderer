@@ -6,13 +6,13 @@ _default:
 build:
     bash build.sh
 
-# run the basic_triangle example through the interpreter
-run example="basic_triangle": build
-    roc examples/{{example}}.roc
+# run a Roc example with the dev backend; roc watches the sources and hot-reloads on change
+run example="basic-triangle": build
+    roc "examples/{{example}}/main.roc"
 
-# build a standalone executable for an example
-exe example="basic_triangle": build
-    roc build examples/{{example}}.roc
+# build an optimized standalone executable for an example
+exe example="basic-triangle": build
+    cd "examples/{{example}}" && roc build main.roc
 
 # build the platform and run every example headlessly
 test:
@@ -34,13 +34,23 @@ stubs:
 licenses:
     bash ci/licenses.sh
 
-# regenerate src/roc_platform_abi.rs from platform/main.roc
+# regenerate src/roc_platform_abi.rs from platform/main.roc with the installed rust_glue shorthand
 glue:
     roc glue rust_glue ./src/ platform/main.roc
 
 # regenerate the shader bindings this crate compiles against
-shaders:
+rust-shaders:
     cargo run -p mltrs-cli --manifest-path ../Cargo.toml -- shaders compile --crate-dir .
+
+# regenerate every example's Roc shader modules and SPIR-V, or one by name
+roc-shaders example="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{example}}" = "all" ]; then
+        for d in examples/*/; do cargo run -p mltrs-cli --manifest-path ../Cargo.toml -- shaders compile --crate-dir "$d"; done
+    else
+        cargo run -p mltrs-cli --manifest-path ../Cargo.toml -- shaders compile --crate-dir "examples/{{example}}"
+    fi
 
 # record the roc version the platform was last built with
 record-roc-version:

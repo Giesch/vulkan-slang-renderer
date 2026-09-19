@@ -1,0 +1,132 @@
+---
+source: crates/cli/tests/shaders_compile.rs
+expression: text
+---
+# Generated; logical values are not GPU memory layouts.
+import pf.ShaderReflection
+import "../compiled with space/particles.comp.spv" as compute_bytes : List(U8)
+
+Particles := {}.{
+	particle_type : ShaderReflection.StructType
+	particle_type = ShaderReflection.StructType.{
+		type_name: "Particle",
+		fields: [
+			Vector(
+				Bound({
+					field_name: "position",
+					binding: Uniform({
+						offset: 0,
+						size: 8,
+					}),
+					element_count: 2,
+					element_type: Scalar({
+						scalar_type: Float32,
+					}),
+				}),
+			),
+			Vector(
+				Bound({
+					field_name: "velocity",
+					binding: Uniform({
+						offset: 8,
+						size: 8,
+					}),
+					element_count: 2,
+					element_type: Scalar({
+						scalar_type: Float32,
+					}),
+				}),
+			),
+			Vector(
+				Bound({
+					field_name: "color",
+					binding: Uniform({
+						offset: 16,
+						size: 16,
+					}),
+					element_count: 4,
+					element_type: Scalar({
+						scalar_type: Float32,
+					}),
+				}),
+			),
+		],
+	}
+
+	sim_params_type : ShaderReflection.StructType
+	sim_params_type = ShaderReflection.StructType.{
+		type_name: "SimParams",
+		fields: [
+			Pointer({
+				field_name: "particlesIn",
+				binding: Uniform({
+					offset: 0,
+					size: 8,
+				}),
+				pointee_type: particle_type,
+				pointee_size: 32,
+				access: Read,
+			}),
+			Pointer({
+				field_name: "particlesOut",
+				binding: Uniform({
+					offset: 8,
+					size: 8,
+				}),
+				pointee_type: particle_type,
+				pointee_size: 32,
+				access: ReadWrite,
+			}),
+			Scalar({
+				field_name: "deltaTime",
+				binding: Uniform({
+					offset: 16,
+					size: 4,
+				}),
+				scalar_type: Float32,
+			}),
+		],
+	}
+
+	reflection : ShaderReflection.ComputeReflection
+	reflection = {
+		source_file_name: "particles.compute.slang",
+		global_parameters: [
+			ParameterBlock({
+				parameter_name: "simParams",
+				element_type: sim_params_type,
+			}),
+		],
+		compute_entry_point: {
+			entry_point_name: "computeMain",
+			stage: Compute,
+			parameters: [],
+		},
+		workgroup_size: {
+			x: 256,
+			y: 1,
+			z: 1,
+		},
+		pipeline_layout: {
+			descriptor_set_layouts: [
+				{
+					binding_ranges: [
+						{
+							binding: 0,
+							descriptor_type: ConstantBuffer,
+							descriptor_count: 1,
+							stage_flags: All,
+							size: 32,
+						},
+					],
+				},
+			],
+			push_constant_ranges: [],
+			bindless_heap_set: None,
+		},
+	}
+
+	stages = {
+		compute: compute_bytes,
+	}
+}

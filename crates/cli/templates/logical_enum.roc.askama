@@ -1,0 +1,10 @@
+{{ name }} : [{{ self.case_list() }}]
+
+{{ value_name }}_tag : {{ name }} -> {{ numeric }}
+{{ value_name }}_tag = |value| {
+    match value {
+{%- for case in cases %}
+        {{ case.tag }} => {{ case.value }}
+{%- endfor %}
+    }
+}

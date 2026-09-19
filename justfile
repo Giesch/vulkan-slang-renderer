@@ -96,7 +96,7 @@ textures:
 vendor-shaders:
     #!/usr/bin/env bash
     set -euo pipefail
-    for d in examples/*/ roc-platform/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
+    for d in examples/*/ roc-platform/ roc-platform/examples/*/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
     cargo fmt
 
 # e.g. `just mltrs shaders compile --crate-dir examples/sdf_2d`
@@ -164,6 +164,34 @@ renderdoc-view example="basic_triangle":
     qrenderdoc "$(ls -t "${captures[@]}" | head -n 1)"
 
 
+# run the real-Roc shader-codegen gate; excluded from test, run by pre-commit when `roc` is on PATH
+[unix]
+roc-codegen-test roc="roc":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    selected="$(command -v {{quote(roc)}} || true)"
+    if [ -z "$selected" ]; then
+        echo "Roc compiler not found: {{roc}}" >&2
+        exit 1
+    fi
+    selected="$(realpath "$selected")"
+    shim_dir="$(mktemp -d)"
+    trap 'rm -rf "$shim_dir"' EXIT
+    ln -s "$selected" "$shim_dir/roc"
+    PATH="$shim_dir:$PATH" cargo test -p mltrs-cli --test roc_codegen -- --ignored --nocapture
+    PATH="$shim_dir:$PATH" cargo test -p mltrs-cli --lib emitted_all_variant_reflection_passes_real_roc -- --ignored --nocapture
+
+# run the real-Roc gate when `roc` is on PATH; skip with a message otherwise
+[unix]
+_roc-codegen-test-if-available:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v roc >/dev/null 2>&1; then
+        {{just_executable()}} roc-codegen-test
+    else
+        echo "pre-commit: roc not on PATH -- skipping roc-codegen-test"
+    fi
+
 # run every example headlessly, failing on vulkan validation output
 [unix]
 sweep *examples:
@@ -219,12 +247,12 @@ pre-commit:
         esac
     done < <(git diff --cached --name-only -z)
     if [ "$staged" -gt 0 ] && [ "$docs_only" -eq 1 ]; then
-        echo "pre-commit: markdown/org only -- skipping shaders, lint, and test"
+        echo "markdown/org only; skipping pre-commit checks"
         exit 0
     fi
     {{just_executable()}} _pre-commit-checks
 
 # the actual pre-commit work; `pre-commit` skips this for docs-only commits
-_pre-commit-checks: shaders && lint test
+_pre-commit-checks: shaders && lint test _roc-codegen-test-if-available
     git add 'examples/*/shaders/compiled/*' 'examples/*/src/generated/*'
 

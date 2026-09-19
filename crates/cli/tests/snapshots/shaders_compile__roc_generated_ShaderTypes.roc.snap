@@ -1,0 +1,37 @@
+---
+source: crates/cli/tests/shaders_compile.rs
+expression: text
+---
+# Generated logical values, not GPU layouts.
+# Fixed arrays are lists: required lengths are preserved in reflection.
+import pf.ShaderReflection
+
+ShaderTypes := {}.{
+	FragInput : {
+		position : ShaderReflection.Float4,
+		color : ShaderReflection.Float3,
+	}
+
+	MvpMatrices : {
+		model : ShaderReflection.Float4x4,
+		view : ShaderReflection.Float4x4,
+		proj : ShaderReflection.Float4x4,
+	}
+
+	Particle : {
+		position : ShaderReflection.Float2,
+		velocity : ShaderReflection.Float2,
+		color : ShaderReflection.Float4,
+	}
+
+	SimParams : {
+		particles_in : ShaderReflection.PointerAddress,
+		particles_out : ShaderReflection.PointerAddress,
+		delta_time : F32,
+	}
+
+	Vertex : {
+		position : ShaderReflection.Float3,
+		color : ShaderReflection.Float3,
+	}
+}

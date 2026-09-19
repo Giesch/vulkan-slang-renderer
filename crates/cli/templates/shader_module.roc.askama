@@ -1,0 +1,21 @@
+# Generated; logical values are not GPU memory layouts.
+import pf.ShaderReflection
+{% for import in stage_imports -%}
+import "{{ import.path }}" as {{ import.stage }}_bytes : List(U8)
+{% endfor %}
+{{ module }} := {}.{
+{%- for definition in struct_types %}
+{{ definition.block() }}
+{% endfor %}
+    reflection : ShaderReflection.{{ reflection_kind }}
+    reflection = {{ reflection }}
+{%- if !stages.is_empty() %}
+
+    stages = {
+{%- for stage in stages %}
+        {{ stage }}: {{ stage }}_bytes,
+{%- endfor %}
+    }
+{%- endif %}
+}
+

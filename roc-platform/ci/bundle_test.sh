@@ -379,7 +379,7 @@ echo ""
 echo "--- test app ---"
 # Line 1 of the committed example is the app header. The test copy names the
 # URL; the committed example keeps its relative path.
-sed "1s|.*|app [game] { pf: platform \"$url\" }|" examples/basic_triangle.roc \
+sed "1s|.*|app [game] { pf: platform \"$url\" }|" examples/basic-triangle/main.roc \
     > "$work/bundle_app.roc" || die app "could not write the test app"
 cp "$script_dir/$(basename "$0")" "$work/bundle_test.sh" || exit 1
 sed -n 1p "$work/bundle_app.roc" | sed 's/^/    /'

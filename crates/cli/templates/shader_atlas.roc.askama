@@ -1,0 +1,16 @@
+# Generated; directories are tool-owned.
+{% for entry in modules -%}
+import {{ entry.module }}
+{% endfor %}
+ShaderAtlas := {}.{
+    shader_names : List(Str)
+    shader_names = [{{ self.shader_names() }}]
+{%- for entry in modules %}
+
+    {{ entry.value }} = {
+        reflection: {{ entry.module }}.reflection,
+        stages: {{ entry.module }}.stages,
+    }
+{%- endfor %}
+}
+
