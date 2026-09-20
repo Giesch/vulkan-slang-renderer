@@ -1,14 +1,19 @@
 # AGENTS.md
 
-Last verified: 2026-09-13
+Last verified: 2026-09-19
 
 ## Docs
 
 - **`docs/`** — current reference material, kept up to date. Trust it, and update
   it when you change what it describes.
 - **[`docs/toon_link.md`](docs/toon_link.md)** — Toon Link's independent GameCube
-  and Modern rendering modes, controls, color policy, verification boundary,
-  and hot-reload limitation.
+  and Modern rendering modes, controls, color policy, BCK skeletal animation
+  playback, verification boundary, and hot-reload limitation.
+- **[`docs/link_animations.md`](docs/link_animations.md)** and
+  **[`docs/link_model_metadata.md`](docs/link_model_metadata.md)** — the Link
+  animation and model conversion contracts: preservation schema and frozen
+  goldens, the runtime catalog compatibility audit, and the joint scaling
+  metadata that playback requires from the model manifest.
 - **[`docs/roc_shader_codegen.md`](docs/roc_shader_codegen.md)** — Roc selection,
   public API and logical-value mapping, managed paths, safety boundaries, and
   compiler-independent versus real-Roc verification.
@@ -32,8 +37,11 @@ Last verified: 2026-09-13
   on graph, not the reverse. Keep its dependency closure free of ash, vk-mem,
   SDL, and shader-slang. See `crates/render-graph/AGENTS.md` for backend contracts.
 - `crates/renderer` (package `mltrs-renderer`) — the renderer, editor widgets,
-  env_config, and the shader watcher. `shaders.rs` is a façade over
-  `mltrs-slang-reflection` plus the vulkan-facing pieces: the `atlas` traits,
+  env_config, and the shader watcher. `Renderer::dispatch_readback` with the
+  generated `gpu_read::GPURead` decoders is a blocking, diagnostic-only
+  readback path for tests, not a frame-loop API (see `docs/testing.md`).
+  `shaders.rs` is a façade over `mltrs-slang-reflection` plus the vulkan-facing
+  pieces: the `atlas` traits,
   and the `ReflectionLayoutBindings` / `ToVk` / `VkCreate` / `SpvBytes`
   extension traits (the reflected types are defined in the other crate, so
   these cannot be inherent impls).
