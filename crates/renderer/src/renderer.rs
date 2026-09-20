@@ -2878,6 +2878,9 @@ impl Renderer {
         // created, and the decoder returns only owned values.
         let bytes = unsafe { std::slice::from_raw_parts(mapped, byte_len) };
 
+        // `as_chunks` needs a const generic argument, and an associated const
+        // of a type parameter cannot be one on stable.
+        #[allow(clippy::chunks_exact_to_as_chunks)]
         bytes.chunks_exact(T::GPU_SIZE).map(T::read_gpu).collect()
     }
 
