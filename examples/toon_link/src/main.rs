@@ -22,6 +22,9 @@
 //! Debug builds show an egui window. [`EditState`] documents each control.
 //! The shader's `DebugMode` enum documents the debug views.
 
+mod animation_player;
+mod animation_pose;
+mod animation_validation;
 mod generated;
 mod modern;
 mod tev_pack;
