@@ -537,13 +537,28 @@ pub struct Batch {
     pub index_count: u32,
 }
 
+/// INF1 joint matrix scaling convention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ScalingRule {
+    Basic,
+    Softimage,
+    Maya,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skeleton {
+    /// Absent in older manifests; absence does not imply Basic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scaling_rule: Option<ScalingRule>,
     pub joints: Vec<SkeletonJoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkeletonJoint {
+    /// JNT1 no-inherit-scale flag. Absent in older manifests, not implicitly false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_compensate: Option<bool>,
     pub name: String,
     /// Parent joint index, or -1 for the root.
     pub parent: i32,
@@ -705,6 +720,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn old_skeleton_metadata_remains_unknown() {
+        let json =
+            r#"{"joints":[{"name":"root","parent":-1,"t":[0,0,0],"r_s16":[0,0,0],"s":[1,1,1]}]}"#;
+        let skeleton: Skeleton = serde_json::from_str(json).unwrap();
+        assert_eq!(skeleton.scaling_rule, None);
+        assert_eq!(skeleton.joints[0].scale_compensate, None);
+        let back = serde_json::to_value(&skeleton).unwrap();
+        assert!(back.get("scaling_rule").is_none());
+        assert!(back["joints"][0].get("scale_compensate").is_none());
+    }
+
+    #[test]
+    fn explicit_skeleton_metadata_roundtrips_without_defaults() {
+        for (rule, spelling) in [
+            (ScalingRule::Basic, "BASIC"),
+            (ScalingRule::Softimage, "SOFTIMAGE"),
+            (ScalingRule::Maya, "MAYA"),
+        ] {
+            for flag in [false, true] {
+                let skeleton = Skeleton {
+                    scaling_rule: Some(rule),
+                    joints: vec![SkeletonJoint {
+                        scale_compensate: Some(flag),
+                        name: "root".into(),
+                        parent: -1,
+                        t: [0.0; 3],
+                        r_s16: [0; 3],
+                        s: [1.0; 3],
+                    }],
+                };
+                let json = serde_json::to_value(&skeleton).unwrap();
+                assert_eq!(json["scaling_rule"], spelling);
+                assert_eq!(json["joints"][0]["scale_compensate"], flag);
+                let back: Skeleton = serde_json::from_value(json).unwrap();
+                assert_eq!(back.scaling_rule, Some(rule));
+                assert_eq!(back.joints[0].scale_compensate, Some(flag));
+            }
+        }
+        assert!(serde_json::from_str::<ScalingRule>(r#""UNKNOWN""#).is_err());
+    }
+
+    #[test]
     fn manifest_round_trips() {
         let m = Manifest {
             version: 1,
@@ -732,7 +789,9 @@ mod tests {
                 index_count: 810,
             }],
             skeleton: Skeleton {
+                scaling_rule: Some(ScalingRule::Maya),
                 joints: vec![SkeletonJoint {
+                    scale_compensate: Some(false),
                     name: "link_root".into(),
                     parent: -1,
                     t: [0.0; 3],
