@@ -293,7 +293,7 @@ fn expand(prim: PrimitiveType, v: &[u32], out: &mut Vec<u32>) {
             }
         }
         PrimitiveType::Triangles => {
-            for c in v.chunks_exact(3) {
+            for c in v.as_chunks::<3>().0 {
                 out.extend_from_slice(c);
             }
         }

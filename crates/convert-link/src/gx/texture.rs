@@ -38,9 +38,11 @@ pub fn image_byte_len(format: ImageFormat, width: u16, height: u16) -> usize {
 }
 
 pub fn decode_palette(format: PaletteFormat, data: &[u8]) -> Vec<[u8; 4]> {
-    data.chunks_exact(2)
+    data.as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| {
-            let raw = u16::from_be_bytes([c[0], c[1]]);
+            let raw = u16::from_be_bytes(*c);
             match format {
                 PaletteFormat::Ia8 => ia8_color(raw),
                 PaletteFormat::Rgb565 => rgb565_color(raw),

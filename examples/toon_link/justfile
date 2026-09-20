@@ -14,8 +14,12 @@ _default:
 [unix]
 tww-assets:
     just extract-link convert-link
-    just link-verify-p1 link-verify-p2 link-verify-p3 link-verify-animations
+    just verify-assets
     @echo "TWW ASSETS VERIFIED"
+
+# verify the Link model and animations against the raw assets (requires TWW_DIR)
+[unix]
+verify-assets: link-verify-model link-verify-animations
 
 
 # extract Link assets from the tww disc image (requires TWW_DIR)
@@ -27,6 +31,27 @@ extract-link:
 [unix]
 convert-link *args:
     cargo run -p convert-link --bin convert_link -- assets/link/raw assets/link/converted {{args}}
+
+# Check freshly converted model bytes, never stale output or auto-promoted goldens.
+[unix]
+link-verify-goldens:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! sha256sum --check --quiet scripts/link_assets.sha256; then
+        echo 'Link raw assets missing or changed; run `just toon_link extract-link` with TWW_DIR set.' >&2
+        exit 1
+    fi
+    output=$(mktemp -d)
+    trap 'rm -rf "$output"' EXIT
+    cargo run -p convert-link --bin convert_link -- assets/link/raw "$output"
+    golden="$PWD/scripts/link_converted.sha256"
+    (cd "$output" && sha256sum --check "$golden")
+    echo "MODEL GOLDENS VERIFIED"
+
+# Complete local model gate; requires extracted raw assets, uv, and the oracle dependency.
+[unix]
+link-verify-model: link-verify-goldens link-verify-p1 link-verify-p2 link-verify-p3
+    echo "MODEL VERIFIED"
 
 
 # P1 gate: diff our --info chunk table against the gclib oracle, then run ignored tests

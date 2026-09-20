@@ -20,18 +20,18 @@ textures, or animation manifests/conversion.
 
 ## Regeneration and checks
 
-Run `just toon_link convert-link`, then run the model gates separately:
+Run the combined local model gate (including fresh conversion and golden hashes):
 
 ```sh
-just toon_link link-verify-p1
-just toon_link link-verify-p2
-just toon_link link-verify-p3
+just toon_link link-verify-model
 cargo test -p gx -p convert-link -- --include-ignored
 ```
 
 The schema tests reject missing metadata and cover explicit values for every rule
 and both compensation flags. The real `real_bake_and_manifest` test checks Maya,
 42 joints, 12 enabled flags, exact per-joint source mapping, and unit bind scales.
+See [testing.md](testing.md#link-local-checks) for automatic pre-commit
+selection and local asset prerequisites.
 
 ### Golden review status
 

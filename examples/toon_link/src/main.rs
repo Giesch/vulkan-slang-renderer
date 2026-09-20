@@ -510,7 +510,9 @@ fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<ModelVe
     let bytes = read_records(path, expected_count, VERTEX_STRIDE, "vertices")?;
     let read_f32 = |b: &[u8], i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
     let vertices = bytes
-        .chunks_exact(VERTEX_STRIDE)
+        .as_chunks::<VERTEX_STRIDE>()
+        .0
+        .iter()
         .map(|v| ModelVertex {
             position: Vec3::new(read_f32(v, 0), read_f32(v, 1), read_f32(v, 2)),
             normal: Vec3::new(read_f32(v, 3), read_f32(v, 4), read_f32(v, 5)),
@@ -523,8 +525,10 @@ fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<ModelVe
 fn load_indices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<u32>> {
     let bytes = read_records(path, expected_count, 4, "u32 indices")?;
     let indices = bytes
-        .chunks_exact(4)
-        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| u32::from_le_bytes(*b))
         .collect();
     Ok(indices)
 }

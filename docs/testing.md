@@ -15,6 +15,68 @@ nothing about whether codegen is correct. The unchanged sweep starts
 Modern GPU or visual evidence. See [`toon_link.md`](toon_link.md) for the
 separate interactive coverage matrix.
 
+## Link local checks
+
+`just toon_link link-verify-model` checks the raw asset hashes, converts into a
+temporary directory, checks every entry in `link_converted.sha256`, and runs
+the P1/P2/P3 oracle comparisons and ignored real-file tests. It requires the
+extracted raw assets and `uv` with access to the pinned gclib dependency. Missing
+or changed assets fail the check; prepare them with `just toon_link extract-link`
+and `TWW_DIR` set. For only the raw and converted hashes, run
+`just toon_link link-verify-goldens`. Neither command updates the golden files.
+
+`just toon_link verify-assets` runs `link-verify-model` and
+`link-verify-animations`. The animation gate extracts the animation raws on
+every run, so it requires `TWW_DIR` and the `dtk` binary in addition to the
+model prerequisites above.
+
+`just test` does not run these gates: Cargo skips ignored real-file tests, and
+the hash checks are separate commands. P1/P2/P3 alone also do not check the
+converted golden hashes.
+
+## Pre-commit hook
+
+Install the local hook with `just setup-precommit`. `just pre-commit` builds
+the workspace graph with `just _workspace-graph`, which reduces
+`cargo metadata --no-deps` with `jq` to one `{name, dir, dependencies}` object
+per package. It passes the graph to `scripts/pre-commit-checks.rs` as the
+first argument and pipes the staged paths into it. The script prints `just`
+arguments, one per line, and the recipe passes them to `just` unchanged. The
+script always names at least one recipe:
+
+- `_pre-commit-skip` alone, when no path needs a check.
+- Otherwise `_pre-commit-shaders` and `lint` first, then
+  `toon_link::verify-assets` when the Link asset gates are needed, then
+  `_roc-codegen-test-if-available`, then `test-crates` followed by every
+  selected package name. `test-crates` takes a variadic parameter, so it and
+  its packages are always last.
+
+The script selects packages as follows:
+
+- A path under a package directory from the graph selects that package and
+  every workspace package that depends on it, directly or transitively. A
+  change under `crates/render-graph/` therefore tests the renderer, `mltrs`,
+  and every example.
+- A path under `examples/toon_link/`, `crates/convert-link/`, or `crates/gx/`
+  also selects the asset gates. Dependents do not: a change to `mltrs` tests
+  `toon_link` but does not run the asset gates.
+- `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `justfile`, `scripts/`,
+  `.cargo/`, and any path under `crates/` or `examples/` that no package
+  directory owns select every package and the asset gates.
+- An empty staged list (for example `git commit --amend` with nothing staged)
+  selects every package.
+- `.md` and `.org` files, `.gitignore`, `.github/`, and any other path select
+  nothing.
+
+The script rejects a graph that lacks `toon_link`, `convert-link`, or `gx`,
+the packages that select the asset gates.
+
+Renames check both old and new paths. Like the build checks, the hook validates
+the working tree, so stage the intended changes before committing. The script
+requires nightly Cargo with `-Zscript` support and `jq` on the path. Its
+inline tests use a fixture graph and run with
+`cargo +nightly -Zscript test --manifest-path scripts/pre-commit-checks.rs`.
+
 ## Link animations
 
 The toon_link animation pipeline carries its own two-level checks

@@ -44,7 +44,9 @@ pub fn build(model: &Model, baked: &BakedModel) -> Converted {
         // counter-clockwise (docs/coordinates.md). pose.rs stays GX-native.
         indices.extend(
             shape_indices
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .flat_map(|t| [t[0], t[2], t[1]]),
         );
         batches.push(mm::Batch {
@@ -324,7 +326,7 @@ pub fn write_obj(
         writeln!(obj, "g batch{b}_{mat_name}").unwrap();
         writeln!(obj, "usemtl {mat_name}").unwrap();
         let range = batch.first_index as usize..(batch.first_index + batch.index_count) as usize;
-        for tri in converted.indices[range].chunks_exact(3) {
+        for tri in converted.indices[range].as_chunks::<3>().0 {
             let (a, b, c) = (tri[0] + 1, tri[1] + 1, tri[2] + 1);
             writeln!(obj, "f {a}/{a}/{a} {b}/{b}/{b} {c}/{c}/{c}").unwrap();
         }

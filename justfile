@@ -207,6 +207,17 @@ sweep-self-test:
 test:
     INSTA_UPDATE=no cargo test --workspace
 
+# run the unit tests of the given packages
+[unix]
+test-crates +crates:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    packages=()
+    for crate in {{crates}}; do
+        packages+=(-p "$crate")
+    done
+    INSTA_UPDATE=no cargo test "${packages[@]}"
+
 # run and review snapshot tests interactively
 [unix] # currently broken on windows, see build_tasks.rs
 insta:
@@ -228,31 +239,36 @@ setup-precommit:
     cp scripts/pre-commit.sh .git/hooks/pre-commit
     chmod +x .git/hooks/pre-commit
 
-# lint and test for git pre-commit hook
+# git pre-commit hook; scripts/pre-commit-checks.rs selects the recipes to run
 [unix]
 pre-commit:
     #!/usr/bin/env bash
     set -euo pipefail
-    # A commit that only touches markdown/org can't break the build, so skip it
-    # NOTE -z so paths with spaces/unicode arrive verbatim rather than quoted,
-    # and an explicit count so an empty index (e.g. `commit --amend --no-edit`)
-    # still runs the checks instead of trivially satisfying "only docs".
-    staged=0
-    docs_only=1
-    while IFS= read -r -d '' path; do
-        staged=$((staged + 1))
-        case "$path" in
-            *.md | *.org) ;;
-            *) docs_only=0; break ;;
-        esac
-    done < <(git diff --cached --name-only -z)
-    if [ "$staged" -gt 0 ] && [ "$docs_only" -eq 1 ]; then
-        echo "markdown/org only; skipping pre-commit checks"
-        exit 0
-    fi
-    {{just_executable()}} _pre-commit-checks
+    set -f
+    graph=$(just _workspace-graph)
+    # NOTE -z so paths with spaces/unicode arrive verbatim rather than quoted
+    recipes=$(git diff --cached --name-only --no-renames -z | ./scripts/pre-commit-checks.rs "$graph")
+    just ${recipes:?pre-commit-checks.rs selected no recipes}
 
-# the actual pre-commit work; `pre-commit` skips this for docs-only commits
-_pre-commit-checks: shaders && lint test _roc-codegen-test-if-available
+# used by the pre-commit hook to calculate dependent tests
+# workspace packages with their directories and in-workspace dependencies, as JSON
+[unix]
+_workspace-graph:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo metadata --format-version 1 --no-deps | jq -c '
+        .workspace_root as $root
+        | [.packages[] | {
+            name,
+            dir: (.manifest_path | ltrimstr($root + "/") | rtrimstr("/Cargo.toml")),
+            dependencies: [.dependencies[] | select(.path != null) | .name]
+        }]'
+
+[unix]
+_pre-commit-skip:
+    @echo "pre-commit: staged paths need no checks"
+
+# compile shaders and stage the generated files
+[unix]
+_pre-commit-shaders: shaders
     git add 'examples/*/shaders/compiled/*' 'examples/*/src/generated/*'
-
