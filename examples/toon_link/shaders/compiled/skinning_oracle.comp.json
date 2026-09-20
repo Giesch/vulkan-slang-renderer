@@ -1,0 +1,272 @@
+{
+  "sourceFileName": "skinning_oracle.compute.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "SkinningOracleParams",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "palette",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "SkinJoint",
+              "fields": [
+                {
+                  "kind": "matrix",
+                  "fieldName": "transform",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 64,
+            "access": "immutable"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "skinning",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "VertexSkinning",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "joints",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "uint32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "weights",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 32,
+            "access": "immutable"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "cases",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "OracleCase",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "normal",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "rawVector",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 32,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 48,
+            "access": "immutable"
+          },
+          {
+            "kind": "scalar",
+            "fieldName": "caseCount",
+            "binding": {
+              "kind": "uniform",
+              "offset": 24,
+              "size": 4
+            },
+            "scalarType": "uint32"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "pushConstant",
+      "parameterName": "pc",
+      "elementType": {
+        "typeName": "SkinningOraclePush",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "output",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "OracleOutput",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "normal",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "safeNormalized",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 32,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "flags",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 48,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "uint32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 64,
+            "access": "readWrite"
+          }
+        ]
+      },
+      "elementSize": 8
+    }
+  ],
+  "computeEntryPoint": {
+    "entryPointName": "computeMain",
+    "stage": "compute",
+    "parameters": []
+  },
+  "workgroupSize": [
+    1,
+    1,
+    1
+  ],
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": [
+      {
+        "stageFlags": "all",
+        "offset": 0,
+        "size": 8
+      }
+    ],
+    "bindlessHeapSet": null
+  }
+}

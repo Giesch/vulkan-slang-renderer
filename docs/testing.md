@@ -100,6 +100,47 @@ The toon_link animation pipeline carries its own two-level checks
   the independent Python oracle over every clip, conversion repeatability,
   tamper detection, and a model-gate isolation check. Fails loudly when
   the assets or prerequisites are missing; it is never cargo-discovered.
+- `cargo test -p toon_link bck_catalog_runtime_audit -- --ignored --nocapture`
+  — the **runtime** compatibility audit, distinct from both of the above. It
+  runs the example's own validators over the actual model, skin and every
+  catalog BCK and fails on any rejection or missing asset. Conversion checks
+  prove the converter preserved the source; this proves the preserved data is
+  structurally playable by `toon_link` (594/594 at last run). Neither is pose
+  or visual evidence; see [link_animations.md](link_animations.md#verification).
+
+## Typed GPU readback
+
+Slang pure-data structs reached through shader parameters or address pointees now
+receive checked `GPURead` decoders. Generated decoders use reflected field offsets
+and sizes, initialize Rust padding, and reject invalid enum discriminants. Types
+containing GPU addresses or resource handles are not readable output types.
+
+`Renderer::dispatch_readback` is a blocking diagnostic API: it drains pending GPU
+work, clears the current output buffer slot, runs one compute dispatch, applies a
+shader-write to host-read barrier, waits for completion, and returns decoded owned
+values. It does not advance the frame or acquire a swapchain image. This is not yet
+an asynchronous picking or frame-loop readback API.
+
+The CLI alignment fixture runs `cargo test`, including generated decoder checks
+for reflected offsets, nested structures, matrix columns, arrays, padding, invalid
+enums, and incorrect byte lengths. These CPU byte fixtures do not prove GPU shader
+execution or numerical skinning correctness.
+
+Run the asset-free GPU readback diagnostic explicitly on Linux:
+
+```sh
+SDL_VIDEODRIVER=offscreen \
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+RUST_LOG=warn \
+cargo test -p mltrs-renderer --test gpu_readback -- --ignored --nocapture
+```
+
+Use your installed lavapipe ICD path. The test fails if prerequisites are absent;
+ordinary `cargo test` ignores it. It generates and executes a Slang compute shader,
+checks two output records, matrix representation and shader matrix-vector results,
+and rejects a GPU-written invalid enum. It checks Vulkan validation messages after
+renderer teardown. See the [fixture guide](../crates/renderer/fixtures/gpu_readback/README.md)
+for details. This proves diagnostic readback, not animation skinning or presentation.
 
 ## Snapshot tests
 

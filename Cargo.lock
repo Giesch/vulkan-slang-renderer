@@ -2184,6 +2184,7 @@ dependencies = [
  "gx",
  "image",
  "mltrs",
+ "sdl3",
  "serde",
  "serde_json",
 ]

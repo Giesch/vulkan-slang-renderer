@@ -3,6 +3,7 @@
 module toon_link;
 
 import mltrs;
+import skinning;
 import tev;
 
 ParameterBlock<ToonLinkParams> params;
@@ -40,6 +41,11 @@ struct ToonLinkParams {
     GXLights lights;
     GXTevColorOverride env;
     DebugMode debugMode;
+    // The joint palette (`animated_world * inverse_bind_world` per joint) for
+    // this frame, and the per-vertex influences indexed by SV_VertexID. See
+    // skinning.slang.
+    mltrs::ImmutableAddr<SkinJoint> palette;
+    mltrs::ImmutableAddr<VertexSkinning> skinning;
 }
 
 // The variant names are the debug window's radio button labels, via
@@ -93,9 +99,12 @@ struct FragVertex {
 };
 
 [shader("vertex")]
-FragVertex vertMain(Vertex vertex, uint drawIndex : SV_DrawIndex) {
-    let position = params.mvp.project(vertex.position);
-    let worldNormal = params.mvp.rotateDirection(vertex.normal);
+FragVertex vertMain(Vertex vertex, uint vertexId : SV_VertexID, uint drawIndex : SV_DrawIndex) {
+    // Skin in model space first: before projection, and before the XF unit
+    // evaluates the color channel and the texgens from the normal.
+    let skinned = skinVertex(params.palette, params.skinning[vertexId], vertex.position, vertex.normal);
+    let position = params.mvp.project(skinned.position);
+    let worldNormal = params.mvp.rotateDirection(skinned.normal);
 
     // SV_DrawIndex counts within one indirect command, from 0 to drawCount - 1.
     // It is not the batch index, so each command carries its own draw table.
@@ -139,7 +148,9 @@ float4 fragMain(FragVertex fragVertex) : SV_TARGET {
     float3 color;
     switch (params.debugMode) {
         case DebugMode.WorldNormals:
-            color = normalize(fragVertex.normal) * 0.5 + 0.5;
+            // Interpolation can cancel a normal to zero; a zero normal shows
+            // as mid-gray rather than NaN.
+            color = skinSafeNormalize(fragVertex.normal) * 0.5 + 0.5;
             break;
         case DebugMode.Uv0:
             color = float3(fragVertex.uv0, 0.0);

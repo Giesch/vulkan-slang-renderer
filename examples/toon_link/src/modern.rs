@@ -16,6 +16,7 @@ use mltrs::renderer::{
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::toon_link_modern::*;
+use crate::skinning::SkinningBuffers;
 
 #[derive(Facet, Clone)]
 pub struct ModernEditState {
@@ -518,6 +519,9 @@ pub struct ToonLinkModern {
     draws: SingletonBufferHandle<ModernIndividualDraw>,
     pipeline_order: Vec<usize>,
     ramp: TextureHandle,
+    /// Same deformation inputs as the GameCube mode; identity palette until
+    /// the animation player supplies a pose.
+    skinning: SkinningBuffers,
 }
 
 impl ToonLinkModern {
@@ -531,6 +535,11 @@ impl ToonLinkModern {
 
     pub fn edit_state_mut(&mut self) -> &mut ModernEditState {
         &mut self.edit_state
+    }
+
+    /// Why this mode renders the static model, or `None` when it animates.
+    pub fn static_reason(&self) -> Option<&str> {
+        self.skinning.static_reason()
     }
 }
 
@@ -686,13 +695,18 @@ impl Game for ToonLinkModern {
         let mut pipeline_order = Vec::new();
         for index in prepared.order {
             let batch = &manifest.batches[index];
-            commands.push(DrawIndexedIndirectCommand {
+            let command = DrawIndexedIndirectCommand {
                 index_count: batch.index_count,
                 instance_count: 1,
                 first_index: batch.first_index,
                 vertex_offset: 0,
                 first_instance: 0,
-            });
+            };
+            assert_eq!(
+                command.vertex_offset, 0,
+                "skin records are indexed by SV_VertexID; a nonzero vertex offset would mis-index them"
+            );
+            commands.push(command);
             draws.push(ModernIndividualDraw {
                 material: renderer.singleton_addr_at(&materials_buffer, batch.material as u32),
             });
@@ -701,6 +715,7 @@ impl Game for ToonLinkModern {
 
         let args_buffer = renderer.create_indirect_buffer(&commands)?;
         let draws = renderer.create_singleton_buffer(&draws)?;
+        let skinning = SkinningBuffers::new(renderer, &dir, &manifest)?;
 
         Ok(Self {
             start_time: Instant::now(),
@@ -712,10 +727,24 @@ impl Game for ToonLinkModern {
             draws,
             pipeline_order,
             ramp: textures[prepared.ramp].take().unwrap(),
+            skinning,
         })
     }
 
-    fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+        self.draw_posed(renderer, None)
+    }
+}
+
+impl ToonLinkModern {
+    /// Draw with `palette` as this frame's joint palette, one
+    /// `animated_world * inverse_bind_world` per skeleton joint. `None` is the
+    /// bind pose (identity), used when there is no host or no player.
+    pub fn draw_posed(
+        &mut self,
+        mut renderer: FrameRenderer,
+        palette: Option<&[Mat4]>,
+    ) -> Result<(), DrawError> {
         let spin = self
             .host_spin
             .unwrap_or_else(|| self.start_time.elapsed().as_secs_f32() * crate::MODEL_SPIN);
@@ -735,6 +764,8 @@ impl Game for ToonLinkModern {
             20.0,
         );
 
+        // Queue-time addresses for this frame's flight slot; never retained.
+        let skinning = self.skinning.addrs(&renderer);
         let data = self.edit_state.params_data(spin);
         let params = ModernParams {
             mvp: MVPMatrices { model, view, proj },
@@ -747,6 +778,8 @@ impl Game for ToonLinkModern {
             ramp_texture: self.ramp.bindless_handle(),
             ramp: data.ramp,
             diagnostic: data.diagnostic,
+            palette: skinning.palette,
+            skinning: skinning.skinning,
         };
 
         for (index, &pipeline) in self.pipeline_order.iter().enumerate() {
@@ -762,7 +795,19 @@ impl Game for ToonLinkModern {
             );
         }
 
-        renderer.submit_draws(|gpu| gpu.write_uniform(&mut self.params_buffer, params))
+        let bind_pose;
+        let palette = match palette {
+            Some(palette) => palette,
+            None => {
+                bind_pose = self.skinning.identity_palette();
+                &bind_pose
+            }
+        };
+
+        renderer.submit_draws(|gpu| {
+            gpu.write_uniform(&mut self.params_buffer, params);
+            self.skinning.write_palette(gpu, palette);
+        })
     }
 }
 
