@@ -138,13 +138,18 @@ pub fn validate_model_skin(model: &Manifest, bytes: &[u8]) -> Result<Vec<VertexS
         bytes.len()
     );
     let mut vertices = Vec::with_capacity(model.buffers.vertex_count as usize);
-    for (vertex, record) in bytes.chunks_exact(PACKED_SKIN_VERTEX_BYTES).enumerate() {
+    for (vertex, record) in bytes
+        .as_chunks::<PACKED_SKIN_VERTEX_BYTES>()
+        .0
+        .iter()
+        .enumerate()
+    {
         let mut influences = [SkinInfluence {
             joint: 0,
             weight: 0.0,
         }; 4];
         let mut sum = 0.0_f64;
-        for (slot, packed) in record.chunks_exact(5).enumerate() {
+        for (slot, packed) in record.as_chunks::<5>().0.iter().enumerate() {
             let joint = packed[0];
             let weight = f32::from_le_bytes(packed[1..5].try_into().expect("five-byte slot"));
             ensure!(
