@@ -14,6 +14,8 @@ use ash::util::read_spv;
 use serde::Serialize;
 
 pub use super::particle::Particle;
+#[allow(unused_imports)]
+use crate::renderer::gpu_read::GPURead;
 use crate::renderer::render_graph::GPUWrite;
 use crate::renderer::*;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};

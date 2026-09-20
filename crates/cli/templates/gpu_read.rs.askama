@@ -1,0 +1,31 @@
+{%- for def in enum_defs %}
+impl GPURead for {{ def.type_name }} {
+    const GPU_SIZE: usize = {{ def.expected_size() }};
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <{{ def.tag_rust_type() }} as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid {{ def.type_name }} tag: {tag}"))
+    }
+}
+{% endfor %}
+{%- for def in struct_defs %}
+{%- if def.gpu_read %}
+impl GPURead for {{ def.type_name }} {
+    const GPU_SIZE: usize = {{ def.expected_size.unwrap() }};
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for {{ def.type_name }}"
+        );
+
+        Ok(Self {
+{%- for field in def.read_fields() %}
+            {{ field }}
+{%- endfor %}
+        })
+    }
+}
+{% endif %}
+{%- endfor %}

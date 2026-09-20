@@ -16,6 +16,8 @@ use serde::Serialize;
 
 pub use super::gpu_picking_common::Cube;
 pub use super::ray_march_camera::RayMarchCamera;
+#[allow(unused_imports)]
+use crate::renderer::gpu_read::GPURead;
 use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};

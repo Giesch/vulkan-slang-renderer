@@ -11,6 +11,8 @@ use serde::Serialize;
 
 use super::mltrs::Projection;
 #[allow(unused_imports)]
+use crate::renderer::gpu_read::GPURead;
+#[allow(unused_imports)]
 use crate::renderer::render_graph::GPUWrite;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
@@ -30,3 +32,20 @@ const _: () = assert!(std::mem::offset_of!(RayMarchCamera, inverse_view_proj) ==
 const _: () = assert!(std::mem::size_of::<Projection>() == 64);
 const _: () = assert!(std::mem::offset_of!(RayMarchCamera, position) == 64);
 const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+
+impl GPURead for RayMarchCamera {
+    const GPU_SIZE: usize = 80;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for RayMarchCamera"
+        );
+
+        Ok(Self {
+            inverse_view_proj: GPURead::read_gpu(&bytes[0..64])?,
+            position: GPURead::read_gpu(&bytes[64..76])?,
+            _padding_0: [0; 4],
+        })
+    }
+}

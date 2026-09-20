@@ -14,6 +14,8 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+#[allow(unused_imports)]
+use crate::renderer::gpu_read::GPURead;
 use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};

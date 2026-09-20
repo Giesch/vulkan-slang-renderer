@@ -14,6 +14,8 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+#[allow(unused_imports)]
+use crate::renderer::gpu_read::GPURead;
 use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -56,6 +58,24 @@ const _: () = assert!(std::mem::size_of::<[glam::IVec4; 4]>() == 64);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
+}
+
+impl GPURead for MatrixData {
+    const GPU_SIZE: usize = 144;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for MatrixData"
+        );
+
+        Ok(Self {
+            c: GPURead::read_gpu(&bytes[0..64])?,
+            d: GPURead::read_gpu(&bytes[64..68])?,
+            _padding_0: [0; 12],
+            e: GPURead::read_gpu(&bytes[80..144])?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

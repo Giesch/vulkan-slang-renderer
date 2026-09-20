@@ -13,6 +13,7 @@ pub mod pointer_params_compute;
 pub mod pointer_pointee_layout;
 pub mod push_constants;
 pub mod push_constants_compute;
+pub mod readback_compute;
 pub mod shared_enum;
 pub mod std140_arrays;
 pub mod std140_enums;
@@ -63,6 +64,7 @@ pub struct ShaderAtlas {
     pub handle_params_compute: handle_params_compute::Shader,
     pub pointer_params_compute: pointer_params_compute::Shader,
     pub push_constants_compute: push_constants_compute::Shader,
+    pub readback_compute: readback_compute::Shader,
     pub storage_handle_params_compute: storage_handle_params_compute::Shader,
 }
 
@@ -98,6 +100,7 @@ impl ShaderAtlasRoot for ShaderAtlas {
             handle_params_compute: handle_params_compute::Shader::init(),
             pointer_params_compute: pointer_params_compute::Shader::init(),
             push_constants_compute: push_constants_compute::Shader::init(),
+            readback_compute: readback_compute::Shader::init(),
             storage_handle_params_compute: storage_handle_params_compute::Shader::init(),
         }
     }

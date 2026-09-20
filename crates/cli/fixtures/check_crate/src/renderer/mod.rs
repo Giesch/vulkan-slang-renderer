@@ -3,6 +3,9 @@
 
 pub mod addr;
 pub mod bindless;
+// Exercise production byte decoding without linking the graphics backend.
+#[path = "../../../../../renderer/src/renderer/gpu_read.rs"]
+pub mod gpu_read;
 pub mod gpu_write;
 pub mod render_graph;
 pub mod vertex_description;
