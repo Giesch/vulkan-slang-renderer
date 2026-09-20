@@ -56,12 +56,18 @@ pub fn build(model: &Model, baked: &BakedModel) -> Converted {
     }
 
     let skeleton = mm::Skeleton {
+        scaling_rule: match model.inf1.scaling_rule {
+            crate::gx::types::MatrixScalingRule::Basic => mm::ScalingRule::Basic,
+            crate::gx::types::MatrixScalingRule::Softimage => mm::ScalingRule::Softimage,
+            crate::gx::types::MatrixScalingRule::Maya => mm::ScalingRule::Maya,
+        },
         joints: model
             .jnt1
             .joints
             .iter()
             .enumerate()
             .map(|(i, j)| mm::SkeletonJoint {
+                scale_compensate: j.no_inherit_scale != 0,
                 name: j.name.clone(),
                 parent: model.inf1.parents[i].map(|p| p as i32).unwrap_or(-1),
                 t: j.translation,

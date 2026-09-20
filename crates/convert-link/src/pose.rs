@@ -463,6 +463,23 @@ mod tests {
         assert_eq!(back.materials.len(), 24);
         assert_eq!(back.textures.len(), 41);
         assert_eq!(back.skeleton.joints.len(), 42);
+        assert_eq!(model.inf1.flags & 0x0f, 2);
+        assert_eq!(
+            back.skeleton.scaling_rule,
+            gx::model_manifest::ScalingRule::Maya
+        );
+        assert_eq!(
+            back.skeleton
+                .joints
+                .iter()
+                .filter(|j| j.scale_compensate)
+                .count(),
+            12
+        );
+        for (exported, source) in back.skeleton.joints.iter().zip(&model.jnt1.joints) {
+            assert_eq!(exported.scale_compensate, source.no_inherit_scale != 0);
+            assert_eq!(exported.s, [1.0; 3]);
+        }
         assert_eq!(back.buffers.vertex_count, baked.vertices.len() as u32);
     }
 
