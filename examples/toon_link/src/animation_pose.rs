@@ -146,7 +146,7 @@ impl PreparedClip {
                         sample_rotation(&axis.rotation, frame, self.clip.rotation_decimal_shift)
                             .with_context(|| format!("axes[{axis_index}].rotation"))?;
                 }
-                let compensation = if bind.parent >= 0 && bind.scale_compensate == Some(true) {
+                let compensation = if bind.parent >= 0 && bind.scale_compensate {
                     let parent_scale = local_scales[bind.parent as usize];
                     ensure!(
                         parent_scale.abs().min_element() > COMPENSATION_SCALE_MIN,
@@ -307,7 +307,7 @@ mod tests {
 
     fn skeleton(parents: &[i32]) -> Skeleton {
         Skeleton {
-            scaling_rule: Some(ScalingRule::Maya),
+            scaling_rule: ScalingRule::Maya,
             joints: parents
                 .iter()
                 .enumerate()
@@ -317,7 +317,7 @@ mod tests {
                     t: [0.0; 3],
                     r_s16: [0; 3],
                     s: [1.0; 3],
-                    scale_compensate: Some(false),
+                    scale_compensate: false,
                 })
                 .collect(),
         }
@@ -603,8 +603,8 @@ mod tests {
     #[test]
     fn bck_maya_nonuniform_rotated_parent_child_and_sibling() {
         let mut bind = skeleton(&[-1, 0, 0]);
-        bind.joints[1].scale_compensate = Some(true);
-        bind.joints[2].scale_compensate = Some(true);
+        bind.joints[1].scale_compensate = true;
+        bind.joints[2].scale_compensate = true;
         let mut data = clip(3);
         for (axis, value) in [2.0, 3.0, 4.0].into_iter().enumerate() {
             data.joints[0].axes[axis].scale = TrackF32::Constant { value };
@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn bck_scale_divisor_threshold_negative_and_zero() {
         let mut bind = skeleton(&[-1, 0]);
-        bind.joints[1].scale_compensate = Some(true);
+        bind.joints[1].scale_compensate = true;
         let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
         for value in [
             -2.0,
@@ -669,7 +669,7 @@ mod tests {
                     .is_err()
             );
         }
-        bind.joints[1].scale_compensate = Some(false);
+        bind.joints[1].scale_compensate = false;
         let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
         let mut data = clip(2);
         data.joints[0].axes[0].scale = TrackF32::Constant { value: 0.0 };

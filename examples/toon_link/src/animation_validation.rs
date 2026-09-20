@@ -92,8 +92,8 @@ pub fn validate_catalog(catalog: &AnimationCatalog) -> Result<()> {
 
 pub fn validate_skeleton(skeleton: &Skeleton) -> Result<()> {
     ensure!(
-        skeleton.scaling_rule == Some(ScalingRule::Maya),
-        "skeleton.scaling_rule: explicit Maya metadata required, got {:?}; regenerate the model with the current convert_link converter (Basic/Softimage playback is unsupported)",
+        skeleton.scaling_rule == ScalingRule::Maya,
+        "skeleton.scaling_rule: Maya scaling required, got {:?}; Basic/Softimage playback is unsupported",
         skeleton.scaling_rule
     );
     ensure!(!skeleton.joints.is_empty(), "skeleton.joints: empty");
@@ -102,10 +102,6 @@ pub fn validate_skeleton(skeleton: &Skeleton) -> Result<()> {
         "skeleton.joints: exceeds u8 skin index capacity"
     );
     for (index, joint) in skeleton.joints.iter().enumerate() {
-        ensure!(
-            joint.scale_compensate.is_some(),
-            "skeleton.joints[{index}].scale_compensate: explicit metadata required; regenerate the model with the current convert_link converter"
-        );
         ensure!(
             joint.parent == -1 || (joint.parent >= 0 && (joint.parent as usize) < index),
             "skeleton.joints[{index}].parent: {} must be root or precede child",
@@ -324,9 +320,9 @@ mod tests {
             materials: vec![],
             batches: vec![],
             skeleton: Skeleton {
-                scaling_rule: Some(ScalingRule::Maya),
+                scaling_rule: ScalingRule::Maya,
                 joints: vec![SkeletonJoint {
-                    scale_compensate: Some(false),
+                    scale_compensate: false,
                     name: "root".into(),
                     parent: -1,
                     t: [0.0; 3],
@@ -434,19 +430,16 @@ mod tests {
     }
 
     #[test]
-    fn bck_validation_explicit_maya_metadata() {
-        for rule in [None, Some(ScalingRule::Basic), Some(ScalingRule::Softimage)] {
+    fn bck_validation_requires_maya_scaling() {
+        for rule in [ScalingRule::Basic, ScalingRule::Softimage] {
             let mut skeleton = model().skeleton;
             skeleton.scaling_rule = rule;
             let error = validate_skeleton(&skeleton).unwrap_err().to_string();
-            assert!(error.contains("scaling_rule") && error.contains("regenerate"));
+            assert!(error.contains("scaling_rule") && error.contains("unsupported"));
         }
         let mut skeleton = model().skeleton;
-        skeleton.joints[0].scale_compensate = None;
-        let error = validate_skeleton(&skeleton).unwrap_err().to_string();
-        assert!(error.contains("scale_compensate") && error.contains("regenerate"));
         for flag in [false, true] {
-            skeleton.joints[0].scale_compensate = Some(flag);
+            skeleton.joints[0].scale_compensate = flag;
             validate_skeleton(&skeleton).unwrap();
         }
     }
@@ -623,7 +616,7 @@ mod tests {
         assert!(validate_model_skin(&invalid, &packed([1.0, 0.0, 0.0, 0.0])).is_err());
         assert!(
             validate_skeleton(&Skeleton {
-                scaling_rule: Some(ScalingRule::Maya),
+                scaling_rule: ScalingRule::Maya,
                 joints: vec![]
             })
             .is_err()

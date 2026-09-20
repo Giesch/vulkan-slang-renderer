@@ -829,12 +829,12 @@ pub(crate) mod test_support {
 
     pub fn skeleton() -> Skeleton {
         Skeleton {
-            scaling_rule: Some(ScalingRule::Maya),
+            scaling_rule: ScalingRule::Maya,
             joints: [-1, 0]
                 .iter()
                 .enumerate()
                 .map(|(index, &parent)| SkeletonJoint {
-                    scale_compensate: Some(false),
+                    scale_compensate: false,
                     name: format!("joint{index}"),
                     parent,
                     t: [0.0; 3],
