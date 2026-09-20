@@ -1,8 +1,10 @@
 # Phase 2 — Additive Schemas and Compile Checks
 
-STATUS: IMPLEMENTATION PLAN — revised for the Roc target on 2026-09-10.
-Rust implementation is authorized by a separate implementation request. This document
-records the plan, not completed implementation or a tested Roc API.
+STATUS: IN PROGRESS (2026-09-20). P2.1 is implemented. P2.4 is partially
+implemented: the push-constant and parameter-binding builders exist; typed
+list insertion does not. P2.2, P2.3, P2.5, and P2.6 are not started. The
+implementation record dated 2026-09-20 below lists the evidence.
+The plan was revised for the Roc target on 2026-09-10.
 This document expands phase 2 of [the parent plan](../08_plain_data_graph.md).
 The accepted decisions below constrain the implementation plan.
 
@@ -126,16 +128,21 @@ The pure core stays free of Vulkan, platform calls, and live resource identities
 
 Read these files before edits. Search by symbol because line numbers move.
 
+Paths as of 2026-09-20, after the crate extraction in
+`02b_backend_neutral_crate.md`.
+
 | File | Current role and phase-2 change |
 | --- | --- |
-| `crates/renderer/src/renderer/render_graph.rs` | `GraphShaderParams`, `GraphBindingSet`, node constructors, tuple inputs, legacy `plan`. Add metadata bridge and prototype typed builders without replacing execution. |
-| `crates/renderer/src/renderer/render_graph/desc.rs` | `SchemaDesc`, optional `SchemaLayout`, field offsets. Extend the metadata model without exposing `GraphDesc`. |
-| `crates/renderer/src/renderer/render_graph/lower.rs` | Typed lowering currently constructs layout-less schemas. Pass generated supported layouts and capture private input mappings. |
-| `crates/renderer/src/renderer/render_graph/compile.rs` | `build_assembly` produces steps or `Deferred`. Exercise real generated layouts through this existing compiler. |
-| `crates/renderer/src/renderer/render_graph/expand.rs` | Pure `FrameShape` and expansion. Test adapter output without renderer access. |
-| `crates/cli/src/build_tasks.rs` | `graph_split_def`, resource classification, reflection and alignment fixtures. Generate metadata from retained semantic information. |
-| `crates/cli/templates/graph_split.rs.askama` | Keep params/data/bindings and existing assembly. Emit additive metadata/adapters. |
+| `crates/render-graph/src/runtime.rs` | `GraphShaderParams`, `GraphBindingSet`, `GraphParamBindingSet`, node constructors, typestate builders, tuple and array inputs, `plan`. Add the metadata bridge and typed list insertion without replacing execution. |
+| `crates/render-graph/src/runtime/desc.rs` | `SchemaDesc`, optional `SchemaLayout`, field offsets. Extend the metadata model without exposing `GraphDesc`. |
+| `crates/render-graph/src/runtime/lower.rs` | Typed lowering constructs layout-less schemas. Pass generated supported layouts and capture private input mappings. |
+| `crates/render-graph/src/runtime/compile.rs` | `build_assembly` produces steps or `Deferred`. Exercise real generated layouts through this existing compiler. |
+| `crates/render-graph/src/runtime/expand.rs` | Pure `FrameShape` and expansion. Test adapter output without renderer access. |
+| `crates/render-graph/src/backend.rs` | Backend contract. Live identity and generation checks (P2.5, setup half) go through `PreparationBackend` and `FrameLookup`. |
+| `crates/cli/src/build_tasks.rs` | `graph_split_def`, `classify_graph_field`, reflection and alignment fixtures. Generate metadata from retained semantic information. |
+| `crates/cli/templates/graph_split.rs.askama` | Emits `*Data`, `*Bindings`, `*Input`, and the `GraphShaderParams` impl. Emit additive metadata/adapters. |
 | `crates/cli/fixtures/check_crate` | Generated syntax/layout fixture with stub renderer types. It cannot prove real renderer API restrictions. |
+| `crates/renderer/tests/render_graph_api_compile.rs`, `crates/renderer/fixtures/api_compile` | The P2.1 harness against the real renderer. |
 
 Phase 1 is implemented. Its reconciled records are `01_pure_core.md` and `01_review.md`.
 Production execution still uses `plan`. Pure compilation/expansion is tested scaffolding.
@@ -230,6 +237,88 @@ Implementation record — P2.1 is implemented.
   `cargo test -p mltrs-renderer`, `just lint`, `just test`, `just sweep`,
   `cargo fmt`. A vacuity check confirmed the harness fails when a negative case
   is changed to compile.
+
+## Implementation record — 2026-09-20
+
+Verified against commit `008e173`. Each step lists what exists in the tree.
+
+### P2.1 — implemented, extended
+
+`CASES` holds 38 entries: 15 positive and 23 negative. Cases added after the
+original 12 cover the builders (P2.4), the crate extraction, the lifecycle
+split, and the trait boundary (`02b_backend_neutral_crate.md`).
+
+Positive: `direct_graph_import`, `extracted_type_identity`,
+`same_indirect_backend`, `param_bindings`, `complete_tuple`,
+`right_binding_kind`, `right_buffer_element_type`, `repeat_frame`,
+`optional_frame`, `tuple_twelve_elements`, `nested_tuples`, `array_nodes`
+(a 13-element node array nested in a tuple), `construction_families`,
+`prepared_lifecycle`, `trait_bridge`.
+
+Negative: `wrong_indirect_backend`, `wrong_indirect_backend_nested`,
+`wrong_prepared_frame_backend`, `external_compatible_with_impl`,
+`indirect_request_fields`, `missing_param_bindings`,
+`push_without_param_bindings`, `wrong_param_bindings`,
+`duplicate_param_bindings`, `omitted_tuple_element`, `wrong_binding_kind`,
+`wrong_buffer_element_type`, `repeat_frame_without_loop_count`,
+`optional_frame_without_option`, `wrong_pipeline_kind`, `wrong_push_block`,
+`wrong_push_block_type`, `missing_push`, `wrong_indirect_element`,
+`logical_no_execute`, `consumed_after_prepare`, `private_backend_traits`,
+`push_requires_graph_gpu_write`.
+
+`cases/negative/graph_indirect_not_gpu_write.rs` exists on disk with no
+`[[bin]]` entry and no `CASES` entry. The harness never runs it. Either wire
+it or delete it.
+
+`docs/testing.md` "Render-graph API compile checks" documents the harness,
+the pruned `Cargo.lock`, `--locked`, and the recovery command.
+
+### P2.4 — partially implemented
+
+Implemented:
+
+- `.with_push_constant(input: B::Input)` on `ComputeNode`, `DrawNode`, and
+  `IndirectDrawNode`. A command built from a `PushBlock<B>` pipeline key is
+  `ComputeNode<S, PendingPush<B>, _>` (or the draw equivalent) until the
+  input is attached, and `PendingPush<B>` does not implement `GraphPush`, so
+  it is not a `GraphNode`. Three compile-fail doctests on `PendingPush` and
+  the `missing_push`, `wrong_push_block`, and `wrong_push_block_type` cases
+  pin this.
+- `.with_param_bindings(bindings)` on `ComputeNode`. `GraphParamBindingSet`
+  gives each generated `*Bindings` a `Pending = PendingParamBindings<Self>`;
+  `()` has `Pending = ()`. The two attachments compose in either order
+  (`param_bindings` case). Draw constructors take bindings as an argument.
+- Pipeline keys carry the push interface: `ComputePipelineKey<P>`,
+  `DrawVertexCountKey<P>`, `DrawIndexedKey<P>`, `DrawIndexedIndirectKey<P>`
+  with `P` = `NoPush` or `PushBlock<B>`; sealed `GraphPipelinePush` maps `P`
+  to its pending state. A vertex-count key cannot drive `draw_indexed`
+  (`wrong_pipeline_kind`).
+- `GraphShaderParams::{Input, input, assemble_input}` with the provided
+  `assemble`, as the combined-input section below specifies.
+- `IndirectDrawNode<S, P, I>` via `draw_indexed_indirect(pipeline,
+  params_buffer, args, first_command, draw_count, bindings)`; `I` is checked
+  against the backend's exact record type at `prepare`.
+
+Not implemented: `DrawList<Params, Push>`, `push(run) -> Result<(), GraphError>`,
+setup-length lists, and empty/single/multi-run lists with one frame type.
+`[N; K]` arrays are the fixed-length form in use (`examples/multi_mesh`,
+18 draws); the element count is a compile-time constant.
+
+### P2.2, P2.3, P2.5, P2.6 — not started
+
+- P2.2: codegen emits no layout metadata. `SchemaLayout` exists in
+  `runtime/desc.rs` with no production producer; `LowerCtx::schema` writes
+  `layout: None`, and `build_assembly` returns `Deferred` for every lowered
+  schema. No fingerprint or hash code exists (decision 4 of this document).
+- P2.3: no adapter populates `FrameShape` from a typed frame tuple. `expand`
+  has no callers outside its tests.
+- P2.5: `with_uniform` does not exist. Each command names its uniform buffer
+  as a constructor argument, and `LowerCtx::uniform` merges identical
+  sources or reports `UniformSourceConflict` (phase 1).
+- P2.6: the buffer-restriction tests exist in part through the harness
+  (`wrong_buffer_element_type`, `right_buffer_element_type`) and through
+  `ImmutableBufferBinding<T> → ReadBufferBinding<T>`; the handoff record is
+  this section.
 
 ### P2.2 — Add metadata without choosing a new frame ABI
 
@@ -355,6 +444,11 @@ or specify the Roc API now. The port proof above is deferred until that design w
 The custom format's schema, encoding, ownership and compatibility rules are also
 future work. Do not assume Rust or Roc memory layouts define the encoded format.
 
+ANNOTATION (2026-09-20): `crates/cli/src/roc_codegen.rs` and the
+`*.roc.askama` templates emit shader reflection only, as `docs/roc_shader_codegen.md`
+describes. No Roc graph split, binding types, or graph API exists. The port
+proof above remains future work.
+
 ## Combined generated input — 2026-09-10
 
 Generate a flat `*Input` intermediate type with both ordinary data fields and typed
@@ -373,6 +467,15 @@ Example: `.with_push_constant(BlurDispatchInput { input_tex, output_tex, directi
 Push data remains fixed at setup, and resource references resolve per command execution.
 This change implements part of P2.4. It does not complete metadata, list insertion,
 uniform scopes, or the remaining phase-2 work.
+
+ANNOTATION (2026-09-20): implemented as described. `graph_split.rs.askama`
+always emits `*Input`. It emits `*Bindings` only when the type has a binding
+field, and `*Data` only when it has both data and binding fields. The
+degenerate impls are `Data = Self` (no bindings), `Data = ()` (no data
+fields), and `Bindings = ()` (no bindings). Push-constant types are in the
+params set, so a push block with a resource field (toon_link's
+`ModernMultiDraw`) gets a split; types reached only through `ImmutableAddr`
+(`ModernIndividualDraw`, `ModernMaterial`) do not.
 
 Scalar packing (3a), arrays (3b), callback dependencies (before S5), and resize (5)
 retain their existing decision gates. This plan does not resolve them incidentally.

@@ -18,6 +18,28 @@ The review record is `01_review.md`. Tested migration scaffolding remains until
 its owning phase wires it into production; phase-1 completion does not imply
 executor migration or closure of later ledger rows.
 
+## Current locations (2026-09-20)
+
+The module layout table and the facade section below describe the tree
+before the crate extraction recorded in `02b_backend_neutral_crate.md`.
+The same items live at these paths:
+
+| In this document | Current |
+| --- | --- |
+| `crates/renderer/src/renderer/render_graph/{desc,validate,compile,expand,lower}.rs` | `crates/render-graph/src/runtime/{desc,validate,compile,expand,lower}.rs` |
+| `crates/renderer/src/renderer/render_graph/test_desc.rs` | `crates/render-graph/src/runtime/test_desc.rs` |
+| `render_graph.rs` facade (node types, `GraphNode`, `PlanCtx`, `BindingResolver`, `RenderGraph`) | `crates/render-graph/src/runtime.rs` |
+| `GraphFormat → vk::Format` mapping | `crates/renderer/src/renderer/render_graph.rs` (`impl ToVk for GraphFormat`) |
+| `GraphFormat` definition | `crates/render-graph/src/backend.rs`, re-exported by `runtime/desc.rs` and `runtime.rs` |
+| `GraphResources::texture(width, height, format)` | `ResourcePlanner::texture(name, width, height, format)` |
+| `RenderGraph::new(renderer, resources, nodes)` | `RenderGraph::new(resources, nodes)`, then `graph.prepare(&mut renderer)` |
+| physical image allocation in `RenderGraph::new` | `RenderGraph::prepare` through `PreparationBackend::prepare_image` |
+| `extent_limit_errors` in `RenderGraph::new` | `RenderGraph::prepare` |
+
+`cargo test -p mltrs-render-graph` runs 129 lib tests, 1 dependency-boundary
+test, and 4 doctests. The test inventory below remains the contract; the
+crate count includes the phase-1b and phase-2b additions.
+
 ## Scope
 
 Phase 1 puts a pure, plain-data core beneath the typed tuple facade:
@@ -181,6 +203,12 @@ pub(crate) enum BufAccess { Read, Write, Mutate, IndirectArgs }
 pub(crate) struct BufferRef { pub buffer: BufferId, pub slot: SlotSel, pub offset: u32, pub range: Option<u32> }
 pub(crate) enum SlotSel { Current, Previous }
 ```
+
+ANNOTATION (2026-09-20): `BufAccess` is `{ Read, Mutate }`; `01_review.md`
+§2 records the deletion of `Write` and `IndirectArgs`. `desc.rs` also holds
+a `Command<'a>` view over one dispatch or draw, with `From<&DispatchDesc>`,
+`From<&DrawDesc>`, `Command::bindings`, `LeafPass::commands`, and
+`GraphDesc::leaves` (phase 1b).
 
 Phase-1 deviations from the parent document's §1, all temporary:
 
@@ -449,6 +477,12 @@ this section in five ways.
 - `Display` has no `render graph: ` prefix. The `validation_message` header
   identifies the source; a prefix on every bullet would repeat it.
 - `TableKind` implements `Display` with lowercase table names.
+
+ANNOTATION (2026-09-20): `GraphError` has 28 variants: the 25 below plus
+`PrevReadWithoutWrite`, `TextureExtentZero`, and `TextureExtentTooLarge`.
+`NestedControlFlow` carries `outer: ScopeKind, inner: ScopeKind` with
+`ScopeKind { Repeat, Optional }`. `UnsupportedFeature` still has the seven
+variants in the matrix below.
 
 Emitted by `validate()` (ported `BuildCtx` check in parentheses; the 15
 checks are the complete list in `schedule.rs:50-207`):

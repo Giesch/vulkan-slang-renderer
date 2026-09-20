@@ -7,6 +7,15 @@ This work simplifies the combined 07/08-phase-1 branch while preserving the
 migration requirements in [`../08_plain_data_graph.md`](../08_plain_data_graph.md).
 It does not wire the pure compiler into execution or close later-phase ledger items.
 
+Location note (2026-09-20): the items this record names live in the
+`mltrs-render-graph` crate after the extraction in
+`02b_backend_neutral_crate.md`. `lower::LowerDrawCall`, the `Command`
+iterators, and the shared push-assembly helper are in
+`crates/render-graph/src/runtime/{lower,desc,compile}.rs`.
+`ComputeNode<S, P = ()>`, the `ComputeNodeWithPush<S, B>` alias,
+`GraphPush::visit_bindings`, and the write-only cursor commit are in
+`crates/render-graph/src/runtime.rs`. The public names are unchanged.
+
 ## Constraints
 
 Preserve the public tuple API, generated split types, constructor signatures,

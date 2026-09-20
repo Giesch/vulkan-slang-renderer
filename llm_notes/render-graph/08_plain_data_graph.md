@@ -1,12 +1,132 @@
 # Render Graph v2 — Typed Tuple API with an Erased Internal Graph
 
-STATUS: DRAFT — decisions 1–13 record the current direction. Decisions 12–13
-replace the earlier proposal to remove the tuple API. Unresolved subchoices
-remain explicit and gate their owning implementation phases.
-The Roc target update dated 2026-09-10 below takes precedence for validation timing,
+STATUS: IN PROGRESS — phases 1, 1b, and 2b are implemented, phase 2 is
+partially implemented, and phases 3a–7 are not started. The implementation
+status section below records where the code lives and what each phase,
+decision, and ledger row has reached. Decisions 1–13 record the design
+direction. Decisions 12–13 replace the earlier proposal to remove the tuple
+API. Unresolved subchoices remain explicit and gate their owning phases.
+The Roc target update dated 2026-09-10 takes precedence for validation timing,
 schema fingerprints, and prototype portability.
 The review update dated 2026-09-07 records later decisions and open questions.
 Accepted changes in that update take precedence over earlier wording.
+Annotations dated 2026-09-20 mark design text that the implementation
+diverged from or has not reached.
+
+## Implementation status — 2026-09-20
+
+Verified against commit `008e173`.
+
+### Code locations
+
+The graph is its own crate. The renderer implements its backend traits.
+Paths elsewhere in this document that name
+`crates/renderer/src/renderer/render_graph/*.rs` describe the layout before
+the extraction.
+
+| Concern | Location |
+| --- | --- |
+| Typed node API, `RenderGraph`, `PreparedRenderGraph`, `PlanCtx`, `GraphShaderParams`, `BindingResolver`, slot keys, pipeline keys | `crates/render-graph/src/runtime.rs` |
+| Plain-data `GraphDesc`, `SchemaTable` (`pub(crate)`) | `crates/render-graph/src/runtime/desc.rs` |
+| `GraphError`, `UnsupportedFeature`, `validate()`, `extent_limit_errors()`, `validation_message()` | `crates/render-graph/src/runtime/validate.rs` |
+| `LowerCtx`, typed lowering, interners, scope machinery | `crates/render-graph/src/runtime/lower.rs` |
+| Pure `compile()` and `build_assembly()` (tests only) | `crates/render-graph/src/runtime/compile.rs` |
+| `TexRunState`, pure `expand()` (`expand` tests only) | `crates/render-graph/src/runtime/expand.rs` |
+| Backend contract: `GraphFormat`, `PhysicalImage`, `BufferAddressKind`, `BackendTypes`, `PreparationBackend`, `BindingLookup`, `FrameLookup`, `FrameBackend`, `IndexedIndirectArgs` | `crates/render-graph/src/backend.rs` |
+| Output vocabulary: `CommandBatch`, `IndirectRequest`, `DrawCallConfig`, `PushConstantBytes` | `crates/render-graph/src/commands.rs` |
+| `Addr`, `ReadAddr`, `ImmutableAddr`, `BindlessHandle`, `GPUWrite`, `PushConstantBlock` | `crates/render-graph/src/{addr,bindless,lib}.rs` |
+| Test-only desc builder and fake backend | `crates/render-graph/src/runtime/{test_desc,backend_tests}.rs` |
+| Dependency-closure test (no ash, vk-mem, SDL, shader-slang, renderer) | `crates/render-graph/tests/dependency_boundary.rs` |
+| Crate contracts | `crates/render-graph/AGENTS.md` |
+| Renderer backend impls, `validate_uploads`, `validate_indirect_layout` | `crates/renderer/src/renderer/graph_backend.rs` |
+| Renderer facade: re-export, `From<&Handle>` for slots and keys, `ToVk for GraphFormat` | `crates/renderer/src/renderer/render_graph.rs` |
+| `DrawIndexedIndirectCommand` | `crates/renderer/src/renderer/indirect.rs` |
+| Graph split codegen (`classify_graph_field`, `graph_split_def`) | `crates/cli/src/build_tasks.rs`, `crates/cli/templates/graph_split.rs.askama` |
+| Stub renderer for generated-code checks | `crates/cli/fixtures/check_crate/src/renderer/render_graph.rs` |
+| Public API compile harness | `crates/renderer/tests/render_graph_api_compile.rs`, `crates/renderer/fixtures/api_compile` |
+| Reference docs | `docs/render_graph.md`, `docs/testing.md` |
+
+### Lifecycle
+
+- `RenderGraph::new(resources, nodes)` lowers the typed nodes and runs
+  `validate`. It needs no renderer. It reports every logical error in one
+  `validation_message`.
+- `graph.prepare(&mut renderer)` checks texture extents against
+  `max_image_dimension_2d`, allocates one `PhysicalImage` per physical image
+  through `PreparationBackend::prepare_image`, and requires
+  `N: CompatibleWith<B>`. The sealed proof checks the backend's exact
+  indirect record type recursively through tuples, arrays, repeat, and optional.
+- `PreparedRenderGraph::execute(frame, &N::Frame)` checks every captured
+  buffer slot for liveness, builds `PlanCtx`, runs `GraphNode::plan`, and calls
+  `FrameBackend::submit(batch, on_submitted)`.
+- `FrameRenderer::submit` validates every upload destination and indirect
+  range before it queues work. A rejected batch returns `DrawError` before any
+  write, submission, or commit. Staged bytes are `MaybeUninit<u8>`.
+- `Renderer::draw_frame` calls `on_submitted` immediately after
+  `queue_submit2`, before it advances the flight slot and before
+  `queue_present_khr`. `on_submitted` installs the proposed texture cursors.
+
+Production execution is the `plan()` path. `compile()` and `expand()` have
+no callers outside their own test modules. `runtime.rs` marks `mod compile`,
+`mod desc`, `mod expand`, and `mod lower` with
+`cfg_attr(not(test), allow(dead_code, reason = ...))`; each reason names
+phase 3a. Every production `SchemaDesc` has `layout: None`, so
+`build_assembly` returns `AssemblyProgram::Deferred`. Execution assembles GPU
+structs through the generated `GraphShaderParams::assemble_input`.
+
+### Phase status
+
+| Phase | Status | Record |
+| --- | --- | --- |
+| 1 | Implemented | [`08_plain_data_graph/01_pure_core.md`](08_plain_data_graph/01_pure_core.md), [`01_review.md`](08_plain_data_graph/01_review.md) |
+| 1b | Implemented | [`01b_simplification.md`](08_plain_data_graph/01b_simplification.md) |
+| 2 | Partially implemented: P2.1 harness and part of P2.4 (`.with_push_constant`, `.with_param_bindings`, `GraphShaderParams::Input`). P2.2, P2.3, P2.5, P2.6 and typed list insertion are not started | [`02_schemas_and_compile_checks.md`](08_plain_data_graph/02_schemas_and_compile_checks.md) |
+| 2b | Implemented outside the phase plan: backend-neutral crate, backend traits, new/prepare/execute lifecycle, sealed `CompatibleWith`, `IndirectDrawNode`, upload and indirect preflight, `[N; K]` node arrays, 11 everyday examples migrated | [`02b_backend_neutral_crate.md`](08_plain_data_graph/02b_backend_neutral_crate.md) |
+| 3a, 3b, 3c | Not started | — |
+| 4 | Not started. `toon_link` uses the manual `FrameRenderer` API in both rendering modes | — |
+| 5, 6, 7 | Not started | — |
+
+### Ledger status
+
+Every row S1–S8 is open. `UnsupportedFeature` in `runtime/validate.rs`
+still has all seven phase-1 rejection variants, and `docs/render_graph.md`
+lists them. `BufferKind::Storage` and the upload-to-`Storage` allowance still
+exist; watercolor's stroke points use them (S2). Fixed-length `[N; K]` node
+arrays exist; setup-length draw lists do not (S4).
+
+### Consumers
+
+- Graph API (13 of 17 examples): `particles`, `watercolor`, `basic_triangle`,
+  `depth_texture`, `dragon`, `koch_curve`, `multi_mesh` (`[DrawNode<_>; 18]`),
+  `ray_marching`, `recipes`, `sdf_2d`, `serenity_crt`, `suzanne`, `viking_room`.
+- Manual `FrameRenderer` API (4): `toon_link` (the phase-4 target; 24 batches,
+  24 materials, 5 pipelines, 7 indexed-indirect runs), `gpu_picking` (the
+  deferred picking path; `PickingNode` exists and has no consumer),
+  `space_invaders`, `sprite_batch`.
+- Roc: `crates/cli/src/roc_codegen.rs` emits shader reflection only
+  (`docs/roc_shader_codegen.md`). No Roc graph API exists.
+
+### Landed outside the phase plan
+
+- The `mltrs-render-graph` crate and its five backend traits.
+- The GPU-free `new` → `prepare` → `execute` lifecycle and
+  `PreparedRenderGraph<N, B>` with backend-owned keepalives.
+- Sealed `CompatibleWith<B>` and `IndirectDrawNode<S, P, I>` over an opaque
+  `DrawIndexedIndirectCommand`.
+- Upload and indirect preflight in `FrameRenderer::submit`.
+- `[N; K]` as a node with frame `[N::Frame; K]`.
+- `ImmutableBufferBinding<T>` into `ReadBufferBinding<T>`.
+- Migration of the 11 everyday examples.
+- Roc shader reflection codegen, without a graph split or graph API.
+
+### Related records
+
+- `llm_notes/tech_debt.md` items 17 (picking as a second rendering path),
+  18 (copied slot keys and per-execute liveness checks), and 19
+  (`UploadNode::Frame = Vec<T>`).
+- `docs/render_graph.md` is the reference for the public API.
+  `docs/testing.md` describes the crate tests, the fake backend, and the
+  compile harness.
 
 ## Roc target update — 2026-09-10
 
@@ -49,6 +169,13 @@ The detailed phase-2 plan records compiler evidence and implementation gates.
 
 This update does not implement a Roc platform or settle scalar/array storage,
 callback dependency discovery, resize, or graph rebuild. Their existing gates remain.
+
+ANNOTATION (2026-09-20): Roc shader reflection codegen exists
+(`crates/cli/src/roc_codegen.rs`, `docs/roc_shader_codegen.md`). It emits
+reflection values only. The Roc graph API, the port proof, and
+constant-evaluation validation are not implemented. The crate extraction
+recorded in `08_plain_data_graph/02b_backend_neutral_crate.md` is the
+boundary a scripting platform would sit behind.
 
 ## Core restrictions and direction
 
@@ -103,8 +230,14 @@ Validation gaps in the tuple API that this design must close:
 - `GraphTex` is a bare index, not tied to its `GraphResources`; a token
   from another resource set aliases silently when the index is in range.
   Decision 4 closes this with graph-identity tokens.
+  ANNOTATION (2026-09-20): open. `GraphTex` is a bare `u32` minted by
+  `ResourcePlanner::texture`, and buffer slot keys are bare indices.
 - Execute-time expansion (`PlanCtx`) holds `&Renderer`, so repeat/optional
   expansion is not unit-tested.
+  ANNOTATION (2026-09-20): superseded. `PlanCtx` reaches the backend through
+  `BindingLookup` and `FrameLookup`, and the fake backend in
+  `crates/render-graph/src/runtime/backend_tests.rs` prepares and executes
+  graphs without Vulkan. The pure `expand()` path remains unwired.
 
 ## Design
 
@@ -116,6 +249,12 @@ live renderer handles or indices in `desc.rs`/`validate.rs`/`expand.rs`;
 formats become a graph-local enum the renderer maps, as
 `mltrs-slang-reflection` does for `ShaderStage`. This keeps the validator
 portable to the scripting language's const evaluator.
+
+ANNOTATION (2026-09-20): the pure modules live under
+`crates/render-graph/src/runtime/` in the `mltrs-render-graph` crate. All
+`desc.rs` items are `pub(crate)`. `tests/dependency_boundary.rs` checks that
+the crate's resolved dependency closure contains no renderer, ash, vk-mem,
+SDL, or shader-slang package.
 
 The description is a set of declaration tables plus an upload table and an
 ordered pass list. Every ID type (`TexId`, `BufferId`, `ImportId`,
@@ -132,6 +271,19 @@ description. `RenderGraph::new(renderer, resources, nodes)` lowers the typed
 nodes and collects live setup inputs internally. Setup verifies each live
 pipeline, uniform, and import against its declaration. The tables below are
 internal compiler structures, not a public builder API.
+
+ANNOTATION (2026-09-20): the three-part key identity is not implemented.
+Slot keys (`UniformSlot`, `StorageSlot`, `GpuOnlySlot`, `ImmutableSlot`,
+`SingletonSlot`) and `GraphTex` carry a bare index. `execute` re-checks each
+captured slot for liveness every frame instead (`tech_debt.md` item 18).
+Construction is two steps: `RenderGraph::new(resources, nodes)` needs no
+renderer; `graph.prepare(&mut renderer)` supplies device limits and
+allocation and returns the only type with `execute`. No setup check compares
+a live pipeline's uniform identity with the graph's source (decision 8).
+The `BufferDecl` in the tree has `capacity: Option<u32>` and
+`elem_size: Option<u32>`, no `elem_schema`, no `init`, and a fourth kind
+`Storage`. Imports are external sampled textures bound through
+`BindlessHandle<Sampler2D>` converted into `SampledTexBinding`.
 
 ```rust
 struct GraphDesc {
@@ -292,6 +444,14 @@ run during renderer setup. Typed execution prevents missing required inputs. Run
 array lengths, counts, limits, and the internal adapter invariants.
 Additional validations for parallel execution are outside this plan.
 
+ANNOTATION (2026-09-20): `RenderGraph::new` runs `validate` with no
+renderer. The device check (`extent_limit_errors` against
+`maxImageDimension2D`) runs in `prepare`, before allocation. `GraphError`
+has 28 variants: the 25 listed in `01_pure_core.md` plus
+`PrevReadWithoutWrite`, `TextureExtentZero`, and `TextureExtentTooLarge`.
+Upload payload sizes and indirect ranges are checked again at execute time
+by `FrameRenderer::submit` against live buffer metadata.
+
 Checks ported from the tuple API:
 
 - undeclared or out-of-range ID, for every table
@@ -407,6 +567,16 @@ user before proceeding. See the follow-up at the end of this document.
   Applications choose practical counts and test their cost.
   A limit for expanded command counts or memory use is outside this plan.
 
+ANNOTATION (2026-09-20): `compile()` and `expand()` exist and are tested in
+`crates/render-graph/src/runtime/{compile,expand}.rs`, and nothing outside
+their test modules calls them. Production execution is `GraphNode::plan`
+through `PlanCtx`. Every production schema has no layout, so
+`build_assembly` returns `Deferred`; execution assembles GPU structs through
+the generated `assemble_input`. The commit rule is implemented:
+`PreparedRenderGraph::execute` passes the cursor install as `on_submitted`,
+and `Renderer::draw_frame` calls it after `queue_submit2` and before
+presentation. Acquisition skips and pre-submit errors do not call it.
+
 #### Synchronization policy by feature phase
 
 Use the existing single ordered GPU submission. Account for read-after-write
@@ -455,6 +625,7 @@ trait GraphNode {
 // For node tuples: (A, B)::Frame = (A::Frame, B::Frame).
 // OptionalNode<B>::Frame = Option<B::Frame>.
 // RepeatNode<B>::Frame = (LoopCount, B::Frame).
+// Implemented 2026-09-17: [N; K]::Frame = [N::Frame; K], no length cap.
 
 // Illustrative: complete inputs are required at the execute call.
 graph.execute(frame, &(compute_data, raster_data))?;
@@ -489,6 +660,19 @@ graph.execute(frame, &(compute_data, raster_data))?;
   params may use the params struct itself as `Data`; both paths share metadata.
 - Extend compile-check fixtures with positive and negative typed API cases.
   Codegen remains additive while the executor changes beneath the facade.
+
+ANNOTATION (2026-09-20): `graph_split.rs.askama` emits, per params or push
+type, `*Data` (only when the type has both data and binding fields),
+`*Bindings` (only when it has binding fields) with `GraphParamBindingSet` and
+`GraphBindingSet` impls, `*Input` (always), the `GraphShaderParams` impl, and
+`GraphBindingSet` for `*Input`. Degenerate forms: `Data = Self` with no
+bindings, `Data = ()` with no data fields, `Bindings = ()` with no bindings.
+Push-constant types are in the params set, so a push block with a resource
+field gets a split; types reached only through `ImmutableAddr` do not. No
+layout metadata, offsets, sizes, or field tables are emitted, and no
+fingerprint code exists. The `check_crate` stub mirrors the crate traits by
+hand. The compile harness in `crates/renderer/tests/render_graph_api_compile.rs`
+holds 15 positive and 23 negative cases against the real renderer.
 
 ### 5. Renderer changes
 
@@ -533,6 +717,14 @@ graph.execute(frame, &(compute_data, raster_data))?;
   referenced by live imported tables.
   See the [Vulkan descriptor binding rules](https://docs.vulkan.org/refpages/latest/refpages/source/VkDescriptorBindingFlagBits.html).
 
+ANNOTATION (2026-09-20): the renderer reaches the graph through the backend
+traits in `crates/renderer/src/renderer/graph_backend.rs`, not through
+direct graph access to `Renderer`. `FrameRenderer::submit` validates every
+upload destination and indirect range before queueing. Graph-target raster
+passes, one ordered step list, the one-call initialization API, and the
+resize and teardown items are not implemented. Indexed indirect draws reach
+the graph through `IndirectDrawNode` and the sealed `CompatibleWith` proof.
+
 ## Phases
 
 Each phase lands green: `cargo check --workspace --all-targets`,
@@ -561,21 +753,29 @@ unresolved frame-data ABI. Decision 5's resize, extent, attachment, and
 final-output rules gate phase 5. Each owning phase settles its required
 subchoices before it removes the corresponding rejection.
 
-1. **Pure core beneath typed nodes.** Extract `desc`, `validate`, `compile`,
+Status markers dated 2026-09-20 follow each phase title.
+
+1. **Pure core beneath typed nodes** — implemented. Extract `desc`, `validate`, `compile`,
    and `expand`. Keep `RenderGraph<N>` and `N::Frame`. Lower stock/generated
    nodes into internal IDs and access declarations. Port schedule tests and
    test pure expansion without a renderer. Initially support fixed textures,
    direct compute, and one main raster output. Add ownership and uniform-source
    analysis. Test rejection of later-phase paths. No public raw description API.
    Detailed plan: [`08_plain_data_graph/01_pure_core.md`](08_plain_data_graph/01_pure_core.md).
-2. **Additive schemas and compile checks.** Keep generated split types and
+   Phase 1b, a simplification pass, is recorded in
+   [`08_plain_data_graph/01b_simplification.md`](08_plain_data_graph/01b_simplification.md).
+2. **Additive schemas and compile checks** — partially implemented (P2.1 and
+   part of P2.4). Keep generated split types and
    traits. Add layout metadata and automatic input adapters. Test omitted frame
    elements, incomplete resource bindings, and invalid buffer operations as
    compile failures. Positive controls must compile. Prototype typed list insertion
    and uniform ownership contracts before executor work depends on them.
    Detailed plan and accepted API decisions:
    [`08_plain_data_graph/02_schemas_and_compile_checks.md`](08_plain_data_graph/02_schemas_and_compile_checks.md).
-3. **Executor migration without tuple deletion.** Each sub-phase lands green.
+   Phase 2b, the backend-neutral crate extraction and the everyday-example
+   migration, landed outside this list and is recorded in
+   [`08_plain_data_graph/02b_backend_neutral_crate.md`](08_plain_data_graph/02b_backend_neutral_crate.md).
+3. **Executor migration without tuple deletion** — not started. Each sub-phase lands green.
    - **3a — Particles and executor core.** Settle scalar storage/padding rules.
      Wire typed lowering and assembly over staged writes. Fix submission-aware
      commits and cross-frame WAR ordering. Migrate initialization and graph identity.
@@ -592,24 +792,24 @@ subchoices before it removes the corresponding rejection.
    - **3c — Internal cleanup.** Remove obsolete scheduling/recording adapters only
      after parity tests pass. Retain the public tuple API, generated split types,
      and legacy picking compatibility. Do not migrate the picking example.
-4. **Raster containers and Toon_link lists.** Add `RasterNode<Draws>` and
+4. **Raster containers and Toon_link lists** — not started. Add `RasterNode<Draws>` and
    `DrawList<Params, Push>` with typed insertion and erased internal runs.
    Support one main target initially. Callback-dependent validation is a separate follow-up task.
    Complete that task before enabling decision-9 initializers for material/draw tables.
    Migrate Toon_link's shared uniform, indexed indirect
    arguments, and per-run pointers. Track indirect/table accesses now. Remove
    S4 and S5. Do not add per-element frame vectors or GPU-driven count commands.
-5. **Multiple raster nodes, attachments, and interleaving.** Settle decision 5.
+5. **Multiple raster nodes, attachments, and interleaving** — not started. Settle decision 5.
    Add offscreen color/depth, window size classes, ordered recording, retirement,
    and pipeline compatibility. Add all required conservative barriers now.
    Test a shadow pass followed by lighting. Also test raster-to-compute-to-raster
    ordering and an internal rendering split that preserves attachments and MSAA.
    Exercise resize and final-output policy. Remove S6 and S7. Keep picking unchanged.
-6. **Derived barriers.** Optimize the correct phase-5 access model using last
+6. **Derived barriers** — not started. Optimize the correct phase-5 access model using last
    writers and outstanding readers. Test physical aliases, executed control flow,
    and cross-frame reuse. Keep `VKR_CONSERVATIVE_BARRIERS` for comparison.
    Remove S8 after all supported paths work with derivation enabled and disabled.
-7. **Documentation and completion audit.** Rewrite `docs/render_graph.md` for
+7. **Documentation and completion audit** — not started. Rewrite `docs/render_graph.md` for
    the typed facade and erased core. Annotate 07 as extended by this plan,
    not as evidence that tuple inputs were removed. Complete the final ledger audit.
 
@@ -618,25 +818,37 @@ and graph-owned picking are not hidden completion gates for these phases.
 
 ## Critical files
 
-- `crates/renderer/src/renderer/render_graph.rs` — rewritten as the
-  builder + executor facade.
-- `crates/renderer/src/renderer/render_graph/{desc,validate,expand,compile}.rs`
-  — new pure core (absorbs `schedule.rs`).
+Paths as of 2026-09-20.
+
+- `crates/render-graph/src/runtime.rs` — typed node API, `RenderGraph`,
+  `PreparedRenderGraph`, `PlanCtx`; the executor migration of phase 3 lands
+  here.
+- `crates/render-graph/src/runtime/{desc,validate,lower,compile,expand}.rs`
+  — the pure core.
+- `crates/render-graph/src/backend.rs`, `commands.rs` — the backend
+  contract and the command vocabulary the renderer consumes.
+- `crates/renderer/src/renderer/graph_backend.rs` — backend trait impls,
+  upload and indirect preflight.
+- `crates/renderer/src/renderer/render_graph.rs` — compatibility facade.
 - `crates/renderer/src/renderer.rs` — record path (raster passes, merged
   steps), indexed indirect recording, and rendering-scope splitting.
 - `crates/renderer/src/renderer/{storage_texture,texture,descriptor_heap}.rs`
   — remove/recreate paths, in-place descriptor rewrite, slot free list.
-- `crates/cli/src/build_tasks.rs`, `crates/cli/templates/*.askama` —
-  additive schema emission and typed input adapters.
+- `crates/cli/src/build_tasks.rs`, `crates/cli/templates/graph_split.rs.askama`
+  — additive schema emission and typed input adapters.
 - `crates/cli/fixtures/check_crate/src/renderer/render_graph.rs` — stub.
+- `crates/renderer/tests/render_graph_api_compile.rs`,
+  `crates/renderer/fixtures/api_compile` — compile-check harness.
 - `examples/{particles,watercolor,toon_link}/src/main.rs` — migrations.
+  `toon_link` remains on the manual API.
 
 ## Reuse
 
-- `TexRunState` cursor model and its tests.
-- `StagedWrites` apply-after-wait mechanism.
-- `queue_dispatch_raw`, the private `draw_frame`, the by-index buffer
-  accessors.
+- `TexRunState` cursor model and its tests (`runtime/expand.rs`).
+- The apply-after-wait upload mechanism: `CommandBatch::visit_writes` and
+  `validate_uploads` in `graph_backend.rs`.
+- `queue_dispatch_raw`, the private `draw_frame`, and the by-index buffer
+  accessors behind `BindingLookup` and `FrameLookup`.
 - `cmd_barrier2`/`cmd_memory_barrier2` and the house layout-transition
   style.
 - The field classification in `build_tasks.rs` (`classify_graph_field`) —
@@ -652,10 +864,14 @@ and graph-owned picking are not hidden completion gates for these phases.
   forced swapchain recreation preserves version-cursor parity across the
   aborted frame. Test valid identical shared uniforms and rejection of a
   second differing assembly source.
-- Phase 4: toon_link interactive parity (all 11 materials, egui debug
+- Phase 4: toon_link interactive parity (all 24 materials, egui debug
   window) and sweep. Test empty, single-run, and multi-run lists with one fixed
   frame type. Check setup-uploaded args, offsets, nested table dependencies, and
   shared uniform assembly. Assert indirect/table access scopes.
+  > CORRECTION (2026-09-20): this bullet said 11 materials. The converted
+  > manifest (`examples/toon_link/assets/link/converted/link.manifest.json`)
+  > lists 24 materials, drawn as 24 batches through 5 pipelines in 7 runs.
+  > Decision 13's "11 materials" bullet is corrected the same way.
 - Phase 5: shadow/depth and offscreen interleaving examples under sweep; window resize under
   validation; the `VKR_INJECT_VALIDATION_FAULT` self-test still fires. Cover
   attachment writes to compute reads, compute writes to raster reads, depth
@@ -708,6 +924,13 @@ version before the latest version-producing write, not always the previous
 frame, and `Mutate` does not rotate it. Source inspection found no
 concrete missing-initialization case in these paths.
 
+ANNOTATION (2026-09-20): not implemented. No `BufferInit` exists. The
+renderer's one-call create-and-initialize APIs are `create_indirect_buffer`
+and `create_singleton_buffer`. GPU-only and immutable buffers use two calls
+(`create_gpu_only_buffer` + `write_gpu_only_all_frames`,
+`create_immutable_buffer` + `write_immutable_all_frames`). Graph textures
+clear at `prepare` through `PreparationBackend::prepare_image`.
+
 ### 2. External resources and transitive references
 
 External resource support is limited to bindless sampled textures that
@@ -737,6 +960,11 @@ storage/count representation; initialization of all copied bytes including paddi
 Metadata must describe data and GPU layouts, nested types, and resource kinds.
 These storage choices must not weaken the typed completeness contract.
 
+ANNOTATION (2026-09-20): still unresolved. `UploadNode::Frame` is `Vec<T>`
+(`tech_debt.md` item 19), which is the copy side of the copy/borrow
+subchoice. Staged bytes are `MaybeUninit<u8>`, so padding is never read as
+initialized. No schema metadata is generated.
+
 ### 4. Resource identity and ownership
 
 Each graph gets an incrementing graph ID.
@@ -760,6 +988,12 @@ Setup compares that identity with the uniform source that the graph writes.
 Example: player and security cameras share one schema but use different uniform resources.
 Their keys must differ, and setup must reject a pipeline/source mismatch.
 Reason: schema compatibility does not establish resource identity.
+
+ANNOTATION (2026-09-20): not implemented. Keys carry a bare index and no
+graph ID or generation. `PreparedRenderGraph::execute` checks every captured
+slot for liveness each frame through `FrameLookup` (`tech_debt.md` item 18).
+Pipeline keys carry the push interface in their type (`NoPush` or
+`PushBlock<B>`) but not a uniform identity.
 
 ### 5. Attachments and window resize
 
@@ -822,7 +1056,7 @@ Update (2026-09-07): enforcement lands in phase 1, not phase 3a. Two nodes
 that stage distinct data sources into one uniform slot are an error even when
 the staged data is identical. Watercolor's shared blur uniform splits into two
 slots (and two pipelines) in phase 1. See
-[`08_plain_data_graph/phase_1.md`](08_plain_data_graph/phase_1.md).
+[`08_plain_data_graph/01_pure_core.md`](08_plain_data_graph/01_pure_core.md).
 
 ### 7. Ordered steps with implicit synchronization
 
@@ -987,6 +1221,11 @@ entire structure in types.
 Decision 12 makes required frame-input presence a type-level contract. Dynamic
 counts, array lengths, and internal byte-layout invariants still need runtime checks.
 
+ANNOTATION (2026-09-20): the Rust builder exists. The typestate builders
+`.with_param_bindings` and `.with_push_constant` reject an incomplete
+command at compile time. The Roc side has reflection codegen and no graph
+builder.
+
 ### 11. Invalid frame values cause controlled shutdown
 
 Treat invalid frame values as application programming errors.
@@ -1011,6 +1250,11 @@ to invalid values that types cannot exclude. Phase 3a tests that error path
 before acquisition, uploads, submission, or state commit.
 An expensive repeat count is not an invalid value solely because expansion costs too much.
 Limits for expansion cost are outside v2. Applications choose and test their repeat counts.
+
+ANNOTATION (2026-09-20): partially implemented. An oversized upload, a
+dropped buffer slot, or an invalid indirect range makes `execute` return
+`DrawError` before any write, submission, or cursor commit. The phase-3a
+tests for dynamic counts and group values are pending.
 
 ### 12. Typed tuple facade with an erased internal representation
 
@@ -1112,6 +1356,13 @@ example. Preserve existing renderer picking behavior and compatibility only.
 Also defer GPU-produced argument/count commands and arbitrary dynamic frame contracts.
 Future AAA extensions must preserve completeness or introduce a separately reviewed contract.
 
+ANNOTATION (2026-09-20): the tuple facade is retained. `[N; K]` is a node
+with frame `[N::Frame; K]`; `examples/multi_mesh` holds 18 draws that way.
+`.with_push_constant(*Input)` exists on every command form.
+`DrawList<Params, Push>`, `with_uniform`, `raster(targets, draws)`, and
+`build_graph` do not exist. A fixed-length array requires the element count
+at compile time; the setup-length list this decision describes remains open.
+
 ### 13. Incremental tuple migration and proof of completeness
 
 Use the phases above: pure core, additive codegen, particles/watercolor migration,
@@ -1148,7 +1399,8 @@ Testing strategy:
   repeats, optional brush uploads, state commit outcomes, and dynamic-input shutdown.
   Assert that successful submission commits before presentation and any resize reset.
   Presentation failure must not reverse that commit.
-- Verify Toon_link's 11 materials, shared uniform, nested immutable tables,
+- Verify Toon_link's 24 materials (the manifest count; an earlier draft said
+  11), shared uniform, nested immutable tables,
   indirect ranges, and per-run pointers through interactive parity and sweep.
 - Verify shadow depth sampling, multiple raster nodes, interleaving, rendering
   splits, preserved attachment contents, resize, and final MSAA resolve.
@@ -1164,19 +1416,27 @@ Use pure source-ownership checks rather than requiring Rust lifetime branding.
 Verify the generated combined push inputs with compile-check fixtures before executor integration.
 None may restore incremental missing-value assembly.
 
-### Evidence locations (current working tree)
+### Evidence locations
 
-- [particles setup and bindings](../../examples/particles/src/main.rs#L49-L104).
-- [watercolor setup and graph](../../examples/watercolor/src/main.rs#L330-L628)
-  and [frame data](../../examples/watercolor/src/main.rs#L748-L854).
-- [toon_link shared pipelines](../../examples/toon_link/src/main.rs#L784-L798),
-  [run recording](../../examples/toon_link/src/main.rs#L956-L969),
-  [initialized tables and args](../../examples/toon_link/src/main.rs#L1049-L1072),
-  and [one frame uniform write](../../examples/toon_link/src/main.rs#L1137-L1140).
-- [transitive table fields](../../examples/toon_link/src/generated/shader_atlas/toon_link.rs#L76-L108).
-- [graph image initialization](../../crates/renderer/src/renderer/render_graph.rs#L1389-L1404),
-  [main attachments](../../crates/renderer/src/renderer.rs#L2060-L2105),
-  and [hot-reload interface check](../../crates/renderer/src/renderer.rs#L5168-L5188).
+Search by symbol; line numbers move.
+
+- `examples/particles/src/main.rs`: `create_gpu_only_buffer`,
+  `write_gpu_only_all_frames`, `SimParamsBindings`, `RenderParamsBindings`.
+- `examples/watercolor/src/main.rs`: `type WcGraph`, `blur_h_pipeline`,
+  `blur_v_pipeline`, the `ResourcePlanner` declarations in `setup`, and the
+  frame tuple passed to `graph.execute` in `draw`.
+- `examples/toon_link/src/main.rs`: `MaterialTable`, `build_materials`,
+  `queue_run`, `create_indirect_buffer`, `create_singleton_buffer`, and the
+  `ToonLinkParams` write inside `submit_draws`.
+- `examples/toon_link/src/generated/shader_atlas/toon_link_modern.rs`:
+  `ModernMultiDraw` → `ModernIndividualDraw` → `ModernMaterial` (the
+  transitive table fields).
+- `crates/renderer/src/renderer/graph_backend.rs`:
+  `PreparationBackend::prepare_image` (graph image creation and clear),
+  `validate_uploads`, `validate_indirect_layout`.
+- `crates/renderer/src/renderer.rs`: `draw_frame` (submission and the
+  `on_submitted` call), the main attachment setup, and
+  `assert_shader_interface_unchanged`.
 
 ## Follow-up after this plan: initialization assurance
 
@@ -1220,6 +1480,8 @@ Reason: the type describes permitted data. The resource identity identifies the 
 The setup check compares resource identities before execution.
 The type still constrains the resource interface. The identity distinguishes individual resources with that interface.
 
+Status (2026-09-20): not implemented. See the decision-4 annotation.
+
 ### 2. Defer validation of dependencies discovered by setup callbacks
 
 Decision: this work is outside the initial implementation.
@@ -1255,6 +1517,11 @@ Decision 5 still owns that choice. Preserve fixed-size resource state across res
 Test successful submission followed by presentation failure and by resource replacement.
 Test acquisition, recording, and submission failures without a graph-state commit.
 
+Status (2026-09-20): implemented. `FrameBackend::submit` takes an
+`on_submitted` callback; `Renderer::draw_frame` calls it after
+`queue_submit2` and before `queue_present_khr`. The fake backend tests cover
+submission-time commits. Resize replacement resets are phase 5.
+
 ### 4. Upload brush points through an Immutable buffer
 
 Decision: migrate watercolor's brush points to `Immutable` in phase 3b.
@@ -1275,6 +1542,10 @@ A material table can use `Singleton` when its contents remain fixed after setup.
 Reason: these three uses have different write permissions and lifetimes.
 The brush does not require a new buffer kind. The name `Immutable` describes the restriction on GPU writes.
 Test valid brush uploads and rejection of frame uploads to the other two kinds.
+
+Status (2026-09-20): not done. Watercolor's stroke points use
+`create_storage_buffer`, `StorageSlot`, and `upload(...)`.
+`BufferKind::Storage` remains in the description (ledger S2).
 
 ### 5. A typed scope owns one uniform source
 
@@ -1332,6 +1603,10 @@ Potential follow-up: optimize unused work or report it through development-time 
 For example, a warning could identify a uniform that receives data but has no consumers.
 The developer could then remove that source explicitly if the application does not need it.
 Neither automatic removal nor these warnings are implementation requirements for this plan.
+
+Status (2026-09-20): `with_uniform` is not implemented. Each command names
+its uniform buffer as a constructor argument. `validate` accepts a
+`UniformDecl` with no consumers and checks its bindings (phase 1).
 
 ### 6. Preserve existing optional behavior
 
@@ -1425,16 +1700,20 @@ Each owning phase records the tests and implementation that close its row.
 If implementation needs another temporary rejection, add a row and assign
 an owning phase before merging that rejection.
 
-| ID | Temporary rejection | Phase that removes it | Required evidence |
-| --- | --- | --- | --- |
-| S1 | V2 frame-data schemas or ingestion that require unresolved scalar padding or mixed data/resource layout rules | 3a | Generated data/GPU layout metadata, safe byte assembly, mixed-field/padding tests, and particles migration |
-| S2 | Frame uploads and runtime array values | 3b | Array schema/count checks, current-slot Immutable brush uploads, rejection of GpuOnlyFlight/Singleton frame uploads, shorter-upload behavior, and watercolor's upload coupled to `When` |
-| S3 | Migrated core paths beyond the 3a subset | 3b | Typed shared sources, repeat, optional groups, and existing draw paths. Preserve legacy picking compatibility without redesign |
-| S4 | Typed setup-length draw lists and per-run push bindings | 4 | Toon_link migration, fixed frame type across list lengths, typed insertion, and indexed indirect range/access checks |
-| S5 | Setup tables that contain references to graph buffers or imported textures | 4, after the callback-validation follow-up | Complete the deferred validation design. Toon_link's material/draw tables initialize correctly. Verify dependency closure, reference ownership, lifetimes, and applicable backing allocations |
-| S6 | Offscreen color/depth targets, dependent draw barriers, and pass orders beyond compute followed by one unconditional main raster pass | 5 | Offscreen example, attachment/version and pipeline checks, interleaving barriers, attachment preservation across internal rendering boundaries, and tests for the final output policy |
-| S7 | `Window` and `WindowDiv` graph textures | 5 | Resize, zero-extent, rounding, history policy, and descriptor/resource lifetime tests |
-| S8 | Derived synchronization mode | 6 | All supported command types pass hazard tests and sweep with derivation enabled and disabled |
+| ID | Temporary rejection | Phase that removes it | Required evidence | Status (2026-09-20) |
+| --- | --- | --- | --- | --- |
+| S1 | V2 frame-data schemas or ingestion that require unresolved scalar padding or mixed data/resource layout rules | 3a | Generated data/GPU layout metadata, safe byte assembly, mixed-field/padding tests, and particles migration | Open. `GroupSourceValue` rejected; no layout metadata emitted |
+| S2 | Frame uploads and runtime array values | 3b | Array schema/count checks, current-slot Immutable brush uploads, rejection of GpuOnlyFlight/Singleton frame uploads, shorter-upload behavior, and watercolor's upload coupled to `When` | Open. `BufferKind::Storage` and upload-to-`Storage` remain; watercolor stroke points use them |
+| S3 | Migrated core paths beyond the 3a subset | 3b | Typed shared sources, repeat, optional groups, and existing draw paths. Preserve legacy picking compatibility without redesign | Open. Production runs `plan()`; `compile`/`expand` unwired |
+| S4 | Typed setup-length draw lists and per-run push bindings | 4 | Toon_link migration, fixed frame type across list lengths, typed insertion, and indexed indirect range/access checks | Open. `[N; K]` arrays and `IndirectDrawNode` exist; no setup-length list; toon_link on the manual API |
+| S5 | Setup tables that contain references to graph buffers or imported textures | 4, after the callback-validation follow-up | Complete the deferred validation design. Toon_link's material/draw tables initialize correctly. Verify dependency closure, reference ownership, lifetimes, and applicable backing allocations | Open |
+| S6 | Offscreen color/depth targets, dependent draw barriers, and pass orders beyond compute followed by one unconditional main raster pass | 5 | Offscreen example, attachment/version and pipeline checks, interleaving barriers, attachment preservation across internal rendering boundaries, and tests for the final output policy | Open. `ColorAttachmentUsage`, `DepthAttachmentUsage`, `OffscreenTargets`, `MultipleRasterPasses`, `RasterInWhen` rejected |
+| S7 | `Window` and `WindowDiv` graph textures | 5 | Resize, zero-extent, rounding, history policy, and descriptor/resource lifetime tests | Open. `WindowSizeClass` rejected; `ResourcePlanner::texture` only mints `Fixed` |
+| S8 | Derived synchronization mode | 6 | All supported command types pass hazard tests and sweep with derivation enabled and disabled | Open. Barrier templates exist only in the unwired `compile.rs` |
+
+The rejection variants live in `UnsupportedFeature` in
+`crates/render-graph/src/runtime/validate.rs`, and `docs/render_graph.md`
+lists them under "Build-time validation".
 
 Before completing phase 7:
 

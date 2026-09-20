@@ -2,6 +2,19 @@
 
 * Now
 - [ ] render graph
+  - [ ] finish 08 render graph plan
+  - [ ] convert the remaining examples
+    - [ ] sprite batch
+      - immutable buffer upload
+    - [ ] space invaders
+      - per-frame vertex count
+        need to change # of sprites per frame
+    - [ ] gpu picking
+      generalize readback buffer
+    - [ ] toon link
+      - potentially wants variable-length draw lists (rather than [T; K] arrays)
+      - we may want this anyway for Roc
+  - [ ] use it in the roc example
 
 - [-] get toon link animations working
   - [X] convert files

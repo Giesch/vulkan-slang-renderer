@@ -14,6 +14,13 @@ Cleanup commit `ff5b9e2` passed 111 renderer tests and repository hooks, includi
 CLI tests, shader compilation, workspace checks, Clippy, and formatting. No
 visual sweep was rerun during cleanup or this documentation reconciliation.
 
+Location note (2026-09-20): every path in this record predates the crate
+extraction in `02b_backend_neutral_crate.md`.
+`crates/renderer/src/renderer/render_graph/{desc,validate,lower,compile,expand,test_desc}.rs`
+are `crates/render-graph/src/runtime/{...}.rs`, and the facade items in
+`render_graph.rs` are in `crates/render-graph/src/runtime.rs`. `build_tasks.rs`
+paths are unchanged.
+
 ## Scope note
 
 The merge base `50c8037` contains no render graph. The branch lands the 07
