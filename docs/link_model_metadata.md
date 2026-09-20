@@ -6,12 +6,12 @@ Each joint exports `scale_compensate`, the boolean value of the JNT1
 no-inherit-scale flag (`no_inherit_scale != 0`).
 
 The shared Rust types are `gx::model_manifest::ScalingRule`,
-`Skeleton::scaling_rule: Option<ScalingRule>`, and
-`SkeletonJoint::scale_compensate: Option<bool>`. Both optional fields deserialize
-missing metadata as `None` and omit `None` when serialized. Old version-1 model
-manifests remain readable for static rendering. Missing metadata does not mean
-Basic scaling or disabled compensation; animation consumers must validate their
-required convention and require explicit joint flags.
+`Skeleton::scaling_rule: ScalingRule`, and
+`SkeletonJoint::scale_compensate: bool`. Both fields are required; manifests
+missing either field fail deserialization. Regenerate manifests produced before
+scaling metadata was exported with `just toon_link convert-link`. The model
+manifest version remains 1. Animation consumers must validate their required
+scaling convention.
 
 For the extracted `cl.bdl`, INF1's low flag nibble is 2 (Maya). There are 42
 joints, with compensation enabled on 12. Every bind scale remains exactly
@@ -29,7 +29,7 @@ just toon_link link-verify-p3
 cargo test -p gx -p convert-link -- --include-ignored
 ```
 
-The schema tests cover old metadata absence and explicit values for every rule
+The schema tests reject missing metadata and cover explicit values for every rule
 and both compensation flags. The real `real_bake_and_manifest` test checks Maya,
 42 joints, 12 enabled flags, exact per-joint source mapping, and unit bind scales.
 

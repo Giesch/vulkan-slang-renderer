@@ -1017,7 +1017,7 @@ mod tests {
             materials,
             batches,
             skeleton: mm::Skeleton {
-                scaling_rule: None,
+                scaling_rule: mm::ScalingRule::Basic,
                 joints: vec![],
             },
         }

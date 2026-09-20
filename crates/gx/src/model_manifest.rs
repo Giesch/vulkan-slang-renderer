@@ -548,17 +548,15 @@ pub enum ScalingRule {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skeleton {
-    /// Absent in older manifests; absence does not imply Basic.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scaling_rule: Option<ScalingRule>,
+    /// INF1 joint matrix scaling convention.
+    pub scaling_rule: ScalingRule,
     pub joints: Vec<SkeletonJoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkeletonJoint {
-    /// JNT1 no-inherit-scale flag. Absent in older manifests, not implicitly false.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scale_compensate: Option<bool>,
+    /// JNT1 no-inherit-scale flag.
+    pub scale_compensate: bool,
     pub name: String,
     /// Parent joint index, or -1 for the root.
     pub parent: i32,
@@ -720,15 +718,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn old_skeleton_metadata_remains_unknown() {
-        let json =
-            r#"{"joints":[{"name":"root","parent":-1,"t":[0,0,0],"r_s16":[0,0,0],"s":[1,1,1]}]}"#;
-        let skeleton: Skeleton = serde_json::from_str(json).unwrap();
-        assert_eq!(skeleton.scaling_rule, None);
-        assert_eq!(skeleton.joints[0].scale_compensate, None);
-        let back = serde_json::to_value(&skeleton).unwrap();
-        assert!(back.get("scaling_rule").is_none());
-        assert!(back["joints"][0].get("scale_compensate").is_none());
+    fn skeleton_requires_scaling_metadata() {
+        let joint = serde_json::json!({
+            "name": "root", "parent": -1, "t": [0, 0, 0],
+            "r_s16": [0, 0, 0], "s": [1, 1, 1], "scale_compensate": false
+        });
+        let missing_rule = serde_json::json!({ "joints": [joint.clone()] });
+        let error = serde_json::from_value::<Skeleton>(missing_rule).unwrap_err();
+        assert!(error.to_string().contains("missing field `scaling_rule`"));
+
+        let mut missing_flag = serde_json::json!({
+            "scaling_rule": "MAYA", "joints": [joint]
+        });
+        missing_flag["joints"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("scale_compensate");
+        let error = serde_json::from_value::<Skeleton>(missing_flag).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("missing field `scale_compensate`")
+        );
     }
 
     #[test]
@@ -740,9 +751,9 @@ mod tests {
         ] {
             for flag in [false, true] {
                 let skeleton = Skeleton {
-                    scaling_rule: Some(rule),
+                    scaling_rule: rule,
                     joints: vec![SkeletonJoint {
-                        scale_compensate: Some(flag),
+                        scale_compensate: flag,
                         name: "root".into(),
                         parent: -1,
                         t: [0.0; 3],
@@ -754,8 +765,8 @@ mod tests {
                 assert_eq!(json["scaling_rule"], spelling);
                 assert_eq!(json["joints"][0]["scale_compensate"], flag);
                 let back: Skeleton = serde_json::from_value(json).unwrap();
-                assert_eq!(back.scaling_rule, Some(rule));
-                assert_eq!(back.joints[0].scale_compensate, Some(flag));
+                assert_eq!(back.scaling_rule, rule);
+                assert_eq!(back.joints[0].scale_compensate, flag);
             }
         }
         assert!(serde_json::from_str::<ScalingRule>(r#""UNKNOWN""#).is_err());
@@ -789,9 +800,9 @@ mod tests {
                 index_count: 810,
             }],
             skeleton: Skeleton {
-                scaling_rule: Some(ScalingRule::Maya),
+                scaling_rule: ScalingRule::Maya,
                 joints: vec![SkeletonJoint {
-                    scale_compensate: Some(false),
+                    scale_compensate: false,
                     name: "link_root".into(),
                     parent: -1,
                     t: [0.0; 3],
