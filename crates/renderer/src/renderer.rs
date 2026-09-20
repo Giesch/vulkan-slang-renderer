@@ -30,6 +30,7 @@ use log::*;
 pub mod debug;
 mod platform;
 
+pub mod gpu_read;
 pub mod gpu_write;
 use gpu_write::write_to_gpu_buffer;
 pub(crate) use gpu_write::{GPUWrite, PushConstantBlock};
@@ -2780,6 +2781,104 @@ impl Renderer {
         }
 
         Ok(())
+    }
+
+    /// Run one diagnostic compute dispatch and decode every output element.
+    ///
+    /// This drains all GPU work, clears the current output slot, uploads inputs
+    /// through `prepare`, and blocks until the dispatch completes. It does not
+    /// acquire a swapchain image or advance frame/flight counters. The shader
+    /// must keep its writes within the output allocation. This is a diagnostic
+    /// path, not an asynchronous frame-loop readback API.
+    pub fn dispatch_readback<T: gpu_read::GPURead + GPUWrite, P: PushConstantBlock>(
+        &mut self,
+        pipeline: &PipelineHandle<Compute, PushBlock<P>>,
+        output: &GpuOnlyBufferHandle<T>,
+        group_count: [u32; 3],
+        prepare: impl FnOnce(&mut Gpu<'_>, Addr<T>) -> P,
+    ) -> anyhow::Result<Vec<T>> {
+        let limits = self
+            .physical_device_properties
+            .limits
+            .max_compute_work_group_count;
+        anyhow::ensure!(
+            group_count
+                .into_iter()
+                .zip(limits)
+                .all(|(count, limit)| count > 0 && count <= limit),
+            "GPU readback dispatch group count is zero or exceeds device limits"
+        );
+        let raw = self
+            .storage_buffers
+            .readback_buffer(output, self.flight_slot)?;
+        let byte_len = gpu_read::readback_byte_len(
+            output.len() as usize,
+            T::GPU_SIZE,
+            size_of::<T>(),
+            raw.byte_size,
+        )?;
+        anyhow::ensure!(
+            !raw.mapped_mem.is_null(),
+            "GPU readback buffer is not mapped"
+        );
+        let mapped = raw.mapped_mem.cast::<u8>();
+        let address = Addr::from_raw(raw.device_address);
+        self.drain_gpu()?;
+        // SAFETY: the checked range is inside a coherent mapped allocation;
+        // drain_gpu completed all previous accesses. Initialize even padding and
+        // fields that the shader might leave unwritten before exposing bytes.
+        unsafe { std::ptr::write_bytes(mapped, 0, byte_len) };
+        let push = prepare(
+            &mut Gpu {
+                flight_slot: self.flight_slot,
+                uniform_buffers: &mut self.uniform_buffers,
+                storage_buffers: &mut self.storage_buffers,
+                singleton_buffers: &self.singleton_buffers,
+            },
+            address,
+        );
+        let commands = [PendingComputeCommand::Dispatch {
+            pipeline_index: pipeline.index(),
+            group_count,
+            push_constants: Some(PushConstantBytes::from_value(&push)),
+        }];
+        // Reuse the drained current slot's command buffer. No temporary Vulkan
+        // resources need cleanup if recording or submission returns an error.
+        let command_buffer = self.command_buffers[self.flight_slot];
+        unsafe {
+            self.device
+                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
+            self.device.begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )?;
+        }
+        self.record_compute_commands(command_buffer, &commands);
+        cmd_memory_barrier2(
+            &self.device,
+            command_buffer,
+            vk::PipelineStageFlags2::COMPUTE_SHADER,
+            vk::AccessFlags2::SHADER_WRITE,
+            vk::PipelineStageFlags2::HOST,
+            vk::AccessFlags2::HOST_READ,
+        );
+        unsafe {
+            self.device.end_command_buffer(command_buffer)?;
+            let infos = [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
+            let submits = [vk::SubmitInfo2::default().command_buffer_infos(&infos)];
+            self.device
+                .queue_submit2(self.graphics_queue, &submits, vk::Fence::null())?;
+            // If waiting fails, do not read memory or free pending resources.
+            // The renderer still owns this command buffer and output allocation.
+            self.device.device_wait_idle()?;
+        }
+        // SAFETY: completion plus the shader-write -> host-read dependency makes
+        // initialized coherent mapped bytes readable. No typed GPU reference is
+        // created, and the decoder returns only owned values.
+        let bytes = unsafe { std::slice::from_raw_parts(mapped, byte_len) };
+
+        bytes.chunks_exact(T::GPU_SIZE).map(T::read_gpu).collect()
     }
 
     pub fn drain_gpu(&mut self) -> Result<(), anyhow::Error> {
