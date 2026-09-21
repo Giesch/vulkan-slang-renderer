@@ -67,6 +67,118 @@ else
     echo "PASS: generate.sh refuses a mismatched glibc floor"
 fi
 
+# An invalid graph must fail `roc check` while the app's constants evaluate,
+# with the same aggregated message the Rust validator reports. The fixture
+# lives beside the example so it shares its generated shader modules.
+echo ""
+echo "--- invalid graph ---"
+invalid_out=$(cd examples/basic-triangle && roc check invalid_graph.roc 2>&1)
+invalid_code=$?
+if [ $invalid_code -eq 0 ]; then
+    echo "FAIL(invalid graph): roc check accepted an invalid render graph"
+    failed=1
+elif ! echo "$invalid_out" | grep -q "render graph validation failed"; then
+    echo "FAIL(invalid graph): roc check failed for another reason:"
+    echo "$invalid_out" | sed 's/^/    /'
+    failed=1
+else
+    echo "PASS: an invalid render graph fails compilation"
+fi
+
+# A two-node graph consumes a value tuple in declaration order.
+echo ""
+echo "--- two draws ---"
+if (cd examples/basic-triangle && roc test two_draws.roc); then
+    echo "PASS: two draws of one pipeline pack both values"
+else
+    echo "FAIL(two draws): roc test failed"
+    failed=1
+fi
+
+# Exercise every supported tuple arity, mixed types, and nested composition.
+echo ""
+echo "--- tuple blueprints ---"
+if (cd examples/basic-triangle && roc test tuple_blueprints.roc); then
+    echo "PASS: tuple blueprints preserve declaration and payload order"
+else
+    echo "FAIL(tuple blueprints): roc test failed"
+    failed=1
+fi
+
+# Packing still verifies the generated packer's byte-length invariant.
+echo ""
+echo "--- invalid packer ---"
+packer_out=$(cd examples/basic-triangle && roc check invalid_packer.roc 2>&1)
+packer_code=$?
+if [ $packer_code -eq 0 ] || ! echo "$packer_out" | grep -q 'packed 1 bytes for a 192-byte uniform'; then
+    echo "FAIL(invalid packer): expected the uniform-size diagnostic:"
+    echo "$packer_out" | sed 's/^/    /'
+    failed=1
+else
+    echo "PASS: an invalid packer fails with the uniform-size diagnostic"
+fi
+
+# Local record collections infer selected frame types without draw annotations.
+echo ""
+echo "--- local graphs ---"
+if (cd examples/basic-triangle && roc test local_graphs.roc); then
+    echo "PASS: local graph selection retains the collection type"
+else
+    echo "FAIL(local graphs): roc test failed"
+    failed=1
+fi
+
+# Frame tuple arity and element types must match the blueprint at draw.
+for fixture in invalid_values invalid_selected_values invalid_extra_values invalid_value_type; do
+    echo ""
+    echo "--- $fixture ---"
+    values_out=$(cd examples/basic-triangle && roc check "$fixture.roc" 2>&1)
+    values_code=$?
+    if [ $values_code -eq 0 ]; then
+        echo "FAIL($fixture): roc check accepted an invalid frame tuple"
+        failed=1
+    elif ! echo "$values_out" | grep -qi "type mismatch" || ! echo "$values_out" | grep -q 'draw('; then
+        echo "FAIL($fixture): roc check failed for another reason:"
+        echo "$values_out" | sed 's/^/    /'
+        failed=1
+    else
+        echo "PASS: $fixture rejects an invalid frame tuple at draw"
+    fi
+done
+
+# A shader with a vertex input declared as a vertex-count pipeline must fail
+# type checking: `shader.vertex` is a nominal marker.
+echo ""
+echo "--- invalid vertex count ---"
+vc_out=$(cd examples/basic-triangle && roc check invalid_vertex_count.roc 2>&1)
+vc_code=$?
+if [ $vc_code -eq 0 ]; then
+    echo "FAIL(invalid vertex count): roc check accepted a vertex-input shader without vertices"
+    failed=1
+elif ! echo "$vc_out" | grep -qi "type mismatch"; then
+    echo "FAIL(invalid vertex count): roc check failed for another reason:"
+    echo "$vc_out" | sed 's/^/    /'
+    failed=1
+else
+    echo "PASS: a vertex-input shader without vertices fails compilation"
+fi
+
+# The Game constructor must tie the draw result to the collection's type.
+echo ""
+echo "--- invalid game ---"
+game_out=$(cd examples/basic-triangle && roc check invalid_game.roc 2>&1)
+game_code=$?
+if [ $game_code -eq 0 ]; then
+    echo "FAIL(invalid game): Game.new accepted mismatched draw and graphs types"
+    failed=1
+elif ! echo "$game_out" | grep -qi "type mismatch" || ! echo "$game_out" | grep -q 'Game.new'; then
+    echo "FAIL(invalid game): roc check failed for another reason:"
+    echo "$game_out" | sed 's/^/    /'
+    failed=1
+else
+    echo "PASS: Game.new rejects mismatched draw and graphs types"
+fi
+
 for roc_file in examples/*/main.roc; do
     example_dir=$(dirname "$roc_file")
     name=$(basename "$example_dir")
