@@ -2,11 +2,11 @@
 source: crates/cli/src/roc_codegen.rs
 expression: "synthetic_module(\"GeneratedSyntheticCompute\", \"ComputeReflection\", &compute)"
 ---
-# Generated; logical values are not GPU memory layouts.
-import pf.ShaderReflection
+import pf.ShaderReflection exposing [ComputeReflection]
 
+## Generated; logical values are not GPU memory layouts.
 GeneratedSyntheticCompute := {}.{
-    reflection : ShaderReflection.ComputeReflection
+    reflection : ComputeReflection
     reflection = {
         source_file_name: "synthetic.compute.slang",
         global_parameters: [],
