@@ -98,8 +98,7 @@ macro_rules! matrix {
         }
     };
 }
-matrix!(glam::Mat2, 4);
-matrix!(glam::Mat3, 9);
+// smaller matrices are deliberately unsupported
 matrix!(glam::Mat4, 16);
 
 pub(super) fn readback_byte_len(
