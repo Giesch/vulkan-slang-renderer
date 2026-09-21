@@ -5,7 +5,7 @@ use ash::vk;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, ShaderAtlasEntry};
 
 use super::gpu_write::PushConstantBlock;
-use super::vertex_description::{NoVertex, VertexDescription};
+use super::vertex_description::{NoVertex, VertexBytes, VertexDescription};
 use super::{
     ComputeShaderPipelineLayout, RawUniformBufferHandle, ShaderPipelineLayout,
     StorageTextureHandle, TextureHandle,
@@ -370,6 +370,9 @@ pub(super) enum VertexConfig<V> {
     // use a cmd_draw_indexed call, with prepared vertex and index buffers,
     // and an associated Vertex type
     VertexAndIndexBuffers(Vec<V>, Vec<u32>),
+    // use a cmd_draw_indexed call, with vertex bytes already packed to the
+    // shader entry's vertex layout
+    VertexBytes(Vec<u8>, Vec<u32>),
     // use cmd_draw_indexed calls against a shared mesh created with
     // Renderer::create_mesh (the index is into Renderer::meshes)
     SharedMesh(MeshIndex),
@@ -427,6 +430,19 @@ impl<'t, V: VertexDescription, P> IndexedPipelineConfig<'t, V, P> {
             storage_texture_handles: self.storage_texture_handles,
             raster_state: self.raster_state,
         }
+    }
+}
+
+impl<'t, P> IndexedPipelineConfig<'t, VertexBytes, P> {
+    /// Draw from vertex bytes already packed to the shader entry's vertex
+    /// layout. The byte count must be a nonzero multiple of that layout's
+    /// stride.
+    pub fn with_vertex_bytes(
+        self,
+        vertex_bytes: Vec<u8>,
+        indices: Vec<u32>,
+    ) -> PipelineConfig<'t, VertexBytes, DrawIndexed, P> {
+        self.into_config(VertexConfig::VertexBytes(vertex_bytes, indices))
     }
 }
 

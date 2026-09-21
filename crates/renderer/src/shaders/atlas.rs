@@ -22,11 +22,30 @@ pub trait ShaderAtlasRoot {
     fn init() -> Self;
 }
 
+/// The atlas of a game whose pipelines are all created at runtime from
+/// precompiled SPIR-V. No slang source dir exists, so nothing is watched.
+pub struct NoAtlas;
+
+impl ShaderAtlasRoot for NoAtlas {
+    const SHADERS_SOURCE_DIR: &'static str = "";
+
+    fn init() -> Self {
+        Self
+    }
+}
+
 pub trait ShaderAtlasEntry {
     // dev only
 
     // used in hot reload
     fn source_file_name(&self) -> &str;
+
+    /// Whether dev builds recompile this entry from its slang source. An
+    /// entry created from precompiled SPIR-V at runtime has no source to
+    /// watch and keeps its bytes in every build profile.
+    fn hot_reload(&self) -> bool {
+        true
+    }
 
     // used in hot reload to detect interface changes that require a rebuild
     fn reflection_json(&self) -> &ReflectionJson;

@@ -141,8 +141,9 @@ pub struct Renderer {
     total_frames: usize,
     #[cfg(debug_assertions)]
     shaders_source_dir: &'static std::path::Path,
+    /// `None` when the atlas has no slang source dir to watch
     #[cfg(debug_assertions)]
-    shader_watcher: shader_watcher::ShaderChanges,
+    shader_watcher: Option<shader_watcher::ShaderChanges>,
     #[cfg(debug_assertions)]
     old_pipelines: Vec<(
         usize,
@@ -282,6 +283,11 @@ fn create_resolve_images(
 }
 
 impl Renderer {
+    /// The window's width divided by its height.
+    pub fn aspect_ratio(&self) -> f32 {
+        self.aspect_ratio
+    }
+
     pub fn init(
         window: Window,
         env: EnvConfig,
@@ -294,7 +300,11 @@ impl Renderer {
         #[cfg(debug_assertions)]
         let shaders_source_dir = std::path::Path::new(shaders_source_dir);
         #[cfg(debug_assertions)]
-        let shader_watcher = shader_watcher::watch(shaders_source_dir)?;
+        let shader_watcher = if shaders_source_dir.as_os_str().is_empty() {
+            None
+        } else {
+            Some(shader_watcher::watch(shaders_source_dir)?)
+        };
 
         let render_scale = render_scale.clamp(0.25, 1.0);
 
@@ -1035,8 +1045,24 @@ impl Renderer {
     }
 
     pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> anyhow::Result<UniformBufferHandle<T>> {
-        let buffer_size = std::mem::size_of::<T>() as u64;
+        self.create_uniform_buffer_sized(std::mem::size_of::<T>() as u64)
+    }
 
+    /// A uniform buffer for an already-packed payload of exactly `byte_size`
+    /// bytes per frame, such as one written by the render graph from bytes.
+    pub fn create_uniform_buffer_bytes(
+        &mut self,
+        byte_size: u64,
+    ) -> anyhow::Result<UniformBufferHandle<UniformBytes>> {
+        anyhow::ensure!(byte_size > 0, "a uniform buffer needs a nonzero size");
+
+        self.create_uniform_buffer_sized(byte_size)
+    }
+
+    fn create_uniform_buffer_sized<T>(
+        &mut self,
+        buffer_size: u64,
+    ) -> anyhow::Result<UniformBufferHandle<T>> {
         let mut buffers_per_frame: [Option<RawUniformBuffer>; MAX_FRAMES_IN_FLIGHT] =
             [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
@@ -1581,6 +1607,28 @@ impl Renderer {
                 config.shader.source_file_name()
             );
         }
+        if let VertexConfig::VertexBytes(bytes, indices) = &config.vertex_config {
+            let stride = config
+                .shader
+                .vertex_binding_descriptions()
+                .first()
+                .map(|binding| binding.stride as usize)
+                .unwrap_or(0);
+            let whole_vertices =
+                stride > 0 && !bytes.is_empty() && bytes.len().is_multiple_of(stride);
+            anyhow::ensure!(
+                whole_vertices,
+                "pipeline for {} was given {} vertex bytes, not a nonzero multiple of the \
+                 vertex stride {stride}",
+                config.shader.source_file_name(),
+                bytes.len(),
+            );
+            anyhow::ensure!(
+                !indices.is_empty(),
+                "pipeline for {} was given empty index data by `.with_vertex_bytes()`",
+                config.shader.source_file_name()
+            );
+        }
 
         let pipeline_layout = ShaderPipelineLayout::create_from_atlas(
             &self.device,
@@ -1607,14 +1655,25 @@ impl Renderer {
         );
 
         let vertex_pipeline_config = match &config.vertex_config {
-            VertexConfig::VertexAndIndexBuffers(vertices, indices) => {
-                let (vertex_buffer, vertex_buffer_memory) = create_vertex_buffer(
-                    &self.allocator,
-                    &self.device,
-                    self.command_pool,
-                    self.graphics_queue,
-                    vertices,
-                )?;
+            VertexConfig::VertexAndIndexBuffers(_, indices)
+            | VertexConfig::VertexBytes(_, indices) => {
+                let (vertex_buffer, vertex_buffer_memory) = match &config.vertex_config {
+                    VertexConfig::VertexAndIndexBuffers(vertices, _) => create_vertex_buffer(
+                        &self.allocator,
+                        &self.device,
+                        self.command_pool,
+                        self.graphics_queue,
+                        vertices,
+                    )?,
+                    VertexConfig::VertexBytes(bytes, _) => create_vertex_buffer(
+                        &self.allocator,
+                        &self.device,
+                        self.command_pool,
+                        self.graphics_queue,
+                        bytes,
+                    )?,
+                    VertexConfig::SharedMesh(_) | VertexConfig::VertexCount => unreachable!(),
+                };
 
                 let (index_buffer, index_buffer_memory) = create_index_buffer(
                     &self.allocator,
@@ -3048,7 +3107,11 @@ impl Renderer {
         }
 
         // recompile shaders if necessary
-        let edit_events = self.shader_watcher.events()?;
+        let Some(shader_watcher) = &mut self.shader_watcher else {
+            return Ok(());
+        };
+
+        let edit_events = shader_watcher.events()?;
         if !edit_events.is_empty() {
             info!("recompiling shaders...");
             for &graphics_index in graphics_pipeline_indices {
@@ -3068,6 +3131,15 @@ impl Renderer {
         &mut self,
         pipeline_index: GraphicsPipelineIndex,
     ) -> Result<(), anyhow::Error> {
+        if !self
+            .pipelines
+            .get_by_index(pipeline_index)
+            .shader
+            .hot_reload()
+        {
+            return Ok(());
+        }
+
         let mut tmp_pipeline_layout = match ShaderPipelineLayout::create_from_atlas(
             &self.device,
             self.descriptor_heap.layout(),
@@ -5433,6 +5505,10 @@ impl ShaderPipelineLayout {
         shader: &dyn ShaderAtlasEntry,
         shaders_source_dir: &std::path::Path,
     ) -> Result<Self, anyhow::Error> {
+        if !shader.hot_reload() {
+            return Self::from_precompiled(device, bindless_heap_layout, shader);
+        }
+
         let shaders::ReflectedShader {
             vertex_shader,
             fragment_shader,
@@ -5475,6 +5551,14 @@ impl ShaderPipelineLayout {
 
     #[cfg(not(debug_assertions))]
     fn create_from_atlas(
+        device: &ash::Device,
+        bindless_heap_layout: vk::DescriptorSetLayout,
+        shader: &dyn ShaderAtlasEntry,
+    ) -> Result<Self, anyhow::Error> {
+        Self::from_precompiled(device, bindless_heap_layout, shader)
+    }
+
+    fn from_precompiled(
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ShaderAtlasEntry,
