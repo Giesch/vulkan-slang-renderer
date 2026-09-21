@@ -5,6 +5,12 @@ use ash::vk;
 
 use super::MAX_FRAMES_IN_FLIGHT;
 
+/// The element marker of a uniform buffer created by byte size. The graph
+/// writes its payload from already-packed bytes; `write_uniform` cannot
+/// target it.
+#[derive(Debug)]
+pub struct UniformBytes;
+
 #[derive(Debug)]
 pub struct UniformBufferHandle<T> {
     index: usize,
