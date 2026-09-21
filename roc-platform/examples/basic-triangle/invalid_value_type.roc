@@ -14,7 +14,7 @@ G : Graphs.ValidatedGraph((Mltrs.MvpMatrices, Mltrs.MvpMatrices))
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-graphs = Graphs.or_crash(Graphs.single(blueprint))
+graphs = Graphs.or_crash(Graphs.single(render_graph))
 
 init! : {} => Game.Init
 init! = |_| { window_title: "invalid values" }
@@ -33,7 +33,7 @@ triangle = RenderGraph.indexed_pipeline({
 	indices: [0, 1, 2],
 })
 
-blueprint = RenderGraph.from_tuple_2((
+render_graph = RenderGraph.from_tuple_2((
 	RenderGraph.draw_indexed(triangle),
 	RenderGraph.draw_indexed(triangle),
 ))
