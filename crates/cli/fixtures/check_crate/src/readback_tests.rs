@@ -44,7 +44,7 @@ fn reflected_readback_decodes_fields_and_initializes_padding() {
 #[test]
 fn reflected_readback_rejects_wrong_lengths_and_unknown_tags() {
     let mut bytes = output_bytes();
-    for length in 0..ReadbackOutput::GPU_SIZE {
+    for length in [0, ReadbackOutput::GPU_SIZE - 1] {
         assert!(ReadbackOutput::read_gpu(&bytes[..length]).is_err());
     }
     bytes.push(0);

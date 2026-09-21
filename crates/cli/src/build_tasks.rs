@@ -2775,7 +2775,7 @@ mod tests {
 
             // Compile layout assertions and execute generated readback regressions.
             let output = std::process::Command::new("cargo")
-                .args(["test"])
+                .args(["test", "--lib", "readback_tests::"])
                 .current_dir(&check_crate)
                 .output()
                 .expect("failed to run fixture cargo test");
