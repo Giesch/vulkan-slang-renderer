@@ -12,6 +12,8 @@ use serde::Serialize;
 {% for import in cross_module_imports -%}
 use {{ import.use_path() }};
 {% endfor -%}
+#[allow(unused_imports)]
+use {{ import_root }}::renderer::gpu_read::GPURead;
 {# a module holding only enums has no GPUWrite impl to emit -#}
 #[allow(unused_imports)]
 use {{ import_root }}::renderer::render_graph::GPUWrite;
@@ -88,6 +90,7 @@ const _: () = assert!(std::mem::size_of::<{{ def.type_name }}>() == {{ size }});
 {{ assert_line }}
 {%- endfor %}
 {% endfor %}
+{%- include "gpu_read.rs.askama" %}
 {%- for split in graph_split_defs %}
 {{ split.block() }}
 {% endfor %}

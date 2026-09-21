@@ -8,6 +8,8 @@ use std::io::Cursor;
 use ash::util::read_spv;
 use serde::Serialize;
 
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
@@ -137,6 +139,24 @@ const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
+}
+
+impl GPURead for PigmentProperties {
+    const GPU_SIZE: usize = 16;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for PigmentProperties"
+        );
+
+        Ok(Self {
+            density: GPURead::read_gpu(&bytes[0..4])?,
+            staining_power: GPURead::read_gpu(&bytes[4..8])?,
+            granulation: GPURead::read_gpu(&bytes[8..12])?,
+            _padding_0: [0; 4],
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

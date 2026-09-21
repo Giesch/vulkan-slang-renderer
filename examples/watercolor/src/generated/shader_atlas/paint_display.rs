@@ -10,6 +10,8 @@ use ash::vk;
 use facet::Facet;
 use serde::Serialize;
 
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -145,6 +147,16 @@ const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 
 pub struct Resources<'a> {
     pub display_params_buffer: &'a UniformBufferHandle<DisplayParams>,
+}
+
+impl GPURead for DebugView {
+    const GPU_SIZE: usize = 4;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <u32 as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid DebugView tag: {tag}"))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

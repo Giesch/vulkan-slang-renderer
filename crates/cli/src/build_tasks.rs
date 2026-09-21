@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -1248,6 +1248,7 @@ fn resources_struct(required_resources: &[RequiredResource]) -> GeneratedStructD
         trait_derives: vec![],
         alignment: None,
         expected_size: None,
+        gpu_read: false,
     }
 }
 
@@ -1330,6 +1331,7 @@ struct GeneratedStructDefinition {
     trait_derives: Vec<&'static str>,
     alignment: Option<Alignment>, // None = CPU only
     expected_size: Option<usize>, // For compile-time size assertion
+    gpu_read: bool,
 }
 
 impl GeneratedStructDefinition {
@@ -1351,7 +1353,27 @@ impl GeneratedStructDefinition {
             trait_derives: vec!["Debug", "Clone", "Copy", "Serialize"],
             alignment,
             expected_size,
+            gpu_read: false,
         }
+    }
+
+    fn read_fields(&self) -> Vec<String> {
+        self.fields
+            .iter()
+            .map(|field| {
+                let name = &field.field_name;
+                if field.synthetic_padding {
+                    format!(
+                        "{name}: [0; {}],",
+                        parse_array_type(&field.type_name).unwrap().1
+                    )
+                } else {
+                    let offset = field.offset.expect("readable field has reflected offset");
+                    let end = offset + field.size.expect("readable field has reflected size");
+                    format!("{name}: GPURead::read_gpu(&bytes[{offset}..{end}])?,")
+                }
+            })
+            .collect()
     }
 
     fn trait_derive_line(&self) -> Option<String> {
@@ -1997,6 +2019,56 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
         .unwrap_or_else(|e| panic!("failed to reflect shared modules: {e}"))
 }
 
+/// Only types with a supported, wholly data-only representation get a decoder.
+/// Resolve nested types before splitting definitions into shared modules.
+fn mark_readable_structs(defs: &mut GeneratedTypeDefs) {
+    // Match the runtime GPURead codecs. Three-component vectors are excluded:
+    // their packed field size is 12 bytes, but their storage array stride is 16.
+    let mut readable: HashSet<String> = [
+        "f32",
+        "i32",
+        "u32",
+        "u64",
+        "glam::Vec2",
+        "glam::Vec4",
+        "glam::IVec4",
+        "glam::UVec4",
+        "glam::Mat4",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    readable.extend(defs.enum_defs.iter().map(|def| def.type_name.clone()));
+    loop {
+        let mut changed = false;
+        for def in &mut defs.struct_defs {
+            if def.gpu_read || def.alignment.is_none() {
+                continue;
+            }
+            let Some(size) = def.expected_size else {
+                continue;
+            };
+            if def.fields.iter().all(|field| {
+                field.synthetic_padding
+                    || (field
+                        .offset
+                        .zip(field.size)
+                        .is_some_and(|(offset, length)| {
+                            offset.checked_add(length).is_some_and(|end| end <= size)
+                        })
+                        && readable.contains(graph_field_element_type(&field.type_name)))
+            }) {
+                def.gpu_read = true;
+                readable.insert(def.type_name.clone());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
 /// Tag type definitions with their source module based on the type→module map.
 /// The flat lists already contain nested types, so no recursion is needed.
 fn tag_source_modules(
@@ -2004,6 +2076,7 @@ fn tag_source_modules(
     type_to_module: &HashMap<String, String>,
     current_shader_module: &str,
 ) {
+    mark_readable_structs(defs);
     for def in defs.struct_defs.iter_mut() {
         if let Some(module) = type_to_module.get(&def.type_name)
             && module != current_shader_module
@@ -2610,6 +2683,72 @@ mod tests {
         std::fs::remove_dir_all(&tmp_dir_path).unwrap();
     }
 
+    #[test]
+    fn readback_excludes_resource_types_transitively() {
+        let mut defs = GeneratedTypeDefs::default();
+        for (name, ty) in [
+            ("Outer", "Nested"),
+            ("Nested", "Addr<Data>"),
+            ("Handle", "BindlessHandle<Sampler2D>"),
+            ("Unknown", "Unsupported"),
+            ("Data", "u32"),
+            ("DataOuter", "Data"),
+        ] {
+            let mut field = GeneratedStructFieldDefinition::new("value".into(), ty.into());
+            field.offset = Some(0);
+            field.size = Some(4);
+            defs.struct_defs.push(GeneratedStructDefinition::gpu_layout(
+                name.into(),
+                vec![field],
+                Some(Alignment::Std430 {
+                    struct_alignment: 4,
+                }),
+                Some(4),
+            ));
+        }
+        mark_readable_structs(&mut defs);
+        let readable: Vec<_> = defs
+            .struct_defs
+            .iter()
+            .filter(|def| def.gpu_read)
+            .map(|def| def.type_name.as_str())
+            .collect();
+        assert_eq!(readable, ["Data", "DataOuter"]);
+    }
+
+    #[test]
+    fn readback_excludes_three_component_vectors_transitively() {
+        let mut defs = GeneratedTypeDefs::default();
+        for (name, ty, field_size, size) in [
+            ("Outer", "Float3", 16, 16),
+            ("Array", "[glam::Vec3; 2]", 32, 32),
+            ("Float3", "glam::Vec3", 12, 16),
+            ("Int3", "glam::IVec3", 12, 16),
+            ("Uint3", "glam::UVec3", 12, 16),
+            ("Float4", "glam::Vec4", 16, 16),
+        ] {
+            let mut field = GeneratedStructFieldDefinition::new("value".into(), ty.into());
+            field.offset = Some(0);
+            field.size = Some(field_size);
+            defs.struct_defs.push(GeneratedStructDefinition::gpu_layout(
+                name.into(),
+                vec![field],
+                Some(Alignment::Std430 {
+                    struct_alignment: 16,
+                }),
+                Some(size),
+            ));
+        }
+        mark_readable_structs(&mut defs);
+        let readable: Vec<_> = defs
+            .struct_defs
+            .iter()
+            .filter(|def| def.gpu_read)
+            .map(|def| def.type_name.as_str())
+            .collect();
+        assert_eq!(readable, ["Float4"]);
+    }
+
     // Tests for std140 and std430 alignment edge cases
     #[cfg(not(windows))]
     #[test]
@@ -2668,12 +2807,12 @@ mod tests {
                 }
             }
 
-            // Run cargo check
+            // Compile layout assertions and execute generated readback regressions.
             let output = std::process::Command::new("cargo")
-                .args(["check"])
+                .args(["test", "--lib", "readback_tests::"])
                 .current_dir(&check_crate)
                 .output()
-                .expect("failed to run cargo check");
+                .expect("failed to run fixture cargo test");
 
             // Cleanup before asserting (so we don't leave files on failure)
             std::fs::remove_dir_all(&check_crate_src).unwrap();
@@ -2681,7 +2820,8 @@ mod tests {
 
             assert!(
                 output.status.success(),
-                "generated code failed to compile:\n{}",
+                "generated code fixture failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
         }

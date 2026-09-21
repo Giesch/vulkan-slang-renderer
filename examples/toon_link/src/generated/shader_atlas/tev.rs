@@ -6,6 +6,8 @@ use facet::Facet;
 use serde::Serialize;
 
 #[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
+#[allow(unused_imports)]
 use mltrs::renderer::render_graph::GPUWrite;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
@@ -210,3 +212,107 @@ const _: () = assert!(std::mem::offset_of!(GXLights, dir) == 0);
 const _: () = assert!(std::mem::size_of::<[glam::Vec4; 2]>() == 32);
 const _: () = assert!(std::mem::offset_of!(GXLights, color) == 32);
 const _: () = assert!(std::mem::size_of::<[glam::Vec4; 2]>() == 32);
+
+impl GPURead for GXCompare {
+    const GPU_SIZE: usize = 4;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <u32 as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid GXCompare tag: {tag}"))
+    }
+}
+
+impl GPURead for GXAlphaOp {
+    const GPU_SIZE: usize = 4;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <u32 as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid GXAlphaOp tag: {tag}"))
+    }
+}
+
+impl GPURead for GXAlphaCompare {
+    const GPU_SIZE: usize = 20;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for GXAlphaCompare"
+        );
+
+        Ok(Self {
+            comp0: GPURead::read_gpu(&bytes[0..4])?,
+            ref0: GPURead::read_gpu(&bytes[4..8])?,
+            comp1: GPURead::read_gpu(&bytes[8..12])?,
+            ref1: GPURead::read_gpu(&bytes[12..16])?,
+            op: GPURead::read_gpu(&bytes[16..20])?,
+        })
+    }
+}
+
+impl GPURead for TevParams {
+    const GPU_SIZE: usize = 1264;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for TevParams"
+        );
+
+        Ok(Self {
+            stage_color_in: GPURead::read_gpu(&bytes[0..128])?,
+            stage_color_op: GPURead::read_gpu(&bytes[128..256])?,
+            stage_alpha_in: GPURead::read_gpu(&bytes[256..384])?,
+            stage_alpha_op: GPURead::read_gpu(&bytes[384..512])?,
+            stage_dest: GPURead::read_gpu(&bytes[512..640])?,
+            stage_order: GPURead::read_gpu(&bytes[640..768])?,
+            stage_swap: GPURead::read_gpu(&bytes[768..896])?,
+            swap_table: GPURead::read_gpu(&bytes[896..960])?,
+            texgen: GPURead::read_gpu(&bytes[960..992])?,
+            texgen_mtx: GPURead::read_gpu(&bytes[992..1056])?,
+            konst: GPURead::read_gpu(&bytes[1056..1120])?,
+            reg: GPURead::read_gpu(&bytes[1120..1184])?,
+            chan_control: GPURead::read_gpu(&bytes[1184..1216])?,
+            chan_mat_color: GPURead::read_gpu(&bytes[1216..1232])?,
+            chan_amb_color: GPURead::read_gpu(&bytes[1232..1248])?,
+            control: GPURead::read_gpu(&bytes[1248..1264])?,
+        })
+    }
+}
+
+impl GPURead for GXTevColorOverride {
+    const GPU_SIZE: usize = 64;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for GXTevColorOverride"
+        );
+
+        Ok(Self {
+            actor_c0: GPURead::read_gpu(&bytes[0..16])?,
+            actor_k0: GPURead::read_gpu(&bytes[16..32])?,
+            eflight_konst: GPURead::read_gpu(&bytes[32..48])?,
+            eflight: GPURead::read_gpu(&bytes[48..52])?,
+            _padding_0: [0; 12],
+        })
+    }
+}
+
+impl GPURead for GXLights {
+    const GPU_SIZE: usize = 64;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for GXLights"
+        );
+
+        Ok(Self {
+            dir: GPURead::read_gpu(&bytes[0..32])?,
+            color: GPURead::read_gpu(&bytes[32..64])?,
+        })
+    }
+}

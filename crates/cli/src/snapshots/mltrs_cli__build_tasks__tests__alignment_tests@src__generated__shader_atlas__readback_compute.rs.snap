@@ -1,0 +1,313 @@
+---
+source: crates/cli/src/build_tasks.rs
+info:
+  relative_path: src/generated/shader_atlas/readback_compute.rs
+---
+// GENERATED FILE (do not edit directly)
+
+//! generated from slang compute shader: readback.compute.slang
+
+use std::ffi::CString;
+use std::io::Cursor;
+
+use ash::util::read_spv;
+use facet::Facet;
+use serde::Serialize;
+
+#[allow(unused_imports)]
+use crate::renderer::gpu_read::GPURead;
+use crate::renderer::render_graph::GPUWrite;
+use crate::renderer::*;
+use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
+use crate::shaders::json::{ComputeReflectionJson, ReflectedPipelineLayout};
+
+// glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
+const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, Facet)]
+#[repr(u32)]
+// variant names come from the shader author, so clippy's shared-prefix lint
+// would otherwise force renaming away from the slang spelling
+#[allow(clippy::enum_variant_names)]
+pub enum ReadbackTag {
+    #[default]
+    Ready = 3,
+    Done = 7,
+}
+
+const _: () = assert!(std::mem::size_of::<ReadbackTag>() == 4);
+
+impl From<ReadbackTag> for u32 {
+    fn from(value: ReadbackTag) -> u32 {
+        value as u32
+    }
+}
+
+// A repr(int) enum holding a value outside its declared variants is undefined
+// behavior. Data flows CPU -> GPU here, so the CPU never materializes a value it
+// did not construct; any future readback must come back through this TryFrom,
+// never a transmute or an `as` cast into the enum.
+impl TryFrom<u32> for ReadbackTag {
+    type Error = u32;
+
+    fn try_from(value: u32) -> Result<Self, u32> {
+        match value {
+            3 => Ok(Self::Ready),
+            7 => Ok(Self::Done),
+            other => Err(other),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(16))]
+pub struct ReadbackParams {
+    pub output: Addr<ReadbackOutput>,
+    pub _padding_0: [u8; 8],
+}
+
+impl GPUWrite for ReadbackParams {}
+const _: () = assert!(std::mem::size_of::<ReadbackParams>() == 16);
+const _: () = assert!(std::mem::offset_of!(ReadbackParams, output) == 0);
+const _: () = assert!(std::mem::size_of::<Addr<ReadbackOutput>>() == 8);
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(16))]
+pub struct ReadbackOutput {
+    pub marker: u32,
+    pub _padding_0: [u8; 12],
+    pub vector: glam::Vec4,
+    pub nested: ReadbackInner,
+    pub tag: ReadbackTag,
+    pub _padding_1: [u8; 12],
+    pub transform: glam::Mat4,
+    pub values: [glam::UVec4; 2],
+}
+
+impl GPUWrite for ReadbackOutput {}
+const _: () = assert!(std::mem::size_of::<ReadbackOutput>() == 160);
+const _: () = assert!(std::mem::offset_of!(ReadbackOutput, marker) == 0);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+const _: () = assert!(std::mem::offset_of!(ReadbackOutput, vector) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::offset_of!(ReadbackOutput, nested) == 32);
+const _: () = assert!(std::mem::size_of::<ReadbackInner>() == 16);
+const _: () = assert!(std::mem::offset_of!(ReadbackOutput, tag) == 48);
+const _: () = assert!(std::mem::size_of::<ReadbackTag>() == 4);
+const _: () = assert!(std::mem::offset_of!(ReadbackOutput, transform) == 64);
+const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
+const _: () = assert!(std::mem::offset_of!(ReadbackOutput, values) == 128);
+const _: () = assert!(std::mem::size_of::<[glam::UVec4; 2]>() == 32);
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(8))]
+pub struct ReadbackInner {
+    pub xy: glam::Vec2,
+    pub id: u32,
+    pub _padding_0: [u8; 4],
+}
+
+impl GPUWrite for ReadbackInner {}
+const _: () = assert!(std::mem::size_of::<ReadbackInner>() == 16);
+const _: () = assert!(std::mem::offset_of!(ReadbackInner, xy) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
+const _: () = assert!(std::mem::offset_of!(ReadbackInner, id) == 8);
+const _: () = assert!(std::mem::size_of::<u32>() == 4);
+
+pub struct Resources<'a> {
+    pub params_buffer: &'a UniformBufferHandle<ReadbackParams>,
+}
+
+impl GPURead for ReadbackTag {
+    const GPU_SIZE: usize = 4;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <u32 as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid ReadbackTag tag: {tag}"))
+    }
+}
+
+impl GPURead for ReadbackOutput {
+    const GPU_SIZE: usize = 160;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for ReadbackOutput"
+        );
+
+        Ok(Self {
+            marker: GPURead::read_gpu(&bytes[0..4])?,
+            _padding_0: [0; 12],
+            vector: GPURead::read_gpu(&bytes[16..32])?,
+            nested: GPURead::read_gpu(&bytes[32..48])?,
+            tag: GPURead::read_gpu(&bytes[48..52])?,
+            _padding_1: [0; 12],
+            transform: GPURead::read_gpu(&bytes[64..128])?,
+            values: GPURead::read_gpu(&bytes[128..160])?,
+        })
+    }
+}
+
+impl GPURead for ReadbackInner {
+    const GPU_SIZE: usize = 16;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for ReadbackInner"
+        );
+
+        Ok(Self {
+            xy: GPURead::read_gpu(&bytes[0..8])?,
+            id: GPURead::read_gpu(&bytes[8..12])?,
+            _padding_0: [0; 4],
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ReadbackParamsBindings {
+    pub output: BufferBinding<ReadbackOutput>,
+}
+
+impl GraphParamBindingSet for ReadbackParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
+}
+
+impl GraphBindingSet for ReadbackParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.output.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct ReadbackParamsInput {
+    pub output: BufferBinding<ReadbackOutput>,
+}
+
+impl GraphShaderParams for ReadbackParams {
+    type Data = ();
+    type Bindings = ReadbackParamsBindings;
+    type Input = ReadbackParamsInput;
+
+    fn input(_data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            output: bindings.output,
+        }
+    }
+
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            output: resolver.buf(input.output),
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for ReadbackParamsInput {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.output.erased()));
+    }
+}
+
+pub const WORKGROUP_SIZE: [u32; 3] = [1, 1, 1];
+
+#[derive(Clone)]
+pub struct Shader {
+    pub reflection_json: ComputeReflectionJson,
+}
+
+impl Shader {
+    pub fn init() -> Self {
+        let json_str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/compiled/readback.comp.json"
+        ));
+
+        let reflection_json: ComputeReflectionJson = serde_json::from_str(json_str).unwrap();
+
+        Self { reflection_json }
+    }
+
+    pub fn pipeline_config<'a>(
+        &self,
+        resources: Resources<'a>,
+    ) -> ComputePipelineConfig<'a, NoPush> {
+        // NOTE each of these must be in descriptor set layout order in the reflection json
+
+        #[rustfmt::skip]
+        let texture_handles = vec![
+        ];
+
+        #[rustfmt::skip]
+        let uniform_buffer_handles = vec![
+            RawUniformBufferHandle::from_typed(resources.params_buffer),
+        ];
+
+        #[rustfmt::skip]
+        let storage_texture_handles = vec![
+        ];
+
+        ComputePipelineConfigBuilder {
+            shader: Box::new(self.clone()),
+            texture_handles,
+            uniform_buffer_handles,
+            storage_texture_handles,
+        }
+        .build()
+    }
+
+    fn comp_entry_point_name(&self) -> CString {
+        let entry_point = self
+            .reflection_json
+            .compute_entry_point
+            .entry_point_name
+            .clone();
+
+        CString::new(entry_point).unwrap()
+    }
+
+    fn comp_spv(&self) -> Vec<u32> {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/compiled/readback.comp.spv"
+        ));
+        let byte_reader = &mut Cursor::new(bytes);
+        read_spv(byte_reader).expect("failed to convert spv byte layout")
+    }
+}
+
+impl ComputeShaderAtlasEntry for Shader {
+    fn source_file_name(&self) -> &str {
+        &self.reflection_json.source_file_name
+    }
+
+    fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
+        self.reflection_json.layout_bindings()
+    }
+
+    fn precompiled_compute_shader(&self) -> PrecompiledShader {
+        PrecompiledShader {
+            entry_point_name: self.comp_entry_point_name(),
+            spv_bytes: self.comp_spv(),
+        }
+    }
+
+    fn pipeline_layout(&self) -> &ReflectedPipelineLayout {
+        &self.reflection_json.pipeline_layout
+    }
+
+    fn workgroup_size(&self) -> [u32; 3] {
+        self.reflection_json.workgroup_size
+    }
+
+    fn reflection_json(&self) -> &ComputeReflectionJson {
+        &self.reflection_json
+    }
+}

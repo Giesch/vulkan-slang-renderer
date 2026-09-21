@@ -15,6 +15,8 @@ use ash::vk;
 use facet::Facet;
 use serde::Serialize;
 
+#[allow(unused_imports)]
+use crate::renderer::gpu_read::GPURead;
 use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -119,6 +121,44 @@ const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<EnumData>,
+}
+
+impl GPURead for Mode {
+    const GPU_SIZE: usize = 4;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <u32 as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid Mode tag: {tag}"))
+    }
+}
+
+impl GPURead for Untagged {
+    const GPU_SIZE: usize = 4;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <i32 as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid Untagged tag: {tag}"))
+    }
+}
+
+impl GPURead for EnumData {
+    const GPU_SIZE: usize = 16;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for EnumData"
+        );
+
+        Ok(Self {
+            a: GPURead::read_gpu(&bytes[0..4])?,
+            mode: GPURead::read_gpu(&bytes[4..8])?,
+            kind: GPURead::read_gpu(&bytes[8..12])?,
+            b: GPURead::read_gpu(&bytes[12..16])?,
+        })
+    }
 }
 
 /// Complete graph inputs before resource references resolve to GPU values.

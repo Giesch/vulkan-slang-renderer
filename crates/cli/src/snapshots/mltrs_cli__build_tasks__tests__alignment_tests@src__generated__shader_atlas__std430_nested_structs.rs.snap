@@ -14,6 +14,8 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+#[allow(unused_imports)]
+use crate::renderer::gpu_read::GPURead;
 use crate::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use crate::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -72,6 +74,42 @@ const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
+}
+
+impl GPURead for OuterData {
+    const GPU_SIZE: usize = 32;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for OuterData"
+        );
+
+        Ok(Self {
+            x: GPURead::read_gpu(&bytes[0..4])?,
+            _padding_0: [0; 4],
+            inner: GPURead::read_gpu(&bytes[8..24])?,
+            y: GPURead::read_gpu(&bytes[24..28])?,
+            _padding_1: [0; 4],
+        })
+    }
+}
+
+impl GPURead for InnerData {
+    const GPU_SIZE: usize = 16;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for InnerData"
+        );
+
+        Ok(Self {
+            a: GPURead::read_gpu(&bytes[0..4])?,
+            _padding_0: [0; 4],
+            b: GPURead::read_gpu(&bytes[8..16])?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

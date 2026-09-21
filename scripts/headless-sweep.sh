@@ -5,11 +5,12 @@
 # Usage, and when it is worth running: docs/testing.md
 # Design: llm_notes/offscreen_testing.md. Findings: build_reproducibility.md §7.
 #
-# Runs each example under a software Vulkan driver with no display, and fails
-# if any of them emits Vulkan validation output.
+# Checks generated GPU readback and runs each example under a software Vulkan
+# driver with no display. Fails on incorrect readback or Vulkan validation output.
 #
-#   scripts/headless-sweep.sh                 # all examples
+#   scripts/headless-sweep.sh                 # readback + all examples
 #   scripts/headless-sweep.sh basic_triangle  # just these
+#   scripts/headless-sweep.sh readback        # only GPU readback
 #   scripts/headless-sweep.sh --self-test     # only prove the detector works
 #   SWEEP_TIMEOUT=20 scripts/headless-sweep.sh
 #   SWEEP_SKIP="toon_link watercolor" scripts/headless-sweep.sh   # force a skip
@@ -82,14 +83,21 @@ export VKR_SWEEP=1
 mkdir -p "$SWEEP_LOG_DIR"
 
 self_test_only=0
+run_readback=0
 examples=()
 for arg in "$@"; do
   case "$arg" in
     --self-test) self_test_only=1 ;;
+    readback) run_readback=1 ;;
     -*) echo "unknown option: $arg" >&2; exit 1 ;;
     *) examples+=("$arg") ;;
   esac
 done
+
+if [ "$#" -eq 0 ]; then
+  run_readback=1
+  mapfile -t examples < <(ls -d examples/*/ | xargs -n1 basename)
+fi
 
 # True when $1 needs machine-local assets that aren't on this machine.
 #
@@ -171,35 +179,55 @@ self_test() {
   echo "self-test ok: injected fault detected (exit $code)"
 }
 
-echo "building examples..."
-# Build FIRST, untimed, and run the binaries directly below.
-#
-# `timeout N cargo run` times the compile as well as the run. On a cold build
-# the timeout expires during compilation: cargo is killed, exit code is 124 --
-# indistinguishable from "the example ran for its whole window" -- and the log
-# is empty. Every example then reports ok and the whole sweep is vacuous. This
-# is easy to hit, since any source edit immediately before a sweep triggers it.
-# every example is its own workspace member crate under examples/
-example_packages=$(ls -d examples/*/ | xargs -n1 basename)
-# shellcheck disable=SC2086
-if ! cargo build $(printf -- '-p %s ' $example_packages); then
-  echo "FAIL: examples did not build" >&2
-  exit 1
+if [ "$self_test_only" -eq 1 ] || [ "${#examples[@]}" -gt 0 ]; then
+  echo "building examples..."
+  # Build FIRST, untimed, and run the binaries directly below.
+  #
+  # `timeout N cargo run` times the compile as well as the run. On a cold build
+  # the timeout expires during compilation: cargo is killed, exit code is 124 --
+  # indistinguishable from "the example ran for its whole window" -- and the log
+  # is empty. Every example then reports ok and the whole sweep is vacuous. This
+  # is easy to hit, since any source edit immediately before a sweep triggers it.
+  # every example is its own workspace member crate under examples/
+  example_packages=$(ls -d examples/*/ | xargs -n1 basename)
+  # shellcheck disable=SC2086
+  if ! cargo build $(printf -- '-p %s ' $example_packages); then
+    echo "FAIL: examples did not build" >&2
+    exit 1
+  fi
+
+  if [ "$self_test_only" -eq 1 ]; then
+    self_test || exit 1
+    exit 0
+  fi
+
+  if [ "$SWEEP_SELF_TEST" != "0" ]; then
+    # Abort rather than continue: a sweep whose detector is broken would report
+    # a clean pass for every example, which is worse than not running at all.
+    self_test || exit 1
+  fi
 fi
 
-if [ "$self_test_only" -eq 1 ]; then
-  self_test || exit 1
-  exit 0
-fi
-
-if [ "$SWEEP_SELF_TEST" != "0" ]; then
-  # Abort rather than continue: a sweep whose detector is broken would report
-  # a clean pass for every example, which is worse than not running at all.
-  self_test || exit 1
-fi
-
-if [ "${#examples[@]}" -eq 0 ]; then
-  mapfile -t examples < <(ls -d examples/*/ | xargs -n1 basename)
+# This finite diagnostic shares the sweep's lavapipe environment, but not the
+# example time window: it compiles a temporary fixture before dispatching.
+# Require its completion marker as well as cargo success so zero executed tests
+# cannot pass. The harness checks decoded values and validation after teardown.
+if [ "$run_readback" -eq 1 ]; then
+  echo "checking GPU readback..."
+  readback_log="$SWEEP_LOG_DIR/gpu-readback.log"
+  if ! cargo test -p mltrs-renderer --test gpu_readback -- --ignored --nocapture >"$readback_log" 2>&1; then
+    echo "FAIL: GPU readback; see $readback_log" >&2
+    tail -40 "$readback_log" >&2
+    exit 1
+  fi
+  if ! grep -qF 'GPU_READBACK_OK: 2 elements; invalid enum rejected; validation=0; teardown complete' "$readback_log"; then
+    echo "FAIL: GPU readback did not report completion; see $readback_log" >&2
+    exit 1
+  fi
+  echo "ok: GPU readback"
+  if [ "${#examples[@]}" -eq 0 ]; then
+    exit 0
+  fi
 fi
 
 fail=0

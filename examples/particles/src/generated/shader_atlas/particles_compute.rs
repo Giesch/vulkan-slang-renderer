@@ -9,6 +9,8 @@ use ash::util::read_spv;
 use serde::Serialize;
 
 pub use super::particle::Particle;
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};

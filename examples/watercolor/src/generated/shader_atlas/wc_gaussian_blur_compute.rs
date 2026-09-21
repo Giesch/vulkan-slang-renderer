@@ -8,6 +8,8 @@ use std::io::Cursor;
 use ash::util::read_spv;
 use serde::Serialize;
 
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
@@ -47,6 +49,22 @@ const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
+}
+
+impl GPURead for Params {
+    const GPU_SIZE: usize = 16;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for Params"
+        );
+
+        Ok(Self {
+            grid_size: GPURead::read_gpu(&bytes[0..8])?,
+            _padding_0: [0; 8],
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

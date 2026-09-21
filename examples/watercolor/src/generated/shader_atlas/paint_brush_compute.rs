@@ -8,6 +8,8 @@ use std::io::Cursor;
 use ash::util::read_spv;
 use serde::Serialize;
 
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
@@ -82,6 +84,21 @@ const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub brush_params_buffer: &'a UniformBufferHandle<BrushParams>,
+}
+
+impl GPURead for StrokePoint {
+    const GPU_SIZE: usize = 8;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for StrokePoint"
+        );
+
+        Ok(Self {
+            position: GPURead::read_gpu(&bytes[0..8])?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
