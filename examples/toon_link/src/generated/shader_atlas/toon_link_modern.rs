@@ -358,6 +358,13 @@ impl mltrs::renderer::render_graph::PushConstantBlock for ModernMultiDraw {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<ModernMultiDraw>() <= 128);
 
+// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
+// must agree with this struct's Rust layout
+const _: () = assert!(std::mem::size_of::<ModernVertex>() == 32);
+const _: () = assert!(std::mem::offset_of!(ModernVertex, position) == 0);
+const _: () = assert!(std::mem::offset_of!(ModernVertex, normal) == 12);
+const _: () = assert!(std::mem::offset_of!(ModernVertex, uv0) == 24);
+
 impl VertexDescription for ModernVertex {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
         let binding_description = ash::vk::VertexInputBindingDescription::default()

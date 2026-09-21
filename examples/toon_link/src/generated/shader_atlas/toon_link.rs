@@ -272,6 +272,13 @@ impl mltrs::renderer::render_graph::PushConstantBlock for MultiDraw {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<MultiDraw>() <= 128);
 
+// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
+// must agree with this struct's Rust layout
+const _: () = assert!(std::mem::size_of::<Vertex>() == 32);
+const _: () = assert!(std::mem::offset_of!(Vertex, position) == 0);
+const _: () = assert!(std::mem::offset_of!(Vertex, normal) == 12);
+const _: () = assert!(std::mem::offset_of!(Vertex, uv0) == 24);
+
 impl VertexDescription for Vertex {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
         let binding_description = ash::vk::VertexInputBindingDescription::default()

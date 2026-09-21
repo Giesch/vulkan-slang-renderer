@@ -108,6 +108,13 @@ const _: () = assert!(std::mem::size_of::<{{ push_constant_type_name }}>() <= {{
 {% when None -%}
 {%- endmatch -%}
 {% for block in vertex_impl_blocks +%}
+// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
+// must agree with this struct's Rust layout
+const _: () = assert!(std::mem::size_of::<{{ block.type_name }}>() == {{ block.stride }});
+{%- for attr in block.attribute_descriptions %}
+const _: () = assert!(std::mem::offset_of!({{ block.type_name }}, {{ attr.field_name }}) == {{ attr.offset }});
+{%- endfor %}
+
 impl VertexDescription for {{ block.type_name }} {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
         let binding_description = ash::vk::VertexInputBindingDescription::default()
