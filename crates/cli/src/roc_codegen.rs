@@ -4,7 +4,7 @@
 //! itself is deliberately not transactional: an I/O failure can leave partial output.
 //! Logical values have no GPU layout, ownership, binding or validity guarantees.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -24,6 +24,62 @@ pub struct RocConfig {
     pub compiled_shaders_dir: PathBuf,
     pub project_root: PathBuf,
     pub optimization: OptimizationLevel,
+}
+
+/// Match Rust's shared-module ownership: top-level modules own their types;
+/// modules one directory below the source root share the directory's module.
+fn shared_type_owners(source: &Path) -> Result<BTreeMap<String, String>> {
+    let mut modules = Vec::new();
+    for entry in fs::read_dir(source)? {
+        let path = entry?.path();
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("non-UTF-8 module name")?;
+        if path.is_dir() {
+            for entry in fs::read_dir(&path)? {
+                let child = entry?.path();
+                let Some(stem) = child
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.strip_suffix(".slang"))
+                else {
+                    continue;
+                };
+
+                if child.is_file() {
+                    modules.push((format!("{name}/{stem}"), name.to_owned()));
+                }
+            }
+        } else if let Some(stem) = name.strip_suffix(".slang") {
+            let is_shader = stem.ends_with(".shader") || stem.ends_with(".compute");
+            if !is_shader {
+                modules.push((stem.to_owned(), stem.to_owned()));
+            }
+        }
+    }
+    modules.sort();
+    let mut module_names = Names::default();
+    for owner in modules
+        .iter()
+        .map(|(_, owner)| owner)
+        .collect::<BTreeSet<_>>()
+    {
+        module_names.insert(&identifier(owner, true)?, owner)?;
+    }
+    let module_refs: Vec<_> = modules
+        .iter()
+        .map(|(load, owner)| (load.as_str(), owner.as_str()))
+        .collect();
+    let owners = mltrs_slang_reflection::reflect_shared_module_types(
+        &module_refs,
+        source.to_str().context("non-UTF-8 source path")?,
+    )?;
+
+    owners
+        .into_iter()
+        .map(|(name, module)| Ok((name, identifier(&module, true)?)))
+        .collect()
 }
 
 /// Generate Roc and SPIR-V
@@ -79,13 +135,14 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
         modules.insert(name, name)?;
     }
 
-    let mut logical = Logical::default();
+    let owners = shared_type_owners(&source)?;
+    let mut shared = Logical::default();
+    let mut checked = Logical::default();
     let mut roc_files = BTreeMap::new();
     let mut binaries = BTreeMap::new();
     let mut atlas = Vec::new();
 
     let mut atlas_names = Names::default();
-    atlas_names.insert("shader_names", "atlas support value")?;
 
     for input in inputs {
         let compute = input.ends_with(".compute.slang");
@@ -100,9 +157,17 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
         modules.insert(&module, &input)?;
         let value = identifier(stem, false)?;
         atlas_names.insert(&value, &input)?;
+        let mut logical = Logical {
+            owners: owners.clone(),
+            local_module: module.clone(),
+            ..Logical::default()
+        };
         let mut types = StructTypes::default();
         let mut stages = Vec::new();
-        let (reflection_kind, reflection) = if compute {
+        let mut uniforms = Vec::new();
+        let mut default_uniform = None;
+        let mut vertex_input = None;
+        let (reflection_kind, reflection, reflection_json) = if compute {
             let shader = prepare_reflected_compute_shader_with_optimization(
                 &input,
                 search,
@@ -117,11 +182,23 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
             (
                 "ComputeReflection",
                 shader.reflection_json.lower(&mut types)?.render(),
+                serde_json::to_string_pretty(&shader.reflection_json)?,
             )
         } else {
             let shader =
                 prepare_reflected_shader_with_optimization(&input, search, config.optimization)?;
             logical.graphics(&shader.reflection_json)?;
+            let (handles, count) =
+                uniform_handles(&shader.reflection_json.global_parameters, &mut logical)?;
+            let has_single_uniform = count == 1;
+            if has_single_uniform {
+                default_uniform = handles.first().map(|handle| handle.name.clone());
+            }
+
+            uniforms = handles;
+            vertex_input = vertex_layout(&shader.reflection_json.vertex_entry_point)?
+                .map(|layout| logical.reference(&layout.type_name, &module))
+                .transpose()?;
             stages.push((
                 "vertex",
                 shader.vertex_shader.shader_bytecode.to_vec(),
@@ -135,8 +212,22 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
             (
                 "GraphicsReflection",
                 shader.reflection_json.lower(&mut types)?.render(),
+                serde_json::to_string_pretty(&shader.reflection_json)?,
             )
         };
+        let json_filename = if compute {
+            format!("{stem}.comp.json")
+        } else {
+            format!("{stem}.json")
+        };
+        ensure!(
+            !binaries
+                .keys()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(&json_filename)),
+            "reflection filename collision: {json_filename}"
+        );
+        let reflection_json_path = import_path(&roc, &compiled.join(&json_filename))?;
+        binaries.insert(json_filename, reflection_json.into_bytes());
         let mut stage_imports = Vec::new();
         let mut stage_names = Vec::new();
         for (stage, bytes, extension) in stages {
@@ -152,13 +243,53 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
             stage_names.push(stage);
             binaries.insert(filename, bytes);
         }
+        let struct_types = types.definitions();
+        let mut members = Names::default();
+        for name in ["reflection", "stages", "shader"] {
+            members.insert(name, "shader module support value")?;
+        }
+        for definition in &struct_types {
+            members.insert(&definition.name, &definition.name)?;
+        }
+        for handle in &uniforms {
+            members.insert(&handle.name, &handle.parameter)?;
+        }
+        logical.validate_scope(&module)?;
+        let logical_definitions = logical.render_definitions(Some(&module));
+        let imports = logical.imports(&module);
+        let mut exposed = logical.exposed(&module);
+        exposed.push(reflection_kind.into());
+        if !struct_types.is_empty() {
+            exposed.push("StructType".into());
+        }
+        if !compute {
+            exposed.push(match vertex_input {
+                Some(_) => "VertexInput".into(),
+                None => "NoVertexInput".into(),
+            });
+        }
+        if !uniforms.is_empty() {
+            exposed.push("UniformBinding".into());
+        }
+        exposed.sort();
+        exposed.dedup();
+        checked.merge(&logical, false)?;
+        shared.merge(&logical, true)?;
         let shader_module = ShaderModule {
             module: module.clone(),
+            logical_definitions,
+            imports,
+            exposed,
             stage_imports,
-            struct_types: types.definitions(),
+            reflection_json_path: Some(reflection_json_path),
+            struct_types,
             reflection_kind,
             reflection: continued(&reflection, 1),
             stages: stage_names,
+            shader_name: (!compute).then(|| value.clone()),
+            uniforms,
+            default_uniform,
+            vertex_input,
         };
         roc_files.insert(
             format!("{module}.roc"),
@@ -167,7 +298,24 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
         atlas.push(AtlasEntry { module, value });
     }
 
-    roc_files.insert("ShaderTypes.roc".into(), logical.shader_types());
+    let shared_modules: BTreeSet<_> = shared
+        .definitions
+        .values()
+        .map(|(original, _)| shared.owner(original).to_owned())
+        .collect();
+    for module in shared_modules {
+        modules.insert(&module, &format!("shared module {module}"))?;
+        shared.validate_scope(&module)?;
+        let rendered = ShaderTypesTemplate {
+            module: module.clone(),
+            imports: shared.imports(&module),
+            exposed: shared.exposed(&module),
+            definitions: shared.render_definitions(Some(&module)),
+        }
+        .render()
+        .expect("static template");
+        roc_files.insert(format!("{module}.roc"), rendered);
+    }
     let atlas = ShaderAtlas { modules: atlas };
     roc_files.insert(
         "ShaderAtlas.roc".into(),
@@ -565,11 +713,75 @@ struct StageImport {
 #[template(path = "shader_module.roc.askama", escape = "none")]
 struct ShaderModule {
     module: String,
+    logical_definitions: Vec<String>,
+    imports: Vec<String>,
+    /// `ShaderReflection` type names this module names unqualified
+    exposed: Vec<String>,
     stage_imports: Vec<StageImport>,
+    /// `None` only for synthetic test modules with no compiled directory
+    reflection_json_path: Option<String>,
     struct_types: Vec<StructTypeDef>,
     reflection_kind: &'static str,
     reflection: String,
     stages: Vec<&'static str>,
+    /// graphics shaders expose a `shader` record for graph pipelines
+    shader_name: Option<String>,
+    /// one typed handle per constant buffer, graphics shaders only
+    uniforms: Vec<UniformHandle>,
+    /// Present only for exactly one constant buffer with a supported packer.
+    default_uniform: Option<String>,
+    /// the scoped name of the vertex input struct, when the vertex
+    /// entry point reads one
+    vertex_input: Option<String>,
+}
+
+/// A typed handle to one of a graphics shader's constant buffers.
+struct UniformHandle {
+    /// the value's name in the module
+    name: String,
+    /// the reflected parameter name
+    parameter: String,
+    /// position among the shader's constant buffers, in descriptor-set-layout
+    /// order
+    index: usize,
+    /// the element type's scoped name
+    type_name: String,
+}
+
+/// One handle per parameter block with uniform bytes, in descriptor-set-layout
+/// order. A block whose element type has no packer keeps its position but gets
+/// no handle.
+fn uniform_handles(
+    globals: &[GlobalParameter],
+    logical: &mut Logical,
+) -> Result<(Vec<UniformHandle>, usize)> {
+    let mut handles = Vec::new();
+    let mut index = 0;
+    for global in globals {
+        let GlobalParameter::ParameterBlock(block) = global else {
+            continue;
+        };
+        let has_bytes = block
+            .element_type
+            .fields
+            .iter()
+            .any(|field| field.binding().is_some_and(Binding::occupies_bytes));
+        if !has_bytes {
+            continue;
+        }
+        if logical.has_packer(&block.element_type.type_name)? {
+            handles.push(UniformHandle {
+                name: identifier(&block.parameter_name, false)?,
+                parameter: block.parameter_name.clone(),
+                index,
+                type_name: logical
+                    .reference(&block.element_type.type_name, &logical.local_module.clone())?,
+            });
+        }
+        index += 1;
+    }
+
+    Ok((handles, index))
 }
 
 struct AtlasEntry {
@@ -581,16 +793,6 @@ struct AtlasEntry {
 #[template(path = "shader_atlas.roc.askama", escape = "none")]
 struct ShaderAtlas {
     modules: Vec<AtlasEntry>,
-}
-
-impl ShaderAtlas {
-    fn shader_names(&self) -> String {
-        self.modules
-            .iter()
-            .map(|entry| quoted(&entry.value))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
 }
 
 // Direct exhaustive schema mapping: no JSON intermediate and no numeric floats.
@@ -866,15 +1068,132 @@ tags!(ReflectedStageFlags, Vertex, Fragment, Compute, All, Empty);
 
 #[derive(Default)]
 struct Logical {
+    /// Original Slang names mapped to generated shared module names.
+    owners: BTreeMap<String, String>,
+    /// Owner for types declared directly in the shader.
+    local_module: String,
+    dependencies: BTreeMap<String, BTreeSet<String>>,
+    /// ShaderReflection type names each module references.
+    exposed: BTreeMap<String, BTreeSet<String>>,
+    /// type bodies (record or tag list) keyed by lowercase name
     definitions: BTreeMap<String, (String, String)>,
+    /// associated blocks keyed like `definitions`: GPU byte packers and enum
+    /// tag functions; a struct with no byte layout (resource elements) has
+    /// none
+    associated: BTreeMap<String, (String, String)>,
+}
+
+/// How a struct's GPU size is known when its packer is generated.
+#[derive(Clone, Copy)]
+enum PackSize {
+    /// reflection states the size (push blocks, pointees, nested fields)
+    Known(usize),
+    /// a std140 block: the reflected end rounded up to 16
+    Std140,
+    /// no GPU layout: structured-buffer elements and other non-uniform data
+    Skip,
 }
 
 impl Logical {
+    fn owner(&self, original: &str) -> &str {
+        self.owners
+            .get(original)
+            .map(String::as_str)
+            .unwrap_or(&self.local_module)
+    }
+
+    fn reference(&mut self, original: &str, scope: &str) -> Result<String> {
+        let name = identifier(original, true)?;
+        let owner = self.owner(original).to_owned();
+        if owner == scope {
+            return Ok(name);
+        }
+
+        self.dependencies
+            .entry(scope.into())
+            .or_default()
+            .insert(owner.clone());
+
+        Ok(format!("{owner}.{name}"))
+    }
+
+    fn imports(&self, module: &str) -> Vec<String> {
+        self.dependencies
+            .get(module)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
+    fn exposed(&self, module: &str) -> Vec<String> {
+        self.exposed
+            .get(module)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
+    /// Record a `ShaderReflection` type the module names unqualified, and
+    /// return that bare name.
+    fn expose(&mut self, scope: &str, name: String) -> String {
+        self.exposed
+            .entry(scope.into())
+            .or_default()
+            .insert(name.clone());
+
+        name
+    }
+
+    fn validate_scope(&self, module: &str) -> Result<()> {
+        let mut names = Names::default();
+        for import in self.imports(module) {
+            names.insert(&import, &format!("import {import}"))?;
+        }
+        for (original, _) in self.definitions.values() {
+            if self.owner(original) == module {
+                names.insert(&identifier(original, true)?, original)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn merge(&mut self, other: &Self, shared_only: bool) -> Result<()> {
+        for (key, (original, body)) in &other.definitions {
+            let skip_local = shared_only && !other.owners.contains_key(original);
+            if skip_local {
+                continue;
+            }
+
+            self.define(original, body.clone())?;
+            if let Some((_, block)) = other.associated.get(key) {
+                self.associate(original, block.clone(), "GPU layouts")?;
+            }
+            self.owners
+                .insert(original.clone(), other.owner(original).to_owned());
+        }
+        for (module, imports) in &other.dependencies {
+            self.dependencies
+                .entry(module.clone())
+                .or_default()
+                .extend(imports.iter().cloned());
+        }
+        for (module, exposed) in &other.exposed {
+            self.exposed
+                .entry(module.clone())
+                .or_default()
+                .extend(exposed.iter().cloned());
+        }
+
+        Ok(())
+    }
+
     fn graphics(&mut self, shader: &ReflectionJson) -> Result<()> {
         self.globals(&shader.global_parameters)?;
-        self.entry(&shader.vertex_entry_point)?;
 
-        self.entry(&shader.fragment_entry_point)
+        self.entry(&shader.vertex_entry_point)
     }
 
     fn compute(&mut self, shader: &ComputeReflectionJson) -> Result<()> {
@@ -886,16 +1205,20 @@ impl Logical {
     fn globals(&mut self, globals: &[GlobalParameter]) -> Result<()> {
         let mut names = Names::default();
         for global in globals {
-            let (parameter_name, element) = match global {
-                GlobalParameter::ParameterBlock(parameter) => {
-                    (&parameter.parameter_name, &parameter.element_type)
-                }
-                GlobalParameter::PushConstant(parameter) => {
-                    (&parameter.parameter_name, &parameter.element_type)
-                }
+            let (parameter_name, element, size) = match global {
+                GlobalParameter::ParameterBlock(parameter) => (
+                    &parameter.parameter_name,
+                    &parameter.element_type,
+                    PackSize::Std140,
+                ),
+                GlobalParameter::PushConstant(parameter) => (
+                    &parameter.parameter_name,
+                    &parameter.element_type,
+                    PackSize::Known(parameter.element_size),
+                ),
             };
             names.insert(&identifier(parameter_name, false)?, parameter_name)?;
-            self.structure(&element.type_name, &element.fields)?;
+            self.structure_sized(&element.type_name, &element.fields, size)?;
         }
 
         Ok(())
@@ -907,7 +1230,11 @@ impl Logical {
         for parameter in &entry.parameters {
             let name = match parameter {
                 EntryPointParameter::Struct(struct_parameter) => {
-                    self.structure(&struct_parameter.type_name, &struct_parameter.fields)?;
+                    self.structure_sized(
+                        &struct_parameter.type_name,
+                        &struct_parameter.fields,
+                        PackSize::Skip,
+                    )?;
                     &struct_parameter.parameter_name
                 }
                 EntryPointParameter::Scalar(ScalarEntryPointParameter::Bound(bound)) => {
@@ -920,7 +1247,140 @@ impl Logical {
             names.insert(&identifier(name, false)?, name)?;
         }
 
+        if matches!(entry.stage, EntryPointStage::Vertex)
+            && let Some(layout) = vertex_layout(entry)?
+        {
+            self.vertex_packer(entry, &layout)?;
+        }
+
         Ok(())
+    }
+
+    fn vertex_packer(&mut self, entry: &EntryPoint, layout: &VertexLayout) -> Result<()> {
+        let fields = entry
+            .parameters
+            .iter()
+            .find_map(|parameter| match parameter {
+                EntryPointParameter::Struct(parameter) => Some(&parameter.fields),
+                EntryPointParameter::Scalar(_) => None,
+            })
+            .expect("a vertex layout comes from a struct parameter");
+        let scope = self.owner(&layout.type_name).to_owned();
+        let mut packed = Vec::new();
+        for attribute in &layout.attributes {
+            let field = fields
+                .iter()
+                .find(|field| field.field_name() == attribute.field_name)
+                .expect("layout attributes name struct fields");
+            let expr = self
+                .field_bytes(field, &scope)?
+                .expect("layout attributes are scalars or vectors");
+            packed.push(PackField {
+                offset: attribute.offset as usize,
+                expr,
+            });
+        }
+
+        self.define_packer(&layout.type_name, layout.stride as usize, packed)
+    }
+
+    fn define_packer(&mut self, original: &str, size: usize, fields: Vec<PackField>) -> Result<()> {
+        let body = fragment(&LogicalPackTemplate {
+            name: identifier(original, true)?,
+            size,
+            fields,
+        });
+
+        self.associate(original, body, "GPU layouts")
+    }
+
+    fn has_packer(&self, original: &str) -> Result<bool> {
+        let key = identifier(original, true)?.to_ascii_lowercase();
+
+        Ok(self.associated.contains_key(&key))
+    }
+
+    fn associate(&mut self, original: &str, body: String, what: &str) -> Result<()> {
+        let key = identifier(original, true)?.to_ascii_lowercase();
+        if let Some((previous, existing)) = self.associated.get(&key) {
+            ensure!(
+                previous == original && existing == &body,
+                "logical type {original:?} has two different {what}"
+            );
+        } else {
+            self.associated.insert(key, (original.into(), body));
+        }
+
+        Ok(())
+    }
+
+    /// The Roc expression packing `value.<field>`, or `None` for a field
+    /// that occupies no uniform bytes.
+    fn field_bytes(&mut self, field: &StructField, scope: &str) -> Result<Option<String>> {
+        let member = identifier(field.field_name(), false)?;
+        let value = format!("value.{member}");
+
+        Ok(Some(match field {
+            StructField::Resource(resource_field) => {
+                bail!(unsupported_resource(&resource_field.field_name))
+            }
+            StructField::Scalar(scalar_field) => {
+                format!(
+                    "ShaderReflection.{}_bytes({value})",
+                    scalar_bytes(scalar_field.scalar_type)
+                )
+            }
+            StructField::Vector(VectorStructField::Bound(vector)) => {
+                let name = vector_name(vector.element_count, vector_scalar(&vector.element_type));
+                format!("{}.to_bytes({value})", self.expose(scope, name))
+            }
+            StructField::Vector(VectorStructField::Semantic(_)) => return Ok(None),
+            StructField::Matrix(matrix_field) => {
+                let name = matrix_name(vector_scalar(&matrix_field.element_type));
+                format!("{}.to_bytes({value})", self.expose(scope, name))
+            }
+            StructField::Struct(struct_field) => {
+                let nested = identifier(&struct_field.struct_type.type_name, true)?;
+                ensure!(
+                    self.associated.contains_key(&nested.to_ascii_lowercase()),
+                    "nested logical type {:?} has no GPU layout",
+                    struct_field.struct_type.type_name
+                );
+                format!(
+                    "{}.to_bytes({value})",
+                    self.reference(&struct_field.struct_type.type_name, scope)?
+                )
+            }
+            StructField::Array(array_field) => {
+                let element = vector_name(4, array_field.element_scalar_type);
+                format!(
+                    "ShaderReflection.array_bytes({value}, {}, {}, {}.to_bytes)",
+                    array_field.element_count,
+                    array_field.element_stride,
+                    self.expose(scope, element)
+                )
+            }
+            StructField::Enum(enum_field) => format!(
+                "ShaderReflection.{}_bytes({}.tag({value}))",
+                match enum_field.enum_type.tag_type {
+                    EnumTagType::Uint32 => "u32",
+                    EnumTagType::Int32 => "i32",
+                },
+                self.reference(&enum_field.enum_type.type_name, scope)?
+            ),
+            StructField::Pointer(_) => {
+                format!(
+                    "{}.to_bytes({value})",
+                    self.expose(scope, "PointerAddress".into())
+                )
+            }
+            StructField::DescriptorHandle(_) => {
+                format!(
+                    "{}.to_bytes({value})",
+                    self.expose(scope, "DescriptorHandle".into())
+                )
+            }
+        }))
     }
 
     fn define(&mut self, original: &str, definition: String) -> Result<String> {
@@ -928,11 +1388,16 @@ impl Logical {
         let reserved = [
             "PointerAddress",
             "DescriptorHandle",
-            "ResourceReference",
             "ShaderTypes",
             "Reflection",
             "ShaderAtlas",
             "ShaderReflection",
+            "StructType",
+            "GraphicsReflection",
+            "ComputeReflection",
+            "UniformBinding",
+            "VertexInput",
+            "NoVertexInput",
             "F32",
             "I32",
             "U32",
@@ -961,7 +1426,18 @@ impl Logical {
         Ok(name)
     }
 
+    #[cfg(test)]
     fn structure(&mut self, name: &str, fields: &[StructField]) -> Result<String> {
+        self.structure_sized(name, fields, PackSize::Std140)
+    }
+
+    fn structure_sized(
+        &mut self,
+        name: &str,
+        fields: &[StructField],
+        size: PackSize,
+    ) -> Result<String> {
+        let scope = self.owner(name).to_owned();
         let mut names = Names::default();
         let mut members = Vec::new();
         for field in fields {
@@ -969,7 +1445,7 @@ impl Logical {
             let member = identifier(original, false)?;
             names.insert(&member, original)?;
             let ty = self
-                .field(field)
+                .field(field, &scope)
                 .with_context(|| format!("logical {name}.{original}"))?;
             members.push(RocField {
                 name: member,
@@ -977,15 +1453,54 @@ impl Logical {
             });
         }
 
-        let definition = LogicalStructTemplate {
-            name: identifier(name, true)?,
-            members,
-        };
+        let definition = LogicalStructTemplate { members };
+        let defined = self.define(name, fragment(&definition))?;
+        self.packer(name, fields, size)
+            .with_context(|| format!("GPU byte packer for logical {name}"))?;
 
-        self.define(name, fragment(&definition))
+        Ok(defined)
     }
 
-    fn field(&mut self, field: &StructField) -> Result<String> {
+    /// Generate the struct's packer when every data field has reflected
+    /// uniform bytes. Structs without a byte layout get none.
+    fn packer(&mut self, name: &str, fields: &[StructField], size: PackSize) -> Result<()> {
+        if matches!(size, PackSize::Skip) {
+            return Ok(());
+        }
+
+        let scope = self.owner(name).to_owned();
+        let mut packed = Vec::new();
+        let mut end = 0;
+        for field in fields {
+            let Some(expr) = self.field_bytes(field, &scope)? else {
+                return Ok(());
+            };
+
+            let Some(bytes) = field.binding().and_then(Binding::occupied_bytes) else {
+                return Ok(());
+            };
+
+            end = end.max(bytes.offset + bytes.size);
+            packed.push(PackField {
+                offset: bytes.offset,
+                expr,
+            });
+        }
+        packed.sort_by_key(|field| field.offset);
+        let size = match size {
+            PackSize::Known(size) => size,
+            PackSize::Std140 => end.div_ceil(16) * 16,
+            PackSize::Skip => unreachable!(),
+        };
+        ensure!(
+            end <= size,
+            "reflected fields of {name:?} end at {end} bytes, past its size {size}"
+        );
+
+        self.define_packer(name, size, packed)
+    }
+
+    fn field(&mut self, field: &StructField, scope: &str) -> Result<String> {
         Ok(match field {
             StructField::Scalar(scalar_field) => scalar(scalar_field.scalar_type).into(),
             StructField::Vector(vector_field) => {
@@ -996,12 +1511,20 @@ impl Logical {
                     }
                 };
 
-                self.vector(count, vector_scalar(element))?
+                self.vector(count, vector_scalar(element), scope)?
             }
-            StructField::Struct(struct_field) => self.structure(
-                &struct_field.struct_type.type_name,
-                &struct_field.struct_type.fields,
-            )?,
+            StructField::Struct(struct_field) => {
+                self.structure_sized(
+                    &struct_field.struct_type.type_name,
+                    &struct_field.struct_type.fields,
+                    match struct_field.binding.occupied_bytes() {
+                        Some(bytes) => PackSize::Known(bytes.size),
+                        None => PackSize::Skip,
+                    },
+                )?;
+
+                self.reference(&struct_field.struct_type.type_name, scope)?
+            }
             StructField::Matrix(matrix_field) => {
                 let scalar = vector_scalar(&matrix_field.element_type);
                 let is_supported_matrix = matrix_field.row_count == 4
@@ -1011,22 +1534,19 @@ impl Logical {
                     is_supported_matrix,
                     "unsupported logical matrix (requires 4x4 F32/I32/U32)"
                 );
-                self.matrix(scalar)?
+                self.matrix(scalar, scope)?
             }
             StructField::Resource(resource_field) => {
-                if let ResourceResultType::Struct(result) = &resource_field.result_type {
-                    self.structure(&result.type_name, &result.fields)?;
-                }
-
-                "ShaderReflection.ResourceReference".into()
+                bail!(unsupported_resource(&resource_field.field_name))
             }
             StructField::Pointer(pointer_field) => {
-                self.structure(
+                self.structure_sized(
                     &pointer_field.pointee_type.type_name,
                     &pointer_field.pointee_type.fields,
+                    PackSize::Known(pointer_field.pointee_size),
                 )?;
 
-                "ShaderReflection.PointerAddress".into()
+                self.expose(scope, "PointerAddress".into())
             }
             StructField::Array(array_field) => {
                 let is_supported_element = array_field.element_stride == 16
@@ -1038,7 +1558,7 @@ impl Logical {
 
                 fragment(&RocApplyTemplate {
                     head: "List".into(),
-                    argument: self.vector(4, array_field.element_scalar_type)?,
+                    argument: self.vector(4, array_field.element_scalar_type, scope)?,
                     hugging: true,
                 })
             }
@@ -1070,45 +1590,103 @@ impl Logical {
                     });
                 }
 
-                let definition = LogicalEnumTemplate {
+                let tag = LogicalEnumTemplate {
                     name,
-                    value_name: identifier(&enum_type.type_name, false)?,
                     numeric: match enum_type.tag_type {
                         EnumTagType::Uint32 => "U32",
                         EnumTagType::Int32 => "I32",
                     },
                     cases,
                 };
+                self.define(&enum_type.type_name, format!("[{}]", tag.case_list()))?;
+                self.associate(&enum_type.type_name, fragment(&tag), "tag functions")?;
 
-                self.define(&enum_type.type_name, fragment(&definition))?
+                self.reference(&enum_type.type_name, scope)?
             }
-            StructField::DescriptorHandle(_) => "ShaderReflection.DescriptorHandle".into(),
+            StructField::DescriptorHandle(_) => self.expose(scope, "DescriptorHandle".into()),
         })
     }
 
-    fn shader_types(&self) -> String {
-        let module = ShaderTypesTemplate {
-            definitions: self
-                .definitions
-                .values()
-                .map(|(_, body)| indent_roc(body))
-                .collect(),
-        };
+    fn render_definitions(&self, module: Option<&str>) -> Vec<String> {
+        self.definitions
+            .iter()
+            .filter(|(_, (original, _))| module.is_none_or(|module| self.owner(original) == module))
+            .map(|(key, (original, body))| {
+                let definition = LogicalDefinitionTemplate {
+                    name: identifier(original, true).expect("defined names are valid"),
+                    body: body.clone(),
+                    associated: self.associated.get(key).map(|(_, block)| indent_roc(block)),
+                };
 
-        module.render().expect("static template")
+                indent_roc(&fragment(&definition))
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn shader_types(&self) -> String {
+        let exposed: Vec<String> = self
+            .exposed
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        ShaderTypesTemplate {
+            module: "ShaderTypes".into(),
+            imports: vec![],
+            exposed,
+            definitions: self.render_definitions(None),
+        }
+        .render()
+        .expect("static template")
     }
 }
 
 #[derive(Template)]
 #[template(path = "shader_types.roc.askama", escape = "none")]
 struct ShaderTypesTemplate {
+    module: String,
+    imports: Vec<String>,
+    /// `ShaderReflection` type names this module names unqualified
+    exposed: Vec<String>,
     definitions: Vec<String>,
+}
+
+#[derive(Template)]
+#[template(path = "logical_definition.roc.askama", escape = "none")]
+struct LogicalDefinitionTemplate {
+    name: String,
+    body: String,
+    associated: Option<String>,
+}
+
+struct PackField {
+    offset: usize,
+    expr: String,
+}
+
+#[derive(Template)]
+#[template(path = "logical_pack.roc.askama", escape = "none")]
+struct LogicalPackTemplate {
+    name: String,
+    size: usize,
+    fields: Vec<PackField>,
+}
+
+fn scalar_bytes(scalar: ScalarType) -> &'static str {
+    match scalar {
+        ScalarType::Float32 => "f32",
+        ScalarType::Int32 => "i32",
+        ScalarType::Uint32 => "u32",
+        ScalarType::Uint64 => "u64",
+    }
 }
 
 #[derive(Template)]
 #[template(path = "logical_struct.roc.askama", escape = "none")]
 struct LogicalStructTemplate {
-    name: String,
     members: Vec<RocField>,
 }
 
@@ -1121,7 +1699,6 @@ struct EnumArm {
 #[template(path = "logical_enum.roc.askama", escape = "none")]
 struct LogicalEnumTemplate {
     name: String,
-    value_name: String,
     numeric: &'static str,
     cases: Vec<EnumArm>,
 }
@@ -1134,6 +1711,13 @@ impl LogicalEnumTemplate {
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
+
+fn unsupported_resource(field_name: &str) -> String {
+    format!(
+        "unsupported logical resource field {field_name:?}: a bare Texture2D or \
+         RWTexture2D field has no Roc value; declare it as a `.Handle` field"
+    )
 }
 
 fn scalar(scalar: ScalarType) -> &'static str {
@@ -1183,17 +1767,17 @@ fn is_builtin_alias(name: &str) -> bool {
 }
 
 impl Logical {
-    fn vector(&self, count: usize, element: ScalarType) -> Result<String> {
+    fn vector(&mut self, count: usize, element: ScalarType, scope: &str) -> Result<String> {
         ensure!(
             (1..=4).contains(&count),
             "unsupported logical vector width {count}"
         );
 
-        Ok(format!("ShaderReflection.{}", vector_name(count, element)))
+        Ok(self.expose(scope, vector_name(count, element)))
     }
 
-    fn matrix(&self, element: ScalarType) -> Result<String> {
-        Ok(format!("ShaderReflection.{}", matrix_name(element)))
+    fn matrix(&mut self, element: ScalarType, scope: &str) -> Result<String> {
+        Ok(self.expose(scope, matrix_name(element)))
     }
 }
 
@@ -1234,13 +1818,12 @@ mod tests {
             .join("roc-platform/platform/main.roc")
             .canonicalize()
             .unwrap();
-        let example =
-            fs::read_to_string(repo.join("roc-platform/examples/basic-triangle/main.roc")).unwrap();
-        let body = example.split_once('\n').unwrap().1;
+        // An empty-graph app depends on no generated shader module.
+        let body = "import pf.Game\nimport pf.RenderGraph\nimport pf.Graphs\n\ngame : Game\ngame = Game.new({ init!, graphs, draw })\n\ngraphs = Graphs.or_crash(Graphs.single(RenderGraph.empty))\n\ninit! : {} => Game.Init\ninit! = |_| { window_title: \"codegen test\" }\n\ndraw = |_frame| graphs.draw({})\n";
         fs::write(
             generated.join("main.roc"),
             format!(
-                "app [game] {{ pf: platform \"{}\" }}\n{body}",
+                "app [game] {{ pf: platform \"{}\" }}\n\n{body}",
                 platform.display()
             ),
         )
@@ -1266,10 +1849,7 @@ mod tests {
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
             names,
-            ["ShaderAtlas.roc", "ShaderTypes.roc"]
-                .into_iter()
-                .map(String::from)
-                .collect()
+            ["ShaderAtlas.roc"].into_iter().map(String::from).collect()
         );
         let first = fs::read(config.roc_source_dir.join("ShaderAtlas.roc")).unwrap();
         write_precompiled_roc_shaders(config.clone()).unwrap();
@@ -1351,8 +1931,50 @@ mod tests {
     }
 
     #[test]
+    fn shader_uniform_requires_exactly_one_constant_buffer() {
+        for count in 0..=2 {
+            let project = TempProject::new();
+            let config = project.config();
+            let declarations = (0..count)
+                .map(|index| format!("ParameterBlock<Params> params{index};\n"))
+                .collect::<String>();
+            let color = (0..count).fold("float4(1.0)".to_owned(), |color, index| {
+                format!("{color} + params{index}.color")
+            });
+            fs::write(
+                config.shaders_source_dir.join("uniforms.shader.slang"),
+                format!(
+                    r#"#language slang 2026
+struct Params {{ float4 color; }}
+{declarations}
+[shader("vertex")]
+float4 vertexMain(uint id : SV_VertexID) : SV_Position {{
+    return float4(float(id), 0.0, 0.0, 1.0);
+}}
+[shader("fragment")]
+float4 fragmentMain() : SV_Target {{ return {color}; }}
+"#
+                ),
+            )
+            .unwrap();
+            write_precompiled_roc_shaders(config.clone()).unwrap();
+            let module = fs::read_to_string(config.roc_source_dir.join("Uniforms.roc")).unwrap();
+            assert_eq!(module.contains("uniform: params0,"), count == 1, "{module}");
+            for index in 0..count {
+                assert!(module.contains(&format!("params{index} : UniformBinding(Params)")));
+            }
+        }
+    }
+
+    #[test]
     fn late_failures_preserve_both_managed_trees() {
-        for case in ["compile", "keyword", "mapping", "import_path"] {
+        for case in [
+            "compile",
+            "keyword",
+            "mapping",
+            "import_path",
+            "shared_module_names",
+        ] {
             let project = TempProject::new();
             let mut config = project.config();
             let before = seed_outputs(&config);
@@ -1379,6 +2001,16 @@ mod tests {
                         shader("b", "float2"),
                     )
                     .unwrap();
+                }
+                "shared_module_names" => {
+                    copy_basic_shader(&project, "good.shader.slang");
+                    for module in ["one_thing", "oneThing"] {
+                        fs::write(
+                            project.0.join(format!("source/{module}.slang")),
+                            format!("module {module};\n"),
+                        )
+                        .unwrap();
+                    }
                 }
                 "import_path" => {
                     copy_basic_shader(&project, "good.shader.slang");
@@ -1528,14 +2160,28 @@ mod tests {
     fn synthetic_module(module: &str, kind: &'static str, value: &impl Lower) -> String {
         let mut types = StructTypes::default();
         let reflection = value.lower(&mut types).unwrap().render();
+        let struct_types = types.definitions();
+        let mut exposed = vec![kind.to_owned()];
+        if !struct_types.is_empty() {
+            exposed.push("StructType".into());
+        }
+        exposed.sort();
 
         ShaderModule {
             module: module.into(),
+            logical_definitions: vec![],
+            imports: vec![],
+            exposed,
             stage_imports: vec![],
-            struct_types: types.definitions(),
+            reflection_json_path: None,
+            struct_types,
             reflection_kind: kind,
             reflection: continued(&reflection, 1),
             stages: vec![],
+            shader_name: None,
+            uniforms: vec![],
+            default_uniform: None,
+            vertex_input: None,
         }
         .render()
         .unwrap()
@@ -1998,9 +2644,12 @@ expect GeneratedSyntheticCompute.reflection.pipeline_layout.bindless_heap_set ==
             .current_dir(std::env::temp_dir())
             .output()
             .expect("run roc test");
+        // platform modules add their own expectations to the run
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             output.status.success()
-                && String::from_utf8_lossy(&output.stdout).contains("All (9) tests passed"),
+                && stdout.contains("tests passed")
+                && !stdout.contains("failed"),
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -2028,24 +2677,93 @@ expect GeneratedSyntheticCompute.reflection.pipeline_layout.bindless_heap_set ==
                 ],
             },
         });
-        assert_eq!(logical.field(&field).unwrap(), "Mode");
+        assert_eq!(logical.field(&field, "").unwrap(), "Mode");
+        assert_eq!(logical.definitions["mode"].1, "[Off, On]");
         assert_eq!(
-            logical.definitions["mode"].1,
-            "Mode : [Off, On]\n\nmode_tag : Mode -> I32\nmode_tag = |value| {\n    match value {\n        Off => -1\n        On => 1\n    }\n}"
+            logical.associated["mode"].1,
+            "tag : Mode -> I32\ntag = |value| {\n    match value {\n        Off => -1\n        On => 1\n    }\n}"
         );
+        assert!(logical.shader_types().contains(
+            "    Mode := [Off, On].{\n        is_eq : _\n\n        tag : Mode -> I32\n        tag = |value| {\n            match value {\n                Off => -1\n                On => 1\n            }\n        }\n    }"
+        ));
+    }
+
+    #[test]
+    fn logical_packers_follow_reflected_offsets_and_the_vertex_rule() {
+        let reflection: ReflectionJson = serde_json::from_str(include_str!(
+            "../../slang-reflection/src/fixtures/basic_triangle.json"
+        ))
+        .unwrap();
+        let mut logical = Logical::default();
+        logical.graphics(&reflection).unwrap();
+
+        assert_eq!(
+            logical.associated["mvpmatrices"].1,
+            "gpu_size : U32\ngpu_size = 192\n\nto_bytes : MvpMatrices -> List(U8)\nto_bytes = |value|\n    ShaderReflection.pack(\n        gpu_size.to_u64(),\n        [\n            (0, Float4x4.to_bytes(value.model)),\n            (64, Float4x4.to_bytes(value.view)),\n            (128, Float4x4.to_bytes(value.proj)),\n        ],\n    )"
+        );
+        assert_eq!(
+            logical.associated["vertex"].1,
+            "gpu_size : U32\ngpu_size = 32\n\nto_bytes : Vertex -> List(U8)\nto_bytes = |value|\n    ShaderReflection.pack(\n        gpu_size.to_u64(),\n        [\n            (0, Float3.to_bytes(value.position)),\n            (12, Float3.to_bytes(value.color)),\n        ],\n    )"
+        );
+        // fragment inputs are varying data the CPU never constructs
+        assert!(!logical.definitions.contains_key("fraginput"));
+        assert!(!logical.associated.contains_key("fraginput"));
+        let module = logical.shader_types();
+        assert!(!module.contains("FragInput"));
+        assert!(module.starts_with(
+            "import pf.ShaderReflection exposing [Float3, Float4x4]\n\n## Generated logical values, not GPU layouts.\n## Fixed arrays are lists: required lengths are preserved in reflection.\nShaderTypes := {}.{\n    MvpMatrices := {"
+        ));
+        assert!(module.contains(
+            "    Vertex := {\n        position : Float3,\n        color : Float3,\n    }.{\n        is_eq : _\n\n        gpu_size : U32\n        gpu_size = 32\n\n        to_bytes : Vertex -> List(U8)\n"
+        ));
+    }
+
+    #[test]
+    fn logical_rejects_bare_resource_fields() {
+        let fields = [
+            StructField::Scalar(ScalarStructField {
+                field_name: "scale".into(),
+                binding: Binding::Uniform(OffsetSizeBinding { offset: 0, size: 4 }),
+                scalar_type: ScalarType::Float32,
+            }),
+            StructField::Resource(ResourceStructField {
+                field_name: "scalar_resource".into(),
+                binding: Binding::DescriptorTableSlot(IndexCountBinding { index: 2, count: 0 }),
+                resource_shape: ResourceShape::Texture2D,
+                result_type: ResourceResultType::Scalar(ScalarResultType {
+                    scalar_type: ScalarType::Float32,
+                }),
+            }),
+        ];
+        let mut logical = Logical::default();
+        let error = logical.structure("Params", &fields).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("logical Params.scalar_resource"),
+            "{message}"
+        );
+        assert!(message.contains("`.Handle`"), "{message}");
+        assert!(logical.definitions.is_empty());
+        assert!(logical.associated.is_empty());
     }
 
     #[test]
     fn logical_vectors_and_shared_identity() {
         let mut logical = Logical::default();
         assert_eq!(
-            logical.vector(2, ScalarType::Uint64).unwrap(),
-            "ShaderReflection.Uint64x2"
+            logical
+                .vector(2, ScalarType::Uint64, "ShaderTypes")
+                .unwrap(),
+            "Uint64x2"
         );
-        assert!(logical.vector(5, ScalarType::Float32).is_err());
+        assert!(
+            logical
+                .vector(5, ScalarType::Float32, "ShaderTypes")
+                .is_err()
+        );
         assert_eq!(
-            logical.matrix(ScalarType::Float32).unwrap(),
-            "ShaderReflection.Float4x4"
+            logical.matrix(ScalarType::Float32, "ShaderTypes").unwrap(),
+            "Float4x4"
         );
         assert!(logical.definitions.is_empty());
         assert!(logical.structure("Float3", &[]).is_err());
