@@ -250,38 +250,39 @@ fn roc_artifact_manifest_and_stale_regeneration() {
         file_manifest(&generated),
         [
             "BasicTriangle.roc",
+            "Mltrs.roc",
+            "Particle.roc",
             "Particles.roc",
             "ShaderAtlas.roc",
-            "ShaderTypes.roc",
         ]
     );
     assert_eq!(
         file_manifest(&compiled),
         [
             "basic_triangle.frag.spv",
+            "basic_triangle.json",
             "basic_triangle.vert.spv",
+            "particles.comp.json",
             "particles.comp.spv",
         ]
     );
     assert!(!project.join("src").exists());
-    assert!(
-        file_manifest(&compiled)
-            .iter()
-            .all(|name| !name.ends_with(".json"))
-    );
 
     fs::write(generated.join("stale.roc"), "stale").unwrap();
+    fs::write(generated.join("ShaderTypes.roc"), "old aggregate").unwrap();
     fs::write(compiled.join("stale.json"), "stale").unwrap();
     let output = mltrs(&project, &["--compiled-dir", compiled.to_str().unwrap()]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(!generated.join("stale.roc").exists());
+    assert!(!generated.join("ShaderTypes.roc").exists());
     assert!(!compiled.join("stale.json").exists());
 
     for name in [
         "BasicTriangle.roc",
         "Particles.roc",
         "ShaderAtlas.roc",
-        "ShaderTypes.roc",
+        "Mltrs.roc",
+        "Particle.roc",
     ] {
         let text = fs::read_to_string(generated.join(name)).unwrap();
         // Snapshots ignore trailing whitespace; `roc fmt --check` does not.

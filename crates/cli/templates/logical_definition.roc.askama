@@ -1,0 +1,7 @@
+{{ name }} := {{ body }}.{
+    is_eq : _
+{%- if let Some(associated) = associated %}
+
+{{ associated }}
+{%- endif %}
+}

@@ -2,12 +2,12 @@
 source: crates/cli/src/roc_codegen.rs
 expression: "synthetic_module(\"GeneratedSyntheticGraphics\", \"GraphicsReflection\",\n&graphics)"
 ---
-# Generated; logical values are not GPU memory layouts.
-import pf.ShaderReflection
+import pf.ShaderReflection exposing [GraphicsReflection, StructType]
 
+## Generated; logical values are not GPU memory layouts.
 GeneratedSyntheticGraphics := {}.{
-    nested_type : ShaderReflection.StructType
-    nested_type = ShaderReflection.StructType.{
+    nested_type : StructType
+    nested_type = StructType.{
         type_name: "Nested",
         fields: [
             Scalar({
@@ -21,8 +21,8 @@ GeneratedSyntheticGraphics := {}.{
         ],
     }
 
-    params_type : ShaderReflection.StructType
-    params_type = ShaderReflection.StructType.{
+    params_type : StructType
+    params_type = StructType.{
         type_name: "Params",
         fields: [
             Scalar({
@@ -203,13 +203,13 @@ GeneratedSyntheticGraphics := {}.{
         ],
     }
 
-    push_type : ShaderReflection.StructType
-    push_type = ShaderReflection.StructType.{
+    push_type : StructType
+    push_type = StructType.{
         type_name: "Push",
         fields: [],
     }
 
-    reflection : ShaderReflection.GraphicsReflection
+    reflection : GraphicsReflection
     reflection = {
         source_file_name: "synthetic.shader.slang",
         global_parameters: [
