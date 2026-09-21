@@ -5,6 +5,8 @@
 use serde::Serialize;
 
 #[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
+#[allow(unused_imports)]
 use mltrs::renderer::render_graph::GPUWrite;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
@@ -26,3 +28,20 @@ const _: () = assert!(std::mem::offset_of!(Particle, velocity) == 8);
 const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 const _: () = assert!(std::mem::offset_of!(Particle, color) == 16);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+
+impl GPURead for Particle {
+    const GPU_SIZE: usize = 32;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for Particle"
+        );
+
+        Ok(Self {
+            position: GPURead::read_gpu(&bytes[0..8])?,
+            velocity: GPURead::read_gpu(&bytes[8..16])?,
+            color: GPURead::read_gpu(&bytes[16..32])?,
+        })
+    }
+}

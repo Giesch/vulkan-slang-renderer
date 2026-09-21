@@ -12,6 +12,8 @@ use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
 pub use super::tev::{GXAlphaCompare, GXLights, GXTevColorOverride, TevParams};
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -149,6 +151,35 @@ impl GPUWrite for Vertex {}
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<ToonLinkParams>,
+}
+
+impl GPURead for DebugMode {
+    const GPU_SIZE: usize = 4;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <u32 as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid DebugMode tag: {tag}"))
+    }
+}
+
+impl GPURead for ToonLinkParams {
+    const GPU_SIZE: usize = 336;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for ToonLinkParams"
+        );
+
+        Ok(Self {
+            mvp: GPURead::read_gpu(&bytes[0..192])?,
+            lights: GPURead::read_gpu(&bytes[192..256])?,
+            env: GPURead::read_gpu(&bytes[256..320])?,
+            debug_mode: GPURead::read_gpu(&bytes[320..324])?,
+            _padding_0: [0; 12],
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

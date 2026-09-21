@@ -11,6 +11,8 @@ use facet::Facet;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -194,6 +196,26 @@ impl GPUWrite for ModernVertex {}
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<ModernParams>,
+}
+
+impl GPURead for ModernRamp {
+    const GPU_SIZE: usize = 4;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <u32 as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid ModernRamp tag: {tag}"))
+    }
+}
+
+impl GPURead for ModernDiagnostic {
+    const GPU_SIZE: usize = 4;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        let tag = <u32 as GPURead>::read_gpu(bytes)?;
+
+        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid ModernDiagnostic tag: {tag}"))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

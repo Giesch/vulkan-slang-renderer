@@ -2022,13 +2022,14 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
 /// Only types with a supported, wholly data-only representation get a decoder.
 /// Resolve nested types before splitting definitions into shared modules.
 fn mark_readable_structs(defs: &mut GeneratedTypeDefs) {
+    // Match the runtime GPURead codecs. Three-component vectors are excluded:
+    // their packed field size is 12 bytes, but their storage array stride is 16.
     let mut readable: HashSet<String> = [
         "f32",
         "i32",
         "u32",
         "u64",
         "glam::Vec2",
-        "glam::Vec3",
         "glam::Vec4",
         "glam::IVec4",
         "glam::UVec4",
@@ -2713,6 +2714,39 @@ mod tests {
             .map(|def| def.type_name.as_str())
             .collect();
         assert_eq!(readable, ["Data", "DataOuter"]);
+    }
+
+    #[test]
+    fn readback_excludes_three_component_vectors_transitively() {
+        let mut defs = GeneratedTypeDefs::default();
+        for (name, ty, field_size, size) in [
+            ("Outer", "Float3", 16, 16),
+            ("Array", "[glam::Vec3; 2]", 32, 32),
+            ("Float3", "glam::Vec3", 12, 16),
+            ("Int3", "glam::IVec3", 12, 16),
+            ("Uint3", "glam::UVec3", 12, 16),
+            ("Float4", "glam::Vec4", 16, 16),
+        ] {
+            let mut field = GeneratedStructFieldDefinition::new("value".into(), ty.into());
+            field.offset = Some(0);
+            field.size = Some(field_size);
+            defs.struct_defs.push(GeneratedStructDefinition::gpu_layout(
+                name.into(),
+                vec![field],
+                Some(Alignment::Std430 {
+                    struct_alignment: 16,
+                }),
+                Some(size),
+            ));
+        }
+        mark_readable_structs(&mut defs);
+        let readable: Vec<_> = defs
+            .struct_defs
+            .iter()
+            .filter(|def| def.gpu_read)
+            .map(|def| def.type_name.as_str())
+            .collect();
+        assert_eq!(readable, ["Float4"]);
     }
 
     // Tests for std140 and std430 alignment edge cases

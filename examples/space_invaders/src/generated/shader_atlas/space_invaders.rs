@@ -10,6 +10,8 @@ use ash::vk;
 use serde::Serialize;
 
 pub use super::mltrs::Projection;
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -98,6 +100,23 @@ const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<SpaceInvadersParams>,
+}
+
+impl GPURead for DebugBox {
+    const GPU_SIZE: usize = 32;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for DebugBox"
+        );
+
+        Ok(Self {
+            color: GPURead::read_gpu(&bytes[0..16])?,
+            position: GPURead::read_gpu(&bytes[16..24])?,
+            size: GPURead::read_gpu(&bytes[24..32])?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

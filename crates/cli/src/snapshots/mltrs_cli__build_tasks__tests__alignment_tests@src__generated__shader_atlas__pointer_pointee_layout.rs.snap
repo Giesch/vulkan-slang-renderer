@@ -115,31 +115,6 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<Params>,
 }
 
-impl GPURead for HostileData {
-    const GPU_SIZE: usize = 112;
-
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for HostileData"
-        );
-
-        Ok(Self {
-            a: GPURead::read_gpu(&bytes[0..12])?,
-            b: GPURead::read_gpu(&bytes[12..16])?,
-            c: GPURead::read_gpu(&bytes[16..20])?,
-            _padding_0: [0; 12],
-            d: GPURead::read_gpu(&bytes[32..48])?,
-            ia: GPURead::read_gpu(&bytes[48..80])?,
-            e: GPURead::read_gpu(&bytes[80..84])?,
-            _padding_1: [0; 4],
-            ib: GPURead::read_gpu(&bytes[88..104])?,
-            f: GPURead::read_gpu(&bytes[104..108])?,
-            _padding_2: [0; 4],
-        })
-    }
-}
-
 impl GPURead for InnerB {
     const GPU_SIZE: usize = 16;
 
@@ -153,24 +128,6 @@ impl GPURead for InnerB {
             p: GPURead::read_gpu(&bytes[0..8])?,
             q: GPURead::read_gpu(&bytes[8..12])?,
             _padding_0: [0; 4],
-        })
-    }
-}
-
-impl GPURead for InnerA {
-    const GPU_SIZE: usize = 32;
-
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for InnerA"
-        );
-
-        Ok(Self {
-            x: GPURead::read_gpu(&bytes[0..4])?,
-            _padding_0: [0; 12],
-            v: GPURead::read_gpu(&bytes[16..28])?,
-            _padding_1: [0; 4],
         })
     }
 }

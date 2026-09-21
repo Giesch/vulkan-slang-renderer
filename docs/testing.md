@@ -254,7 +254,9 @@ nonzero on a readback failure or if any example emits Vulkan validation output.
 
 ```bash
 just sweep                                         # readback + all examples (~10s each, plus builds)
-just sweep sprite_batch                            # readback + only the named examples
+just sweep sprite_batch                            # only the named examples
+just sweep readback                                # only GPU readback
+just sweep readback sprite_batch                   # readback + the named examples
 just sweep-self-test                               # only prove the detector works
 SWEEP_TIMEOUT=30 scripts/headless-sweep.sh         # seconds per example (default 10)
 SWEEP_SKIP=watercolor scripts/headless-sweep.sh    # force-skip by name
@@ -269,9 +271,11 @@ comparable across machines.
 
 ### Generated GPU readback
 
-Every sweep runs the ignored `gpu_readback` renderer integration test before
-the examples, including sweeps restricted to named examples. `SWEEP_SKIP` only
-skips examples; `SWEEP_SELF_TEST=0` only skips fault injection. The standalone
+A full `just sweep` runs the ignored `gpu_readback` renderer integration test
+before the examples. Naming examples selects only those examples; add `readback`
+to include the diagnostic. `just sweep readback` runs only the diagnostic,
+without building examples or running fault injection. `SWEEP_SKIP` only skips
+examples; `SWEEP_SELF_TEST=0` only skips fault injection. The standalone
 `just sweep-self-test` runs only fault injection.
 
 The readback test generates SPIR-V, reflection, and Rust bindings from the

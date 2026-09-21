@@ -9,6 +9,8 @@ use ash::util::read_spv;
 use ash::vk;
 use serde::Serialize;
 
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -38,6 +40,23 @@ const _: () = assert!(std::mem::size_of::<f32>() == 4);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<SDF2DParams>,
+}
+
+impl GPURead for SDF2DParams {
+    const GPU_SIZE: usize = 16;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for SDF2DParams"
+        );
+
+        Ok(Self {
+            resolution: GPURead::read_gpu(&bytes[0..8])?,
+            time: GPURead::read_gpu(&bytes[8..12])?,
+            beat_proximity: GPURead::read_gpu(&bytes[12..16])?,
+        })
+    }
 }
 
 /// Complete graph inputs before resource references resolve to GPU values.

@@ -11,6 +11,8 @@ use serde::Serialize;
 
 pub use super::gpu_picking_common::Cube;
 pub use super::ray_march_camera::RayMarchCamera;
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};

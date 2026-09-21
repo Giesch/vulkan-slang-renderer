@@ -5,6 +5,8 @@
 use serde::Serialize;
 
 #[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
+#[allow(unused_imports)]
 use mltrs::renderer::render_graph::GPUWrite;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
@@ -26,3 +28,20 @@ const _: () = assert!(std::mem::offset_of!(MVPMatrices, view) == 64);
 const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
 const _: () = assert!(std::mem::offset_of!(MVPMatrices, proj) == 128);
 const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
+
+impl GPURead for MVPMatrices {
+    const GPU_SIZE: usize = 192;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for MVPMatrices"
+        );
+
+        Ok(Self {
+            model: GPURead::read_gpu(&bytes[0..64])?,
+            view: GPURead::read_gpu(&bytes[64..128])?,
+            proj: GPURead::read_gpu(&bytes[128..192])?,
+        })
+    }
+}

@@ -5,6 +5,8 @@
 use serde::Serialize;
 
 #[allow(unused_imports)]
+use mltrs::renderer::gpu_read::GPURead;
+#[allow(unused_imports)]
 use mltrs::renderer::render_graph::GPUWrite;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
@@ -20,3 +22,18 @@ impl GPUWrite for Projection {}
 const _: () = assert!(std::mem::size_of::<Projection>() == 64);
 const _: () = assert!(std::mem::offset_of!(Projection, matrix) == 0);
 const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
+
+impl GPURead for Projection {
+    const GPU_SIZE: usize = 64;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for Projection"
+        );
+
+        Ok(Self {
+            matrix: GPURead::read_gpu(&bytes[0..64])?,
+        })
+    }
+}
