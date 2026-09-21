@@ -92,7 +92,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		call : Call,
 	}
 
-	## Compose 2 blueprints and consume their frame values in tuple order.
+	## Compose 2 graphs and consume their frame values in tuple order.
 	from_tuple_2 : (RenderGraph(a), RenderGraph(b)) -> RenderGraph((a, b))
 	from_tuple_2 = |(b0, b1)| {
 		pack0 = b0.packer()
@@ -105,7 +105,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 3 blueprints and consume their frame values in tuple order.
+	## Compose 3 graphs and consume their frame values in tuple order.
 	from_tuple_3 : (RenderGraph(a), RenderGraph(b), RenderGraph(c)) -> RenderGraph((a, b, c))
 	from_tuple_3 = |(b0, b1, b2)| {
 		pack0 = b0.packer()
@@ -119,7 +119,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 4 blueprints and consume their frame values in tuple order.
+	## Compose 4 graphs and consume their frame values in tuple order.
 	from_tuple_4 : (RenderGraph(a), RenderGraph(b), RenderGraph(c), RenderGraph(d)) -> RenderGraph((a, b, c, d))
 	from_tuple_4 = |(b0, b1, b2, b3)| {
 		pack0 = b0.packer()
@@ -134,7 +134,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 5 blueprints and consume their frame values in tuple order.
+	## Compose 5 graphs and consume their frame values in tuple order.
 	from_tuple_5 : (RenderGraph(a), RenderGraph(b), RenderGraph(c), RenderGraph(d), RenderGraph(e)) -> RenderGraph((a, b, c, d, e))
 	from_tuple_5 = |(b0, b1, b2, b3, b4)| {
 		pack0 = b0.packer()
@@ -150,7 +150,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 6 blueprints and consume their frame values in tuple order.
+	## Compose 6 graphs and consume their frame values in tuple order.
 	from_tuple_6 : (RenderGraph(a), RenderGraph(b), RenderGraph(c), RenderGraph(d), RenderGraph(e), RenderGraph(f)) -> RenderGraph((a, b, c, d, e, f))
 	from_tuple_6 = |(b0, b1, b2, b3, b4, b5)| {
 		pack0 = b0.packer()
@@ -167,7 +167,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 7 blueprints and consume their frame values in tuple order.
+	## Compose 7 graphs and consume their frame values in tuple order.
 	from_tuple_7 : (RenderGraph(a), RenderGraph(b), RenderGraph(c), RenderGraph(d), RenderGraph(e), RenderGraph(f), RenderGraph(g)) -> RenderGraph((a, b, c, d, e, f, g))
 	from_tuple_7 = |(b0, b1, b2, b3, b4, b5, b6)| {
 		pack0 = b0.packer()
@@ -185,7 +185,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 8 blueprints and consume their frame values in tuple order.
+	## Compose 8 graphs and consume their frame values in tuple order.
 	from_tuple_8 : (RenderGraph(a), RenderGraph(b), RenderGraph(c), RenderGraph(d), RenderGraph(e), RenderGraph(f), RenderGraph(g), RenderGraph(h)) -> RenderGraph((a, b, c, d, e, f, g, h))
 	from_tuple_8 = |(b0, b1, b2, b3, b4, b5, b6, b7)| {
 		pack0 = b0.packer()
@@ -204,7 +204,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 9 blueprints and consume their frame values in tuple order.
+	## Compose 9 graphs and consume their frame values in tuple order.
 	from_tuple_9 : (RenderGraph(a), RenderGraph(b), RenderGraph(c), RenderGraph(d), RenderGraph(e), RenderGraph(f), RenderGraph(g), RenderGraph(h), RenderGraph(i)) -> RenderGraph((a, b, c, d, e, f, g, h, i))
 	from_tuple_9 = |(b0, b1, b2, b3, b4, b5, b6, b7, b8)| {
 		pack0 = b0.packer()
@@ -224,7 +224,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 10 blueprints and consume their frame values in tuple order.
+	## Compose 10 graphs and consume their frame values in tuple order.
 	from_tuple_10 : (RenderGraph(a), RenderGraph(b), RenderGraph(c), RenderGraph(d), RenderGraph(e), RenderGraph(f), RenderGraph(g), RenderGraph(h), RenderGraph(i), RenderGraph(j)) -> RenderGraph((a, b, c, d, e, f, g, h, i, j))
 	from_tuple_10 = |(b0, b1, b2, b3, b4, b5, b6, b7, b8, b9)| {
 		pack0 = b0.packer()
@@ -245,7 +245,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 11 blueprints and consume their frame values in tuple order.
+	## Compose 11 graphs and consume their frame values in tuple order.
 	from_tuple_11 : (RenderGraph(a), RenderGraph(b), RenderGraph(c), RenderGraph(d), RenderGraph(e), RenderGraph(f), RenderGraph(g), RenderGraph(h), RenderGraph(i), RenderGraph(j), RenderGraph(k)) -> RenderGraph((a, b, c, d, e, f, g, h, i, j, k))
 	from_tuple_11 = |(b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10)| {
 		pack0 = b0.packer()
@@ -267,7 +267,7 @@ RenderGraph(frame) :: { decls : List(Decl), pack : frame -> List(List(U8)) }.{
 		)
 	}
 
-	## Compose 12 blueprints and consume their frame values in tuple order.
+	## Compose 12 graphs and consume their frame values in tuple order.
 	from_tuple_12 : (RenderGraph(a), RenderGraph(b), RenderGraph(c), RenderGraph(d), RenderGraph(e), RenderGraph(f), RenderGraph(g), RenderGraph(h), RenderGraph(i), RenderGraph(j), RenderGraph(k), RenderGraph(l)) -> RenderGraph((a, b, c, d, e, f, g, h, i, j, k, l))
 	from_tuple_12 = |(b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11)| {
 		pack0 = b0.packer()

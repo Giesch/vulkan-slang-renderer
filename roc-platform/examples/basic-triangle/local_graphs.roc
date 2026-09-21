@@ -8,7 +8,7 @@ import pf.ShaderReflection
 import Generated/BasicTriangle
 import Generated/Mltrs
 
-pair = Graphs.or_crash({ first: blueprint, second: blueprint }.Graphs)
+pair = Graphs.or_crash({ first: render_graph, second: render_graph }.Graphs)
 
 graphs = Graphs.or_crash({ pair, single: RenderGraph.draw_indexed(triangle) }.Graphs)
 
@@ -50,7 +50,7 @@ triangle = RenderGraph.indexed_pipeline({
 
 ## Each node owns a pipeline and a uniform buffer, so one declaration can be
 ## drawn twice with different values.
-blueprint = RenderGraph.from_tuple_2((
+render_graph = RenderGraph.from_tuple_2((
 	RenderGraph.draw_indexed(triangle),
 	RenderGraph.draw_indexed(triangle),
 ))
@@ -72,7 +72,7 @@ filled = |v| {
 ## Node order and frame packing are checked through the host ABI.
 expect Game.host_config(game).graphs.len() == 3
 
-## An invalid blueprint is rejected with the validator's message.
+## An invalid render graph is rejected with the validator's message.
 expect {
 	foreign : RenderGraph.Uniform(Mltrs.MvpMatrices)
 	foreign = { name: "foreign", index: 1, size: 64, to_bytes: Mltrs.MvpMatrices.to_bytes }
