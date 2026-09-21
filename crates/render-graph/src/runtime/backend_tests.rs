@@ -561,3 +561,57 @@ fn backend_commit_once() {
         assert_eq!(prepared.tex[0].cursor, expected);
     }
 }
+
+#[test]
+fn backend_erased_draw_plan() {
+    let mut backend = Fake::default();
+    let nodes = vec![
+        DynDrawNode::indexed(
+            DrawIndexedKey::<NoPush>::new(3),
+            UniformSlot::<()>::from_backend(3),
+            192,
+        ),
+        DynDrawNode::vertex_count(
+            DrawVertexCountKey::<NoPush>::new(4),
+            UniformSlot::<()>::from_backend(4),
+            16,
+            6,
+        ),
+    ];
+    let mut prepared = RenderGraph::new(ResourcePlanner::new(), nodes)
+        .unwrap()
+        .prepare(&mut backend)
+        .unwrap();
+
+    let short = prepared.execute(Frame(&backend), &vec![vec![0u8; 100], vec![0u8; 16]]);
+    assert!(
+        short
+            .unwrap_err()
+            .to_string()
+            .contains("received 100 bytes")
+    );
+    let missing = prepared.execute(Frame(&backend), &vec![vec![0u8; 192]]);
+    assert!(
+        missing
+            .unwrap_err()
+            .to_string()
+            .contains("2 nodes received 1")
+    );
+    assert!(backend.events.borrow().is_empty(), "nothing submitted");
+
+    prepared
+        .execute(Frame(&backend), &vec![vec![0u8; 192], vec![0u8; 16]])
+        .unwrap();
+    let events = backend.events.borrow();
+    for expected in [
+        "write:true:3:192",
+        "write:true:4:16",
+        "draw:3:index:12:None",
+        "draw:4:vertex:6:None",
+    ] {
+        assert!(
+            events.iter().any(|event| event == expected),
+            "missing {expected}: {events:?}"
+        );
+    }
+}
