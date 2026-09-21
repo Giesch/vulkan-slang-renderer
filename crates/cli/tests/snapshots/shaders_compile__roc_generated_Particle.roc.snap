@@ -1,0 +1,31 @@
+---
+source: crates/cli/tests/shaders_compile.rs
+expression: text
+---
+import pf.ShaderReflection exposing [Float2, Float4]
+
+## Generated logical values, not GPU layouts.
+## Fixed arrays are lists: required lengths are preserved in reflection.
+Particle := {}.{
+	Particle := {
+		position : Float2,
+		velocity : Float2,
+		color : Float4,
+	}.{
+		is_eq : _
+
+		gpu_size : U32
+		gpu_size = 32
+
+		to_bytes : Particle -> List(U8)
+		to_bytes = |value|
+			ShaderReflection.pack(
+				gpu_size.to_u64(),
+				[
+					(0, Float2.to_bytes(value.position)),
+					(8, Float2.to_bytes(value.velocity)),
+					(16, Float4.to_bytes(value.color)),
+				],
+			)
+	}
+}
