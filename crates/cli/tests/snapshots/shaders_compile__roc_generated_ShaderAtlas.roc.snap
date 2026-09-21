@@ -2,14 +2,11 @@
 source: crates/cli/tests/shaders_compile.rs
 expression: text
 ---
-# Generated; directories are tool-owned.
 import BasicTriangle
 import Particles
 
+## Generated; directories are tool-owned.
 ShaderAtlas := {}.{
-	shader_names : List(Str)
-	shader_names = ["basic_triangle", "particles"]
-
 	basic_triangle = {
 		reflection: BasicTriangle.reflection,
 		stages: BasicTriangle.stages,
