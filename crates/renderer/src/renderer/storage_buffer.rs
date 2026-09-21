@@ -129,14 +129,11 @@ pub(super) struct StorageBufferStorage(Vec<Option<[RawStorageBuffer; MAX_FRAMES_
 impl StorageBufferStorage {
     pub(super) fn readback_buffer<T>(
         &self,
+        // GPU-written output; CPU readback is synchronized by dispatch_readback.
         handle: &GpuOnlyBufferHandle<T>,
         frame: usize,
-    ) -> anyhow::Result<&RawStorageBuffer> {
-        self.0
-            .get(handle.index)
-            .and_then(Option::as_ref)
-            .and_then(|buffers| buffers.get(frame))
-            .ok_or_else(|| anyhow::anyhow!("GPU readback buffer is missing"))
+    ) -> &RawStorageBuffer {
+        &self.0[handle.index].as_ref().unwrap()[frame]
     }
 
     pub(super) fn contains(&self, index: usize) -> bool {

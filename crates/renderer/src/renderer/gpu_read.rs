@@ -43,10 +43,11 @@ impl<T: GPURead, const N: usize> GPURead for [T; N] {
             bytes.len() == Self::GPU_SIZE,
             "incorrect GPU array byte length"
         );
-        anyhow::ensure!(T::GPU_SIZE != 0, "zero GPU element stride");
-        // `as_chunks` needs a const generic argument, and an associated const
-        // of a type parameter cannot be one on stable.
-        #[allow(clippy::chunks_exact_to_as_chunks)]
+        const { assert!(T::GPU_SIZE != 0, "zero GPU element stride") };
+
+        // `as_chunks` needs a const generic argument,
+        // and an associated const of a type parameter cannot be one on stable.
+        #[expect(clippy::chunks_exact_to_as_chunks)]
         let values = bytes
             .chunks_exact(T::GPU_SIZE)
             .map(T::read_gpu)

@@ -2808,9 +2808,10 @@ impl Renderer {
                 .all(|(count, limit)| count > 0 && count <= limit),
             "GPU readback dispatch group count is zero or exceeds device limits"
         );
+
         let raw = self
             .storage_buffers
-            .readback_buffer(output, self.flight_slot)?;
+            .readback_buffer(output, self.flight_slot);
         let byte_len = gpu_read::readback_byte_len(
             output.len() as usize,
             T::GPU_SIZE,
@@ -2821,13 +2822,16 @@ impl Renderer {
             !raw.mapped_mem.is_null(),
             "GPU readback buffer is not mapped"
         );
+
         let mapped = raw.mapped_mem.cast::<u8>();
         let address = Addr::from_raw(raw.device_address);
         self.drain_gpu()?;
+
         // SAFETY: the checked range is inside a coherent mapped allocation;
         // drain_gpu completed all previous accesses. Initialize even padding and
         // fields that the shader might leave unwritten before exposing bytes.
         unsafe { std::ptr::write_bytes(mapped, 0, byte_len) };
+
         let push = prepare(
             &mut Gpu {
                 flight_slot: self.flight_slot,
@@ -2837,11 +2841,13 @@ impl Renderer {
             },
             address,
         );
+
         let commands = [PendingComputeCommand::Dispatch {
             pipeline_index: pipeline.index(),
             group_count,
             push_constants: Some(PushConstantBytes::from_value(&push)),
         }];
+
         // Reuse the drained current slot's command buffer. No temporary Vulkan
         // resources need cleanup if recording or submission returns an error.
         let command_buffer = self.command_buffers[self.flight_slot];
@@ -2854,6 +2860,7 @@ impl Renderer {
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
         }
+
         self.record_compute_commands(command_buffer, &commands);
         cmd_memory_barrier2(
             &self.device,
@@ -2863,24 +2870,28 @@ impl Renderer {
             vk::PipelineStageFlags2::HOST,
             vk::AccessFlags2::HOST_READ,
         );
+
         unsafe {
             self.device.end_command_buffer(command_buffer)?;
+
             let infos = [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
             let submits = [vk::SubmitInfo2::default().command_buffer_infos(&infos)];
             self.device
                 .queue_submit2(self.graphics_queue, &submits, vk::Fence::null())?;
+
             // If waiting fails, do not read memory or free pending resources.
             // The renderer still owns this command buffer and output allocation.
             self.device.device_wait_idle()?;
         }
+
         // SAFETY: completion plus the shader-write -> host-read dependency makes
         // initialized coherent mapped bytes readable. No typed GPU reference is
         // created, and the decoder returns only owned values.
         let bytes = unsafe { std::slice::from_raw_parts(mapped, byte_len) };
 
-        // `as_chunks` needs a const generic argument, and an associated const
-        // of a type parameter cannot be one on stable.
-        #[allow(clippy::chunks_exact_to_as_chunks)]
+        // `as_chunks` needs a const generic argument,
+        // and an associated const of a type parameter cannot be one on stable.
+        #[expect(clippy::chunks_exact_to_as_chunks)]
         bytes.chunks_exact(T::GPU_SIZE).map(T::read_gpu).collect()
     }
 
