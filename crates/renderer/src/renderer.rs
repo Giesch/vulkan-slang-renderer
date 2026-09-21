@@ -2797,6 +2797,11 @@ impl Renderer {
         group_count: [u32; 3],
         prepare: impl FnOnce(&mut Gpu<'_>, Addr<T>) -> P,
     ) -> anyhow::Result<Vec<T>> {
+        anyhow::ensure!(
+            group_count.into_iter().all(|count| count > 0),
+            "GPU readback dispatch group count is zero"
+        );
+
         let limits = self
             .physical_device_properties
             .limits
@@ -2805,8 +2810,8 @@ impl Renderer {
             group_count
                 .into_iter()
                 .zip(limits)
-                .all(|(count, limit)| count > 0 && count <= limit),
-            "GPU readback dispatch group count is zero or exceeds device limits"
+                .all(|(count, limit)| count <= limit),
+            "GPU readback dispatch group count exceeds device limits"
         );
 
         let raw = self
