@@ -122,12 +122,14 @@ mltrs shaders compile      # Cargo.toml selects Rust: SPIR-V + JSON + src/genera
 For a Roc project, a directly contained `main.roc` selects Roc codegen: SPIR-V
 plus importable logical values and typed reflection in the tool-owned
 `Generated/` directory, rooted at `Generated/ShaderAtlas.roc`. Use
-`--language rust|roc` when both or neither project marker exists. Roc values do
-not promise shader-memory layout, valid GPU handles, dereference, upload, or
-runtime rendering integration; the separate `roc-platform` host continues to
-consume its generated Rust bindings. Generated Roc modules import
-`pf.ShaderReflection` from `roc-platform/platform/`, so the app header must bind
-the platform as `pf`. Keep separate `--compiled-dir` values when retaining both
+`--language rust|roc` when both or neither project marker exists. Generated `<Type>.to_bytes`
+packers produce GPU bytes; handles and addresses carry no GPU validity. The
+`roc-platform` host renders the graph a Roc app builds from its generated
+`shader` records as constants (see `roc-platform/README.md`). Generated Roc
+modules import `pf.ShaderReflection` from `roc-platform/platform/`, so the app
+header must bind the platform as `pf`. A generated module exposes the
+`ShaderReflection` types it uses and names them unqualified; it calls
+`ShaderReflection` functions qualified. Keep separate `--compiled-dir` values when retaining both
 Rust and Roc artifacts, because successful generation replaces managed output
 directories.
 

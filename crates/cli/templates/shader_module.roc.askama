@@ -1,13 +1,26 @@
-# Generated; logical values are not GPU memory layouts.
-import pf.ShaderReflection
+import pf.ShaderReflection{% if !exposed.is_empty() %} exposing [{{ exposed|join(", ") }}]{% endif %}
+{% if !imports.is_empty() %}
+{% for import in imports -%}
+import {{ import }}
+{% endfor -%}
+{% endif -%}
+{% if !stage_imports.is_empty() || reflection_json_path.is_some() %}
 {% for import in stage_imports -%}
 import "{{ import.path }}" as {{ import.stage }}_bytes : List(U8)
-{% endfor %}
+{% endfor -%}
+{% if let Some(path) = reflection_json_path -%}
+import "{{ path }}" as reflection_json : Str
+{% endif -%}
+{% endif %}
+## Generated; logical values are not GPU memory layouts.
 {{ module }} := {}.{
+{%- for definition in logical_definitions %}
+{{ definition }}
+{% endfor -%}
 {%- for definition in struct_types %}
 {{ definition.block() }}
 {% endfor %}
-    reflection : ShaderReflection.{{ reflection_kind }}
+    reflection : {{ reflection_kind }}
     reflection = {{ reflection }}
 {%- if !stages.is_empty() %}
 
@@ -17,5 +30,39 @@ import "{{ import.path }}" as {{ import.stage }}_bytes : List(U8)
 {%- endfor %}
     }
 {%- endif %}
+{%- if let Some(shader_name) = shader_name %}
+
+    ## The pipeline inputs a render graph needs: stages, reflection, its
+    ## JSON form for the host, vertex input, and a single packable uniform.
+    shader = {
+        name: "{{ shader_name }}",
+        vertex_spv: vertex_bytes,
+        fragment_spv: fragment_bytes,
+        reflection_json,
+        reflection,
+{%- if let Some(uniform) = default_uniform %}
+        uniform: {{ uniform }},
+{%- endif %}
+{%- if let Some(vertex) = vertex_input %}
+        vertex: VertexInput.{
+            stride: {{ vertex }}.gpu_size,
+            to_bytes: {{ vertex }}.to_bytes,
+        },
+{%- else %}
+        vertex: NoVertexInput.{},
+{%- endif %}
+    }
+{%- endif %}
+{%- for uniform in uniforms %}
+
+    ## The `{{ uniform.parameter }}` constant buffer, position {{ uniform.index }} in descriptor-set-layout order.
+    {{ uniform.name }} : UniformBinding({{ uniform.type_name }})
+    {{ uniform.name }} = {
+        name: "{{ uniform.parameter }}",
+        index: {{ uniform.index }},
+        size: {{ uniform.type_name }}.gpu_size,
+        to_bytes: {{ uniform.type_name }}.to_bytes,
+    }
+{%- endfor %}
 }
 
