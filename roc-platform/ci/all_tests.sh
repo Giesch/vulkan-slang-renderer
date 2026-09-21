@@ -97,11 +97,11 @@ fi
 
 # Exercise every supported tuple arity, mixed types, and nested composition.
 echo ""
-echo "--- tuple blueprints ---"
-if (cd examples/basic-triangle && roc test tuple_blueprints.roc); then
-    echo "PASS: tuple blueprints preserve declaration and payload order"
+echo "--- tuple render graphs ---"
+if (cd examples/basic-triangle && roc test tuple_render_graphs.roc); then
+    echo "PASS: tuple render graphs preserve declaration and payload order"
 else
-    echo "FAIL(tuple blueprints): roc test failed"
+    echo "FAIL(tuple render graphs): roc test failed"
     failed=1
 fi
 
@@ -128,7 +128,7 @@ else
     failed=1
 fi
 
-# Frame tuple arity and element types must match the blueprint at draw.
+# Frame tuple arity and element types must match the render graph at draw.
 for fixture in invalid_values invalid_selected_values invalid_extra_values invalid_value_type; do
     echo ""
     echo "--- $fixture ---"
