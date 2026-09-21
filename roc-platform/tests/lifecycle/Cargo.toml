@@ -1,0 +1,14 @@
+[package]
+name = "roc-graph-lifecycle-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "1.0.100"
+
+[[test]]
+name = "graph_lifecycle"
+path = "../graph_lifecycle.rs"
