@@ -258,6 +258,27 @@ An array `[N; K]` of one node type is a node. It runs its elements in index
 order, and its frame element is `[N::Frame; K]`. `std::array::from_fn` builds
 both arrays from one table of per-node data.
 
+### Erased nodes
+
+`DynDrawNode` is a draw node built from runtime data instead of a generated
+params type, for a host whose graph arrives as plain data (the Roc platform).
+Its constructors take the pipeline family's key, a uniform slot, and the
+parameter block's GPU size:
+
+```rust
+DynDrawNode::indexed(&indexed_pipeline, &uniform_buffer, gpu_size)
+DynDrawNode::index_range(&indexed_pipeline, &uniform_buffer, gpu_size, first, count)
+DynDrawNode::vertex_count(&vertex_count_pipeline, &uniform_buffer, gpu_size, count)
+```
+
+Its frame value is a `Vec<u8>` of exactly `gpu_size` packed bytes; any other
+length is an execution error before submission. Erased nodes lower through
+the same `LowerCtx` and pass the same validation as typed nodes; they carry no
+resource bindings or push block yet. A `Vec<N>` of one node type is a node
+whose frame is a `Vec<N::Frame>` of the same length, checked at execution.
+The host creates the uniform buffer with `create_uniform_buffer_bytes` and the
+pipeline from a `RuntimeShader` (`shaders::runtime`) with `with_vertex_bytes`.
+
 Compute parameter blocks with resource bindings require
 `.with_param_bindings(bindings)` before the command can enter a graph.
 Blocks whose `Bindings` type is `()` need no attachment or unit argument.
