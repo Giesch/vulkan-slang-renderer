@@ -1,12 +1,14 @@
 platform ""
 	requires {
-		game : {
-			init! : {} => Game.Init,
-		}
+		game : Game
 	}
-	exposes [Stdout, Stderr, Stdin, Game, ShaderReflection]
+	exposes [Stdout, Stderr, Game, ShaderReflection, Graphs, RenderGraph]
 	packages {}
-	provides { "roc_init": init_for_host! }
+	provides {
+		"roc_init": init_for_host!,
+		"roc_config": config_for_host,
+		"roc_draw": draw_for_host,
+	}
 	hosted {
 		"roc_stderr_line": Host.stderr_line!,
 		"roc_stdin_line": Host.stdin_line!,
@@ -19,14 +21,22 @@ platform ""
 
 import Stdout
 import Stderr
-import Stdin
 import Host
-import InitConfig
 import Game
 import ShaderReflection
+import Graphs
+import RenderGraph
 
 ## The return type is nominal so the generated glue names it. An anonymous
 ## record reaches Rust as a structural hash, and every field added to it
 ## renames the Rust type.
-init_for_host! : {} => InitConfig
-init_for_host! = |{}| InitConfig.new((game.init!)({}))
+init_for_host! : {} => Game.Init
+init_for_host! = |{}| Game.init!(game)
+
+## Setup fetches definitions without calling app draw.
+config_for_host : {} -> Game.HostConfig
+config_for_host = |{}| game.host_config()
+
+## Frames transfer only the selected graph ordinal and packed values.
+draw_for_host : Game.Frame -> Graphs.Draw
+draw_for_host = |frame| game.draw(frame)
