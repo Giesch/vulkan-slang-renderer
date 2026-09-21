@@ -12,7 +12,7 @@ import Generated/Mltrs
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-graphs = Graphs.or_crash({ first: blueprint, second: blueprint }.Graphs)
+graphs = Graphs.or_crash({ first: render_graph, second: render_graph }.Graphs)
 
 selected = graphs.select(|g| g.second)
 
@@ -32,7 +32,7 @@ triangle = RenderGraph.indexed_pipeline({
 	indices: [0, 1, 2],
 })
 
-blueprint = RenderGraph.from_tuple_2((
+render_graph = RenderGraph.from_tuple_2((
 	RenderGraph.draw_indexed(triangle),
 	RenderGraph.draw_indexed(triangle),
 ))

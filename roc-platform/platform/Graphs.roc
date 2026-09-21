@@ -11,11 +11,11 @@ RenderGraphExtension := [].{
 		Graphs(Graphs.ValidatedGraph(frame)),
 		Graphs.Invalid,
 	)
-	to_graphs = |blueprint| Graphs.single(blueprint)
+	to_graphs = |render_graph| Graphs.single(render_graph)
 }
 
 ## Deferred graph definitions. A collection holds validated graphs only:
-## `single` and `map2` reject an invalid blueprint before it can be registered.
+## `single` and `map2` reject an invalid render graph before it can be registered.
 Graphs(g) :: { definitions : List(ValidatedRenderGraph.HostGraph), build : U32 -> g }.{
 
 	## A registered graph retains its typed packer, not host assets.
@@ -52,12 +52,12 @@ Graphs(g) :: { definitions : List(ValidatedRenderGraph.HostGraph), build : U32 -
 		is_eq = |Draw.(left), Draw.(right)| left == right
 	}
 
-	## The aggregated validation message for an invalid blueprint.
+	## The aggregated validation message for an invalid render graph.
 	Invalid : [InvalidRenderGraph(Str)]
 
 	single : RenderGraph(frame) -> Try(Graphs(ValidatedGraph(frame)), Invalid)
-	single = |blueprint| {
-		graph = ValidatedRenderGraph.new(blueprint)?
+	single = |render_graph| {
+		graph = ValidatedRenderGraph.new(render_graph)?
 
 		definitions = [graph.definition()]
 		pack = graph.packer()
@@ -68,7 +68,7 @@ Graphs(g) :: { definitions : List(ValidatedRenderGraph.HostGraph), build : U32 -
 
 	# TODO: Remove this function once we can use an Ok(...) destructure instead:
 	# https://github.com/roc-lang/roc/issues/11532
-	## An invalid blueprint becomes a compile-time error that carries the
+	## An invalid render graph becomes a compile-time error that carries the
 	## validation message.
 	or_crash : Try(Graphs(g), Invalid) -> Graphs(g)
 	or_crash = |result| match result {

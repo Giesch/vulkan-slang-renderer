@@ -87,7 +87,7 @@ Each selected graph retains its own packer, so frame values carry no slots
 that could accidentally refer to another node or graph.
 The game is a constant: `Graphs.single`
 runs during compile-time constant evaluation and returns
-`Err(InvalidRenderGraph(message))` for an invalid blueprint, where `message` is
+`Err(InvalidRenderGraph(message))` for an invalid render graph, where `message` is
 the same aggregated message the Rust validator reports. `Graphs.or_crash` turns
 that `Err` into a compile-time error, so an invalid graph fails `roc check`
 with the message. The `game : Game` annotation is load-bearing:
@@ -114,7 +114,7 @@ and payload order.
   `RenderGraph.draw_indexed` and `RenderGraph.draw_vertex_count` are the nodes. Each
   returns an opaque `RenderGraph(t)`: one declaration plus a packer consuming
   its uniform value. `RenderGraph.from_tuple_2` through `from_tuple_12` combine
-  a tuple of blueprints into a blueprint consuming the corresponding tuple
+  a tuple of render graphs into a render graph consuming the corresponding tuple
   of frame values. `RenderGraph.empty` consumes `{}` and emits no payloads.
 - `ValidatedRenderGraph.new` takes a `RenderGraph`, checks each node's uniform against its
   shader's reflection and its mesh, lowers the nodes through
@@ -125,7 +125,7 @@ and payload order.
 - `Graphs` is the collection the app hands to the host. `Graphs.single`
   validates one `RenderGraph` and returns `Try(Graphs(ValidatedGraph(frame)), [InvalidRenderGraph(Str)])`.
   `Graphs.or_crash` unwraps that `Try`; `Graphs.map2` combines two
-  collections (or blueprints) into one. The only way to build a `Graphs` is
+  collections (or render graphs) into one. The only way to build a `Graphs` is
   through validation, so every graph the host registers passed it.
 - `Game.new` takes `{ init!, draw, graphs }`, checks that `draw` and `graphs`
   share the same generic collection type through `Graphs.Submission(g)`.
@@ -139,7 +139,7 @@ and payload order.
   or upload host assets. To retain the registration, define
   `selected = graphs.select(|graph| graph)` at module scope.
 
-A graph with two or more nodes uses a tuple of blueprints. Tuple position is
+A graph with two or more nodes uses a tuple of render graphs. Tuple position is
 both the draw order and the frame-value order:
 
 ```roc
@@ -152,7 +152,7 @@ draw = |frame| graphs.draw((mvp_for(frame), light_for(frame)))
 ```
 
 The collection and selected-graph `draw` methods require the exact frame type
-of the blueprint. Missing or extra tuple elements and incorrect uniform types
+of the render graph. Missing or extra tuple elements and incorrect uniform types
 fail `roc check` at `draw`. Each leaf produces exactly one payload, using the
 packer retained by that graph; callers do not supply node indices or packed
 value lists. Swapping two values of the same type still type-checks, but each
@@ -160,13 +160,13 @@ position always writes its own distinct node. Each leaf checks its packer's
 output length against the declared uniform size.
 
 Tuple constructors accept one tuple argument and support arities 2 through
-12. Nest tuple blueprints for larger graphs; frame tuples have the same
-nesting. A single-node blueprint consumes its uniform value directly.
+12. Nest tuple render graphs for larger graphs; frame tuples have the same
+nesting. A single-node render graph consumes its uniform value directly.
 
 For a collection containing multiple graphs, select each one at module scope:
 
 ```roc
-graphs = Graphs.or_crash({ triangle: triangle_blueprint, sky: sky_blueprint }.Graphs)
+graphs = Graphs.or_crash({ triangle: triangle_graph, sky: sky_graph }.Graphs)
 triangle = graphs.select(|registered| registered.triangle)
 sky = graphs.select(|registered| registered.sky)
 
@@ -257,10 +257,10 @@ not runnable examples, and `ci/all_tests.sh` runs them:
 - `invalid_game.roc` rejects a draw callback whose collection type differs
   from the registered collection.
 - `invalid_packer.roc` checks that packing rejects an incorrect byte length.
-- `two_draws.roc`, `local_graphs.roc`, and `tuple_blueprints.roc` must pass
+- `two_draws.roc`, `local_graphs.roc`, and `tuple_render_graphs.roc` must pass
   `roc test`. They cover tuple packing order, inferred graph selection,
   distinct graph ordinals, all tuple arities, mixed uniform types, nested and
-  empty blueprints, and retention of each graph's own packer.
+  empty render graphs, and retention of each graph's own packer.
 
 Constant evaluation packs the mesh and the frame at compile time. A large
 mesh slows `roc check`; converted assets belong in imported files.
