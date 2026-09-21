@@ -27,6 +27,8 @@ mod compile;
     )
 )]
 mod desc;
+mod erased;
+pub use erased::{DynDrawCall, DynDrawNode};
 #[cfg_attr(
     not(test),
     allow(
@@ -1336,6 +1338,33 @@ impl<T: GPUWrite, B: BackendTypes> compatible::Sealed<B> for UploadNode<T> {}
 impl<N: CompatibleWith<B>, B: BackendTypes> compatible::Sealed<B> for RepeatNode<N> {}
 impl<N: CompatibleWith<B>, B: BackendTypes> compatible::Sealed<B> for OptionalNode<N> {}
 impl<N: CompatibleWith<B>, B: BackendTypes, const K: usize> compatible::Sealed<B> for [N; K] {}
+impl<N: CompatibleWith<B>, B: BackendTypes> compatible::Sealed<B> for Vec<N> {}
+
+/// A runtime-length list of one node type, for graphs built from data. Its
+/// frame is a `Vec` of the same length; a mismatch is an execution error.
+impl<N: GraphNode> GraphNode for Vec<N> {
+    type Frame = Vec<N::Frame>;
+
+    fn lower(&self, cx: &mut LowerCtx) {
+        for node in self {
+            node.lower(cx);
+        }
+    }
+
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            frame_data.len() == self.len(),
+            "render graph: {} nodes received {} frame values",
+            self.len(),
+            frame_data.len(),
+        );
+        for (node, frame) in self.iter().zip(frame_data) {
+            node.plan(frame, cx)?;
+        }
+
+        Ok(())
+    }
+}
 
 impl<N: GraphNode, const K: usize> GraphNode for [N; K] {
     type Frame = [N::Frame; K];
@@ -1541,9 +1570,13 @@ impl PlanCtx<'_> {
     }
 
     fn stage_uniform<S>(&mut self, slot: UniformSlot<S>, value: &S) {
-        let byte_range = self.staged.stage(std::slice::from_ref(value));
+        self.stage_uniform_bytes(slot.index, std::slice::from_ref(value));
+    }
+
+    fn stage_uniform_bytes<T>(&mut self, buffer_index: usize, value: &[T]) {
+        let byte_range = self.staged.stage(value);
         self.staged.targets.push(StagedTarget::Uniform {
-            buffer_index: slot.index,
+            buffer_index,
             byte_range,
         });
     }
