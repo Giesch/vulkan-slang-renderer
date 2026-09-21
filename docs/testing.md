@@ -7,10 +7,10 @@ and validation sweep; Roc codegen changes also need the explicit Roc gate.
 | ----------------- | -------------------------------------------------------------------- | ----------------------- |
 | normal tests      | generated Rust/JSON and compiler-independent Roc codegen. No GPU/Roc. | `just test`             |
 | Roc codegen gate  | generated modules, imports, values, bytes, and formatting in real Roc | `just roc-codegen-test` |
-| validation sweep  | every example running, checked for Vulkan validation output.          | `just sweep`            |
+| validation sweep  | generated GPU readback and examples, checked for Vulkan validation output | `just sweep`         |
 
-`just test` says nothing about whether the renderer works. The sweep says
-nothing about whether codegen is correct. The unchanged sweep starts
+`just test` says nothing about whether the renderer works. The sweep checks
+generated readback on Vulkan but does not replace the codegen suite. It starts
 `toon_link` in its default GameCube mode; it does not select Modern and is not
 Modern GPU or visual evidence. See [`toon_link.md`](toon_link.md) for the
 separate interactive coverage matrix.
@@ -248,13 +248,13 @@ the same generated code against the real renderer.
 
 ## Validation sweep
 
-`scripts/headless-sweep.sh` runs every example under the lavapipe software
-driver, with no window and no display. It exits nonzero if any example emits
-Vulkan validation output.
+`scripts/headless-sweep.sh` checks generated GPU readback and runs every example
+under the lavapipe software driver, with no window and no display. It exits
+nonzero on a readback failure or if any example emits Vulkan validation output.
 
 ```bash
-just sweep                                         # all examples (~10s each, plus a build)
-just sweep sprite_batch                            # only the named examples
+just sweep                                         # readback + all examples (~10s each, plus builds)
+just sweep sprite_batch                            # readback + only the named examples
 just sweep-self-test                               # only prove the detector works
 SWEEP_TIMEOUT=30 scripts/headless-sweep.sh         # seconds per example (default 10)
 SWEEP_SKIP=watercolor scripts/headless-sweep.sh    # force-skip by name
@@ -266,6 +266,31 @@ The sweep needs `mesa-vulkan-drivers vulkan-validationlayers libvulkan-dev`. It
 needs no GPU, no display and no sound card, so it runs in a container. The
 script pins the lavapipe ICD even on a machine with a real GPU, so results stay
 comparable across machines.
+
+### Generated GPU readback
+
+Every sweep runs the ignored `gpu_readback` renderer integration test before
+the examples, including sweeps restricted to named examples. `SWEEP_SKIP` only
+skips examples; `SWEEP_SELF_TEST=0` only skips fault injection. The standalone
+`just sweep-self-test` runs only fault injection.
+
+The readback test generates SPIR-V, reflection, and Rust bindings from the
+fixture sources in a temporary crate, then executes it against the real renderer.
+It needs Slang and the normal renderer build dependencies, seeds resolution from
+the workspace lockfile, and runs the temporary crate with offline Cargo.
+Successful runs remove the temporary crate; failures retain it for inspection.
+The sweep saves output to `$SWEEP_LOG_DIR/gpu-readback.log` and fails on missing
+prerequisites, generation/build failures, mismatched output, validation warnings
+or errors, or a missing completion marker. Ordinary `just test` still skips it.
+
+Two one-thread workgroups write records covering a nested struct, two enum
+variants, vectors, a fixed array, and a nonsymmetric nonidentity matrix. A second
+dispatch writes invalid enum value 99 and must produce a checked decoder error.
+Validation counts include renderer destruction, independently of the log filter.
+Row-major Slang matrix storage decodes into glam columns, matching the inverse
+raw upload representation; explicit column assertions are separate from the
+shader-computed matrix/vector product. This covers software Vulkan execution,
+not hardware drivers, animation skinning, or the frame loop.
 
 ### When to run it
 

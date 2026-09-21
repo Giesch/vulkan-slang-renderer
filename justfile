@@ -192,7 +192,7 @@ _roc-codegen-test-if-available:
         echo "pre-commit: roc not on PATH -- skipping roc-codegen-test"
     fi
 
-# run every example headlessly, failing on vulkan validation output
+# check GPU readback and run every example headlessly, failing on Vulkan validation output
 [unix]
 sweep *examples:
     ./scripts/headless-sweep.sh {{examples}}

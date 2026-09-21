@@ -5,8 +5,8 @@
 # Usage, and when it is worth running: docs/testing.md
 # Design: llm_notes/offscreen_testing.md. Findings: build_reproducibility.md §7.
 #
-# Runs each example under a software Vulkan driver with no display, and fails
-# if any of them emits Vulkan validation output.
+# Checks generated GPU readback and runs each example under a software Vulkan
+# driver with no display. Fails on incorrect readback or Vulkan validation output.
 #
 #   scripts/headless-sweep.sh                 # all examples
 #   scripts/headless-sweep.sh basic_triangle  # just these
@@ -197,6 +197,23 @@ if [ "$SWEEP_SELF_TEST" != "0" ]; then
   # a clean pass for every example, which is worse than not running at all.
   self_test || exit 1
 fi
+
+# This finite diagnostic shares the sweep's lavapipe environment, but not the
+# example time window: it compiles a temporary fixture before dispatching.
+# Require its completion marker as well as cargo success so zero executed tests
+# cannot pass. The harness checks decoded values and validation after teardown.
+echo "checking GPU readback..."
+readback_log="$SWEEP_LOG_DIR/gpu-readback.log"
+if ! cargo test -p mltrs-renderer --test gpu_readback -- --ignored --nocapture >"$readback_log" 2>&1; then
+  echo "FAIL: GPU readback; see $readback_log" >&2
+  tail -40 "$readback_log" >&2
+  exit 1
+fi
+if ! grep -qF 'GPU_READBACK_OK: 2 elements; invalid enum rejected; validation=0; teardown complete' "$readback_log"; then
+  echo "FAIL: GPU readback did not report completion; see $readback_log" >&2
+  exit 1
+fi
+echo "ok: GPU readback"
 
 if [ "${#examples[@]}" -eq 0 ]; then
   mapfile -t examples < <(ls -d examples/*/ | xargs -n1 basename)
