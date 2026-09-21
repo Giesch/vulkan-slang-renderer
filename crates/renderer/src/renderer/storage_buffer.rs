@@ -127,6 +127,15 @@ pub(super) struct RawStorageBuffer {
 pub(super) struct StorageBufferStorage(Vec<Option<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]>>);
 
 impl StorageBufferStorage {
+    pub(super) fn readback_buffer<T>(
+        &self,
+        // GPU-written output; CPU readback is synchronized by dispatch_readback.
+        handle: &GpuOnlyBufferHandle<T>,
+        frame: usize,
+    ) -> &RawStorageBuffer {
+        &self.0[handle.index].as_ref().unwrap()[frame]
+    }
+
     pub(super) fn contains(&self, index: usize) -> bool {
         self.0.get(index).is_some_and(Option::is_some)
     }
