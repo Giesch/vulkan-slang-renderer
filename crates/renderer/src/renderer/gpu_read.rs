@@ -30,7 +30,8 @@ macro_rules! scalar {
         }
     )* };
 }
-scalar!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64);
+// including only primitives that implement GPUWrite or are allowed scalar fields
+scalar!(u8, u32, i32, u64, f32);
 
 impl<T: GPURead, const N: usize> GPURead for [T; N] {
     const GPU_SIZE: usize = match T::GPU_SIZE.checked_mul(N) {
@@ -76,15 +77,12 @@ macro_rules! vector {
         }
     };
 }
+// 3-component vectors are deliberately unsupported: std430 stride 16 != size 12
 vector!(glam::Vec2, f32, 2, 8);
-vector!(glam::Vec3, f32, 3, 12);
-vector!(glam::Vec3A, f32, 3, 16);
 vector!(glam::Vec4, f32, 4, 16);
 vector!(glam::IVec2, i32, 2, 8);
-vector!(glam::IVec3, i32, 3, 12);
 vector!(glam::IVec4, i32, 4, 16);
 vector!(glam::UVec2, u32, 2, 8);
-vector!(glam::UVec3, u32, 3, 12);
 vector!(glam::UVec4, u32, 4, 16);
 
 macro_rules! matrix {
@@ -136,9 +134,12 @@ mod tests {
         assert_eq!(u32::read_gpu(&[4, 3, 2, 1]).unwrap(), 0x01020304);
         assert!(u32::read_gpu(&[0; 3]).is_err());
         assert!(u32::read_gpu(&[0; 5]).is_err());
-        assert_eq!(<[u16; 2]>::read_gpu(&[1, 0, 2, 0]).unwrap(), [1, 2]);
-        assert!(<[u16; 2]>::read_gpu(&[0; 3]).is_err());
-        assert_eq!(glam::Vec3::read_gpu(&[0; 12]).unwrap(), glam::Vec3::ZERO);
+        assert_eq!(
+            <[u32; 2]>::read_gpu(&[1, 0, 0, 0, 2, 0, 0, 0]).unwrap(),
+            [1, 2]
+        );
+        assert!(<[u32; 2]>::read_gpu(&[0; 7]).is_err());
+        assert_eq!(glam::Vec4::read_gpu(&[0; 16]).unwrap(), glam::Vec4::ZERO);
         assert_eq!(glam::Mat4::read_gpu(&[0; 64]).unwrap(), glam::Mat4::ZERO);
         assert_eq!(<[u32; 0]>::read_gpu(&[]).unwrap(), [0_u32; 0]);
     }
