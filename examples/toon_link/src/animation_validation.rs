@@ -1,7 +1,7 @@
 //! Runtime BCK compatibility boundary, separate from preservation/schema readers.
 //!
 //! These checks do not evaluate poses. Every sampled pose must additionally be
-//! checked for finite results before publication. Animation-only failures must
+//! checked for finite results before rendering. Animation-only failures must
 //! leave the existing static model path available.
 
 #![expect(unused)]
@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::path::{Component, Path};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use gx::animation_manifest::{
     AnimationCatalog, AnimationClip, AnimationFormat, BckClip, CATALOG_VERSION, CLIP_VERSION,
     CatalogClip, ClipData, TrackF32, TrackI16,
@@ -197,11 +197,11 @@ pub fn validate_clip<'a>(
             "clip.identity: differs from catalog"
         );
         ensure!(
-            entry.format == AnimationFormat::Bck && document.format() == entry.format,
+            entry.format == AnimationFormat::Bck,
             "clip.format: expected catalog BCK"
         );
         let ClipData::Bck(clip) = &document.data else {
-            unreachable!("format checked")
+            bail!("clip.format: expected catalog BCK");
         };
         validate_bck(clip, skeleton)?;
 
