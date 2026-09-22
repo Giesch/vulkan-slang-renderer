@@ -195,7 +195,7 @@ yet. `roc test platform/RenderGraphValidate.roc` and
 `examples/basic-triangle/two_draws.roc` is a two-node fixture whose
 expectations `roc test` runs.
 
-`Stdout`, `Stderr`, and `Stdin` are also exposed. `ShaderReflection` exposes
+`Stdout` and `Stderr` are also exposed. `ShaderReflection` exposes
 the reflection schema, the logical shader value types, and the GPU byte
 packing helpers that generated Roc shader modules use.
 
@@ -342,7 +342,7 @@ Three checks guard the committed artifacts:
 
 - `platform/main.roc` — the platform header: `requires`, `hosted`, and the
   link inputs for each target.
-- `platform/{Stdout,Stderr,Stdin}.roc` — app-facing effect modules.
+- `platform/{Stdout,Stderr}.roc` — app-facing effect modules.
 - `platform/Game.roc` — the game an app provides and its nominal `Init` and
   `Frame` records.
 - `platform/Host.roc` — the hosted-effect boundary the modules above wrap.
