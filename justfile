@@ -247,7 +247,7 @@ pre-commit:
     set -f
     graph=$(just _workspace-graph)
     # NOTE -z so paths with spaces/unicode arrive verbatim rather than quoted
-    recipes=$(git diff --cached --name-only --no-renames -z | ./scripts/pre-commit-checks.rs "$graph")
+    recipes=$(git diff --cached --name-only --no-renames -z | MLTRS_WORKSPACE_GRAPH="$graph" ./scripts/pre-commit-checks.rs)
     just ${recipes:?pre-commit-checks.rs selected no recipes}
 
 # used by the pre-commit hook to calculate dependent tests

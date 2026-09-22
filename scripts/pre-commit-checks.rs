@@ -11,7 +11,7 @@ serde_json = "1"
 
 //! Selects the pre-commit checks for a set of staged paths.
 //!
-//! The first argument is the workspace graph: a JSON array of
+//! `MLTRS_WORKSPACE_GRAPH` contains the workspace graph: a JSON array of
 //! `{"name", "dir", "dependencies"}` objects, one per workspace package,
 //! as produced by `just _workspace-graph` from `cargo metadata`. `dir` is the
 //! package directory relative to the workspace root and `dependencies` lists
@@ -73,8 +73,12 @@ const WORKSPACE_DIRECTORIES: &[&[u8]] = &[b"scripts/", b".cargo/"];
 const PACKAGE_DIRECTORIES: &[&[u8]] = &[b"crates/", b"examples/"];
 
 fn main() -> io::Result<ExitCode> {
-    let Some(graph) = std::env::args().nth(1) else {
-        eprintln!("usage: pre-commit-checks.rs <workspace graph json> < staged paths");
+    let Some(graph) = std::env::var_os("MLTRS_WORKSPACE_GRAPH") else {
+        eprintln!("pre-commit-checks.rs: MLTRS_WORKSPACE_GRAPH is required");
+        return Ok(ExitCode::FAILURE);
+    };
+    let Ok(graph) = graph.into_string() else {
+        eprintln!("pre-commit-checks.rs: MLTRS_WORKSPACE_GRAPH must be UTF-8 JSON");
         return Ok(ExitCode::FAILURE);
     };
 
