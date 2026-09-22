@@ -1,16 +1,21 @@
-//! Deterministic BCK transport shared by both render modes. Pure CPU: no
-//! wall clock, no renderer, no per-frame filesystem access.
+//! Both render modes use this deterministic BCK playback controller.
+//! It uses only the CPU. It does not read the wall clock or use the renderer.
+//! It does not access the filesystem during each frame.
 //!
-//! Seam (matches the app order update -> UI -> draw):
-//! - [`AnimationPlayer::advance`] from update, with elapsed seconds.
-//! - [`AnimationPlayer::apply`] from the UI, one call per command.
-//! - [`AnimationPlayer::prepare_frame`] from draw. It evaluates at most one
-//!   pose per changed frame and returns the pose to upload.
+//! The application calls these methods in this order:
+//! 1. Update calls [`AnimationPlayer::advance`] with the elapsed seconds.
+//! 2. The UI calls [`AnimationPlayer::apply`] once for each command.
+//! 3. Draw calls [`AnimationPlayer::prepare_frame`] to get the pose for upload.
+//!    This method evaluates at most one pose for each changed frame.
 //!
-//! Selection is transactional: read, validate, prepare and evaluate frame 0
-//! before any state changes. Every later pose is evaluated before it is
-//! published; a failure keeps the last valid pose, frame and clip, pauses, and
-//! records a persistent diagnostic.
+//! Before it changes the selected clip, the controller reads, validates,
+//! and prepares the candidate clip.
+//! It also evaluates frame 0 before it changes the selected clip.
+//! The controller evaluates each subsequent pose before it publishes that pose.
+//! If evaluation fails, the controller keeps the last valid pose, frame, and clip.
+//! It pauses playback and records a persistent diagnostic.
+
+#![expect(unused)]
 
 use std::collections::HashMap;
 use std::fs;
@@ -30,6 +35,9 @@ pub const MIN_SPEED: f32 = 0.1;
 pub const MAX_SPEED: f32 = 2.0;
 pub const DEFAULT_SPEED: f32 = 1.0;
 /// `Once` stops this many frames before the clip duration.
+/// Matches Wind Waker's `J3DFrameCtrl::update`: `EMode_NONE` sets the frame
+/// to `mEnd - 0.001f` when playback reaches the end.
+/// See <https://github.com/zeldaret/tww/blob/main/src/JSystem/J3DGraphAnimator/J3DAnimation.cpp>.
 pub const ONCE_END_MARGIN: f32 = 0.001;
 
 /// Loop preference chosen in the UI. `Source` follows the clip's own metadata.
@@ -49,7 +57,7 @@ pub enum LoopPolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TransportState {
+pub enum PlaybackState {
     /// Bind pose, a static clip, or a completed/parked `Once` clip.
     Stopped,
     Playing,
@@ -67,6 +75,14 @@ pub enum Command {
     Scrub(f32),
     SetSpeed(f32),
     SetLoop(LoopPreference),
+}
+
+/// Commands that require an active clip with a positive duration.
+#[derive(Clone, Copy, Debug)]
+enum PlaybackCommand {
+    Play,
+    Restart,
+    Scrub,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,7 +136,7 @@ pub struct AnimationPlayer {
     catalog_error: Option<String>,
     active: Option<ActiveClip>,
     generation: u64,
-    transport: TransportState,
+    playback_state: PlaybackState,
     /// Requested frame. Equals `published_frame` once `prepare_frame` succeeds.
     frame: f32,
     /// Frame of the last successfully evaluated clip pose.
@@ -173,7 +189,7 @@ impl AnimationPlayer {
             catalog_error,
             active: None,
             generation: 0,
-            transport: TransportState::Stopped,
+            playback_state: PlaybackState::Stopped,
             frame: 0.0,
             published_frame: 0.0,
             speed: DEFAULT_SPEED,
@@ -195,7 +211,7 @@ impl AnimationPlayer {
     /// whose target frame overflows, is ignored.
     pub fn advance(&mut self, elapsed_seconds: f32) {
         let usable_elapsed = elapsed_seconds.is_finite() && elapsed_seconds > 0.0;
-        if self.transport != TransportState::Playing || !usable_elapsed {
+        if self.playback_state != PlaybackState::Playing || !usable_elapsed {
             return;
         }
 
@@ -223,7 +239,7 @@ impl AnimationPlayer {
                 let end = duration - ONCE_END_MARGIN;
                 if target >= end {
                     self.frame = end;
-                    self.transport = TransportState::Stopped;
+                    self.playback_state = PlaybackState::Stopped;
                 } else {
                     self.frame = target;
                 }
@@ -279,10 +295,10 @@ impl AnimationPlayer {
         });
         self.frame = 0.0;
         self.published_frame = 0.0;
-        self.transport = if duration > 0 {
-            TransportState::Playing
+        self.playback_state = if duration > 0 {
+            PlaybackState::Playing
         } else {
-            TransportState::Stopped
+            PlaybackState::Stopped
         };
         self.pose = pose;
         self.pose_key = PoseKey::Clip {
@@ -321,7 +337,7 @@ impl AnimationPlayer {
         }
 
         self.active = None;
-        self.transport = TransportState::Stopped;
+        self.playback_state = PlaybackState::Stopped;
         self.frame = 0.0;
         self.published_frame = 0.0;
         self.pose_key = PoseKey::Bind;
@@ -332,11 +348,11 @@ impl AnimationPlayer {
     }
 
     fn play(&mut self) -> CommandOutcome {
-        if let Err(outcome) = self.require_transport("Play") {
+        if let Err(outcome) = self.require_playback(PlaybackCommand::Play) {
             return outcome;
         }
 
-        if self.transport == TransportState::Playing {
+        if self.playback_state == PlaybackState::Playing {
             return CommandOutcome::NoOp;
         }
 
@@ -345,9 +361,9 @@ impl AnimationPlayer {
             Some(LoopPolicy::Once) if self.frame >= duration - ONCE_END_MARGIN => {
                 // Park at the once endpoint; a completed clip stays stopped.
                 let end = duration - ONCE_END_MARGIN;
-                let changed = self.frame != end || self.transport != TransportState::Stopped;
+                let changed = self.frame != end || self.playback_state != PlaybackState::Stopped;
                 self.frame = end;
-                self.transport = TransportState::Stopped;
+                self.playback_state = PlaybackState::Stopped;
                 if changed {
                     self.clear_on_publication = true;
                     CommandOutcome::Applied
@@ -357,12 +373,12 @@ impl AnimationPlayer {
             }
             Some(LoopPolicy::Repeat) if self.frame >= duration => {
                 self.frame = 0.0;
-                self.transport = TransportState::Playing;
+                self.playback_state = PlaybackState::Playing;
                 self.clear_on_publication = true;
                 CommandOutcome::Applied
             }
             _ => {
-                self.transport = TransportState::Playing;
+                self.playback_state = PlaybackState::Playing;
                 self.clear_on_publication = true;
                 CommandOutcome::Applied
             }
@@ -374,29 +390,29 @@ impl AnimationPlayer {
             return CommandOutcome::Disabled("Pause: no active clip".into());
         }
 
-        if self.transport != TransportState::Playing {
+        if self.playback_state != PlaybackState::Playing {
             return CommandOutcome::NoOp;
         }
 
-        self.transport = TransportState::Paused;
+        self.playback_state = PlaybackState::Paused;
 
         CommandOutcome::Applied
     }
 
     fn restart(&mut self) -> CommandOutcome {
-        if let Err(outcome) = self.require_transport("Restart") {
+        if let Err(outcome) = self.require_playback(PlaybackCommand::Restart) {
             return outcome;
         }
 
         self.frame = 0.0;
-        self.transport = TransportState::Playing;
+        self.playback_state = PlaybackState::Playing;
         self.clear_on_publication = true;
 
         CommandOutcome::Applied
     }
 
     fn scrub(&mut self, frame: f32) -> CommandOutcome {
-        if let Err(outcome) = self.require_transport("Scrub") {
+        if let Err(outcome) = self.require_playback(PlaybackCommand::Scrub) {
             return outcome;
         }
 
@@ -405,7 +421,7 @@ impl AnimationPlayer {
         }
 
         self.frame = frame.clamp(0.0, self.duration());
-        self.transport = TransportState::Paused;
+        self.playback_state = PlaybackState::Paused;
         self.clear_on_publication = true;
 
         CommandOutcome::Applied
@@ -437,7 +453,21 @@ impl AnimationPlayer {
     }
 
     /// Play, Restart and Scrub need an active positive-duration clip.
-    fn require_transport(&self, command: &str) -> Result<(), CommandOutcome> {
+    fn require_playback(&self, command: PlaybackCommand) -> Result<(), CommandOutcome> {
+        let label = match command {
+            PlaybackCommand::Play => "Play",
+            PlaybackCommand::Restart => "Restart",
+            PlaybackCommand::Scrub => "Scrub",
+        };
+
+        self.require_playback_with_label(label)
+    }
+
+    fn has_playback(&self) -> bool {
+        self.require_playback_with_label("").is_ok()
+    }
+
+    fn require_playback_with_label(&self, command: &str) -> Result<(), CommandOutcome> {
         match &self.active {
             None => Err(CommandOutcome::Disabled(format!(
                 "{command}: no active clip"
@@ -499,7 +529,7 @@ impl AnimationPlayer {
             }
             Err(error) => {
                 self.frame = self.published_frame;
-                self.transport = TransportState::Paused;
+                self.playback_state = PlaybackState::Paused;
                 self.diagnostic = Some(format!(
                     "{label}: pose at frame {target} failed: {error:#}; \
                      paused at retained frame {}",
@@ -522,8 +552,8 @@ impl AnimationPlayer {
         &self.pose.palette
     }
 
-    pub fn transport(&self) -> TransportState {
-        self.transport
+    pub fn playback_state(&self) -> PlaybackState {
+        self.playback_state
     }
 
     /// Requested frame; after a failed `prepare_frame` it is the retained frame.
@@ -597,27 +627,28 @@ impl AnimationPlayer {
     /// False while playing and at a completed Once endpoint, where `play`
     /// would be a no-op.
     pub fn can_play(&self) -> bool {
-        if self.require_transport("").is_err() || self.transport == TransportState::Playing {
+        let unavailable = !self.has_playback() || self.playback_state == PlaybackState::Playing;
+        if unavailable {
             return false;
         }
 
         let completed_once = self.effective_policy() == Some(LoopPolicy::Once)
-            && self.transport == TransportState::Stopped
+            && self.playback_state == PlaybackState::Stopped
             && self.frame >= self.duration() - ONCE_END_MARGIN;
 
         !completed_once
     }
 
     pub fn can_pause(&self) -> bool {
-        self.transport == TransportState::Playing
+        self.playback_state == PlaybackState::Playing
     }
 
     pub fn can_restart(&self) -> bool {
-        self.require_transport("").is_ok()
+        self.has_playback()
     }
 
     pub fn can_scrub(&self) -> bool {
-        self.require_transport("").is_ok()
+        self.has_playback()
     }
 
     /// Every BCK row in catalog order. Filter with [`CatalogRow::matches`] or
@@ -950,7 +981,8 @@ mod tests {
             entry(3, "LkAnm", "btps/face.btp", AnimationFormat::Btp),
         ];
         entries.swap(1, 2);
-        // Only the walk clip exists; run is malformed and wait is missing.
+        // Deliberate synthetic failures: write valid walk JSON, malformed run JSON,
+        // and no wait file. These fixtures do not use extracted game assets.
         fs::write(
             dir.join(&entries[0].file),
             serde_json::to_string(&document(&entries[0], ramp_clip(20, 2))).unwrap(),
@@ -976,7 +1008,7 @@ mod tests {
         // Startup reads only the catalog: broken documents do not matter yet.
         let mut player = fixture.player();
         assert_eq!(player.catalog_error(), None);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         assert!(!player.has_active_clip());
         assert_eq!(player.evaluation_count(), 0);
         let labels: Vec<_> = player
@@ -1016,7 +1048,7 @@ mod tests {
         );
         assert_eq!(player.selected_identity(), Some(&fixture.identity(0)));
         assert_eq!(player.selected_label(), Some("LkAnm/bcks/Walk.bck"));
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         assert_eq!(player.evaluation_count(), 1);
 
         let CommandOutcome::Failed(message) = player.apply(Command::Select(fixture.identity(1)))
@@ -1094,7 +1126,7 @@ mod tests {
                 "{name}: {error}"
             );
             assert!(player.catalog_rows().is_empty());
-            assert_eq!(player.transport(), TransportState::Stopped);
+            assert_eq!(player.playback_state(), PlaybackState::Stopped);
             assert!(matches!(
                 player.apply(Command::Play),
                 CommandOutcome::Disabled(_)
@@ -1131,7 +1163,7 @@ mod tests {
 
         player.advance(0.1);
         assert_eq!(player.apply(Command::Scrub(7.5)), CommandOutcome::Applied);
-        assert_eq!(player.transport(), TransportState::Paused);
+        assert_eq!(player.playback_state(), PlaybackState::Paused);
         assert_eq!(root_x(player.prepare_frame()), 7.5);
         assert_eq!(player.evaluation_count(), 2);
         // The same command is not re-applied: later frames advance from it.
@@ -1141,14 +1173,14 @@ mod tests {
 
         player.advance(0.1);
         assert_eq!(player.apply(Command::Restart), CommandOutcome::Applied);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         assert_eq!(root_x(player.prepare_frame()), 0.0);
         assert!((tick(&mut player, 0.1) - 3.0).abs() <= TOLERANCE);
 
         player.advance(0.1);
         assert_eq!(player.apply(Command::BindPose), CommandOutcome::Applied);
         assert_eq!(player.prepare_frame().palette, vec![Mat4::IDENTITY; 2]);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         assert_eq!(player.selected_identity(), None);
     }
 
@@ -1191,24 +1223,27 @@ mod tests {
             CommandOutcome::Applied
         );
         assert_frame(&player, 0.0);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         player.advance(0.0);
         player.advance(-1.0);
         player.advance(f32::NAN);
         assert_frame(&player, 0.0);
     }
 
-    #[test]
-    fn bck_loop_endpoint_transitions() {
-        let fixture = fixture(
-            "endpoints",
-            &[
-                ("bcks/repeat.bck", Some(ramp_clip(20, 2))),
-                ("bcks/once.bck", Some(ramp_clip(20, 0))),
-            ],
-        );
+    fn playing_repeat_fixture(name: &str) -> (Fixture, AnimationPlayer) {
+        let fixture = fixture(name, &[("bcks/repeat.bck", Some(ramp_clip(20, 2)))]);
         let mut player = fixture.player();
-        player.apply(Command::Select(fixture.identity(0)));
+        assert_eq!(
+            player.apply(Command::Select(fixture.identity(0))),
+            CommandOutcome::Applied
+        );
+
+        (fixture, player)
+    }
+
+    #[test]
+    fn bck_repeat_wrap_preserves_overshoot() {
+        let (_fixture, mut player) = playing_repeat_fixture("bck_repeat_wrap_preserves_overshoot");
         assert_eq!(player.effective_policy(), Some(LoopPolicy::Repeat));
         assert_eq!(player.duration_frames(), Some(20));
 
@@ -1223,8 +1258,13 @@ mod tests {
         player.apply(Command::Scrub(10.0));
         player.apply(Command::Play);
         assert_eq!(tick(&mut player, 10.0 / 30.0), 0.0);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
+    }
 
+    #[test]
+    fn bck_elapsed_schedules_reach_the_same_frame() {
+        let (_fixture, mut player) =
+            playing_repeat_fixture("bck_elapsed_schedules_reach_the_same_frame");
         // Alternate frame schedules reach the same frame.
         player.apply(Command::Scrub(0.0));
         player.apply(Command::Play);
@@ -1242,11 +1282,23 @@ mod tests {
         player.apply(Command::Play);
         player.advance(0.1);
         assert_frame(&player, 3.0);
+    }
+
+    #[test]
+    fn bck_overflowing_elapsed_time_keeps_frame_and_playback_state() {
+        let (_fixture, mut player) =
+            playing_repeat_fixture("bck_overflowing_elapsed_time_keeps_frame_and_playback_state");
+        player.advance(0.1);
         // An elapsed time whose target frame overflows is ignored, never stored.
         player.advance(f32::MAX);
         assert_frame(&player, 3.0);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
+    }
 
+    #[test]
+    fn bck_speed_scales_elapsed_time_and_clamps_to_supported_range() {
+        let (_fixture, mut player) =
+            playing_repeat_fixture("bck_speed_scales_elapsed_time_and_clamps_to_supported_range");
         // Speed scales the clock and is clamped to the supported range.
         assert_eq!(
             player.apply(Command::SetSpeed(5.0)),
@@ -1269,10 +1321,15 @@ mod tests {
         ));
         assert_eq!(player.speed(), MIN_SPEED);
         player.apply(Command::SetSpeed(1.0));
+    }
 
+    #[test]
+    fn bck_scrub_clamps_to_closed_duration_interval_and_rejects_nan() {
+        let (_fixture, mut player) =
+            playing_repeat_fixture("bck_scrub_clamps_to_closed_duration_interval_and_rejects_nan");
         // Exact-duration scrub lands on the closed interval endpoint.
         assert_eq!(player.apply(Command::Scrub(20.0)), CommandOutcome::Applied);
-        assert_eq!(player.transport(), TransportState::Paused);
+        assert_eq!(player.playback_state(), PlaybackState::Paused);
         assert_eq!(root_x(player.prepare_frame()), 20.0);
         player.apply(Command::Scrub(25.0));
         assert_frame(&player, 20.0);
@@ -1283,52 +1340,88 @@ mod tests {
             CommandOutcome::Failed(_)
         ));
         assert_frame(&player, 0.0);
+    }
 
+    #[test]
+    fn bck_repeat_play_at_duration_wraps_to_zero() {
+        let (_fixture, mut player) =
+            playing_repeat_fixture("bck_repeat_play_at_duration_wraps_to_zero");
         // Play at duration wraps for Repeat.
         player.apply(Command::Scrub(20.0));
         assert_eq!(player.apply(Command::Play), CommandOutcome::Applied);
         assert_frame(&player, 0.0);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
+    }
 
+    #[test]
+    fn bck_once_stops_before_duration_and_restart_resumes() {
+        let (_fixture, mut player) =
+            playing_repeat_fixture("bck_once_stops_before_duration_and_restart_resumes");
         // Once via override: stops at duration - 0.001.
         assert_eq!(
             player.apply(Command::SetLoop(LoopPreference::Once)),
             CommandOutcome::Applied
         );
         assert_eq!(player.effective_policy(), Some(LoopPolicy::Once));
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         player.apply(Command::Scrub(18.0));
         player.apply(Command::Play);
         player.advance(5.0 / 30.0);
         assert_frame(&player, 19.999);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         assert!((root_x(player.prepare_frame()) - 19.999).abs() <= TOLERANCE);
         // Play at a completed once endpoint remains stopped, and the UI must
         // not offer it; Restart begins again.
         assert!(!player.can_play());
         assert!(player.can_restart());
         assert_eq!(player.apply(Command::Play), CommandOutcome::NoOp);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         assert_frame(&player, 19.999);
         assert_eq!(player.apply(Command::Restart), CommandOutcome::Applied);
         assert_frame(&player, 0.0);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
+    }
+
+    #[test]
+    fn bck_once_play_at_duration_parks_before_endpoint() {
+        let (_fixture, mut player) =
+            playing_repeat_fixture("bck_once_play_at_duration_parks_before_endpoint");
+        player.apply(Command::SetLoop(LoopPreference::Once));
         // Play at duration parks for Once.
         player.apply(Command::Scrub(20.0));
         assert!(player.can_play());
         assert_eq!(player.apply(Command::Play), CommandOutcome::Applied);
         assert_frame(&player, 19.999);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         assert!(!player.can_play());
+    }
+
+    #[test]
+    fn bck_loop_policy_change_applies_on_next_advance() {
+        let (_fixture, mut player) =
+            playing_repeat_fixture("bck_loop_policy_change_applies_on_next_advance");
+        player.apply(Command::SetLoop(LoopPreference::Once));
         // Policy changes apply at the next advance, not immediately.
         player.apply(Command::Scrub(18.0));
         player.apply(Command::Play);
         player.apply(Command::SetLoop(LoopPreference::Repeat));
         assert_frame(&player, 18.0);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         player.advance(5.0 / 30.0);
         assert_frame(&player, 3.0);
+    }
 
+    #[test]
+    fn bck_source_policy_follows_clip_and_preferences_survive_selection() {
+        let fixture = fixture(
+            "source-policy",
+            &[
+                ("bcks/repeat.bck", Some(ramp_clip(20, 2))),
+                ("bcks/once.bck", Some(ramp_clip(20, 0))),
+            ],
+        );
+        let mut player = fixture.player();
+        player.apply(Command::Select(fixture.identity(0)));
         // Source honors the clip's loop attribute (0 => Once, 2 => Repeat),
         // and the preference survives clip changes and bind pose.
         player.apply(Command::SetLoop(LoopPreference::Source));
@@ -1341,7 +1434,7 @@ mod tests {
         assert_eq!(player.effective_policy(), Some(LoopPolicy::Once));
         player.advance(2.0);
         assert_frame(&player, 19.999);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         player.apply(Command::SetLoop(LoopPreference::Repeat));
         player.apply(Command::Select(fixture.identity(0)));
         assert_eq!(player.loop_preference(), LoopPreference::Repeat);
@@ -1368,7 +1461,7 @@ mod tests {
         assert!(player.is_static());
         assert!(player.has_active_clip());
         assert_eq!(player.duration_frames(), Some(0));
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         assert_eq!(player.effective_policy(), None);
         assert!(!player.can_play() && !player.can_restart() && !player.can_scrub());
         assert_eq!(
@@ -1384,7 +1477,7 @@ mod tests {
             };
             assert!(reason.contains("static"), "{reason}");
             assert!(reason.contains("bcks/rise.bck"), "{reason}");
-            assert_eq!(player.transport(), TransportState::Stopped);
+            assert_eq!(player.playback_state(), PlaybackState::Stopped);
             assert_frame(&player, 0.0);
         }
         assert_eq!(player.apply(Command::Pause), CommandOutcome::NoOp);
@@ -1406,7 +1499,7 @@ mod tests {
         assert!(!player.is_static());
         assert_eq!(player.speed(), 1.5);
         assert_eq!(player.loop_preference(), LoopPreference::Once);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         assert!((tick(&mut player, 0.1) - 4.5).abs() <= TOLERANCE);
         assert_eq!(player.apply(Command::BindPose), CommandOutcome::Applied);
         assert_eq!(player.apply(Command::BindPose), CommandOutcome::NoOp);
@@ -1419,7 +1512,7 @@ mod tests {
         player.apply(Command::Select(fixture.identity(0)));
         player.advance(1.0);
         assert_frame(&player, 19.999);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         assert!(!player.can_play());
         assert_eq!(player.apply(Command::Play), CommandOutcome::NoOp);
 
@@ -1431,28 +1524,28 @@ mod tests {
             CommandOutcome::Applied
         );
         assert_frame(&player, 19.999);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         assert!(player.can_play());
         assert_eq!(player.apply(Command::Play), CommandOutcome::Applied);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         assert_frame(&player, 19.999);
         assert!((tick(&mut player, 0.1) - 2.999).abs() <= TOLERANCE);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
 
         // Back to an effective Once: the same endpoint parks again, and
         // Source resolving to Once behaves the same.
         player.apply(Command::SetLoop(LoopPreference::Once));
         player.advance(1.0);
         assert_frame(&player, 19.999);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         player.apply(Command::SetLoop(LoopPreference::Source));
         assert!(!player.can_play());
         assert_eq!(player.apply(Command::Play), CommandOutcome::NoOp);
-        assert_eq!(player.transport(), TransportState::Stopped);
+        assert_eq!(player.playback_state(), PlaybackState::Stopped);
         player.apply(Command::SetLoop(LoopPreference::Repeat));
         assert!(player.can_play());
         assert_eq!(player.apply(Command::Play), CommandOutcome::Applied);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         assert!(!player.can_play());
     }
 
@@ -1517,11 +1610,11 @@ mod tests {
                 assert_eq!(player.selected_identity(), Some(&fixture.identity(0)));
                 assert_frame(&player, 5.0);
                 assert_eq!(
-                    player.transport(),
+                    player.playback_state(),
                     if playing {
-                        TransportState::Playing
+                        PlaybackState::Playing
                     } else {
-                        TransportState::Paused
+                        PlaybackState::Paused
                     }
                 );
                 assert_eq!(player.speed(), 0.5);
@@ -1559,7 +1652,7 @@ mod tests {
         );
         let mut player = fixture.player();
         player.apply(Command::Select(fixture.identity(0)));
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
 
         // A failed Select while playing survives many successful draws and
         // every non-pose command; only an applied pose-changing command clears it.
@@ -1609,7 +1702,7 @@ mod tests {
         );
         assert_eq!(player.apply(Command::Scrub(3.0)), CommandOutcome::Applied);
         assert_eq!(root_x(player.prepare_frame()), 0.0);
-        assert_eq!(player.transport(), TransportState::Paused);
+        assert_eq!(player.playback_state(), PlaybackState::Paused);
         let diagnostic = player.diagnostic().unwrap().to_owned();
         assert!(diagnostic.contains("frame 3"), "{diagnostic}");
         let evaluations = player.evaluation_count();
@@ -1622,7 +1715,7 @@ mod tests {
         assert!(player.diagnostic().is_some());
         assert_eq!(root_x(player.prepare_frame()), 0.0);
         assert_eq!(player.diagnostic(), None);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
     }
 
     #[test]
@@ -1653,12 +1746,12 @@ mod tests {
             player.apply(Command::Select(fixture.identity(0))),
             CommandOutcome::Applied
         );
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         player.advance(0.05);
         assert_frame(&player, 3.0);
         assert_eq!(root_x(player.prepare_frame()), 0.0, "last valid pose");
         assert_frame(&player, 0.0);
-        assert_eq!(player.transport(), TransportState::Paused);
+        assert_eq!(player.playback_state(), PlaybackState::Paused);
         assert_eq!(player.selected_identity(), Some(&fixture.identity(0)));
         assert_eq!(player.speed(), 2.0);
         assert_eq!(player.loop_preference(), LoopPreference::Once);
@@ -1677,7 +1770,7 @@ mod tests {
         player.apply(Command::Play);
         player.advance(0.05);
         player.prepare_frame();
-        assert_eq!(player.transport(), TransportState::Paused);
+        assert_eq!(player.playback_state(), PlaybackState::Paused);
         assert_frame(&player, 0.0);
         // A safe scrub succeeds and clears the error; Restart stays available.
         assert_eq!(player.apply(Command::Scrub(10.0)), CommandOutcome::Applied);
@@ -1686,7 +1779,7 @@ mod tests {
         assert_frame(&player, 10.0);
         assert_eq!(player.apply(Command::Restart), CommandOutcome::Applied);
         assert_eq!(root_x(player.prepare_frame()), 0.0);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
 
         // Hierarchy overflow discovered by a scrub: the scrub target is
         // dropped, the retained frame stays published.
@@ -1697,7 +1790,7 @@ mod tests {
         player.apply(Command::Scrub(5.0));
         assert_eq!(root_x(player.prepare_frame()), 0.0);
         assert_frame(&player, 0.0);
-        assert_eq!(player.transport(), TransportState::Paused);
+        assert_eq!(player.playback_state(), PlaybackState::Paused);
         let diagnostic = player.diagnostic().unwrap().to_owned();
         assert!(
             diagnostic.contains("LkAnm/bcks/hierarchy.bck"),
@@ -1712,7 +1805,7 @@ mod tests {
             CommandOutcome::Applied
         );
         assert_eq!(player.diagnostic(), None);
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         player.apply(Command::Select(fixture.identity(1)));
         player.apply(Command::Scrub(5.0));
         player.prepare_frame();
@@ -1742,7 +1835,7 @@ mod tests {
         assert!(player.diagnostic().is_some());
         assert_eq!(player.published_palette(), retained);
         assert_frame(&player, 0.0);
-        assert_eq!(player.transport(), TransportState::Paused);
+        assert_eq!(player.playback_state(), PlaybackState::Paused);
 
         // A safe candidate cannot erase a later failed selection.
         player.apply(Command::Scrub(10.0));
@@ -1793,7 +1886,7 @@ mod tests {
         assert!(!visible.contains(&fixture.identity(0)));
         assert_eq!(player.selected_identity(), Some(&fixture.identity(0)));
         assert_eq!(player.selected_label(), Some("LkAnm/bcks/walk.bck"));
-        assert_eq!(player.transport(), TransportState::Playing);
+        assert_eq!(player.playback_state(), PlaybackState::Playing);
         assert_frame(&player, 3.0);
         assert_eq!(player.evaluation_count(), evaluations);
         assert_eq!(

@@ -115,7 +115,7 @@ impl PreparedClip {
         &self.clip
     }
 
-    /// Samples raw frame time, with track endpoint clamps, not transport wrapping.
+    /// Samples raw frame time and clamps to track endpoints. Playback handles loop wrapping.
     /// All failures include the requested frame; the caller retains its last pose.
     pub fn evaluate(&self, frame: f32) -> Result<Pose> {
         self.evaluate_inner(frame)
