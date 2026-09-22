@@ -202,17 +202,18 @@ impl TargetSet {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod fixtures {
+#[cfg(any(test, feature = "fixtures"))]
+#[doc(hidden)]
+pub mod fixtures {
 
-    pub(crate) struct Built {
-        pub(crate) file: Vec<u8>,
+    pub struct Built {
+        pub file: Vec<u8>,
     }
 
     /// TTK1 with one main target (keyed translation per axis, split tangents)
     /// and, when `post` is true, one post target. Exercises non-identity
     /// remap, explicit selector, and a configurable matrix mode.
-    pub(crate) fn build_btk(post: bool, matrix_mode: u32) -> Built {
+    pub fn build_btk(post: bool, matrix_mode: u32) -> Built {
         let mut c: Vec<u8> = vec![0; 0x60];
         c[0..4].copy_from_slice(b"TTK1");
         c[8] = 2;
@@ -354,7 +355,7 @@ pub(crate) mod fixtures {
         Built { file }
     }
 
-    pub(crate) fn name_table(names: &[&str]) -> Vec<u8> {
+    pub fn name_table(names: &[&str]) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&(names.len() as u16).to_be_bytes());
         out.extend_from_slice(&0xFFFFu16.to_be_bytes());

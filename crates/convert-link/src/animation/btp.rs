@@ -77,12 +77,13 @@ pub fn parse(data: &[u8], what: &str) -> Result<BtpClip> {
     })
 }
 
-#[cfg(test)]
-pub(crate) mod fixtures {
+#[cfg(any(test, feature = "fixtures"))]
+#[doc(hidden)]
+pub mod fixtures {
 
     /// TPT1 with two rows: 3 stepped samples and 1 constant sample, an
     /// explicitly non-identity remap, and duplicate material names.
-    pub(crate) fn build_btp() -> Vec<u8> {
+    pub fn build_btp() -> Vec<u8> {
         let mut chunk: Vec<u8> = vec![0; 0x20];
         chunk[0..4].copy_from_slice(b"TPT1");
         chunk[8] = 2; // loop

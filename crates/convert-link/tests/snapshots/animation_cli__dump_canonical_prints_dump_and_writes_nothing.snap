@@ -1,0 +1,25 @@
+---
+source: crates/convert-link/tests/animation_cli.rs
+expression: "String::from_utf8(result.stdout).unwrap()"
+---
+clip LkAnm/bcks/a.bck bck sha256=6c4a9469f55a626ca0342ddce30ff060447167425ce286805d07fb608d6ff212
+  duration=6 loop=2 rotation_shift=0 bas=absent
+  joint 0
+    axis x scale=default rotation=constant=16384 translation=constant=f32:0x40B00000
+    axis y scale=default rotation=constant=16384 translation=constant=f32:0x40B00000
+    axis z scale=default rotation=constant=16384 translation=constant=f32:0x40B00000
+clip LkAnm/btp/f.btp btp sha256=9a4943f954705fc48aa21b8bee388b05f8ca73d4f837f33be31bd5a26780550b
+  duration=10 loop=2
+  target 0 material=mouth remap=14 texno=0 samples=3:27,7,7
+  target 1 material=mouth remap=1 texno=1 samples=1:9
+clip LkD01/btk/s.btk btk sha256=571a80a4bf603eb880da73de7e5d50ca7a4bad7b4007e8f69612f38558bfbc1f
+  duration=20 loop=2 rotation_shift=1 matrix_calc=1
+  target 0 material=eyeL remap=7 texgen=2 center=f32:0x3F000000,f32:0xBF000000,f32:0x3E800000
+    axis s scale=constant=f32:0x3F800000 rotation=constant=16384 translation=keyed[ty=1] (f32:0x00000000,f32:0x00000000,f32:0x00000000,f32:0x3E800000);(f32:0x40A00000,f32:0x3F800000,f32:0x3F000000,f32:0x3E000000)
+    axis t scale=constant=f32:0x40000000 rotation=constant=16384 translation=keyed[ty=1] (f32:0x00000000,f32:0x00000000,f32:0x00000000,f32:0x3E800000);(f32:0x40A00000,f32:0x3F800000,f32:0x3F000000,f32:0x3E000000)
+    axis q scale=constant=f32:0x40400000 rotation=constant=16384 translation=keyed[ty=1] (f32:0x00000000,f32:0x00000000,f32:0x00000000,f32:0x3E800000);(f32:0x40A00000,f32:0x3F800000,f32:0x3F000000,f32:0x3E000000)
+  post targets=1
+  target 0 material=eyeR remap=0 texgen=1 center=f32:0x00000000,f32:0x00000000,f32:0x00000000
+    axis s scale=default rotation=default translation=default
+    axis t scale=default rotation=default translation=default
+    axis q scale=default rotation=default translation=default

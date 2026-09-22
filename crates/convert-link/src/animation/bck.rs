@@ -139,12 +139,13 @@ pub(crate) fn bas_metadata(data: &[u8], what: &str) -> Result<BasMetadata> {
     })
 }
 
-#[cfg(test)]
-pub(crate) mod fixtures {
+#[cfg(any(test, feature = "fixtures"))]
+#[doc(hidden)]
+pub mod fixtures {
     use super::*;
 
     /// Minimal ANK1 BCK: one joint, S=(default), R=constant, T=constant.
-    pub(crate) fn build_bck() -> Vec<u8> {
+    pub fn build_bck() -> Vec<u8> {
         let mut chunk: Vec<u8> = vec![0; 0x24];
         chunk[0..4].copy_from_slice(b"ANK1");
         chunk.extend_from_slice(&[0u8; 0x1C]); // pad header to 0x40
