@@ -243,6 +243,7 @@ fn arguments(workspace: &Workspace, paths: &[u8]) -> Vec<String> {
     let mut arguments: Vec<String> = ALWAYS.iter().map(|recipe| recipe.to_string()).collect();
     if tww_assets {
         arguments.push(TWW_ASSETS.to_string());
+        arguments.push("--quiet".to_string());
     }
     arguments.push(ROC.to_string());
     if !packages.is_empty() {
@@ -284,6 +285,7 @@ mod tests {
         let mut expected = ALWAYS.to_vec();
         if tww_assets {
             expected.push(TWW_ASSETS);
+            expected.push("--quiet");
         }
         expected.push(ROC);
         if !packages.is_empty() {

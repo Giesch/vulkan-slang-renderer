@@ -28,7 +28,15 @@ and `TWW_DIR` set. For only the raw and converted hashes, run
 `just toon_link verify-assets` runs `link-verify-model` and
 `link-verify-animations`. The animation gate extracts the animation raws on
 every run, so it requires `TWW_DIR` and the `dtk` binary in addition to the
-model prerequisites above.
+model prerequisites above. These three public gates suppress output on success
+and replay captured diagnostics on failure. Pass `--verbose` to stream all logs,
+for example `just toon_link verify-assets --verbose`. When chaining recipes,
+pass `--quiet` explicitly so the next recipe is not consumed as the optional
+verbosity argument. The lower-level P1/P2/P3 recipes retain their diagnostic output.
+
+The logging wrapper, `examples/toon_link/scripts/run_asset_check.rs`, requires
+nightly Cargo with `-Zscript` support. Its asset-free, same-file unit tests run
+with `cargo +nightly -Zscript test --manifest-path examples/toon_link/scripts/run_asset_check.rs`.
 
 `just test` does not run these gates: Cargo skips ignored real-file tests, and
 the hash checks are separate commands. P1/P2/P3 alone also do not check the

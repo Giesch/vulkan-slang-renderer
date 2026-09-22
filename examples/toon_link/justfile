@@ -17,9 +17,10 @@ tww-assets:
     just verify-assets
     @echo "TWW ASSETS VERIFIED"
 
-# verify the Link model and animations against the raw assets (requires TWW_DIR)
+# verify assets quietly; pass --verbose for successful check logs (requires TWW_DIR)
 [unix]
-verify-assets: link-verify-model link-verify-animations
+verify-assets verbosity='--quiet':
+    @./scripts/run_asset_check.rs {{quote(verbosity)}} -- just _link-verify-model _link-verify-animations
 
 
 # extract Link assets from the tww disc image (requires TWW_DIR)
@@ -48,9 +49,13 @@ link-verify-goldens:
     (cd "$output" && sha256sum --check "$golden")
     echo "MODEL GOLDENS VERIFIED"
 
-# Complete local model gate; requires extracted raw assets, uv, and the oracle dependency.
+# Complete local model gate; pass --verbose for successful check logs.
 [unix]
-link-verify-model: link-verify-goldens link-verify-p1 link-verify-p2 link-verify-p3
+link-verify-model verbosity='--quiet':
+    @./scripts/run_asset_check.rs {{quote(verbosity)}} -- just _link-verify-model
+
+[unix]
+_link-verify-model: link-verify-goldens link-verify-p1 link-verify-p2 link-verify-p3
     echo "MODEL VERIFIED"
 
 
@@ -146,7 +151,11 @@ link-test-animations:
 # converted hashes + repeatability, tamper detection, model-gate isolation.
 # Fails when the assets or prerequisites are missing (run extract first).
 [unix]
-link-verify-animations:
+link-verify-animations verbosity='--quiet':
+    @./scripts/run_asset_check.rs {{quote(verbosity)}} -- just _link-verify-animations
+
+[unix]
+_link-verify-animations:
     #!/usr/bin/env bash
     set -euo pipefail
     just extract-link-animations
