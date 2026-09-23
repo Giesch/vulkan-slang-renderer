@@ -108,6 +108,13 @@ impl GraphBindingSet for DepthTextureParamsInput {
     }
 }
 
+// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
+// must agree with this struct's Rust layout
+const _: () = assert!(std::mem::size_of::<Vertex>() == 32);
+const _: () = assert!(std::mem::offset_of!(Vertex, position) == 0);
+const _: () = assert!(std::mem::offset_of!(Vertex, color) == 12);
+const _: () = assert!(std::mem::offset_of!(Vertex, tex_coord) == 24);
+
 impl VertexDescription for Vertex {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
         let binding_description = ash::vk::VertexInputBindingDescription::default()

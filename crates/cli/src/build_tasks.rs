@@ -380,25 +380,27 @@ fn collect_graphics_shader_data(
                     None,
                 );
 
-                let mut attribute_descriptions = vec![];
-                for (location, field) in def.fields.iter().enumerate() {
-                    let format = match field.type_name.as_str() {
-                        "glam::Vec3" => "ash::vk::Format::R32G32B32_SFLOAT",
-                        "glam::Vec2" => "ash::vk::Format::R32G32_SFLOAT",
-                        "u32" => "ash::vk::Format::R32_UINT",
-                        other => todo!("field without vk format in entry point parameter: {other}"),
-                    };
-
-                    let attr = VertexAttributeDescription {
-                        field_name: field.field_name.to_snake_case(),
-                        format: format.to_string(),
-                        location,
-                    };
-
-                    attribute_descriptions.push(attr);
-                }
+                let layout = vertex_layout(&reflection_json.vertex_entry_point)
+                    .expect("vertex layout")
+                    .expect("vertex entry point struct");
+                assert_eq!(
+                    layout.attributes.len(),
+                    def.fields.len(),
+                    "vertex layout attribute count disagrees with generated fields"
+                );
+                let attribute_descriptions = layout
+                    .attributes
+                    .iter()
+                    .map(|attribute| VertexAttributeDescription {
+                        field_name: attribute.field_name.to_snake_case(),
+                        format: vk_format_name(attribute.format).to_string(),
+                        location: attribute.location,
+                        offset: attribute.offset,
+                    })
+                    .collect();
                 let vert_block = VertexImplBlock {
                     type_name: def.type_name.clone(),
+                    stride: layout.stride,
                     attribute_descriptions,
                 };
                 vertex_impl_blocks.push(vert_block);
@@ -1079,9 +1081,11 @@ fn gather_struct_defs(
 
             // Only 4x4 matrices are supported.
             //
-            // A slang float4 matches glam::Mat4 exactly. But the glam crate has
-            // no integer matrix types, so int4x4 and uint4x4 become arrays
-            // of their four columns.
+            // Shaders read matrices row-major (MATRIX_LAYOUT in
+            // mltrs-slang-reflection), so glam::Mat4's column-major bytes
+            // reach the shader transposed; the mltrs.slang helpers multiply
+            // in reversed order to compensate. glam has no integer matrix
+            // types, so int4x4 and uint4x4 become arrays of their four rows.
             let field_type = match (scalar.scalar_type, matrix.row_count, matrix.column_count) {
                 (ScalarType::Float32, 4, 4) => "glam::Mat4",
                 (ScalarType::Int32, 4, 4) => "[glam::IVec4; 4]",
@@ -1719,6 +1723,8 @@ fn write_generated_file(config: &Config, source_file: &GeneratedFile) -> anyhow:
 #[derive(Clone)]
 struct VertexImplBlock {
     type_name: String,
+    /// the stride `vertex_layout` defines; asserted against `size_of`
+    stride: u32,
     attribute_descriptions: Vec<VertexAttributeDescription>,
 }
 
@@ -1726,7 +1732,22 @@ struct VertexImplBlock {
 struct VertexAttributeDescription {
     field_name: String,
     format: String,
-    location: usize,
+    location: u32,
+    /// the offset `vertex_layout` defines; asserted against `offset_of!`
+    offset: u32,
+}
+
+fn vk_format_name(format: VertexFormat) -> &'static str {
+    match format {
+        VertexFormat::R32Sfloat => "ash::vk::Format::R32_SFLOAT",
+        VertexFormat::R32G32Sfloat => "ash::vk::Format::R32G32_SFLOAT",
+        VertexFormat::R32G32B32Sfloat => "ash::vk::Format::R32G32B32_SFLOAT",
+        VertexFormat::R32G32B32A32Sfloat => "ash::vk::Format::R32G32B32A32_SFLOAT",
+        VertexFormat::R32Sint => "ash::vk::Format::R32_SINT",
+        VertexFormat::R32G32B32A32Sint => "ash::vk::Format::R32G32B32A32_SINT",
+        VertexFormat::R32Uint => "ash::vk::Format::R32_UINT",
+        VertexFormat::R32G32B32A32Uint => "ash::vk::Format::R32G32B32A32_UINT",
+    }
 }
 
 struct RequiredResource {

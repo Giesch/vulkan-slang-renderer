@@ -6,6 +6,9 @@ pub use parameters::*;
 mod pipeline_builders;
 pub use pipeline_builders::*;
 
+mod vertex_layout;
+pub use vertex_layout::*;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReflectionJson {
