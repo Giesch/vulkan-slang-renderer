@@ -10,7 +10,9 @@ import Generated/Mltrs
 
 game = Game.new({ init!, draw, graphs: graph })
 
-graph = RenderGraph.draw_indexed(pipeline) |> Graphs.single |> Graphs.or_crash
+graph = RenderGraph.draw_indexed(pipeline)
+	|> Graphs.single
+	|> Graphs.or_crash
 
 init! : {} => Game.Init
 init! = |_|
