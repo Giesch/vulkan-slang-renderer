@@ -1,12 +1,13 @@
 import RenderGraph
 import ValidatedRenderGraph
 
-## A type converts to a graph collection when it provides
-## `to_graphs : coll -> Try(Graphs(g), Graphs.Invalid)`.
-coll.ToGraphs(g) :  where [coll.to_graphs : coll -> Try(Graphs(g), Graphs.Invalid)]
+coll.ToGraphs(args) :
+	where [
+		coll.to_graphs : coll -> Try(Graphs(args), Graphs.Invalid),
+	]
 
-## Receiver extension without a RenderGraph-to-Graphs import cycle.
-RenderGraphExtension := [].{
+# avoids a RenderGraph-to-Graphs import cycle.
+RenderGraphToGraphsExtension := [].{
 	to_graphs : RenderGraph(frame) -> Try(
 		Graphs(Graphs.ValidatedGraph(frame)),
 		Graphs.Invalid,
@@ -14,45 +15,45 @@ RenderGraphExtension := [].{
 	to_graphs = |render_graph| Graphs.single(render_graph)
 }
 
-## Deferred graph definitions. A collection holds validated graphs only:
-## `single` and `map2` reject an invalid render graph before it can be registered.
-Graphs(g) :: { definitions : List(ValidatedRenderGraph.HostGraph), build : U32 -> g }.{
+## The application's collection of RenderGraphs.
+## Defined and validated at compile time.
+Graphs(args) :: {
+	definitions : List(ValidatedRenderGraph.HostGraph),
+	build : U32 -> args,
+}.{
 
-	## A registered graph retains its typed packer, not host assets.
 	ValidatedGraph(frame) :: { id : U32, pack : frame -> List(List(U8)) }.{
 		draw : ValidatedGraph(frame), frame -> Draw
 		draw = |ValidatedGraph.(graph), values|
 			Draw.({ graph_id: graph.id, values: (graph.pack)(values) })
 	}
 
-	## A frame retains the collection type until Game.new erases it.
-	Submission(g) :: Draw.{
-		to_host : Submission(g) -> Draw
+	## The type returned by `Graph.draw`.
+	## Converted into GPU commands by the platform.
+	Submission(args) :: Draw.{
+		to_host : Submission(args) -> Draw
 		to_host = |Submission.(draw)| draw
 	}
 
 	## A selected graph retains its collection type without retaining host assets.
-	SelectedGraph(g, frame) :: ValidatedGraph(frame).{
-		draw : SelectedGraph(g, frame), frame -> Submission(g)
+	SelectedGraph(args, frame) :: ValidatedGraph(frame).{
+		draw : SelectedGraph(args, frame), frame -> Submission(args)
 		draw = |SelectedGraph.(graph), values| Submission.(graph.draw(values))
 	}
 
 	## Define selections at module scope to retain the selected packer.
 	## This checks collection types, not the identity of captured graphs.
-	select : Graphs(g), (g -> ValidatedGraph(frame)) -> SelectedGraph(g, frame)
+	select : Graphs(args), (args -> ValidatedGraph(frame)) -> SelectedGraph(args, frame)
 	select = |graphs, choose| SelectedGraph.(choose(graphs.register()))
 
 	## A single-graph collection needs no selector.
 	draw : Graphs(ValidatedGraph(frame)), frame -> Submission(ValidatedGraph(frame))
 	draw = |graphs, values| Submission.(graphs.register().draw(values))
 
-	## The entire per-frame ABI: collection ordinal and ordered payloads.
 	Draw :: { graph_id : U32, values : List(List(U8)) }.{
-		is_eq : Draw, Draw -> Bool
-		is_eq = |Draw.(left), Draw.(right)| left == right
+		is_eq : _
 	}
 
-	## The aggregated validation message for an invalid render graph.
 	Invalid : [InvalidRenderGraph(Str)]
 
 	single : RenderGraph(frame) -> Try(Graphs(ValidatedGraph(frame)), Invalid)
@@ -70,13 +71,13 @@ Graphs(g) :: { definitions : List(ValidatedRenderGraph.HostGraph), build : U32 -
 	# https://github.com/roc-lang/roc/issues/11532
 	## An invalid render graph becomes a compile-time error that carries the
 	## validation message.
-	or_crash : Try(Graphs(g), Invalid) -> Graphs(g)
+	or_crash : Try(Graphs(args), Invalid) -> Graphs(args)
 	or_crash = |result| match result {
 		Ok(graphs) => graphs
 		Err(InvalidRenderGraph(message)) => crash message
 	}
 
-	to_graphs : Graphs(g) -> Try(Graphs(g), Invalid)
+	to_graphs : Graphs(args) -> Try(Graphs(args), Invalid)
 	to_graphs = |graphs| Ok(graphs)
 
 	map2 : left, right, (a, b -> c) -> Try(Graphs(c), Invalid)
@@ -100,9 +101,9 @@ Graphs(g) :: { definitions : List(ValidatedRenderGraph.HostGraph), build : U32 -
 		Ok(Graphs.({ definitions, build }))
 	}
 
-	register : Graphs(g) -> g
+	register : Graphs(args) -> args
 	register = |Graphs.(graphs)| (graphs.build)(0)
 
-	definitions : Graphs(g) -> List(ValidatedRenderGraph.HostGraph)
+	definitions : Graphs(args) -> List(ValidatedRenderGraph.HostGraph)
 	definitions = |Graphs.(graphs)| graphs.definitions
 }
