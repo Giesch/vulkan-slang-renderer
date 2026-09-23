@@ -2,13 +2,14 @@
 //! (see `bmd::*`) and produces baked, model-space vertices ready for a static
 //! render — no runtime skinning in v1.
 //!
-//! Pipeline: FK world matrices from JNT1 + INF1 parentage → per-DRW1-slot
-//! skinning matrices (rigid = joint world; weighted = `Σ wᵢ·worldᵢ·invBindᵢ`)
-//! → per-shape matrix-slot state machine resolving PNMTXIDX → baked vertices
-//! (deduped by GX index tuple + resolved matrix) → triangle lists.
+//! Pipeline: FK model-space matrices from JNT1 + INF1 parentage → per-DRW1-slot
+//! skinning matrices (rigid = joint model space; weighted =
+//! `Σ wᵢ·model_spaceᵢ·invBindᵢ`) → per-shape matrix-slot state machine
+//! resolving PNMTXIDX → baked vertices (deduped by GX index tuple + resolved
+//! matrix) → triangle lists.
 //!
 //! Two numeric gates run here, both hard errors (the file is its own oracle):
-//! invBind identity (`world(j)·invBind(j) = I` at bind pose) and
+//! invBind identity (`model_space(j)·invBind(j) = I` at bind pose) and
 //! weighted-identity (EVP1-weighted vertices, stored in model space, must bake
 //! back to ≈ their stored positions).
 
@@ -25,10 +26,11 @@ use crate::bmd::shp1::VertexIndices;
 use crate::bmd::vtx1::Vtx1;
 use crate::gx::types::PrimitiveType;
 
-/// Max acceptable residual for `world(j)·invBind(j) = I`. The stored inverse
-/// binds are f32 and Link's joints sit up to ~30 units from the origin chained
-/// ~6 deep, so the identity holds only to f32 precision at that scale; the
-/// wrong rotation order fails by ~10^4, not ~10^-2, so this still catches it.
+/// Max acceptable residual for `model_space(j)·invBind(j) = I`. The stored
+/// inverse binds are f32 and Link's joints sit up to ~30 units from the origin
+/// chained ~6 deep, so the identity holds only to f32 precision at that scale;
+/// the wrong rotation order fails by ~10^4, not ~10^-2, so this still catches
+/// it.
 const INVBIND_EPS: f32 = 0.02;
 /// Max acceptable baked-vs-stored distance for weighted vertices, in model
 /// units. Tighter than INVBIND because it is a direct positional error.
@@ -53,7 +55,7 @@ pub struct BakedModel {
 }
 
 pub fn bake(model: &Model) -> Result<BakedModel, BmdError> {
-    let world = joint_world_matrices(
+    let model_space = joint_model_space_matrices(
         &model.jnt1,
         &model.inf1.parents,
         &model.inf1.hierarchy_order,
@@ -63,8 +65,8 @@ pub fn bake(model: &Model) -> Result<BakedModel, BmdError> {
     // across all joints at once.
     let inv_bind: Vec<Mat4> = model.evp1.inv_bind.iter().map(mat4_from_rows_3x4).collect();
     let mut invbind_max_residual = 0.0f32;
-    for j in 0..world.len() {
-        let residual = world[j] * inv_bind[j] - Mat4::IDENTITY;
+    for j in 0..model_space.len() {
+        let residual = model_space[j] * inv_bind[j] - Mat4::IDENTITY;
         invbind_max_residual = invbind_max_residual.max(mat4_max_abs(&residual));
     }
     if invbind_max_residual > INVBIND_EPS {
@@ -79,7 +81,7 @@ pub fn bake(model: &Model) -> Result<BakedModel, BmdError> {
         .drw1
         .slots
         .iter()
-        .map(|slot| skinning_matrix(slot, &world, &inv_bind, &model.evp1))
+        .map(|slot| skinning_matrix(slot, &model_space, &inv_bind, &model.evp1))
         .collect();
     let norm_mtx: Vec<Mat3> = skin_mtx
         .iter()
@@ -161,18 +163,22 @@ fn joint_local(j: &Joint) -> Mat4 {
     Mat4::from_translation(Vec3::from_array(j.translation)) * r
 }
 
-/// World matrix per joint. `order` must list joints parent-before-child
+/// Model-space matrix per joint. `order` must list joints parent-before-child
 /// (INF1 hierarchy order guarantees it — joint indices are not assumed sorted).
-pub fn joint_world_matrices(jnt1: &Jnt1, parents: &[Option<u16>], order: &[u16]) -> Vec<Mat4> {
-    let mut world = vec![Mat4::IDENTITY; jnt1.joints.len()];
+pub fn joint_model_space_matrices(
+    jnt1: &Jnt1,
+    parents: &[Option<u16>],
+    order: &[u16],
+) -> Vec<Mat4> {
+    let mut model_space = vec![Mat4::IDENTITY; jnt1.joints.len()];
     for &j in order {
         let local = joint_local(&jnt1.joints[j as usize]);
-        world[j as usize] = match parents[j as usize] {
-            Some(p) => world[p as usize] * local,
+        model_space[j as usize] = match parents[j as usize] {
+            Some(p) => model_space[p as usize] * local,
             None => local,
         };
     }
-    world
+    model_space
 }
 
 /// 3×4 row-major (translation in the 4th column) → glam column-major affine.
@@ -191,13 +197,13 @@ fn mat4_max_abs(m: &Mat4) -> f32 {
         .fold(0.0f32, |acc, &v| acc.max(v.abs()))
 }
 
-fn skinning_matrix(slot: &DrwSlot, world: &[Mat4], inv_bind: &[Mat4], evp1: &Evp1) -> Mat4 {
+fn skinning_matrix(slot: &DrwSlot, model_space: &[Mat4], inv_bind: &[Mat4], evp1: &Evp1) -> Mat4 {
     match slot {
-        DrwSlot::Joint(j) => world[*j as usize],
+        DrwSlot::Joint(j) => model_space[*j as usize],
         DrwSlot::Envelope(e) => {
             let mut m = Mat4::ZERO;
             for &(joint, w) in &evp1.envelopes[*e as usize] {
-                m += (world[joint as usize] * inv_bind[joint as usize]) * w;
+                m += (model_space[joint as usize] * inv_bind[joint as usize]) * w;
             }
             m
         }
@@ -345,7 +351,7 @@ mod tests {
     #[test]
     fn two_joint_chain_fk() {
         // root at origin, no rotation; child translated +X by 10, rotated 90°
-        // about Z (0x4000). world(child) should place its local origin at
+        // about Z (0x4000). model_space(child) should place its local origin at
         // (10,0,0) and rotate its local axes.
         let jnt1 = Jnt1 {
             joints: vec![
@@ -355,11 +361,11 @@ mod tests {
         };
         let parents = vec![None, Some(0)];
         let order = vec![0, 1];
-        let world = joint_world_matrices(&jnt1, &parents, &order);
-        let origin = world[1].transform_point3(Vec3::ZERO);
+        let model_space = joint_model_space_matrices(&jnt1, &parents, &order);
+        let origin = model_space[1].transform_point3(Vec3::ZERO);
         assert!((origin - Vec3::new(10.0, 0.0, 0.0)).length() < 1e-4);
         // local +X of the child maps to +Y after a 90° Z rotation
-        let x_axis = world[1].transform_vector3(Vec3::X);
+        let x_axis = model_space[1].transform_vector3(Vec3::X);
         assert!((x_axis - Vec3::Y).length() < 1e-4);
     }
 
@@ -486,13 +492,13 @@ mod tests {
     #[test]
     fn invbind_identity_holds_for_pure_rotation() {
         // A joint that is a pure rotation; its inverse bind is the inverse
-        // rotation, so world·invBind = I.
+        // rotation, so model_space·invBind = I.
         let jnt1 = Jnt1 {
             joints: vec![joint("j", [0, 0x4000, 0], [0.0, 0.0, 0.0])],
         };
-        let world = joint_world_matrices(&jnt1, &[None], &[0]);
-        let inv = world[0].inverse();
-        let residual = world[0] * inv - Mat4::IDENTITY;
+        let model_space = joint_model_space_matrices(&jnt1, &[None], &[0]);
+        let inv = model_space[0].inverse();
+        let residual = model_space[0] * inv - Mat4::IDENTITY;
         assert!(mat4_max_abs(&residual) < 1e-4);
     }
 }

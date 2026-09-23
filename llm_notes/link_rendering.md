@@ -241,7 +241,7 @@ src/bin/convert_link/
   bti.rs         standalone .bti (same header layout as TEX1 entries)
   gx/types.rs    typed enums for every GX field we read (u8 → enum, validated)
   gx/texture.rs  decoders: CMPR, I4, I8, IA4, IA8, RGB565, RGB5A3, RGBA8, C4/C8+palette
-  pose.rs        JNT1 world matrices, EVP1/DRW1 CPU skinning, strip/fan → triangle list
+  pose.rs        JNT1 model-space matrices, EVP1/DRW1 CPU skinning, strip/fan → triangle list
   tev_ir.rs      MAT3 → validated TevMaterialDesc (the subset gate)
   output.rs      manifest JSON + PNGs + flat binaries + mat3_dump.txt + --obj debug export
 ```
@@ -263,22 +263,23 @@ unused. `--casual` swaps the body texture for `linktexbci4` the same way
 (P9). The substitution is wired when the manifest is assembled (P3);
 P2 verified both sides of it decode correctly.
 
-**Pose baking.** `world(j) = world(parent(j)) · T·R·S` from JNT1 (s16 angle →
-radians via `a / 32768.0 * π`); every scale in cl.bdl is exactly 1.0, so the
-Maya scaling-rule/no-inherit-scale subtleties drop out. For each SHP1 packet,
-resolve its matrix table through DRW1: rigid slot → joint world matrix;
-weighted slot → `Σ wᵢ · (worldᵢ · invBindᵢ)`. Transform positions (normals via
-inverse-transpose, renormalize). Strips → lists (odd triangles swap first two
-indices), fans → `(0, i, i+1)` (cl.bdl is strips-only; fans implemented for
-completeness). Keep Y-up right-handed as-is — same convention as the
-viking_room OBJ; the shader's projection handles Vulkan clip space.
+**Pose baking.** `model_space(j) = model_space(parent(j)) · T·R·S` from JNT1
+(s16 angle → radians via `a / 32768.0 * π`); every scale in cl.bdl is exactly
+1.0, so the Maya scaling-rule/no-inherit-scale subtleties drop out. For each
+SHP1 packet, resolve its matrix table through DRW1: rigid slot → joint
+model-space matrix; weighted slot → `Σ wᵢ · (model_spaceᵢ · invBindᵢ)`.
+Transform positions (normals via inverse-transpose, renormalize). Strips →
+lists (odd triangles swap first two indices), fans → `(0, i, i+1)` (cl.bdl is
+strips-only; fans implemented for completeness). Keep Y-up right-handed as-is
+— same convention as the viking_room OBJ; the shader's projection handles
+Vulkan clip space.
 
 *Sanity anchor:* in J3D, EVP1-weighted vertices are stored in **model space**
-(at bind pose `Σw·(world·invBind) = I`, so baking ≈ identity), while rigid
-DRW1-bound vertices are stored **joint-local** and must be moved by the joint's
-world matrix. The converter asserts the weighted-identity property; if rigid
-parts (hair, belt, scabbard) render detached, the JNT1 walk is wrong — not the
-skinning.
+(at bind pose `Σw·(model_space·invBind) = I`, so baking ≈ identity), while
+rigid DRW1-bound vertices are stored **joint-local** and must be moved by the
+joint's model-space matrix. The converter asserts the weighted-identity
+property; if rigid parts (hair, belt, scabbard) render detached, the JNT1 walk
+is wrong — not the skinning.
 
 Also emitted for the future (unused in v1): `link.skin.bin` (per-vertex 4 ×
 (joint u8, weight f32)) and the skeleton in the manifest.
@@ -684,10 +685,10 @@ works): [`link_rendering/risks.md`](link_rendering/risks.md).
    table slot). Getting this wrong = exploded vertices. *Real for cl.bdl: 77
    inherit-entries, 240 of 270 DRW1 slots weighted.* **Resolved in P3 (green):**
    the file's own inverse bind matrices gave a numeric FK oracle
-   (`world·invBind = I`, residual 0.0145), the weighted-identity check passed
-   (0.0077), and the canonical `--dump-geometry` diff pinned the raw tables — no
-   exploded mesh. (Note: `mUseMtxIndex` is *not* the matrix-table head; the
-   useMtx table drives everything.)
+   (`model_space·invBind = I`, residual 0.0145), the weighted-identity check
+   passed (0.0077), and the canonical `--dump-geometry` diff pinned the raw
+   tables — no exploded mesh. (Note: `mUseMtxIndex` is *not* the matrix-table
+   head; the useMtx table drives everything.)
 2. ~~**GX fixed-point vertex formats**~~ — *resolved by the P3 probe*:
    positions/normals are f32; only UVs are fixed-point (s16, shift 8). The
    format table is still implemented generally and diffed via

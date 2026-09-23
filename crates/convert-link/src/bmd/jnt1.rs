@@ -7,7 +7,7 @@
 //!
 //! Every scale in cl.bdl is exactly (1,1,1), which the parser hard-asserts:
 //! it collapses the Maya scaling-rule / no-inherit-scale subtleties so FK
-//! reduces to `world = parent · T · R` (see pose.rs). Rotations are kept as
+//! reduces to `model_space = parent · T · R` (see pose.rs). Rotations are kept as
 //! raw s16 (0x8000 = -π); radians are derived in pose.rs.
 
 use crate::be::BeReader;

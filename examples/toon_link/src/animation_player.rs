@@ -955,7 +955,7 @@ mod tests {
     }
 
     fn root_x(pose: &Pose) -> f32 {
-        pose.world[0].w_axis.x
+        pose.model_space[0].w_axis.x
     }
 
     fn assert_frame(player: &AnimationPlayer, expected: f32) {

@@ -15,7 +15,7 @@ pub const COMPENSATION_SCALE_MIN: f32 = 1e-6;
 pub struct PreparedSkeleton {
     skeleton: Skeleton,
     inverse_bind: Vec<Mat4>,
-    bind_world: Vec<Mat4>,
+    bind_model_space: Vec<Mat4>,
 }
 
 /// Owns shared, validated, immutable inputs so frame evaluation needs no
@@ -29,11 +29,11 @@ pub struct PreparedClip {
 
 #[derive(Debug)]
 pub struct Pose {
-    /// Animated world transform per joint. Only the pose tests read it; the
+    /// Animated model-space transform per joint. Only the pose tests read it; the
     /// draw paths upload `palette`.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub world: Vec<Mat4>,
-    /// `animated_world * inverse_bind_world`, one entry per skeleton joint.
+    pub model_space: Vec<Mat4>,
+    /// `animated_model_space * inverse_bind`, one entry per skeleton joint.
     pub palette: Vec<Mat4>,
     /// Evaluated local scale per joint, kept for the Maya compensation tests.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -43,34 +43,35 @@ pub struct Pose {
 impl PreparedSkeleton {
     pub fn new(skeleton: &Skeleton) -> Result<Self> {
         validate_skeleton(skeleton)?;
-        let mut bind_world: Vec<Mat4> = Vec::with_capacity(skeleton.joints.len());
+        let mut bind_model_space: Vec<Mat4> = Vec::with_capacity(skeleton.joints.len());
         let mut inverse_bind = Vec::with_capacity(skeleton.joints.len());
         for (index, joint) in skeleton.joints.iter().enumerate() {
             let local = local_matrix(Vec3::from_array(joint.t), joint.r_s16, Vec3::ONE, Vec3::ONE)
                 .with_context(|| format!("bind.joints[{index}].local"))?;
-            let world = if joint.parent < 0 {
+            let model_space = if joint.parent < 0 {
                 local
             } else {
-                bind_world[joint.parent as usize] * local
+                bind_model_space[joint.parent as usize] * local
             };
-            finite_matrix(world).with_context(|| format!("bind.joints[{index}].world"))?;
-            let inverse = world.inverse();
+            finite_matrix(model_space)
+                .with_context(|| format!("bind.joints[{index}].model_space"))?;
+            let inverse = model_space.inverse();
             finite_matrix(inverse).with_context(|| format!("bind.joints[{index}].inverse"))?;
-            bind_world.push(world);
+            bind_model_space.push(model_space);
             inverse_bind.push(inverse);
         }
 
         Ok(Self {
             skeleton: skeleton.clone(),
             inverse_bind,
-            bind_world,
+            bind_model_space,
         })
     }
 
     pub fn bind_pose(&self) -> Result<Pose> {
         self.finish(
-            self.bind_world.clone(),
-            vec![Vec3::ONE; self.bind_world.len()],
+            self.bind_model_space.clone(),
+            vec![Vec3::ONE; self.bind_model_space.len()],
         )
     }
 
@@ -88,13 +89,13 @@ impl PreparedSkeleton {
         })
     }
 
-    fn finish(&self, world: Vec<Mat4>, local_scales: Vec<Vec3>) -> Result<Pose> {
-        let palette = world
+    fn finish(&self, model_space: Vec<Mat4>, local_scales: Vec<Vec3>) -> Result<Pose> {
+        let palette = model_space
             .iter()
             .zip(&self.inverse_bind)
             .enumerate()
-            .map(|(index, (world, inverse))| {
-                let matrix = *world * *inverse;
+            .map(|(index, (&model_space, &inverse))| {
+                let matrix = model_space * inverse;
                 finite_matrix(matrix).with_context(|| format!("joints[{index}].palette"))?;
 
                 Ok(matrix)
@@ -102,7 +103,7 @@ impl PreparedSkeleton {
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Pose {
-            world,
+            model_space,
             palette,
             local_scales,
         })
@@ -124,7 +125,7 @@ impl PreparedClip {
 
     fn evaluate_inner(&self, frame: f32) -> Result<Pose> {
         ensure!(frame.is_finite(), "frame: nonfinite");
-        let mut world: Vec<Mat4> = Vec::with_capacity(self.joints.len());
+        let mut model_space: Vec<Mat4> = Vec::with_capacity(self.joints.len());
         let mut local_scales: Vec<Vec3> = Vec::with_capacity(self.joints.len());
         for (index, (joint, bind)) in self
             .joints
@@ -160,18 +161,18 @@ impl PreparedClip {
                 let matrix = if bind.parent < 0 {
                     local
                 } else {
-                    world[bind.parent as usize] * local
+                    model_space[bind.parent as usize] * local
                 };
-                finite_matrix(matrix).context("world: nonfinite hierarchy product")?;
+                finite_matrix(matrix).context("model_space: nonfinite hierarchy product")?;
 
                 Ok((matrix, scale))
             };
             let (matrix, scale) = sample().with_context(|| format!("joints[{index}]"))?;
-            world.push(matrix);
+            model_space.push(matrix);
             local_scales.push(scale);
         }
 
-        self.skeleton.finish(world, local_scales)
+        self.skeleton.finish(model_space, local_scales)
     }
 }
 
@@ -479,7 +480,7 @@ mod tests {
             .unwrap()
             .evaluate(0.0)
             .unwrap();
-        close(pose.world[0].transform_point3(Vec3::ZERO), Vec3::ZERO);
+        close(pose.model_space[0].transform_point3(Vec3::ZERO), Vec3::ZERO);
         assert_eq!(pose.local_scales, [Vec3::ONE]);
     }
 
@@ -523,7 +524,7 @@ mod tests {
         }
     }
 
-    /// Pins `palette = animated_world * inverse_bind` (not the reverse product):
+    /// Pins `palette = animated_model_space * inverse_bind` (not the reverse product):
     /// the palette must carry a bind-space point to its animated-space image.
     #[test]
     fn bck_palette_maps_bind_space_to_animated_space() {
@@ -555,9 +556,11 @@ mod tests {
             .evaluate(0.0)
             .unwrap();
         let point = Vec3::new(0.3, -0.7, 1.1);
-        for (joint, (palette, world)) in pose.palette.iter().zip(&pose.world).enumerate() {
-            let bound = prepared.bind_world[joint].transform_point3(point);
-            let animated = world.transform_point3(point);
+        for (joint, (palette, model_space)) in
+            pose.palette.iter().zip(&pose.model_space).enumerate()
+        {
+            let bound = prepared.bind_model_space[joint].transform_point3(point);
+            let animated = model_space.transform_point3(point);
             assert!(
                 (animated - bound).abs().max_element() > 0.5,
                 "joint {joint}: pose equals bind, so the product order would not matter"
@@ -583,7 +586,7 @@ mod tests {
         // Independent scalar rotations of (1,2,3):
         // Rx90 -> (1,-3,2), Ry90 -> (2,-3,-1),
         // Rz45 -> ((2+3)/sqrt(2), (2-3)/sqrt(2), -1).
-        let actual = pose.world[0].transform_point3(Vec3::new(1.0, 2.0, 3.0));
+        let actual = pose.model_space[0].transform_point3(Vec3::new(1.0, 2.0, 3.0));
         let half_root = std::f32::consts::FRAC_1_SQRT_2;
         let expected = Vec3::new(5.0 * half_root, -half_root, -1.0);
         assert!(
@@ -628,12 +631,12 @@ mod tests {
         // divide by (2,3,4), add (1,2,3); parent scales (2,3,4),
         // Rz90 maps (x,y,z)->(-y,x,z), then adds (10,0,0).
         close(
-            pose.world[1].transform_point3(Vec3::new(1.0, 2.0, 3.0)),
+            pose.model_space[1].transform_point3(Vec3::new(1.0, 2.0, 3.0)),
             Vec3::new(-1.0, -12.0, 45.0),
         );
         // Sibling must use root (2,3,4), NOT preceding child's (5,7,11).
         close(
-            pose.world[2].transform_point3(Vec3::new(1.0, 2.0, 3.0)),
+            pose.model_space[2].transform_point3(Vec3::new(1.0, 2.0, 3.0)),
             Vec3::new(8.0, 1.0, 3.0),
         );
         assert_eq!(pose.local_scales[0], Vec3::new(2.0, 3.0, 4.0));
@@ -656,7 +659,7 @@ mod tests {
                 .unwrap()
                 .evaluate(0.0)
                 .unwrap();
-            close(pose.world[1].transform_point3(Vec3::X), Vec3::X);
+            close(pose.model_space[1].transform_point3(Vec3::X), Vec3::X);
         }
         for value in [0.0, COMPENSATION_SCALE_MIN, -COMPENSATION_SCALE_MIN] {
             let mut data = clip(2);
@@ -678,7 +681,7 @@ mod tests {
             .unwrap()
             .evaluate(0.0)
             .unwrap();
-        close(pose.world[1].transform_point3(Vec3::X), Vec3::ZERO);
+        close(pose.model_space[1].transform_point3(Vec3::X), Vec3::ZERO);
     }
 
     #[test]
@@ -758,7 +761,7 @@ mod tests {
         ] {
             let pose = candidate.evaluate(frame).unwrap();
             close(
-                pose.world[1].transform_point3(Vec3::X),
+                pose.model_space[1].transform_point3(Vec3::X),
                 Vec3::new(expected, expected, 0.0),
             );
             assert_eq!(pose.local_scales[0].x, expected);
