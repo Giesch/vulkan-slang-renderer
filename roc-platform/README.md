@@ -70,8 +70,9 @@ triangle = RenderGraph.indexed_pipeline({
 The host calls `init!` once, before it creates the window. It reads the
 game's graph definitions once at setup, to create every graph's pipelines and
 uniform buffers, and calls the game's `draw` once per frame with a
-`Game.Frame` containing the window's current `aspect_ratio`. The app's `draw`
-uses its module-level `graphs`: a single-graph collection exposes
+`Game.Frame` containing the window's current `aspect_ratio` and `elapsed` in
+seconds since the host began game setup. The app's `draw` uses its
+module-level `graphs`: a single-graph collection exposes
 `draw(values)` directly. For multiple graphs, define a selection at module
 scope with `graphs.select(|registered| registered.triangle)`, then call the
 selection's `draw(values)`. Both paths supply concrete local
