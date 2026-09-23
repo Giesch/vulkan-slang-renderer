@@ -1,4 +1,5 @@
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use anyhow::Context;
 
@@ -44,9 +45,12 @@ struct FrameSubmission {
 }
 
 impl FrameSubmission {
-    fn fetch(aspect_ratio: f32) -> Self {
+    fn fetch(aspect_ratio: f32, elapsed: f32) -> Self {
         // Safety: the generated wrapper owns the returned Roc allocations.
-        let owned = unsafe { roc_draw_owned(GameFrame { aspect_ratio }) };
+        let owned = unsafe { roc_draw_owned(GameFrame {
+            aspect_ratio,
+            elapsed,
+        }) };
 
         Self {
             graph_id: owned.graph_id,
@@ -178,6 +182,7 @@ enum LivePipeline {
 
 pub struct RocGame {
     graphs: crate::graph_lifecycle::GraphLifecycle<PreparedGraph>,
+    start_time: Instant,
 }
 
 struct PreparedGraph {
@@ -204,18 +209,22 @@ impl Game for RocGame {
     where
         Self: Sized,
     {
+        let start_time = Instant::now();
         let graphs = crate::graph_lifecycle::GraphLifecycle::setup(
             GraphDefinition::fetch_config,
             |definition| PreparedGraph::prepare(renderer, definition),
         )?;
-        Ok(Self { graphs })
+
+        Ok(Self { graphs, start_time })
     }
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
+        let elapsed = self.start_time.elapsed().as_secs_f32();
+
         self.graphs.frame(
             || {
-                let submission = FrameSubmission::fetch(aspect_ratio);
+                let submission = FrameSubmission::fetch(aspect_ratio, elapsed);
                 (submission.graph_id, submission.values)
             },
             |graph, values| graph.graph.execute(renderer, &values),
