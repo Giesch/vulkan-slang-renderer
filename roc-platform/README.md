@@ -153,10 +153,19 @@ A pull request that touches `roc-platform/**` runs every job except the
 release. A `workflow_dispatch` with a `release_version` of `X.Y.Z` publishes
 the tested archive under the tag `roc-platform-X.Y.Z`.
 
-The workflow builds roc from source at the commit in `ci/roc_commit.txt`, then
-asserts `roc version` names it. `built_with_roc_version.txt` records a
-different hash: it names the dev machine's build, whose branch carries local
-commits. Update both files in one commit.
+The workflow downloads the exact prebuilt Roc nightly in `ci/roc_nightly.txt`
+using the same pinned setup action as roc-ray. The installer verifies the
+archive's SHA-256 against GitHub release metadata and installs it into the
+runner tool cache, keyed by nightly tag and platform. Reuse is runner-local;
+fresh GitHub-hosted runners download the archive instead of compiling Roc.
+The workflow then asserts that `roc version` matches the pin.
+
+Use the pinned nightly on `PATH` to reproduce CI locally; `ci/all_tests.sh`
+prints the selected version but does not enforce the pin.
+`built_with_roc_version.txt` separately records the compiler used to generate
+the committed host glue; changing the CI pin does not regenerate that glue.
+When updating the pin, run both `ci/all_tests.sh` and `ci/bundle_test.sh`:
+the latter also checks the downloaded compiler in the Ubuntu 24.04 container.
 
 Three checks guard the committed artifacts:
 
@@ -186,7 +195,7 @@ Three checks guard the committed artifacts:
   ships. `ci/licenses.sh` regenerates `LICENSES/`.
 - `platform/targets/x64glibc/` — the link inputs. Committed except `libhost.a`.
 - `stubs/generate.sh` — regenerates those link inputs and the licence texts.
-- `ci/roc_commit.txt` — the upstream roc commit CI builds.
+- `ci/roc_nightly.txt` — the prebuilt Roc nightly used in CI.
 - `ci/expected_sdl_backends.txt` — the SDL backend set CI asserts.
 - `stubs/*_stub.s` — the generated stub sources, committed for review.
 - `stubs/forward/` — the C sources behind `libc_forward.a`.

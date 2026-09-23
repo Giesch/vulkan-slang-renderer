@@ -88,6 +88,7 @@ die() {
 if [ "${1:-}" = "--container" ]; then
     mkdir -p /out || exit 1
     cp /work/bundle_app.roc /out/ || exit 1
+    cp -R /work/Generated /work/shaders /out/ || exit 1
     cd /out || exit 1
 
     # /work is read-only, so every write goes to the container's own layer. The
@@ -381,6 +382,11 @@ echo "--- test app ---"
 # URL; the committed example keeps its relative path.
 sed "1s|.*|app [game] { pf: platform \"$url\" }|" examples/basic-triangle/main.roc \
     > "$work/bundle_app.roc" || die app "could not write the test app"
+# Keep the app's generated modules and their SPIR-V/reflection imports with
+# the URL-based copy. These are app inputs, not platform contents.
+cp -R examples/basic-triangle/Generated "$work/Generated" || die app "could not copy generated shader modules"
+mkdir -p "$work/shaders" || exit 1
+cp -R examples/basic-triangle/shaders/compiled "$work/shaders/compiled" || die app "could not copy compiled shaders"
 cp "$script_dir/$(basename "$0")" "$work/bundle_test.sh" || exit 1
 sed -n 1p "$work/bundle_app.roc" | sed 's/^/    /'
 
