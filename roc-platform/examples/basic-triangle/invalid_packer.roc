@@ -46,4 +46,4 @@ zero = {
 }
 
 packed : Graphs.Draw
-packed = Game.draw(game, { aspect_ratio: 1.0 })
+packed = Game.draw(game, { aspect_ratio: 1.0, elapsed: 0.0 })
