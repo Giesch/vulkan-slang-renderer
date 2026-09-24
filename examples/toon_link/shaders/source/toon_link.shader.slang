@@ -102,7 +102,7 @@ struct FragVertex {
 FragVertex vertMain(Vertex vertex, uint vertexId : SV_VertexID, uint drawIndex : SV_DrawIndex) {
     // Skin in model space first: before projection, and before the XF unit
     // evaluates the color channel and the texgens from the normal.
-    let skinned = skinVertex(params.palette, params.skinning[vertexId], vertex.position, vertex.normal);
+    let skinned = SkinnedVertex(params.palette, params.skinning[vertexId], vertex.position, vertex.normal);
     let position = params.mvp.project(skinned.position);
     let worldNormal = params.mvp.rotateDirection(skinned.normal);
 

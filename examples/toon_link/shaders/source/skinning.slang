@@ -3,10 +3,11 @@
 // Shared GPU skeletal deformation for both Toon Link render modes.
 //
 // Both `toon_link.shader.slang` (GameCube) and `toon_link_modern.shader.slang`
-// (Modern) call `skinVertex` before projection and before any mode-specific
-// shading. `skinning_oracle.compute.slang` imports the same functions and runs
-// them over synthetic fixtures; `src/skinning.rs` holds the CPU reference and
-// the test that compares the two (`just toon_link test-skinning-gpu`).
+// (Modern) construct `SkinnedVertex` before projection and before any
+// mode-specific shading. `skinning_oracle.compute.slang` imports the same
+// functions and runs them over synthetic fixtures; `src/skinning.rs` holds the
+// CPU reference and the test that compares the two
+// (`just toon_link test-skinning-gpu`).
 //
 // Deformation
 //   Each palette entry is `animated_world * inverse_bind_world` for one joint,
@@ -85,6 +86,23 @@ public struct SkinnedVertex {
     public float3 position;
     // Unit length, or exactly zero under the policy above.
     public float3 normal;
+
+    // Deform one model-space bind vertex. The result stays in model space; the
+    // caller applies the model/view/projection matrices afterwards.
+    public __init(
+        mltrs::ImmutableAddr<SkinJoint> palette,
+        VertexSkinning skin,
+        float3 position,
+        float3 normal
+    ) {
+        let blended = skinBlendedTransform(palette, skin);
+        let columns = skinLinearColumns(blended);
+
+        this.position = skinTransformPoint(blended, position);
+        this.normal = skinNormal(columns, normal);
+    }
+
+    private __init() {}
 }
 
 public static const float SKIN_NORMAL_CONDITION_MIN = 1e-3;
@@ -117,7 +135,7 @@ public float4x4 skinBlendedTransform(mltrs::ImmutableAddr<SkinJoint> palette, Ve
 // row-major compile (`MATRIX_LAYOUT` in crates/slang-reflection/src/lib.rs;
 // `mltrs::MVPMatrices::project` takes the same branch). The oracle's
 // nonsymmetric-matrix case fails if that convention ever changes.
-public float3 skinTransformPoint(float4x4 transform, float3 point) {
+float3 skinTransformPoint(float4x4 transform, float3 point) {
     return mul(float4(point, 1.0), transform).xyz;
 }
 
@@ -127,7 +145,7 @@ public float3x3 skinLinearColumns(float4x4 transform) {
 }
 
 // `L * n` where `columns` holds the columns of `L`.
-public float3 skinApplyLinear(float3x3 columns, float3 normal) {
+float3 skinApplyLinear(float3x3 columns, float3 normal) {
     return columns[0] * normal.x + columns[1] * normal.y + columns[2] * normal.z;
 }
 
@@ -139,6 +157,7 @@ public float skinDeterminant(float3x3 columns) {
 public float skinConditioning(float3x3 columns) {
     let det = skinDeterminant(columns);
     let scale = length(columns[0]) * length(columns[1]) * length(columns[2]);
+
     // Written so that a NaN scale also takes the early return.
     let zeroColumn = !(scale > 0.0);
     if (zeroColumn) {
@@ -156,32 +175,18 @@ public bool skinNormalUsesFallback(float3x3 columns) {
 }
 
 // `cofactor(L) * n`: the inverse-transpose direction scaled by det, no division.
-public float3 skinCofactorNormal(float3x3 columns, float3 normal) {
+float3 skinCofactorNormal(float3x3 columns, float3 normal) {
     return cross(columns[1], columns[2]) * normal.x
         + cross(columns[2], columns[0]) * normal.y
         + cross(columns[0], columns[1]) * normal.z;
 }
 
 // The AC7 normal policy for the blended linear part `columns`.
-public float3 skinNormal(float3x3 columns, float3 normal) {
+float3 skinNormal(float3x3 columns, float3 normal) {
     let useFallback = skinNormalUsesFallback(columns);
     if (useFallback) {
         return skinSafeNormalize(skinApplyLinear(columns, normal));
     }
 
     return skinSafeNormalize(skinCofactorNormal(columns, normal));
-}
-
-// Deform one model-space bind vertex. The result stays in model space; the
-// caller applies the model/view/projection matrices afterwards.
-public SkinnedVertex skinVertex(
-    mltrs::ImmutableAddr<SkinJoint> palette,
-    VertexSkinning skin,
-    float3 position,
-    float3 normal
-) {
-    let blended = skinBlendedTransform(palette, skin);
-    let columns = skinLinearColumns(blended);
-
-    return SkinnedVertex(skinTransformPoint(blended, position), skinNormal(columns, normal));
 }

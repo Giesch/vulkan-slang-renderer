@@ -72,7 +72,7 @@ struct ModernFragment {
 [shader("vertex")]
 ModernFragment vertMain(ModernVertex vertex, uint vertexId : SV_VertexID, uint drawIndex : SV_DrawIndex) {
     // Skin in model space before projection and before any shading input.
-    let skinned = skinVertex(params.palette, params.skinning[vertexId], vertex.position, vertex.normal);
+    let skinned = SkinnedVertex(params.palette, params.skinning[vertexId], vertex.position, vertex.normal);
 
     return ModernFragment(
         params.mvp.project(skinned.position),
