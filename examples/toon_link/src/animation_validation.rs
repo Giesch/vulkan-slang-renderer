@@ -4,8 +4,6 @@
 //! checked for finite results before rendering. Animation-only failures must
 //! leave the existing static model path available.
 
-#![expect(unused)]
-
 use std::collections::HashSet;
 use std::path::{Component, Path};
 

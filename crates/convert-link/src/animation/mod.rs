@@ -182,8 +182,8 @@ mod tests {
 
     #[test]
     fn animation_malformed_inputs_return_errors() {
-        // Format-level malformed inputs (the per-format suites in bck/btp/btk
-        // cover their own corruption cases; this is the AC-named aggregate).
+        // Format-level malformed inputs; the per-format suites in bck/btp/btk
+        // cover their own corruption cases.
         let bck = super::bck::fixtures::build_bck();
         let btp = super::btp::fixtures::build_btp();
         let btk = super::btk::fixtures::build_btk(false, 0).file;

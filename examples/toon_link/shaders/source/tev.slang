@@ -31,6 +31,9 @@
 
 module tev;
 
+// For `skinSafeNormalize`: the shared zero-normal policy (see skinning.slang).
+import skinning;
+
 // --- GX constants -----------------------------------------------------------
 
 // GXTexCoordID / GXTexMapID / GXChannelID all use 0xFF for "none".
@@ -422,7 +425,8 @@ public struct TevParams {
             return matColor;
         }
 
-        let n = normalize(normal);
+        // A zero / interpolation-cancelled normal lights as ambient only, never NaN.
+        let n = skinSafeNormalize(normal);
         float3 illumRgb = this.chanAmbColor.rgb;
         float illumA = this.chanAmbColor.a;
 

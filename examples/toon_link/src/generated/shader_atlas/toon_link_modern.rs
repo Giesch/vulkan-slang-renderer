@@ -11,6 +11,7 @@ use facet::Facet;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
+pub use super::skinning::{SkinJoint, VertexSkinning};
 #[allow(unused_imports)]
 use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
@@ -159,10 +160,12 @@ pub struct ModernParams {
     pub ramp_texture: BindlessHandle<Sampler2D>,
     pub ramp: ModernRamp,
     pub diagnostic: ModernDiagnostic,
+    pub palette: ImmutableAddr<SkinJoint>,
+    pub skinning: ImmutableAddr<VertexSkinning>,
 }
 
 impl GPUWrite for ModernParams {}
-const _: () = assert!(std::mem::size_of::<ModernParams>() == 304);
+const _: () = assert!(std::mem::size_of::<ModernParams>() == 320);
 const _: () = assert!(std::mem::offset_of!(ModernParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(ModernParams, main_direction) == 192);
@@ -183,6 +186,10 @@ const _: () = assert!(std::mem::offset_of!(ModernParams, ramp) == 296);
 const _: () = assert!(std::mem::size_of::<ModernRamp>() == 4);
 const _: () = assert!(std::mem::offset_of!(ModernParams, diagnostic) == 300);
 const _: () = assert!(std::mem::size_of::<ModernDiagnostic>() == 4);
+const _: () = assert!(std::mem::offset_of!(ModernParams, palette) == 304);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<SkinJoint>>() == 8);
+const _: () = assert!(std::mem::offset_of!(ModernParams, skinning) == 312);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<VertexSkinning>>() == 8);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
@@ -282,6 +289,8 @@ pub struct ModernParamsData {
 #[derive(Debug, Clone, Copy)]
 pub struct ModernParamsBindings {
     pub ramp_texture: SampledTexBinding,
+    pub palette: ImmutableBufferBinding<SkinJoint>,
+    pub skinning: ImmutableBufferBinding<VertexSkinning>,
 }
 
 impl GraphParamBindingSet for ModernParamsBindings {
@@ -295,6 +304,8 @@ impl GraphParamBindingSet for ModernParamsBindings {
 impl GraphBindingSet for ModernParamsBindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.ramp_texture));
+        f(GraphBinding::Buffer(self.palette.erased()));
+        f(GraphBinding::Buffer(self.skinning.erased()));
     }
 }
 /// Complete graph inputs before resource references resolve to GPU values.
@@ -310,6 +321,8 @@ pub struct ModernParamsInput {
     pub ramp_texture: SampledTexBinding,
     pub ramp: ModernRamp,
     pub diagnostic: ModernDiagnostic,
+    pub palette: ImmutableBufferBinding<SkinJoint>,
+    pub skinning: ImmutableBufferBinding<VertexSkinning>,
 }
 
 impl GraphShaderParams for ModernParams {
@@ -329,6 +342,8 @@ impl GraphShaderParams for ModernParams {
             ramp: data.ramp,
             diagnostic: data.diagnostic,
             ramp_texture: bindings.ramp_texture,
+            palette: bindings.palette,
+            skinning: bindings.skinning,
         }
     }
 
@@ -344,6 +359,8 @@ impl GraphShaderParams for ModernParams {
             ramp_texture: resolver.sampled_tex(input.ramp_texture),
             ramp: input.ramp,
             diagnostic: input.diagnostic,
+            palette: resolver.immutable_buf(input.palette),
+            skinning: resolver.immutable_buf(input.skinning),
         }
     }
 }
@@ -351,6 +368,8 @@ impl GraphShaderParams for ModernParams {
 impl GraphBindingSet for ModernParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.ramp_texture));
+        f(GraphBinding::Buffer(self.palette.erased()));
+        f(GraphBinding::Buffer(self.skinning.erased()));
     }
 }
 

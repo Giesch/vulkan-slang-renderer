@@ -11,6 +11,7 @@ use facet::Facet;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
+pub use super::skinning::{SkinJoint, VertexSkinning};
 pub use super::tev::{GXAlphaCompare, GXLights, GXTevColorOverride, TevParams};
 #[allow(unused_imports)]
 use mltrs::renderer::gpu_read::GPURead;
@@ -125,11 +126,14 @@ pub struct ToonLinkParams {
     pub lights: GXLights,
     pub env: GXTevColorOverride,
     pub debug_mode: DebugMode,
-    pub _padding_0: [u8; 12],
+    pub _padding_0: [u8; 4],
+    pub palette: ImmutableAddr<SkinJoint>,
+    pub skinning: ImmutableAddr<VertexSkinning>,
+    pub _padding_1: [u8; 8],
 }
 
 impl GPUWrite for ToonLinkParams {}
-const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 336);
+const _: () = assert!(std::mem::size_of::<ToonLinkParams>() == 352);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, lights) == 192);
@@ -138,6 +142,10 @@ const _: () = assert!(std::mem::offset_of!(ToonLinkParams, env) == 256);
 const _: () = assert!(std::mem::size_of::<GXTevColorOverride>() == 64);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, debug_mode) == 320);
 const _: () = assert!(std::mem::size_of::<DebugMode>() == 4);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, palette) == 328);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<SkinJoint>>() == 8);
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, skinning) == 336);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<VertexSkinning>>() == 8);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
@@ -160,25 +168,6 @@ impl GPURead for DebugMode {
         let tag = <u32 as GPURead>::read_gpu(bytes)?;
 
         Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid DebugMode tag: {tag}"))
-    }
-}
-
-impl GPURead for ToonLinkParams {
-    const GPU_SIZE: usize = 336;
-
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for ToonLinkParams"
-        );
-
-        Ok(Self {
-            mvp: GPURead::read_gpu(&bytes[0..192])?,
-            lights: GPURead::read_gpu(&bytes[192..256])?,
-            env: GPURead::read_gpu(&bytes[256..320])?,
-            debug_mode: GPURead::read_gpu(&bytes[320..324])?,
-            _padding_0: [0; 12],
-        })
     }
 }
 
@@ -230,6 +219,34 @@ impl GraphBindingSet for MultiDrawInput {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ToonLinkParamsData {
+    pub mvp: MVPMatrices,
+    pub lights: GXLights,
+    pub env: GXTevColorOverride,
+    pub debug_mode: DebugMode,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ToonLinkParamsBindings {
+    pub palette: ImmutableBufferBinding<SkinJoint>,
+    pub skinning: ImmutableBufferBinding<VertexSkinning>,
+}
+
+impl GraphParamBindingSet for ToonLinkParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
+}
+
+impl GraphBindingSet for ToonLinkParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.palette.erased()));
+        f(GraphBinding::Buffer(self.skinning.erased()));
+    }
+}
 /// Complete graph inputs before resource references resolve to GPU values.
 #[derive(Debug, Clone, Copy)]
 pub struct ToonLinkParamsInput {
@@ -237,35 +254,45 @@ pub struct ToonLinkParamsInput {
     pub lights: GXLights,
     pub env: GXTevColorOverride,
     pub debug_mode: DebugMode,
+    pub palette: ImmutableBufferBinding<SkinJoint>,
+    pub skinning: ImmutableBufferBinding<VertexSkinning>,
 }
 
 impl GraphShaderParams for ToonLinkParams {
-    type Data = Self;
-    type Bindings = ();
+    type Data = ToonLinkParamsData;
+    type Bindings = ToonLinkParamsBindings;
     type Input = ToonLinkParamsInput;
 
-    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
         Self::Input {
             mvp: data.mvp,
             lights: data.lights,
             env: data.env,
             debug_mode: data.debug_mode,
+            palette: bindings.palette,
+            skinning: bindings.skinning,
         }
     }
 
-    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
         Self {
             mvp: input.mvp,
             lights: input.lights,
             env: input.env,
             debug_mode: input.debug_mode,
             _padding_0: Default::default(),
+            palette: resolver.immutable_buf(input.palette),
+            skinning: resolver.immutable_buf(input.skinning),
+            _padding_1: Default::default(),
         }
     }
 }
 
 impl GraphBindingSet for ToonLinkParamsInput {
-    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.palette.erased()));
+        f(GraphBinding::Buffer(self.skinning.erased()));
+    }
 }
 
 impl mltrs::renderer::render_graph::PushConstantBlock for MultiDraw {}

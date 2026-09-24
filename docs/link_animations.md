@@ -10,8 +10,15 @@ plan-level history lives in the session notes, not here.
 sets. Everything else is out of scope by design: prop/effect animations
 (they live in the same archives but animate other skeletons/materials),
 other actors, BRK/BPK/BCA and the other J3D animation kinds, DAT blur data,
-BAS sound-event *decoding*, runtime sampling/blending, and any renderer or
-example changes. Nothing here feeds `toon_link`'s run path.
+BAS sound-event *decoding*, and blending. The conversion pipeline itself makes
+no renderer or example changes. Its output **is** consumed at runtime: the
+`toon_link` example reads `converted/catalog.json` and the BCK clip documents
+for skeletal playback (validation in `examples/toon_link/src/animation_validation.rs`,
+sampling in `animation_pose.rs`, transport in `animation_player.rs`; see
+[`toon_link.md`](toon_link.md)). The preservation schema and goldens are
+unchanged by that consumer; a schema change must keep it working. The model
+side exports the joint scaling metadata playback needs — see
+[`link_model_metadata.md`](link_model_metadata.md).
 
 ## Prerequisites
 
@@ -165,6 +172,25 @@ dependencies); the semantics are documented on the types. The essentials:
   promised playback mode or tick rate.
 
 ## Verification
+
+The runtime compatibility audit is a separate check from the conversion gate.
+It loads the actual model, skin and every catalog BCK through the same
+validators the example uses at runtime and fails on any rejection:
+
+```bash
+cargo test -p toon_link bck_catalog_runtime_audit -- --ignored --nocapture
+```
+
+It prints per-clip ACCEPT/REJECT rows with identity and reason, the totals
+(currently 594 accepted / 0 rejected), the five zero-duration clips, and the
+scale fingerprint (77 clips with non-unit constant scale, 116 with varying
+keyed scale, 35 overlap). The 594 total and that fingerprint are asserted on
+purpose: the converter is frozen behind byte-identical goldens, so neither can
+change without `link-verify-animations` changing first. If a deliberate
+re-conversion moves them, update both gates together. It is `#[ignore]`d so
+ordinary `cargo test` skips it; missing assets fail it rather than passing.
+Passing this audit says the clips are *structurally* playable; it is not pose
+or visual evidence.
 
 `just toon_link link-verify-animations` runs the real-asset gate:
 raw-tree checks, byte-identical canonical parity between the Rust dump and

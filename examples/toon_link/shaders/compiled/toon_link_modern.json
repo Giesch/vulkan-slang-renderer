@@ -221,6 +221,81 @@
                 }
               ]
             }
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "palette",
+            "binding": {
+              "kind": "uniform",
+              "offset": 304,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "SkinJoint",
+              "fields": [
+                {
+                  "kind": "matrix",
+                  "fieldName": "transform",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 64,
+            "access": "immutable"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "skinning",
+            "binding": {
+              "kind": "uniform",
+              "offset": 312,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "VertexSkinning",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "joints",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "uint32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "weights",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 32,
+            "access": "immutable"
           }
         ]
       }
@@ -382,6 +457,12 @@
       },
       {
         "kind": "scalar",
+        "parameterName": "vertexId",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      },
+      {
+        "kind": "scalar",
         "parameterName": "drawIndex",
         "semanticName": "SV_DRAWINDEX",
         "scalarType": "uint32"
@@ -463,7 +544,7 @@
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 304
+            "size": 320
           }
         ]
       }

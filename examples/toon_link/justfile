@@ -147,6 +147,33 @@ link-test-animations:
     echo "ANIMATION TESTS OK"
 
 
+# GPU skinning oracle: run the production skinning.slang helpers on
+# lavapipe over synthetic fixtures and compare with the CPU reference. Needs
+# no game assets. Fails loudly (never skips) without lavapipe or SDL offscreen.
+[unix]
+test-skinning-gpu:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lvp_icd=
+    for candidate in /usr/share/vulkan/icd.d/lvp_icd*.json; do
+        [ -r "$candidate" ] && lvp_icd=$candidate && break
+    done
+    if [ -z "$lvp_icd" ]; then
+        echo "FAIL: no lavapipe ICD in /usr/share/vulkan/icd.d (install mesa-vulkan-drivers)" >&2
+        exit 1
+    fi
+    # A filter that matches nothing exits 0, so also require the test's own
+    # marker. Grep the saved log rather than the pipe: `grep -q` on the pipe
+    # would SIGPIPE `tee` and trip pipefail with exit 141.
+    log=$(mktemp)
+    trap 'rm -f "$log"' EXIT
+    SDL_VIDEODRIVER=offscreen VK_ICD_FILENAMES=$lvp_icd RUST_LOG=${RUST_LOG:-warn} \
+        cargo test -p toon_link -- --ignored --exact --nocapture skinning::tests::skinning_gpu_oracle \
+        2>&1 | tee "$log"
+    grep -q '^SKINNING_GPU_ORACLE_OK' "$log"
+    echo "SKINNING GPU ORACLE OK"
+
+
 # real-asset animation gate: extraction + raw checks, full oracle parity,
 # converted hashes + repeatability, tamper detection, model-gate isolation.
 # Fails when the assets or prerequisites are missing (run extract first).

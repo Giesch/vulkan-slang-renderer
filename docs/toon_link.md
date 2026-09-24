@@ -5,7 +5,7 @@ The `toon_link` example compares two independent renderers in one application:
 - **GameCube** is the startup default. It preserves the GX TEV/XF material interpretation, UNORM texture handling, destination-alpha facial-feature compositing, controls, diagnostics, and draw ordering.
 - **Modern** directly shades normalized interpolated world normals per pixel in linear color space. It has its own material preparation, textures, pipelines, parameters, and draw submission. It does not use `tev_pack`, TEV/XF evaluation, destination-alpha compositing, or the classic `ChannelPerPixel` diagnostic.
 
-The example-local host initializes and retains both games, owns the shared elapsed time, and delegates exactly one draw each frame. Switching keeps the same window, camera, model pose, and continuous spin. Each mode retains its own session-local settings while inactive. Restarting restores defaults. The debug UI is not present in release builds.
+The example-local host initializes and retains both games, owns the shared elapsed time, and delegates exactly one draw each frame. Switching keeps the same window, camera, model pose, continuous spin, and skeletal animation playback state. Each mode retains its own session-local settings while inactive. Restarting restores defaults. The debug UI is not present in release builds.
 
 Converted assets are machine-local at `examples/toon_link/assets/link/converted`. Create them with:
 
@@ -31,6 +31,26 @@ Modern starts with the **Analytic** ramp. Its controls are:
 
 Ramp-specific values remain retained when the other ramp is selected. Disabled secondary direction and tint values are retained but cannot affect rendering.
 
+## Animation playback
+
+Both modes play the converted Link BCK body animations (`assets/link/animations/converted/catalog.json`, see [`link_animations.md`](link_animations.md)) through one CPU player owned by the host and one shared GPU deformation module (`shaders/source/skinning.slang`) that runs before projection and before either mode's shading. Debug and release both start stopped in the bind pose; the playback controls exist only in the debug UI.
+
+The **Animation** section sits above the mode sections:
+
+- **Search**: case-insensitive substring over `archive/member`. Filtering never changes playback; the selected clip stays selected while its row is hidden. Clips whose labels collide are disambiguated with their catalog entry, resource, and hash.
+- **Clip list**: selecting a different clip reads and validates its document on demand, then starts at frame 0 playing. Selecting the active clip does nothing. A clip that fails validation is reported with its identity and offending field; the previous clip, pose, and transport state are kept, and the report stays visible until a later pose-changing command succeeds.
+- **Bind pose** clears the active clip and stops. **Play / Pause / Restart** resume, freeze, or restart at frame 0 playing; Play is disabled at a completed Once endpoint, where Restart begins again. **Scrub** sets a fractional frame in `[0, duration]` and pauses.
+- **Speed**: 0.1–2× (default 1×). **Loop**: Source (the clip's own attribute, 0 → Once, 2 → Repeat), Repeat, or Once. Speed and loop survive clip changes and Bind pose.
+- Readouts: clip, transport, frame, effective policy. Catalog or loading errors appear in red; a pose-evaluation diagnostic appears in amber.
+
+Timing is 30 animation frames per second at 1×, independent of the render rate. Repeat wraps at the duration and keeps the overshoot; Once parks at `duration − 0.001` and stays stopped until Restart. A loop change takes effect at the next advance, so a completed Once clip switched to Repeat resumes from its retained frame on Play. The catalog's five zero-duration clips are valid static frame-0 poses: Play, Restart, and Scrub are disabled, and they are not the bind pose. The host advances the clock in update, then the UI buffers commands. The same frame's pre-draw step consumes those commands exactly once before evaluating and publishing the pose, so the first draw after a command shows the commanded frame without another clock advance.
+
+If a later frame fails to evaluate (nonfinite sample, hierarchy overflow, or a scale-compensation divisor with magnitude at or below `1e-6`), the last valid pose and frame are kept, playback pauses, and the diagnostic names the clip and target frame until a later pose-changing command (select, bind pose, play, restart, or scrub) succeeds; accepting a command alone does not clear it before its requested pose succeeds. Automatic advancement, filtering, and mode switches never clear it, and a pending successful request cannot erase a later command's failure diagnostic. Mode switches apply no commands and therefore preserve playback exactly.
+
+Deformation is `animated_world × inverse_bind` per joint applied to the bind-baked model-space vertices, with per-vertex skin records addressed by `SV_VertexID`. Joint composition follows the model's Maya scaling rule with per-joint scale compensation (`T · inverse(parent local scale) · R · S`), which the model manifest must export explicitly ([`link_model_metadata.md`](link_model_metadata.md)); a manifest without that metadata, or whose skin data fails validation, renders statically, and the Animation section shows the reason with its controls disabled. Normals use the cofactor (inverse-transpose direction) of the blended linear part when its Hadamard conditioning is at least `1e-3` and the plain linear transform otherwise; every normal-dependent stage in both modes normalizes safely, returning zero for vectors shorter than `1e-6`, so no NaN reaches shading. Facial features, materials, UVs, draw ordering, and spin are unchanged by playback.
+
+Not supported: BTP/BTK face animations, crossfades, Basic/Softimage scaling rules, and non-unit bind scales. 30 fps is the NTSC viewer convention, not reproduced hardware pacing.
+
 ## Modern diagnostics
 
 Modern exposes six shader outputs before normal target encoding and blending:
@@ -54,7 +74,7 @@ Facial masks write feature-specific stencil references only where nonzero alpha 
 
 ## Verification boundary
 
-`just sweep` is intentionally unchanged. It starts `toon_link` in the default GameCube mode and provides GameCube recording, presentation, validation-layer, and teardown evidence only. A passing sweep is **not** Modern GPU or visual evidence.
+`just sweep` is intentionally unchanged. It starts `toon_link` in the default GameCube mode, stopped in the bind pose, and provides GameCube recording, presentation, validation-layer, and teardown evidence only. It exercises the identity-palette skinning path but no animated pose. A passing sweep is **not** Modern GPU, animation, or visual evidence.
 
 After source changes, run the normal generated-code, Rust, lint, test, and unchanged sweep checks described in `AGENTS.md`. Separately verify Modern interactively with `just dev toon_link`:
 
@@ -66,6 +86,16 @@ After source changes, run the normal generated-code, Rust, lint, test, and uncha
 - GameCube startup and appearance after returning from Modern;
 - startup and smaller usable window sizes, resize, minimize/restore, and shutdown;
 - active-mode shader hot reload in each mode using temporary interface-preserving edits.
+
+Animation-specific checks:
+
+```bash
+cargo test -p toon_link                                                     # asset-free sampler, clock, transport, host UI and normal-policy tests
+cargo test -p toon_link bck_catalog_runtime_audit -- --ignored --nocapture  # real assets: every catalog BCK must be accepted
+just toon_link test-skinning-gpu                                            # production shader deformation/normal oracle under lavapipe
+```
+
+Then verify playback interactively in both modes with `just dev toon_link`, recording clip identity, frame, loop policy, and mode for each case: bind pose in both modes (`visual-bind-both`); a fractional frame of a nontrivial clip in both modes (`visual-animated-fractional-both`); a paused clip across a mode switch (`visual-paused-mode-switch`); all five static clips (`visual-static-five`); return to bind pose (`visual-return-bind`); and the existing facial/material controls with a clip playing (`visual-facial-settings-regression`).
 
 Record actual observations and any unperformed cases. Manual checks establish only the viewed model/camera cases, not arbitrary-scene correctness or golden-image equivalence.
 

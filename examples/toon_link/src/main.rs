@@ -27,11 +27,13 @@ mod animation_pose;
 mod animation_validation;
 mod generated;
 mod modern;
+mod skinning;
 mod tev_pack;
 
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -55,10 +57,16 @@ use mltrs::renderer::{
     UniformBufferHandle,
 };
 
+use crate::animation_player::{
+    AnimationPlayer, CatalogRow, Command, LoopPolicy, LoopPreference, MAX_SPEED, MIN_SPEED,
+    PlaybackState,
+};
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::tev::{GXAlphaOp, GXCompare};
 use crate::generated::shader_atlas::toon_link::*;
 use crate::modern::ToonLinkModern;
+use crate::skinning::SkinningBuffers;
+use gx::animation_manifest::ClipIdentity;
 
 fn main() -> Result<(), anyhow::Error> {
     ToonLinkHost::run()
@@ -477,6 +485,12 @@ fn converted_dir() -> PathBuf {
     mltrs::manifest_path!["assets", "link", "converted"]
 }
 
+/// The converted BCK catalog. Missing or unreadable is not fatal: the player
+/// stays in bind pose and reports it (see [`AnimationPlayer::new`]).
+fn catalog_path() -> PathBuf {
+    mltrs::manifest_path!["assets", "link", "animations", "converted", "catalog.json"]
+}
+
 fn load_manifest(dir: &Path) -> anyhow::Result<Manifest> {
     let path = dir.join("link.manifest.json");
     let bytes = std::fs::read(&path).with_context(|| {
@@ -890,13 +904,18 @@ fn build_draw_list(
         );
 
         let command_idx = commands.len() as u32;
-        commands.push(DrawIndexedIndirectCommand {
+        let command = DrawIndexedIndirectCommand {
             index_count: batch.index_count,
             instance_count: 1,
             first_index: batch.first_index,
             vertex_offset: 0,
             first_instance: 0,
-        });
+        };
+        assert_eq!(
+            command.vertex_offset, 0,
+            "skin records are indexed by SV_VertexID; a nonzero vertex offset would mis-index them"
+        );
+        commands.push(command);
         let material = renderer.singleton_addr_at(materials_buffer, slot.raw() as u32);
         individual_draws.push(IndividualDraw { material });
 
@@ -941,6 +960,10 @@ pub struct ToonLink {
     /// The runs in `args_buffer` that share a pipeline, in draw order.
     /// Each run corresponds to one multi-draw-indirect command.
     runs: Vec<Run>,
+    /// The joint palette and per-vertex influences behind `params.palette`
+    /// and `params.skinning`. The palette is the bind pose (identity) until
+    /// the animation player supplies a pose.
+    skinning: SkinningBuffers,
     edit_state: EditState,
     last_frame_time: Instant,
     frame_times: VecDeque<Duration>,
@@ -972,6 +995,11 @@ pub struct EditState {
 }
 
 impl ToonLink {
+    /// Why this mode renders the static model, or `None` when it animates.
+    fn static_reason(&self) -> Option<&str> {
+        self.skinning.static_reason()
+    }
+
     /// Record `run`'s span of [`Self::args_buffer`] as one indirect draw.
     /// The push block is set once for the whole command, so the draw table
     /// pointer is what tells the sub-draws apart.
@@ -1096,6 +1124,7 @@ impl Game for ToonLink {
         let args_buffer = renderer.create_indirect_buffer(&draw_list.commands)?;
         let individual_draw_buffer =
             renderer.create_singleton_buffer(&draw_list.individual_draws)?;
+        let skinning = SkinningBuffers::new(renderer, &dir, &manifest)?;
 
         let edit_state = EditState {
             fps: Label::new("FPS: --"),
@@ -1116,6 +1145,7 @@ impl Game for ToonLink {
             args_buffer,
             individual_draw_buffer,
             runs: draw_list.runs,
+            skinning,
             edit_state,
             last_frame_time: Instant::now(),
             frame_times: VecDeque::with_capacity(FRAME_HISTORY_SIZE),
@@ -1124,7 +1154,20 @@ impl Game for ToonLink {
         Ok(game)
     }
 
-    fn draw(&mut self, mut renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+        self.draw_posed(renderer, None)
+    }
+}
+
+impl ToonLink {
+    /// Draw with `palette` as this frame's joint palette, one
+    /// `animated_world * inverse_bind_world` per skeleton joint. `None` is the
+    /// bind pose (identity), used when there is no host or no player.
+    fn draw_posed(
+        &mut self,
+        mut renderer: FrameRenderer,
+        palette: Option<&[Mat4]>,
+    ) -> Result<(), DrawError> {
         let spin = self
             .host_spin
             .unwrap_or_else(|| self.start_time.elapsed().as_secs_f32() * MODEL_SPIN);
@@ -1138,6 +1181,8 @@ impl Game for ToonLink {
         for run in &self.runs {
             self.queue_run(&mut renderer, run);
         }
+        // Queue-time addresses for this frame's flight slot; never retained.
+        let skinning = self.skinning.addrs(&renderer);
 
         let light = LightRig {
             eflight: self.edit_state.eflight.checked,
@@ -1161,12 +1206,25 @@ impl Game for ToonLink {
             },
             debug_mode: self.edit_state.debug_mode,
             _padding_0: Default::default(),
+            palette: skinning.palette,
+            skinning: skinning.skinning,
+            _padding_1: Default::default(),
+        };
+
+        let bind_pose;
+        let palette = match palette {
+            Some(palette) => palette,
+            None => {
+                bind_pose = self.skinning.identity_palette();
+                &bind_pose
+            }
         };
 
         renderer.submit_draws(|gpu| {
             // The material buffer is never written after setup, so the param
-            // block is the only per-frame upload.
+            // block and the palette are the per-frame uploads.
             gpu.write_uniform(&mut self.params_buffer, params);
+            self.skinning.write_palette(gpu, palette);
         })
     }
 }
@@ -1185,10 +1243,314 @@ fn selected_mode(index: usize) -> SelectedMode {
     }
 }
 
+/// The host's renderer-independent share of the animation seam. It owns the
+/// one [`AnimationPlayer`] both modes draw from, applies the UI's buffered
+/// commands once before draw, advances the shared clock during update, and publishes the
+/// palette for the selected mode's draw.
+struct AnimationHost {
+    player: Option<AnimationPlayer>,
+    /// Why there is no player: the skeleton could not produce a bind pose.
+    /// Both modes then keep rendering the static model.
+    unavailable: Option<String>,
+}
+
+impl AnimationHost {
+    fn new(skeleton: &mm::Skeleton, catalog: &Path) -> Self {
+        match AnimationPlayer::new(skeleton, catalog) {
+            Ok(player) => Self {
+                player: Some(player),
+                unavailable: None,
+            },
+            Err(error) => {
+                let message =
+                    format!("animation unavailable, rendering the static bind pose: {error:#}");
+                eprintln!("toon_link: {message}");
+                Self {
+                    player: None,
+                    unavailable: Some(message),
+                }
+            }
+        }
+    }
+
+    /// Drop the player: a mode found its skin unusable, so its palette would
+    /// never reach the GPU and playback would silently desync from the model.
+    /// The UI then shows `reason` and every control is inert.
+    fn disable(&mut self, reason: String) {
+        self.player = None;
+        self.unavailable = Some(reason);
+    }
+
+    /// Advance only the clock before UI. Commands issued by UI belong to the
+    /// following draw, not the next update.
+    fn update(&mut self, controls: &mut AnimationControls, elapsed_seconds: f32) {
+        if let Some(player) = &mut self.player {
+            player.advance(elapsed_seconds);
+        }
+        controls.sync(&self.view());
+    }
+
+    /// Production pre-draw seam: consume UI commands once, in order, then
+    /// evaluate and publish. Refresh the view after evaluation, including failures.
+    /// `None` means the modes must render their static bind pose.
+    fn prepare_frame(&mut self, controls: &mut AnimationControls) -> Option<&[Mat4]> {
+        let commands = std::mem::take(&mut controls.commands);
+        if let Some(player) = &mut self.player {
+            for command in commands {
+                player.apply(command);
+            }
+            player.prepare_frame();
+        }
+        controls.sync(&self.view());
+
+        self.player.as_ref().map(AnimationPlayer::published_palette)
+    }
+
+    fn view(&self) -> AnimationView {
+        match &self.player {
+            Some(player) => AnimationView::from_player(player),
+            None => AnimationView {
+                unavailable: self.unavailable.clone(),
+                ..AnimationView::default()
+            },
+        }
+    }
+}
+
+/// What the UI shows about the player, refreshed after clock advancement and
+/// after preparation because the static `render_editor_ui` cannot reach the host.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AnimationView {
+    /// `Some` when [`AnimationHost`] has no player; every control is inert.
+    unavailable: Option<String>,
+    catalog_error: Option<String>,
+    diagnostic: Option<String>,
+    selected_identity: Option<ClipIdentity>,
+    selected_label: Option<String>,
+    /// `None` without a player.
+    transport: Option<PlaybackState>,
+    frame: f32,
+    duration_frames: Option<u16>,
+    speed: f32,
+    loop_preference: LoopPreference,
+    effective_policy: Option<LoopPolicy>,
+    has_active_clip: bool,
+    /// A valid zero-duration clip: frame 0, stopped, transport disabled.
+    is_static: bool,
+    can_play: bool,
+    can_pause: bool,
+    can_restart: bool,
+    can_scrub: bool,
+}
+
+impl AnimationView {
+    fn from_player(player: &AnimationPlayer) -> Self {
+        Self {
+            unavailable: None,
+            catalog_error: player.catalog_error().map(str::to_owned),
+            diagnostic: player.diagnostic().map(str::to_owned),
+            selected_identity: player.selected_identity().cloned(),
+            selected_label: player.selected_label().map(str::to_owned),
+            transport: Some(player.playback_state()),
+            frame: player.frame(),
+            duration_frames: player.duration_frames(),
+            speed: player.speed(),
+            loop_preference: player.loop_preference(),
+            effective_policy: player.effective_policy(),
+            has_active_clip: player.has_active_clip(),
+            is_static: player.is_static(),
+            can_play: player.can_play(),
+            can_pause: player.can_pause(),
+            can_restart: player.can_restart(),
+            can_scrub: player.can_scrub(),
+        }
+    }
+
+    fn available(&self) -> bool {
+        self.transport.is_some()
+    }
+}
+
+/// The debug "Animation" section. The UI never touches the player: it reads
+/// [`AnimationView`] and buffers intent as [`Command`]s that the host drains
+/// before this frame's draw ([`AnimationHost::prepare_frame`]). Search and
+/// scroll state live here, so they survive mode switches.
+#[derive(Clone, Default)]
+pub struct AnimationControls {
+    /// Case-insensitive search over `archive/member`. Filtering only changes
+    /// which rows are listed; it never issues a command.
+    query: String,
+    /// Every BCK row, in catalog order. Selection uses the row's identity,
+    /// never its position in the filtered list.
+    rows: Rc<[CatalogRow]>,
+    view: AnimationView,
+    /// Commands issued by the UI since the previous preparation, in order.
+    commands: Vec<Command>,
+    /// Slider positions. Synced after update and preparation; a change pushes a
+    /// command rather than moving the player directly.
+    scrub: f32,
+    speed: f32,
+}
+
+const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 96, 96);
+const DIAGNOSTIC_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 200, 80);
+const CLIP_LIST_HEIGHT: f32 = 160.0;
+
+impl AnimationControls {
+    fn new(host: &AnimationHost) -> Self {
+        let rows: Rc<[CatalogRow]> = host
+            .player
+            .as_ref()
+            .map_or(&[][..], AnimationPlayer::catalog_rows)
+            .into();
+        let mut controls = Self {
+            rows,
+            ..Self::default()
+        };
+        controls.sync(&host.view());
+
+        controls
+    }
+
+    fn sync(&mut self, view: &AnimationView) {
+        self.scrub = view.frame;
+        self.speed = view.speed;
+        self.view = view.clone();
+    }
+
+    fn render_ui(&mut self, ui: &mut egui::Ui) {
+        let view = self.view.clone();
+        if let Some(error) = view
+            .unavailable
+            .as_deref()
+            .or(view.catalog_error.as_deref())
+        {
+            ui.colored_label(ERROR_COLOR, error);
+        }
+        if let Some(diagnostic) = &view.diagnostic {
+            ui.colored_label(DIAGNOSTIC_COLOR, diagnostic);
+        }
+
+        ui.add_enabled_ui(view.available(), |ui| {
+            self.render_selector(ui, &view);
+            self.render_transport(ui, &view);
+            self.render_readouts(ui, &view);
+        });
+    }
+
+    fn render_selector(&mut self, ui: &mut egui::Ui, view: &AnimationView) {
+        ui.horizontal(|ui| {
+            ui.label("Search");
+            ui.add(egui::TextEdit::singleline(&mut self.query).hint_text("archive/member"));
+        });
+
+        let rows: Vec<&CatalogRow> = self
+            .rows
+            .iter()
+            .filter(|row| row.matches(&self.query))
+            .collect();
+        ui.label(format!("{} of {} BCK clips", rows.len(), self.rows.len()));
+
+        let row_height = ui.spacing().interact_size.y;
+        let mut select = None;
+        egui::ScrollArea::vertical()
+            .id_salt("bck_clips")
+            .max_height(CLIP_LIST_HEIGHT)
+            .show_rows(ui, row_height, rows.len(), |ui, range| {
+                for row in &rows[range] {
+                    let selected = view.selected_identity.as_ref() == Some(&row.identity);
+                    let clicked = ui.selectable_label(selected, &row.label).clicked();
+                    // Selecting the active clip is a no-op; do not issue it.
+                    let newly_selected = clicked && !selected;
+                    if newly_selected {
+                        select = Some(row.identity.clone());
+                    }
+                }
+            });
+        if let Some(identity) = select {
+            self.commands.push(Command::Select(identity));
+        }
+    }
+
+    fn render_transport(&mut self, ui: &mut egui::Ui, view: &AnimationView) {
+        ui.horizontal(|ui| {
+            let buttons = [
+                ("Bind pose", view.has_active_clip, Command::BindPose),
+                ("Play", view.can_play, Command::Play),
+                ("Pause", view.can_pause, Command::Pause),
+                ("Restart", view.can_restart, Command::Restart),
+            ];
+            for (label, enabled, command) in buttons {
+                if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                    self.commands.push(command);
+                }
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Scrub");
+            let duration = f32::from(view.duration_frames.unwrap_or(0));
+            let slider = egui::Slider::new(&mut self.scrub, 0.0..=duration);
+            if ui.add_enabled(view.can_scrub, slider).changed() {
+                self.commands.push(Command::Scrub(self.scrub));
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Speed");
+            let slider = egui::Slider::new(&mut self.speed, MIN_SPEED..=MAX_SPEED);
+            if ui.add(slider).changed() {
+                self.commands.push(Command::SetSpeed(self.speed));
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Loop");
+            let mut preference = view.loop_preference;
+            for (label, value) in [
+                ("Source", LoopPreference::Source),
+                ("Repeat", LoopPreference::Repeat),
+                ("Once", LoopPreference::Once),
+            ] {
+                ui.radio_value(&mut preference, value, label);
+            }
+            let changed = preference != view.loop_preference;
+            if changed {
+                self.commands.push(Command::SetLoop(preference));
+            }
+        });
+    }
+
+    fn render_readouts(&self, ui: &mut egui::Ui, view: &AnimationView) {
+        let clip = view.selected_label.as_deref().unwrap_or("bind pose");
+        ui.label(format!("Clip: {clip}"));
+        let transport = match view.transport {
+            Some(PlaybackState::Stopped) if view.is_static => "Stopped (static clip)",
+            Some(PlaybackState::Stopped) => "Stopped",
+            Some(PlaybackState::Playing) => "Playing",
+            Some(PlaybackState::Paused) => "Paused",
+            None => "unavailable",
+        };
+        ui.label(format!("Transport: {transport}"));
+        let duration = view.duration_frames.unwrap_or(0);
+        ui.label(format!("Frame: {:.2} / {duration}", view.frame));
+        let policy = match view.effective_policy {
+            Some(LoopPolicy::Repeat) => "Repeat",
+            Some(LoopPolicy::Once) => "Once",
+            None => "none",
+        };
+        ui.label(format!("Effective policy: {policy}"));
+    }
+}
+
 /// Switches between displaying the two versions of the Game implementation.
 /// Delegates to one or the other based on HostEditState.
 pub struct ToonLinkHost {
     start_time: Instant,
+    /// `start_time.elapsed()` at the previous update; the animation clock is
+    /// the difference, so the player needs no wall clock of its own.
+    last_update: Duration,
+    animation: AnimationHost,
     classic: ToonLink,
     modern: ToonLinkModern,
     edit_state: HostEditState,
@@ -1199,6 +1561,9 @@ pub struct HostEditState {
     mode: RadioButton,
     game_cube: EditState,
     modern: modern::ModernEditState,
+    /// Shared by both modes; not reflected, it renders itself.
+    #[facet(opaque)]
+    animation: AnimationControls,
 }
 
 impl HostEditState {
@@ -1211,6 +1576,11 @@ impl HostEditState {
             .inner;
 
         let game_cube = self.selected() == SelectedMode::GameCube;
+
+        egui::CollapsingHeader::new("Animation")
+            .id_salt("animation_controls")
+            .default_open(true)
+            .show(ui, |ui| self.animation.render_ui(ui));
 
         egui::CollapsingHeader::new("GameCube")
             .id_salt("game_cube_settings")
@@ -1278,6 +1648,13 @@ impl Game for ToonLinkHost {
     }
 
     fn update(&mut self) {
+        // Shared playback runs every frame, whichever mode is selected.
+        let elapsed = self.start_time.elapsed();
+        let delta = elapsed.saturating_sub(self.last_update);
+        self.last_update = elapsed;
+        self.animation
+            .update(&mut self.edit_state.animation, delta.as_secs_f32());
+
         match self.edit_state.selected() {
             SelectedMode::GameCube => self.classic.update(),
             SelectedMode::Modern => self.modern.update(),
@@ -1289,14 +1666,35 @@ impl Game for ToonLinkHost {
     fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
         let classic = ToonLink::setup(renderer, ShaderAtlas::init())?;
         let modern = ToonLinkModern::setup(renderer, shaders)?;
+        let manifest = load_manifest(&converted_dir())?;
+        let mut animation = AnimationHost::new(&manifest.skeleton, &catalog_path());
+        // A mode that rejected its skin ignores every palette; playing a clip
+        // into it would show a moving transport over a motionless model.
+        let static_modes = [
+            ("GameCube", classic.static_reason()),
+            ("Modern", modern.static_reason()),
+        ];
+        for (mode, reason) in static_modes {
+            let Some(reason) = reason else {
+                continue;
+            };
+
+            let message =
+                format!("animation disabled, rendering the static model: {mode} mode: {reason}");
+            eprintln!("toon_link: {message}");
+            animation.disable(message);
+        }
         let edit_state = HostEditState {
             mode: RadioButton::new(&["GameCube", "Modern"]),
             game_cube: classic.edit_state.clone(),
             modern: modern.edit_state().clone(),
+            animation: AnimationControls::new(&animation),
         };
 
         Ok(Self {
             start_time: Instant::now(),
+            last_update: Duration::ZERO,
+            animation,
             classic,
             modern,
             edit_state,
@@ -1305,16 +1703,18 @@ impl Game for ToonLinkHost {
 
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let spin = self.start_time.elapsed().as_secs_f32() * MODEL_SPIN;
+        // One pose per frame, shared by both modes.
+        let palette = self.animation.prepare_frame(&mut self.edit_state.animation);
         match self.edit_state.selected_settings() {
             SelectedSettings::GameCube(settings) => {
                 self.classic.host_spin = Some(spin);
                 self.classic.edit_state = settings.clone();
-                self.classic.draw(renderer)
+                self.classic.draw_posed(renderer, palette)
             }
             SelectedSettings::Modern(settings) => {
                 self.modern.set_spin(spin);
                 *self.modern.edit_state_mut() = settings.clone();
-                self.modern.draw(renderer)
+                self.modern.draw_posed(renderer, palette)
             }
         }
     }
@@ -1350,12 +1750,25 @@ mod host_tests {
             mode: RadioButton::new(&["GameCube", "Modern"]),
             game_cube: classic_settings(),
             modern: modern::ModernEditState::default(),
+            animation: AnimationControls::default(),
         }
+    }
+
+    /// One painted text run from the last harness frame.
+    #[derive(Clone, Debug)]
+    struct PaintedText {
+        text: String,
+        bounds: egui::Rect,
+        /// Below 1 inside a disabled `Ui`: egui fades a disabled widget by
+        /// gamma-multiplying its shape colors, alpha included.
+        opacity: f32,
+        /// The first section's color; `colored_label` sets it.
+        color: egui::Color32,
     }
 
     struct EditorHarness {
         ctx: egui::Context,
-        labels: Vec<(String, egui::Rect)>,
+        labels: Vec<PaintedText>,
         header_ids: [egui::Id; 2],
     }
 
@@ -1401,19 +1814,22 @@ mod host_tests {
             }
         }
 
-        fn target(&self, label: &str, radio: bool) -> egui::Rect {
+        /// The one painted text `label` below the Mode row, or on it for a
+        /// mode radio button.
+        fn painted(&self, label: &str, radio: bool) -> &PaintedText {
             let rows: Vec<_> = self
                 .labels
                 .iter()
-                .filter(|(text, _)| text == "Mode")
+                .filter(|painted| painted.text == "Mode")
                 .collect();
             assert_eq!(rows.len(), 1, "missing or ambiguous Mode row");
-            let row = rows[0].1;
+            let row = rows[0].bounds;
             let targets: Vec<_> = self
                 .labels
                 .iter()
-                .filter(|(text, bounds)| {
-                    text == label
+                .filter(|painted| {
+                    let bounds = painted.bounds;
+                    painted.text == label
                         && if radio {
                             bounds.center().y >= row.top() && bounds.center().y <= row.bottom()
                         } else {
@@ -1427,7 +1843,42 @@ mod host_tests {
                 "missing or ambiguous {label} target (radio={radio})"
             );
 
-            targets[0].1
+            targets[0]
+        }
+
+        fn target(&self, label: &str, radio: bool) -> egui::Rect {
+            self.painted(label, radio).bounds
+        }
+
+        fn has_text(&self, text: &str) -> bool {
+            self.labels.iter().any(|painted| painted.text == text)
+        }
+
+        /// Whether the unique control labelled `label` is painted disabled.
+        fn disabled(&self, label: &str) -> bool {
+            self.painted(label, false).opacity < 1.0
+        }
+
+        /// Every text painted on the same row as the unique `label`, other
+        /// than the label itself (a slider's value, for example).
+        fn row_texts(&self, label: &str) -> Vec<&PaintedText> {
+            let row = self.target(label, false);
+
+            self.labels
+                .iter()
+                .filter(|painted| {
+                    painted.text != label
+                        && painted.bounds.center().y >= row.top()
+                        && painted.bounds.center().y <= row.bottom()
+                })
+                .collect()
+        }
+
+        /// Focus the search field through its hint text, then type `text`.
+        fn type_search(&mut self, settings: &mut HostEditState, text: &str) {
+            self.click(settings, "archive/member", false);
+            self.frame(settings, vec![egui::Event::Text(text.to_owned())]);
+            self.frame(settings, Vec::new());
         }
 
         fn click(&mut self, settings: &mut HostEditState, label: &str, radio: bool) {
@@ -1455,25 +1906,26 @@ mod host_tests {
                     .expect("header state was not persisted");
                 assert_eq!(state.is_open(), expected);
             }
-            assert_eq!(
-                self.labels.iter().any(|(text, _)| text == "FPS: --"),
-                game_cube
-            );
-            assert_eq!(
-                self.labels.iter().any(|(text, _)| text == "band_center"),
-                modern
-            );
+            assert_eq!(self.has_text("FPS: --"), game_cube);
+            assert_eq!(self.has_text("band_center"), modern);
             self.target("GameCube", false);
             self.target("Modern", false);
         }
     }
 
-    fn collect_labels(shape: &egui::epaint::Shape, labels: &mut Vec<(String, egui::Rect)>) {
+    fn collect_labels(shape: &egui::epaint::Shape, labels: &mut Vec<PaintedText>) {
         match shape {
-            egui::epaint::Shape::Text(text) => labels.push((
-                text.galley.text().to_owned(),
-                text.galley.rect.translate(text.pos.to_vec2()),
-            )),
+            egui::epaint::Shape::Text(text) => labels.push(PaintedText {
+                text: text.galley.text().to_owned(),
+                bounds: text.galley.rect.translate(text.pos.to_vec2()),
+                opacity: f32::from(text.fallback_color.a()) / 255.0,
+                color: text
+                    .galley
+                    .job
+                    .sections
+                    .first()
+                    .map_or(text.fallback_color, |section| section.format.color),
+            }),
             egui::epaint::Shape::Vec(shapes) => {
                 for shape in shapes {
                     collect_labels(shape, labels);
@@ -1613,5 +2065,590 @@ mod host_tests {
             panic!("GameCube was not selected");
         };
         assert!(classic.eflight.checked);
+    }
+
+    // --- BCK playback through the production host seam ----------------------
+
+    use crate::animation_player::test_support::{self, Fixture};
+
+    const WALK: &str = "LkAnm/bcks/walk.bck";
+    const RUN: &str = "LkAnm/bcks/run.bck";
+    const RISE: &str = "LkAnm/bcks/rise.bck";
+    const FRAME_TOLERANCE: f32 = 1e-4;
+
+    /// The renderer-independent host seam: [`AnimationHost`] (update and the
+    /// draw's `prepare_frame`) and [`HostEditState`] (UI) exchange state only
+    /// through [`AnimationControls`], driven by the real editor harness with
+    /// fake elapsed time. No renderer, no wall clock, no game assets.
+    struct PlaybackBench {
+        _fixture: Fixture,
+        host: AnimationHost,
+        settings: HostEditState,
+        ui: EditorHarness,
+    }
+
+    impl PlaybackBench {
+        fn new(fixture: Fixture) -> Self {
+            let host = AnimationHost::new(&test_support::skeleton(), &fixture.catalog);
+
+            Self::with_host(fixture, host)
+        }
+
+        fn with_host(fixture: Fixture, host: AnimationHost) -> Self {
+            let mut settings = mode_settings();
+            settings.animation = AnimationControls::new(&host);
+            let ui = EditorHarness::new(&mut settings);
+            let mut bench = Self {
+                _fixture: fixture,
+                host,
+                settings,
+                ui,
+            };
+            bench.tick(0.0);
+
+            bench
+        }
+
+        fn player(&self) -> &AnimationPlayer {
+            self.host.player.as_ref().expect("the bench has a player")
+        }
+
+        /// One app frame: update, UI, then production preparation. Returns the
+        /// number of consumed commands. A final UI-only refresh exposes the view
+        /// published by draw for existing paint assertions.
+        fn tick(&mut self, elapsed: f32) -> usize {
+            self.host.update(&mut self.settings.animation, elapsed);
+            self.ui.frame(&mut self.settings, Vec::new());
+            let applied = self.commands().len();
+            self.palette();
+            self.ui.frame(&mut self.settings, Vec::new());
+
+            applied
+        }
+
+        /// The draw half: the palette either mode would upload this frame.
+        fn palette(&mut self) -> Vec<Mat4> {
+            self.host
+                .prepare_frame(&mut self.settings.animation)
+                .map(<[Mat4]>::to_vec)
+                .unwrap_or_default()
+        }
+
+        fn click(&mut self, label: &str) {
+            self.ui.click(&mut self.settings, label, false);
+        }
+
+        fn select_mode(&mut self, label: &str) {
+            self.ui.click(&mut self.settings, label, true);
+        }
+
+        fn commands(&self) -> &[Command] {
+            &self.settings.animation.commands
+        }
+
+        /// Everything a mode switch must leave alone.
+        fn playback(&mut self) -> (Option<ClipIdentity>, f32, PlaybackState, Vec<Mat4>) {
+            let palette = self.palette();
+            let player = self.player();
+
+            (
+                player.selected_identity().cloned(),
+                player.frame(),
+                player.playback_state(),
+                palette,
+            )
+        }
+
+        fn assert_frame(&self, expected: f32) {
+            let actual = self.player().frame();
+            assert!(
+                (actual - expected).abs() <= FRAME_TOLERANCE,
+                "frame {actual} != {expected}"
+            );
+        }
+
+        /// The ramp clip's root x translation, which equals the evaluated frame.
+        fn assert_root_x(&mut self, expected: f32) {
+            let actual = self.palette()[0].w_axis.x;
+            assert!(
+                (actual - expected).abs() <= FRAME_TOLERANCE,
+                "root x {actual} != {expected}"
+            );
+        }
+
+        /// The unique painted text containing `needle`.
+        fn text_containing(&self, needle: &str) -> &PaintedText {
+            let found: Vec<_> = self
+                .ui
+                .labels
+                .iter()
+                .filter(|painted| painted.text.contains(needle))
+                .collect();
+            assert_eq!(
+                found.len(),
+                1,
+                "missing or ambiguous text containing {needle:?}"
+            );
+
+            found[0]
+        }
+
+        fn assert_transport_controls(&self, expected: [(&str, bool); 4]) {
+            for (label, enabled) in expected {
+                assert_eq!(
+                    !self.ui.disabled(label),
+                    enabled,
+                    "{label} enabled={enabled}"
+                );
+            }
+        }
+
+        fn assert_slider_enabled(&self, label: &str, enabled: bool) {
+            let texts = self.ui.row_texts(label);
+            assert!(!texts.is_empty(), "{label} slider paints no value");
+            for painted in texts {
+                assert_eq!(painted.opacity >= 1.0, enabled, "{label} enabled={enabled}");
+            }
+        }
+    }
+
+    #[test]
+    fn bck_mode_switch_retains_pose() {
+        let fixture = test_support::fixture(
+            "host-mode-switch",
+            &[("bcks/walk.bck", Some(test_support::ramp_clip(20, 2)))],
+        );
+        let walk = fixture.identity(0);
+        let mut bench = PlaybackBench::new(fixture);
+        bench.settings.game_cube.eflight.checked = true;
+        bench.settings.modern.band_center.value = 0.73;
+        let bind = bench.palette();
+        assert_eq!(bind, vec![Mat4::IDENTITY; 2]);
+
+        bench.click(WALK);
+        assert_eq!(bench.commands(), [Command::Select(walk.clone())]);
+        assert_eq!(bench.tick(0.0), 1);
+        assert_eq!(bench.tick(0.1), 0);
+        let playing = bench.playback();
+        assert_eq!(playing.0.as_ref(), Some(&walk));
+        assert_eq!(playing.2, PlaybackState::Playing);
+        bench.assert_frame(3.0);
+        assert_ne!(playing.3, bind);
+
+        // Switching with no commands changes nothing about playback.
+        for mode in ["Modern", "GameCube", "Modern"] {
+            bench.select_mode(mode);
+            assert!(bench.commands().is_empty());
+            assert_eq!(bench.tick(0.0), 0);
+            assert_eq!(bench.playback(), playing);
+        }
+        // Playback keeps running while Modern is selected.
+        assert_eq!(bench.settings.selected(), SelectedMode::Modern);
+        assert_eq!(bench.tick(0.1), 0);
+        bench.assert_frame(6.0);
+        assert_ne!(bench.palette(), playing.3);
+
+        // Paused: elapsed time across switches is discarded.
+        bench.click("Pause");
+        assert_eq!(bench.commands(), [Command::Pause]);
+        assert_eq!(bench.tick(0.0), 1);
+        let paused = bench.playback();
+        assert_eq!(paused.2, PlaybackState::Paused);
+        bench.assert_frame(6.0);
+        for mode in ["GameCube", "Modern", "GameCube"] {
+            bench.select_mode(mode);
+            assert_eq!(bench.tick(0.5), 0);
+            assert_eq!(bench.playback(), paused);
+        }
+        assert_eq!(bench.settings.selected(), SelectedMode::GameCube);
+
+        // The independent mode settings are untouched too.
+        assert!(bench.settings.game_cube.eflight.checked);
+        assert_eq!(bench.settings.modern.band_center.value, 0.73);
+        assert_eq!(bench.player().preparation_count(), 1);
+    }
+
+    #[test]
+    fn bck_ui_first_draw_uses_commands_without_another_update() {
+        let fixture = test_support::fixture(
+            "host-immediate-draw",
+            &[("bcks/walk.bck", Some(test_support::ramp_clip(20, 2)))],
+        );
+        let mut bench = PlaybackBench::new(fixture);
+        bench.host.update(&mut bench.settings.animation, 0.1);
+        bench.click(WALK);
+        bench.assert_root_x(0.0);
+        assert!(bench.commands().is_empty());
+        assert_eq!(bench.tick(0.1), 0);
+        bench.assert_root_x(3.0);
+
+        // Click the scrub track, immediately to the right of its label.
+        bench.host.update(&mut bench.settings.animation, 0.1);
+        let label = bench.ui.target("Scrub", false);
+        let pos = egui::pos2(label.right() + 45.0, label.center().y);
+        for pressed in [true, false] {
+            bench.ui.frame(
+                &mut bench.settings,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        let target = match bench.commands().last() {
+            Some(Command::Scrub(frame)) => *frame,
+            other => panic!("slider must issue a scrub: {other:?}"),
+        };
+        bench.assert_root_x(target);
+        assert_eq!(bench.settings.animation.view.frame, target);
+        assert_eq!(bench.tick(0.1), 0);
+        bench.assert_root_x(target);
+
+        bench.host.update(&mut bench.settings.animation, 0.1);
+        bench.click("Restart");
+        bench.assert_root_x(0.0);
+        assert_eq!(bench.tick(0.1), 0);
+        bench.assert_root_x(3.0);
+
+        bench.host.update(&mut bench.settings.animation, 0.1);
+        bench.click("Bind pose");
+        assert_eq!(bench.palette(), vec![Mat4::IDENTITY; 2]);
+        assert!(!bench.player().has_active_clip());
+        assert_eq!(bench.tick(0.1), 0);
+        assert_eq!(bench.palette(), vec![Mat4::IDENTITY; 2]);
+    }
+
+    #[test]
+    fn bck_ui_commands_apply_once() {
+        let fixture = test_support::fixture(
+            "host-apply-once",
+            &[("bcks/walk.bck", Some(test_support::ramp_clip(20, 2)))],
+        );
+        let mut bench = PlaybackBench::new(fixture);
+        bench.click(WALK);
+        assert_eq!(bench.tick(0.0), 1);
+        assert_eq!(
+            bench.player().evaluation_count(),
+            1,
+            "selection evaluates frame 0"
+        );
+        bench.assert_root_x(0.0);
+        assert_eq!(bench.player().evaluation_count(), 1, "the draw reuses it");
+
+        bench.click("Pause");
+        assert_eq!(bench.tick(0.0), 1);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Paused);
+
+        // One click buffers one command, however many UI frames follow.
+        bench.click("Play");
+        assert_eq!(bench.commands(), [Command::Play]);
+        bench.ui.frame(&mut bench.settings, Vec::new());
+        assert_eq!(bench.commands(), [Command::Play]);
+
+        // It applies once, after that update's advance, so the draw shows it.
+        assert_eq!(bench.tick(0.5), 1);
+        assert!(bench.commands().is_empty());
+        assert_eq!(bench.player().playback_state(), PlaybackState::Playing);
+        bench.assert_frame(0.0);
+        bench.assert_root_x(0.0);
+        assert_eq!(bench.player().evaluation_count(), 1);
+
+        // Later updates advance from it and never re-apply it.
+        assert_eq!(bench.tick(0.1), 0);
+        bench.assert_frame(3.0);
+        bench.assert_root_x(3.0);
+        assert_eq!(bench.player().evaluation_count(), 2);
+        assert_eq!(bench.tick(0.0), 0);
+        bench.palette();
+        assert_eq!(
+            bench.player().evaluation_count(),
+            2,
+            "unchanged frames do not evaluate"
+        );
+
+        // A scrub requested by the UI wins over that frame's advancement.
+        bench.settings.animation.commands.push(Command::Scrub(7.5));
+        assert_eq!(bench.tick(1.0), 1);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Paused);
+        bench.assert_frame(7.5);
+        bench.assert_root_x(7.5);
+        assert_eq!(bench.player().evaluation_count(), 3);
+        assert_eq!(
+            bench.settings.animation.scrub, 7.5,
+            "the slider follows the player"
+        );
+        assert_eq!(bench.player().preparation_count(), 1);
+    }
+
+    #[test]
+    fn bck_ui_failed_candidate_keeps_diagnostic_and_retained_view() {
+        use gx::animation_manifest::{KeyF32, TrackF32};
+        let mut clip = test_support::ramp_clip(20, 2);
+        clip.joints[0].axes[0].scale = TrackF32::Keyed {
+            tangent_type: 1,
+            keys: vec![
+                KeyF32 {
+                    time: 0.0,
+                    value: 1.0,
+                    tangent_in: 0.0,
+                    tangent_out: f32::MAX,
+                },
+                KeyF32 {
+                    time: 10.0,
+                    value: 1.0,
+                    tangent_in: -f32::MAX,
+                    tangent_out: 0.0,
+                },
+            ],
+        };
+        let fixture =
+            test_support::fixture("host-failed-candidate", &[("bcks/walk.bck", Some(clip))]);
+        let mut bench = PlaybackBench::new(fixture);
+        bench.click(WALK);
+        let retained = bench.palette();
+        bench.settings.animation.commands.push(Command::Scrub(3.0));
+        assert_eq!(bench.palette(), retained);
+        let error = bench.settings.animation.view.diagnostic.clone().unwrap();
+        bench.settings.animation.commands.push(Command::Scrub(3.0));
+        assert_eq!(
+            bench.settings.animation.view.diagnostic.as_deref(),
+            Some(error.as_str())
+        );
+        assert_eq!(bench.palette(), retained);
+        assert_eq!(
+            bench.settings.animation.view.diagnostic.as_deref(),
+            Some(error.as_str())
+        );
+        assert_eq!(bench.settings.animation.view.frame, 0.0);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Paused);
+        bench.settings.animation.commands.push(Command::Scrub(10.0));
+        assert!(bench.settings.animation.view.diagnostic.is_some());
+        bench.assert_root_x(10.0);
+        assert_eq!(bench.settings.animation.view.diagnostic, None);
+        assert_eq!(bench.settings.animation.view.frame, 10.0);
+    }
+
+    #[test]
+    fn bck_selector_search_never_changes_playback() {
+        let fixture = test_support::fixture(
+            "host-search",
+            &[
+                ("bcks/walk.bck", Some(test_support::ramp_clip(20, 2))),
+                ("bcks/run.bck", Some(test_support::ramp_clip(40, 2))),
+            ],
+        );
+        let walk = fixture.identity(0);
+        let mut bench = PlaybackBench::new(fixture);
+        assert!(bench.ui.has_text("2 of 2 BCK clips"));
+        bench.click(WALK);
+        assert_eq!(bench.tick(0.0), 1);
+        assert_eq!(bench.tick(0.1), 0);
+        let playing = bench.playback();
+        assert_eq!(playing.0.as_ref(), Some(&walk));
+
+        // Filtering hides the selected row and issues nothing.
+        bench.ui.type_search(&mut bench.settings, "RUN");
+        assert_eq!(bench.settings.animation.query, "RUN");
+        assert!(bench.ui.has_text(RUN));
+        assert!(!bench.ui.has_text(WALK));
+        assert!(bench.ui.has_text("1 of 2 BCK clips"));
+        assert!(bench.commands().is_empty());
+        assert_eq!(bench.tick(0.0), 0);
+        assert_eq!(bench.playback(), playing);
+
+        // The list is the player's own search.
+        let shown: Vec<_> = bench
+            .settings
+            .animation
+            .rows
+            .iter()
+            .filter(|row| row.matches(&bench.settings.animation.query))
+            .map(|row| row.label.clone())
+            .collect();
+        let expected: Vec<_> = bench
+            .player()
+            .search("RUN")
+            .map(|row| row.label.clone())
+            .collect();
+        assert_eq!(shown, expected);
+        assert_eq!(shown, [RUN]);
+
+        // The query survives a mode switch, and so does playback.
+        bench.select_mode("Modern");
+        assert_eq!(bench.settings.animation.query, "RUN");
+        assert!(bench.ui.has_text(RUN));
+        assert!(!bench.ui.has_text(WALK));
+        assert_eq!(bench.tick(0.1), 0);
+        assert_eq!(bench.player().selected_identity(), Some(&walk));
+        bench.assert_frame(6.0);
+        assert_eq!(bench.player().preparation_count(), 1);
+    }
+
+    #[test]
+    fn bck_static_clip_ui_disabled() {
+        let mut rise = test_support::clip(0, 2);
+        rise.joints[0].axes[0].translation =
+            gx::animation_manifest::TrackF32::Constant { value: 4.0 };
+        let fixture = test_support::fixture(
+            "host-static",
+            &[
+                ("bcks/rise.bck", Some(rise)),
+                ("bcks/walk.bck", Some(test_support::ramp_clip(20, 2))),
+            ],
+        );
+        let mut bench = PlaybackBench::new(fixture);
+        bench.click(RISE);
+        assert_eq!(bench.tick(0.0), 1);
+        assert!(bench.player().is_static());
+        assert_eq!(bench.player().playback_state(), PlaybackState::Stopped);
+        assert!(bench.ui.has_text("Transport: Stopped (static clip)"));
+        assert!(bench.ui.has_text("Frame: 0.00 / 0"));
+        assert!(bench.ui.has_text("Effective policy: none"));
+        bench.assert_transport_controls([
+            ("Bind pose", true),
+            ("Play", false),
+            ("Pause", false),
+            ("Restart", false),
+        ]);
+        bench.assert_slider_enabled("Scrub", false);
+        bench.assert_slider_enabled("Speed", true);
+
+        // Disabled controls issue nothing; the pose is frame 0, not bind.
+        for label in ["Play", "Restart", "Pause"] {
+            bench.click(label);
+        }
+        assert!(bench.commands().is_empty());
+        assert_eq!(bench.tick(1.0), 0);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Stopped);
+        bench.assert_root_x(4.0);
+
+        // A positive-duration clip re-enables the transport.
+        bench.click(WALK);
+        assert_eq!(bench.tick(0.0), 1);
+        assert!(!bench.player().is_static());
+        bench.assert_transport_controls([
+            ("Bind pose", true),
+            ("Play", false),
+            ("Pause", true),
+            ("Restart", true),
+        ]);
+        bench.assert_slider_enabled("Scrub", true);
+        assert!(bench.ui.has_text("Transport: Playing"));
+    }
+
+    #[test]
+    fn bck_catalog_error_shown() {
+        let fixture = test_support::fixture("host-missing-catalog", &[]);
+        let missing = fixture.dir.join("absent").join("catalog.json");
+        let host = AnimationHost::new(&test_support::skeleton(), &missing);
+        let mut bench = PlaybackBench::with_host(fixture, host);
+        let error = bench
+            .player()
+            .catalog_error()
+            .expect("catalog error")
+            .to_owned();
+        assert!(error.contains("absent"));
+
+        let painted = bench.text_containing("BCK catalog");
+        assert_eq!(painted.text, error);
+        assert_eq!(painted.color, ERROR_COLOR);
+        assert!(bench.ui.has_text("0 of 0 BCK clips"));
+        assert!(bench.ui.has_text("Clip: bind pose"));
+        assert!(bench.ui.has_text("Transport: Stopped"));
+        bench.assert_transport_controls([
+            ("Bind pose", false),
+            ("Play", false),
+            ("Pause", false),
+            ("Restart", false),
+        ]);
+        bench.assert_slider_enabled("Scrub", false);
+
+        // Bind pose, and the controls are inert.
+        for label in ["Play", "Restart", "Bind pose"] {
+            bench.click(label);
+        }
+        assert!(bench.commands().is_empty());
+        assert_eq!(bench.tick(0.5), 0);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Stopped);
+        assert_eq!(bench.player().selected_identity(), None);
+        assert_eq!(bench.palette(), vec![Mat4::IDENTITY; 2]);
+        assert_eq!(bench.player().evaluation_count(), 0);
+    }
+
+    #[test]
+    fn bck_animation_unavailable_static_fallback() {
+        let fixture = test_support::fixture(
+            "host-unavailable",
+            &[("bcks/walk.bck", Some(test_support::ramp_clip(20, 2)))],
+        );
+        let mut skeleton = test_support::skeleton();
+        skeleton.scaling_rule = gx::model_manifest::ScalingRule::Basic;
+        let host = AnimationHost::new(&skeleton, &fixture.catalog);
+        assert!(host.player.is_none());
+        let mut bench = PlaybackBench::with_host(fixture, host);
+
+        // No palette: both modes draw the static bind pose.
+        assert!(bench.palette().is_empty());
+        let painted = bench.text_containing("animation unavailable");
+        assert_eq!(painted.color, ERROR_COLOR);
+        assert!(bench.ui.has_text("Transport: unavailable"));
+        assert!(bench.ui.has_text("0 of 0 BCK clips"));
+        bench.assert_transport_controls([
+            ("Bind pose", false),
+            ("Play", false),
+            ("Pause", false),
+            ("Restart", false),
+        ]);
+        for label in ["Play", "Restart"] {
+            bench.click(label);
+        }
+        assert!(bench.commands().is_empty());
+        assert_eq!(bench.tick(0.5), 0);
+        assert!(bench.palette().is_empty());
+    }
+
+    /// A mode whose skin failed to load reports a static reason, and the host
+    /// disables playback rather than animating a palette the mode ignores.
+    /// The `SkinningBuffers` → `setup` link itself needs a renderer; this
+    /// covers everything after it.
+    #[test]
+    fn bck_skin_failure_disables_animation_ui() {
+        let fixture = test_support::fixture(
+            "host-skin-failure",
+            &[("bcks/walk.bck", Some(test_support::ramp_clip(20, 2)))],
+        );
+        let mut host = AnimationHost::new(&test_support::skeleton(), &fixture.catalog);
+        assert!(host.player.is_some(), "the skeleton alone is valid");
+
+        let reason =
+            "animation disabled, rendering the static model: GameCube mode: skin.bin: bad length";
+        host.disable(reason.to_owned());
+        assert!(host.player.is_none());
+        let mut bench = PlaybackBench::with_host(fixture, host);
+
+        assert!(bench.palette().is_empty());
+        let painted = bench.text_containing("animation disabled");
+        assert_eq!(painted.text, reason);
+        assert_eq!(painted.color, ERROR_COLOR);
+        assert!(bench.ui.has_text("Transport: unavailable"));
+        assert!(bench.ui.has_text("0 of 0 BCK clips"));
+        bench.assert_transport_controls([
+            ("Bind pose", false),
+            ("Play", false),
+            ("Pause", false),
+            ("Restart", false),
+        ]);
+        bench.assert_slider_enabled("Scrub", false);
+        for label in ["Play", "Restart", "Bind pose"] {
+            bench.click(label);
+        }
+        assert!(bench.commands().is_empty());
+        assert_eq!(bench.tick(0.5), 0);
+        assert!(bench.palette().is_empty());
     }
 }
