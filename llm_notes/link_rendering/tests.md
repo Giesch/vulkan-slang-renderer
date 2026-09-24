@@ -175,7 +175,7 @@ detail in [`phase_03.md`](phase_03.md); strategy re-weighted after probing
 found the file carries its own answer key:
 
 - **invBind identity (the skeleton oracle, upgraded)**: EVP1 stores every
-  joint's inverse bind matrix, so at bind pose `world(j) · invBind(j) = I`
+  joint's inverse bind matrix, so at bind pose `model_space(j) · invBind(j) = I`
   must hold for all 42 joints — verifying our FK (composition order, INF1
   parent wiring, rotation conversion) against Nintendo's own exporter output
   with **no third-party tool in the loop**. Hard error with a max-residual

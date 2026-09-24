@@ -45,22 +45,22 @@ Two traps make this the most dangerous part of the converter:
 The failure mode is unmistakable (limbs stretched across the scene, "exploded"
 mesh) but hard to debug backward from. That's why the plan bakes in the
 **weighted-identity check**: at bind pose, every EVP1-weighted vertex must come
-out ≈ where it started (`Σw·(world·invBind) = I`). If that check passes but
-rigid parts (hair, scabbard, belt) are detached, the bug is isolated to the
-JNT1 world-matrix walk instead. It converts "something is wrong somewhere in
-four layers of indirection" into a bisecting test.
+out ≈ where it started (`Σw·(model_space·invBind) = I`). If that check passes
+but rigid parts (hair, scabbard, belt) are detached, the bug is isolated to the
+JNT1 model-space-matrix walk instead. It converts "something is wrong somewhere
+in four layers of indirection" into a bisecting test.
 
 *Resolved (P3, implemented and green)*: the mechanism is real for cl.bdl — 77
 `0xFFFF` inherit-entries, 240 of 270 DRW1 slots weighted, 7 Multi shapes — and
 all three bisection layers now run on the real file and pass: the parse layer
 (canonical `--dump-geometry` **zero-line diff** vs an independent decoder), the
-FK layer (**invBind identity** `world(j)·invBind(j) = I`, max residual 0.0145
-across all 42 joints — f32 precision, not a bug: the *wrong* rotation order
-fails by ~10^2), and the bake layer (**weighted identity**, max baked-vs-stored
-distance 0.0077 model units). One planning assumption fell out: `mUseMtxIndex`
-is **not** the head of the matrix table (0 vs 67 on shape 0) — the useMtx table
-drives everything and `mUseMtxIndex` is ignored. No exploded mesh; the mitigation
-stack did its job.
+FK layer (**invBind identity** `model_space(j)·invBind(j) = I`, max residual
+0.0145 across all 42 joints — f32 precision, not a bug: the *wrong* rotation
+order fails by ~10^2), and the bake layer (**weighted identity**, max
+baked-vs-stored distance 0.0077 model units). One planning assumption fell out:
+`mUseMtxIndex` is **not** the head of the matrix table (0 vs 67 on shape 0) —
+the useMtx table drives everything and `mUseMtxIndex` is ignored. No exploded
+mesh; the mitigation stack did its job.
 
 ## 2. GX fixed-point vertex formats
 

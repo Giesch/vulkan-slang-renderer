@@ -6,7 +6,7 @@
 //! concatenated and walked with a running cursor.
 //!
 //! The inverse-bind matrices are the file's own FK answer key: at bind pose
-//! `world(j)·invBind(j) = I` (checked in pose.rs).
+//! `model_space(j)·invBind(j) = I` (checked in pose.rs).
 
 use crate::be::BeReader;
 use crate::bmd::BmdError;

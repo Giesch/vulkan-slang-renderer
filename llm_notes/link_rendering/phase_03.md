@@ -19,8 +19,8 @@ invariants the file itself supplies.
 
 1. `src/bin/convert_link/bmd/{inf1,vtx1,evp1,drw1,jnt1,shp1}.rs` — typed
    parsers + inline tests
-2. `src/bin/convert_link/pose.rs` — FK world matrices, DRW1/EVP1 resolution,
-   the packet matrix-slot state machine, vertex baking, strip→list
+2. `src/bin/convert_link/pose.rs` — FK model-space matrices, DRW1/EVP1
+   resolution, the packet matrix-slot state machine, vertex baking, strip→list
 3. `src/model_manifest.rs` — serde manifest types, registered in `src/lib.rs`
    (shared with the P6 example; serde/serde_json already deps);
    `src/bin/convert_link/output.rs` — manifest + flat binaries + `--obj`
@@ -89,8 +89,9 @@ canonical gate re-asserts all of this):
 - **JNT1**: joint names are lowercase (`link_root`, `center`, …, `cl_back`).
   **Every scale is exactly (1,1,1)** — the MAYA scaling rule,
   `noInheritScale` (12 joints), and segment-scale-compensate semantics are
-  all moot for this model; FK reduces to `world = parent_world · T · R`.
-  matrixType histogram {0: 8, 1: 33, 2: 1} — record meaning, unused by FK.
+  all moot for this model; FK reduces to
+  `model_space = parent_model_space · T · R`. matrixType histogram
+  {0: 8, 1: 33, 2: 1} — record meaning, unused by FK.
 - **EVP1**: 120 envelopes; mix counts {2: 101, 3: 18, 4: 1}, 260 weight
   entries; 42 inverse bind matrices.
 - **DRW1**: 270 slots = 30 rigid (flag 0) + 240 weighted (flag 1).
@@ -143,15 +144,15 @@ pub struct BakedModel {
     pub vertices: Vec<BakedVertex>,   // pos [f32;3], nrm [f32;3], uv [f32;2]
     pub skin: Vec<[(u8, f32); 4]>,    // per vertex, zero-padded
     pub indices_per_shape: Vec<Vec<u32>>, // triangle lists, GX winding
-    pub joint_world: Vec<Mat4>,       // 42 entries
+    pub joint_model_space: Vec<Mat4>, // 42 entries
 }
 ```
 
-- **FK**: `world(j) = world(parent(j)) · T(j) · R(j)` (scales all 1.0 —
-  asserted). Rotation order Z·Y·X (J3D convention; the invBind identity
+- **FK**: `model_space(j) = model_space(parent(j)) · T(j) · R(j)` (scales all
+  1.0 — asserted). Rotation order Z·Y·X (J3D convention; the invBind identity
   check below catches it if wrong, and X·Y·Z is the one-line fallback).
-- **Skinning matrices**: rigid DRW1 slot → `world(joint)`; weighted slot →
-  `Σ wᵢ · world(jᵢ) · invBind(jᵢ)`.
+- **Skinning matrices**: rigid DRW1 slot → `model_space(joint)`; weighted slot →
+  `Σ wᵢ · model_space(jᵢ) · invBind(jᵢ)`.
 - **Matrix-slot state machine**: a 10-slot `[Option<u16>; 10]` table
   persisting across a shape's groups **in file order**; each group loads its
   `use_mtx` entries into slots 0..count, `0xFFFF` = keep the slot's current
@@ -268,16 +269,17 @@ After the gates pass: regenerate `scripts/link_converted.sha256` including
 Three independent legs, strongest first:
 
 1. **The file is its own skeleton oracle.** EVP1 stores the inverse bind
-   matrix of every joint; at bind pose `world(j) · invBind(j) = I` must hold
-   for all 42 joints. This checks our FK — composition order, parent wiring
-   from INF1, rotation conversion — against data authored by Nintendo's
-   exporter, with no third-party tool in the loop. Hard converter error with
-   a max-deviation report (ε ~1e-3 on the 4×4 residual; record the actual
-   max). The **weighted-identity check** (tests.md §P3) is its corollary:
-   every EVP1-weighted vertex must bake to ≈ its stored position (weights
-   sum to 1 and Σw·(world·invBind) = I); hard error, max distance recorded.
-   Rigid shapes are deliberately *not* identity — they move from joint-local
-   to model space; their gate is the AABB comparison below.
+   matrix of every joint; at bind pose `model_space(j) · invBind(j) = I`
+   must hold for all 42 joints. This checks our FK — composition order,
+   parent wiring from INF1, rotation conversion — against data authored by
+   Nintendo's exporter, with no third-party tool in the loop. Hard converter
+   error with a max-deviation report (ε ~1e-3 on the 4×4 residual; record the
+   actual max). The **weighted-identity check** (tests.md §P3) is its
+   corollary: every EVP1-weighted vertex must bake to ≈ its stored position
+   (weights sum to 1 and Σw·(model_space·invBind) = I); hard error, max
+   distance recorded. Rigid shapes are deliberately *not* identity — they
+   move from joint-local to model space; their gate is the AABB comparison
+   below.
 2. **Canonical diff over all raw geometry data** (Steps 4–5): every number
    our parsers extracted — hierarchy, formats, envelope tables, joint TRS,
    matrix tables, per-primitive vertex counts — byte-compared against an
@@ -409,11 +411,11 @@ Record outcomes (steps 3, 9, 10 especially) in Recorded facts.
 ## Recorded facts (fill in after gates pass)
 
 ```
-invBind identity max residual: 0.014493 (max abs of world·invBind − I over all
-  42 joints; worst = joint 17 Rmomi_jnt). Gate epsilon INVBIND_EPS = 0.02. This
-  is f32 precision, not an algorithm bug: residuals grow with chain depth and
-  joint distance from origin (Link ~30 units out, ~6 deep), and the *wrong*
-  rotation order fails by ~10^2–10^4, not ~10^-2.
+invBind identity max residual: 0.014493 (max abs of model_space·invBind − I
+  over all 42 joints; worst = joint 17 Rmomi_jnt). Gate epsilon
+  INVBIND_EPS = 0.02. This is f32 precision, not an algorithm bug: residuals
+  grow with chain depth and joint distance from origin (Link ~30 units out,
+  ~6 deep), and the *wrong* rotation order fails by ~10^2–10^4, not ~10^-2.
 weighted-identity max distance: 0.007726 model units (over all EVP1-weighted
   baked vertices). Gate epsilon WEIGHTED_EPS = 0.05. This is the load-bearing
   geometry check and it is tight — confirms envelope skinning + SHP1 matrix

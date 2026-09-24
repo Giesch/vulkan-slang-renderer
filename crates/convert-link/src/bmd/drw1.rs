@@ -5,7 +5,7 @@
 //! (weighted). In cl.bdl the rigid slots are packed before the weighted ones.
 //!
 //! SHP1 matrix tables index these slots; pose.rs resolves each slot to a
-//! skinning matrix (joint world, or the envelope's weighted blend).
+//! skinning matrix (joint model space, or the envelope's weighted blend).
 
 use crate::be::BeReader;
 use crate::bmd::BmdError;
