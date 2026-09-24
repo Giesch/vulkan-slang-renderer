@@ -12,7 +12,7 @@ import Generated/Mltrs
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-graphs = Graphs.or_crash({ first: render_graph, second: render_graph }.Graphs)
+Ok(graphs) = { first: render_graph, second: render_graph }.Graphs
 
 selected = graphs.select(|g| g.second)
 
