@@ -1,11 +1,15 @@
-# Generated logical values, not GPU layouts.
-# Fixed arrays are lists: required lengths are preserved in reflection.
-import pf.ShaderReflection
-
+import pf.ShaderReflection{% if !exposed.is_empty() %} exposing [{{ exposed|join(", ") }}]{% endif %}
+{% if !imports.is_empty() %}
+{% for import in imports -%}
+import {{ import }}
+{% endfor -%}
+{% endif %}
+## Generated logical values, not GPU layouts.
+## Fixed arrays are lists: required lengths are preserved in reflection.
 {% if definitions.is_empty() -%}
-ShaderTypes := {}
+{{ module }} := {}
 {% else -%}
-ShaderTypes := {}.{
+{{ module }} := {}.{
 {%- for definition in definitions %}
 {%- if !loop.first %}
 {% endif %}
