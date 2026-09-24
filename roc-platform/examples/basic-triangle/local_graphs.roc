@@ -8,9 +8,9 @@ import pf.ShaderReflection
 import Generated/BasicTriangle
 import Generated/Mltrs
 
-pair = Graphs.or_crash({ first: render_graph, second: render_graph }.Graphs)
+Ok(pair) = { first: render_graph, second: render_graph }.Graphs
 
-graphs = Graphs.or_crash({ pair, single: RenderGraph.draw_indexed(triangle) }.Graphs)
+Ok(graphs) = { pair, single: RenderGraph.draw_indexed(triangle) }.Graphs
 
 game : Game
 game = Game.new({ init!, draw, graphs })
