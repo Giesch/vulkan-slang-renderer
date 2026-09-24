@@ -1098,55 +1098,283 @@ unsafe impl<T> RocRelease<*mut T> for RocBoxSpineRelease<T> {
     }
 }
 
-/// Element type for __AnonStruct_621dc7eda441df2f
+/// Element type for Game.HostConfig
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct AnonStruct621dc7eda441df2f {
-    pub init_bang: RocErasedCallable,
+pub struct GameHostConfig {
+    pub graphs: RocList<ValidatedRenderGraphHostGraph>,
 }
 
-/// Element type for __AnonStruct_621dc7eda441df2f
+/// Element type for Game.HostConfig
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct AnonStruct621dc7eda441df2f {
+pub struct GameHostConfig {
+    pub graphs: RocList<ValidatedRenderGraphHostGraph>,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<GameHostConfig>() == 24, "GameHostConfig size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<GameHostConfig>() == 8, "GameHostConfig alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<GameHostConfig>() == 12, "GameHostConfig size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<GameHostConfig>() == 4, "GameHostConfig alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostGraph
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostGraph {
+    pub draws: RocListWith<ValidatedRenderGraphHostDraw, false>,
+    pub pipelines: RocList<ValidatedRenderGraphHostPipeline>,
+    pub uniforms: RocList<ValidatedRenderGraphHostUniform>,
+}
+
+/// Element type for ValidatedRenderGraph.HostGraph
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostGraph {
+    pub draws: RocListWith<ValidatedRenderGraphHostDraw, false>,
+    pub pipelines: RocList<ValidatedRenderGraphHostPipeline>,
+    pub uniforms: RocList<ValidatedRenderGraphHostUniform>,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostGraph>() == 72, "ValidatedRenderGraphHostGraph size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostGraph>() == 8, "ValidatedRenderGraphHostGraph alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostGraph>() == 36, "ValidatedRenderGraphHostGraph size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostGraph>() == 4, "ValidatedRenderGraphHostGraph alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostDraw
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostDraw {
+    pub call: ValidatedRenderGraphHostDrawCall,
+    pub pipeline: u32,
+    pub uniform: u32,
+}
+
+/// Element type for ValidatedRenderGraph.HostDraw
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostDraw {
+    pub call: ValidatedRenderGraphHostDrawCall,
+    pub pipeline: u32,
+    pub uniform: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostDraw>() == 16, "ValidatedRenderGraphHostDraw size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostDraw>() == 4, "ValidatedRenderGraphHostDraw alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostDraw>() == 16, "ValidatedRenderGraphHostDraw size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostDraw>() == 4, "ValidatedRenderGraphHostDraw alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostPipeline
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostPipeline {
+    pub fragment_spv: RocListWith<u8, false>,
+    pub mesh: ValidatedRenderGraphHostMesh,
+    pub name: RocStr,
+    pub reflection_json: RocStr,
+    pub uniforms: RocListWith<u32, false>,
+    pub vertex_spv: RocListWith<u8, false>,
+}
+
+/// Element type for ValidatedRenderGraph.HostPipeline
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostPipeline {
+    pub fragment_spv: RocListWith<u8, false>,
+    pub mesh: ValidatedRenderGraphHostMesh,
+    pub name: RocStr,
+    pub reflection_json: RocStr,
+    pub uniforms: RocListWith<u32, false>,
+    pub vertex_spv: RocListWith<u8, false>,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostPipeline>() == 176, "ValidatedRenderGraphHostPipeline size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostPipeline>() == 8, "ValidatedRenderGraphHostPipeline alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostPipeline>() == 88, "ValidatedRenderGraphHostPipeline size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostPipeline>() == 4, "ValidatedRenderGraphHostPipeline alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostIndexedMesh
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostIndexedMesh {
+    pub indices: RocListWith<u32, false>,
+    pub vertex_bytes: RocListWith<u8, false>,
+}
+
+/// Element type for ValidatedRenderGraph.HostIndexedMesh
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostIndexedMesh {
+    pub indices: RocListWith<u32, false>,
+    pub vertex_bytes: RocListWith<u8, false>,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostIndexedMesh>() == 48, "ValidatedRenderGraphHostIndexedMesh size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostIndexedMesh>() == 8, "ValidatedRenderGraphHostIndexedMesh alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostIndexedMesh>() == 24, "ValidatedRenderGraphHostIndexedMesh size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostIndexedMesh>() == 4, "ValidatedRenderGraphHostIndexedMesh alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostUniform
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostUniform {
+    pub name: RocStr,
+    pub size: u32,
+}
+
+/// Element type for ValidatedRenderGraph.HostUniform
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostUniform {
+    pub name: RocStr,
+    pub size: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostUniform>() == 32, "ValidatedRenderGraphHostUniform size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostUniform>() == 8, "ValidatedRenderGraphHostUniform alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostUniform>() == 16, "ValidatedRenderGraphHostUniform size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostUniform>() == 4, "ValidatedRenderGraphHostUniform alignment mismatch");
+
+/// Element type for Game.Init
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameInit {
+    pub window_title: RocStr,
+}
+
+/// Element type for Game.Init
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameInit {
+    pub window_title: RocStr,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<GameInit>() == 24, "GameInit size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<GameInit>() == 8, "GameInit alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<GameInit>() == 12, "GameInit size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<GameInit>() == 4, "GameInit alignment mismatch");
+
+/// Element type for Game.Frame
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameFrame {
+    pub aspect_ratio: f32,
+}
+
+/// Element type for Game.Frame
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameFrame {
+    pub aspect_ratio: f32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<GameFrame>() == 4, "GameFrame size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<GameFrame>() == 4, "GameFrame alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<GameFrame>() == 4, "GameFrame size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<GameFrame>() == 4, "GameFrame alignment mismatch");
+
+/// Element type for Graphs.Draw
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GraphsDraw {
+    pub values: RocList<RocListWith<u8, false>>,
+    pub graph_id: u32,
+}
+
+/// Element type for Graphs.Draw
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GraphsDraw {
+    pub values: RocList<RocListWith<u8, false>>,
+    pub graph_id: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<GraphsDraw>() == 32, "GraphsDraw size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<GraphsDraw>() == 8, "GraphsDraw alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<GraphsDraw>() == 16, "GraphsDraw size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<GraphsDraw>() == 4, "GraphsDraw alignment mismatch");
+
+/// Element type for Game
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Game {
+    pub config: GameHostConfig,
+    pub draw: RocErasedCallable,
+    pub init_bang: RocErasedCallable,
+}
+
+/// Element type for Game
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Game {
+    pub config: GameHostConfig,
+    pub draw: RocErasedCallable,
     pub init_bang: RocErasedCallable,
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<AnonStruct621dc7eda441df2f>() == 8, "AnonStruct621dc7eda441df2f size mismatch");
+const _: () = assert!(core::mem::size_of::<Game>() == 40, "Game size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<AnonStruct621dc7eda441df2f>() == 8, "AnonStruct621dc7eda441df2f alignment mismatch");
+const _: () = assert!(core::mem::align_of::<Game>() == 8, "Game alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<AnonStruct621dc7eda441df2f>() == 4, "AnonStruct621dc7eda441df2f size mismatch");
+const _: () = assert!(core::mem::size_of::<Game>() == 20, "Game size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<AnonStruct621dc7eda441df2f>() == 4, "AnonStruct621dc7eda441df2f alignment mismatch");
-
-/// Element type for InitConfig
-#[cfg(target_pointer_width = "32")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct InitConfig {
-    pub window_title: RocStr,
-}
-
-/// Element type for InitConfig
-#[cfg(not(target_pointer_width = "32"))]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct InitConfig {
-    pub window_title: RocStr,
-}
-
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<InitConfig>() == 24, "InitConfig size mismatch");
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<InitConfig>() == 8, "InitConfig alignment mismatch");
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<InitConfig>() == 12, "InitConfig size mismatch");
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<InitConfig>() == 4, "InitConfig alignment mismatch");
+const _: () = assert!(core::mem::align_of::<Game>() == 4, "Game alignment mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -1238,6 +1466,97 @@ const _: () = assert!(core::mem::size_of::<HostStderrLineResult>() == 16, "HostS
 const _: () = assert!(core::mem::align_of::<HostStderrLineResult>() == 4, "HostStderrLineResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostStderrLineResult, tag) == 12, "HostStderrLineResult tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostStdoutLineResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostStdoutLineResultPayload {
+    pub err: core::mem::ManuallyDrop<RocStr>,
+    pub ok: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostStdoutLineResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostStdoutLineResult {
+    pub _payload_alignment: [HostStdoutLineResultPayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: HostStdoutLineResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostStdoutLineResult {
+    pub payload: HostStdoutLineResultPayload,
+    pub tag: HostStdoutLineResultTag,
+}
+
+impl HostStdoutLineResult {
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostStdoutLineResultTag::Err` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostStdoutLineResultTag::Err` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostStdoutLineResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostStdoutLineResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostStdoutLineResult>() == 32, "HostStdoutLineResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostStdoutLineResult>() == 8, "HostStdoutLineResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostStdoutLineResult, tag) == 24, "HostStdoutLineResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostStdoutLineResult>() == 16, "HostStdoutLineResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostStdoutLineResult>() == 4, "HostStdoutLineResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostStdoutLineResult, tag) == 12, "HostStdoutLineResult tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -1366,96 +1685,187 @@ const _: () = assert!(core::mem::align_of::<HostStdinLineResult>() == 4, "HostSt
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostStdinLineResult, tag) == 12, "HostStdinLineResult tag offset mismatch");
 
-/// Tag discriminant for Try.
+/// Tag discriminant for ValidatedRenderGraph.HostDrawCall.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostStdoutLineResultTag {
-    Err = 0,
-    Ok = 1,
+pub enum ValidatedRenderGraphHostDrawCallTag {
+    VertexCount = 0,
+    WholeIndexed = 1,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union HostStdoutLineResultPayload {
-    pub err: core::mem::ManuallyDrop<RocStr>,
-    pub ok: [u8; 0],
+pub union ValidatedRenderGraphHostDrawCallPayload {
+    pub vertex_count: core::mem::ManuallyDrop<u32>,
+    pub whole_indexed: [u8; 0],
 }
 
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct HostStdoutLineResultPayloadAlignment;
+pub struct ValidatedRenderGraphHostDrawCallPayloadAlignment;
 
-/// Tag union: Try
+/// Tag union: ValidatedRenderGraph.HostDrawCall
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostStdoutLineResult {
-    pub _payload_alignment: [HostStdoutLineResultPayloadAlignment; 0],
-    pub payload: [u8; 12],
-    pub tag: HostStdoutLineResultTag,
+pub struct ValidatedRenderGraphHostDrawCall {
+    pub _payload_alignment: [ValidatedRenderGraphHostDrawCallPayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: ValidatedRenderGraphHostDrawCallTag,
 }
 
-/// Tag union: Try
+/// Tag union: ValidatedRenderGraph.HostDrawCall
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostStdoutLineResult {
-    pub payload: HostStdoutLineResultPayload,
-    pub tag: HostStdoutLineResultTag,
+pub struct ValidatedRenderGraphHostDrawCall {
+    pub payload: ValidatedRenderGraphHostDrawCallPayload,
+    pub tag: ValidatedRenderGraphHostDrawCallTag,
 }
 
-impl HostStdoutLineResult {
-    /// Borrow the `Err` payload without creating another owner.
+impl ValidatedRenderGraphHostDrawCall {
+    /// Borrow the `VertexCount` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostStdoutLineResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `ValidatedRenderGraphHostDrawCallTag::VertexCount` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn borrow_payload_vertex_count_unchecked(&self) -> &u32 {
+        unsafe { &*(self.payload.as_ptr() as *const u32) }
     }
 
-    /// Borrow the `Err` payload without creating another owner.
+    /// Borrow the `VertexCount` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostStdoutLineResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `ValidatedRenderGraphHostDrawCallTag::VertexCount` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    pub unsafe fn borrow_payload_vertex_count_unchecked(&self) -> &u32 {
+        unsafe { &*(&self.payload.vertex_count as *const core::mem::ManuallyDrop<u32> as *const u32) }
     }
 
-    /// Move the `Err` payload out of one owned tag-union shell.
+    /// Move the `VertexCount` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostStdoutLineResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `ValidatedRenderGraphHostDrawCallTag::VertexCount`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
-        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn take_payload_vertex_count_unchecked(&mut self) -> u32 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u32) }
     }
 
-    /// Move the `Err` payload out of one owned tag-union shell.
+    /// Move the `VertexCount` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostStdoutLineResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `ValidatedRenderGraphHostDrawCallTag::VertexCount`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
-        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    pub unsafe fn take_payload_vertex_count_unchecked(&mut self) -> u32 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.vertex_count) }
     }
 
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostStdoutLineResult>() == 32, "HostStdoutLineResult size mismatch");
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostDrawCall>() == 8, "ValidatedRenderGraphHostDrawCall size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<HostStdoutLineResult>() == 8, "HostStdoutLineResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostDrawCall>() == 4, "ValidatedRenderGraphHostDrawCall alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostStdoutLineResult, tag) == 24, "HostStdoutLineResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostDrawCall, tag) == 4, "ValidatedRenderGraphHostDrawCall tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostStdoutLineResult>() == 16, "HostStdoutLineResult size mismatch");
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostDrawCall>() == 8, "ValidatedRenderGraphHostDrawCall size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<HostStdoutLineResult>() == 4, "HostStdoutLineResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostDrawCall>() == 4, "ValidatedRenderGraphHostDrawCall alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostStdoutLineResult, tag) == 12, "HostStdoutLineResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostDrawCall, tag) == 4, "ValidatedRenderGraphHostDrawCall tag offset mismatch");
+
+/// Tag discriminant for ValidatedRenderGraph.HostMesh.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidatedRenderGraphHostMeshTag {
+    Indexed = 0,
+    VertexCount = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union ValidatedRenderGraphHostMeshPayload {
+    pub indexed: core::mem::ManuallyDrop<ValidatedRenderGraphHostIndexedMesh>,
+    pub vertex_count: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostMeshPayloadAlignment;
+
+/// Tag union: ValidatedRenderGraph.HostMesh
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostMesh {
+    pub _payload_alignment: [ValidatedRenderGraphHostMeshPayloadAlignment; 0],
+    pub payload: [u8; 24],
+    pub tag: ValidatedRenderGraphHostMeshTag,
+}
+
+/// Tag union: ValidatedRenderGraph.HostMesh
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostMesh {
+    pub payload: ValidatedRenderGraphHostMeshPayload,
+    pub tag: ValidatedRenderGraphHostMeshTag,
+}
+
+impl ValidatedRenderGraphHostMesh {
+    /// Borrow the `Indexed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostMeshTag::Indexed` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_indexed_unchecked(&self) -> &ValidatedRenderGraphHostIndexedMesh {
+        unsafe { &*(self.payload.as_ptr() as *const ValidatedRenderGraphHostIndexedMesh) }
+    }
+
+    /// Borrow the `Indexed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostMeshTag::Indexed` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_indexed_unchecked(&self) -> &ValidatedRenderGraphHostIndexedMesh {
+        unsafe { &*(&self.payload.indexed as *const core::mem::ManuallyDrop<ValidatedRenderGraphHostIndexedMesh> as *const ValidatedRenderGraphHostIndexedMesh) }
+    }
+
+    /// Move the `Indexed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostMeshTag::Indexed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_indexed_unchecked(&mut self) -> ValidatedRenderGraphHostIndexedMesh {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const ValidatedRenderGraphHostIndexedMesh) }
+    }
+
+    /// Move the `Indexed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostMeshTag::Indexed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_indexed_unchecked(&mut self) -> ValidatedRenderGraphHostIndexedMesh {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.indexed) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostMesh>() == 56, "ValidatedRenderGraphHostMesh size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostMesh>() == 8, "ValidatedRenderGraphHostMesh alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostMesh, tag) == 48, "ValidatedRenderGraphHostMesh tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostMesh>() == 28, "ValidatedRenderGraphHostMesh size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostMesh>() == 4, "ValidatedRenderGraphHostMesh alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostMesh, tag) == 24, "ValidatedRenderGraphHostMesh tag offset mismatch");
 
 /// Arguments for Host.stderr_line!
 /// Roc signature: Str => Try({}, [StderrErr(Str)])
@@ -1474,6 +1884,14 @@ pub struct HostStderrLineArgs {
 pub struct HostStdoutLineArgs {
     pub arg0: RocStr,
 }
+
+// Platform Type Aliases
+
+pub type GameHostConfigGraphs = ValidatedRenderGraphHostGraph;
+pub type ValidatedRenderGraphHostGraphDraws = ValidatedRenderGraphHostDraw;
+pub type ValidatedRenderGraphHostGraphPipelines = ValidatedRenderGraphHostPipeline;
+pub type ValidatedRenderGraphHostMeshIndexed = ValidatedRenderGraphHostIndexedMesh;
+pub type ValidatedRenderGraphHostGraphUniforms = ValidatedRenderGraphHostUniform;
 
 // Generated Refcount Helpers
 
@@ -1516,6 +1934,49 @@ pub struct HostStderrLineResultRelease;
 
 unsafe impl RocRelease<HostStderrLineResult> for HostStderrLineResultRelease {
     unsafe fn release(value: HostStderrLineResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostStdoutLineResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostStdoutLineResultTag::Err => {
+                let payload = unsafe { value.take_payload_err_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            HostStdoutLineResultTag::Ok => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostStdoutLineResultTag::Err => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            HostStdoutLineResultTag::Ok => {},
+        }
+    }
+}
+
+pub struct HostStdoutLineResultRelease;
+
+unsafe impl RocRelease<HostStdoutLineResult> for HostStdoutLineResultRelease {
+    unsafe fn release(value: HostStdoutLineResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -1569,20 +2030,108 @@ unsafe impl RocRelease<HostStdinLineResult> for HostStdinLineResultRelease {
     }
 }
 
-impl HostStdoutLineResult {
+impl GameHostConfig {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_list_of_validated_render_graph_host_graph(value.graphs, roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.graphs.incref(amount); }
+    }
+}
+
+pub struct GameHostConfigRelease;
+
+unsafe impl RocRelease<GameHostConfig> for GameHostConfigRelease {
+    unsafe fn release(value: GameHostConfig, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostGraph {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.draws.decref(roc_host); }
+        unsafe { decref_list_of_validated_render_graph_host_pipeline(value.pipelines, roc_host); }
+        unsafe { decref_list_of_validated_render_graph_host_uniform(value.uniforms, roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.draws.incref(amount); }
+        unsafe { value.pipelines.incref(amount); }
+        unsafe { value.uniforms.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostGraphRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostGraph> for ValidatedRenderGraphHostGraphRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostGraph, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostDraw {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.call.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.call.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostDrawRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostDraw> for ValidatedRenderGraphHostDrawRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostDraw, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostDrawCall {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
     /// `self` must own one live Roc reference for each refcounted payload.
     pub unsafe fn decref(self, roc_host: &RocHost) {
-        let mut value = self;
+        let value = self;
         let _ = roc_host;
         match value.tag {
-            HostStdoutLineResultTag::Err => {
-                let payload = unsafe { value.take_payload_err_unchecked() };
-                unsafe { payload.decref(roc_host); }
-            },
-            HostStdoutLineResultTag::Ok => {},
+            ValidatedRenderGraphHostDrawCallTag::VertexCount => {},
+            ValidatedRenderGraphHostDrawCallTag::WholeIndexed => {},
         }
     }
 
@@ -1595,31 +2144,33 @@ impl HostStdoutLineResult {
         let value = self;
         let _ = amount;
         match value.tag {
-            HostStdoutLineResultTag::Err => {
-                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
-                unsafe { payload.incref(amount); }
-            },
-            HostStdoutLineResultTag::Ok => {},
+            ValidatedRenderGraphHostDrawCallTag::VertexCount => {},
+            ValidatedRenderGraphHostDrawCallTag::WholeIndexed => {},
         }
     }
 }
 
-pub struct HostStdoutLineResultRelease;
+pub struct ValidatedRenderGraphHostDrawCallRelease;
 
-unsafe impl RocRelease<HostStdoutLineResult> for HostStdoutLineResultRelease {
-    unsafe fn release(value: HostStdoutLineResult, roc_host: &RocHost) {
+unsafe impl RocRelease<ValidatedRenderGraphHostDrawCall> for ValidatedRenderGraphHostDrawCallRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostDrawCall, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
 
-impl AnonStruct621dc7eda441df2f {
+impl ValidatedRenderGraphHostPipeline {
     /// Recursively decrement Roc-owned fields.
     ///
     /// # Safety
     /// `self` must own one live Roc reference for each refcounted field.
     pub unsafe fn decref(self, roc_host: &RocHost) {
         let value = self;
-        unsafe { decref_erased_callable(value.init_bang, roc_host); }
+        unsafe { value.fragment_spv.decref(roc_host); }
+        unsafe { value.mesh.decref(roc_host); }
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.reflection_json.decref(roc_host); }
+        unsafe { value.uniforms.decref(roc_host); }
+        unsafe { value.vertex_spv.decref(roc_host); }
     }
 
     /// Increment Roc-owned fields.
@@ -1629,19 +2180,127 @@ impl AnonStruct621dc7eda441df2f {
     /// be balanced by later decrefs.
     pub unsafe fn incref(self, amount: isize) {
         let value = self;
-        unsafe { incref_erased_callable(value.init_bang, amount); }
+        unsafe { value.fragment_spv.incref(amount); }
+        unsafe { value.mesh.incref(amount); }
+        unsafe { value.name.incref(amount); }
+        unsafe { value.reflection_json.incref(amount); }
+        unsafe { value.uniforms.incref(amount); }
+        unsafe { value.vertex_spv.incref(amount); }
     }
 }
 
-pub struct AnonStruct621dc7eda441df2fRelease;
+pub struct ValidatedRenderGraphHostPipelineRelease;
 
-unsafe impl RocRelease<AnonStruct621dc7eda441df2f> for AnonStruct621dc7eda441df2fRelease {
-    unsafe fn release(value: AnonStruct621dc7eda441df2f, roc_host: &RocHost) {
+unsafe impl RocRelease<ValidatedRenderGraphHostPipeline> for ValidatedRenderGraphHostPipelineRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostPipeline, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
 
-impl InitConfig {
+impl ValidatedRenderGraphHostMesh {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            ValidatedRenderGraphHostMeshTag::Indexed => {
+                let payload = unsafe { value.take_payload_indexed_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            ValidatedRenderGraphHostMeshTag::VertexCount => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            ValidatedRenderGraphHostMeshTag::Indexed => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_indexed_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            ValidatedRenderGraphHostMeshTag::VertexCount => {},
+        }
+    }
+}
+
+pub struct ValidatedRenderGraphHostMeshRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostMesh> for ValidatedRenderGraphHostMeshRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostMesh, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostIndexedMesh {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.indices.decref(roc_host); }
+        unsafe { value.vertex_bytes.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.indices.incref(amount); }
+        unsafe { value.vertex_bytes.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostIndexedMeshRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostIndexedMesh> for ValidatedRenderGraphHostIndexedMeshRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostIndexedMesh, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostUniform {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostUniformRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostUniform> for ValidatedRenderGraphHostUniformRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostUniform, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl GameInit {
     /// Recursively decrement Roc-owned fields.
     ///
     /// # Safety
@@ -1662,12 +2321,158 @@ impl InitConfig {
     }
 }
 
-pub struct InitConfigRelease;
+pub struct GameInitRelease;
 
-unsafe impl RocRelease<InitConfig> for InitConfigRelease {
-    unsafe fn release(value: InitConfig, roc_host: &RocHost) {
+unsafe impl RocRelease<GameInit> for GameInitRelease {
+    unsafe fn release(value: GameInit, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
+}
+
+impl GameFrame {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct GameFrameRelease;
+
+unsafe impl RocRelease<GameFrame> for GameFrameRelease {
+    unsafe fn release(value: GameFrame, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl GraphsDraw {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_list_of_list_of_type56(value.values, roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.values.incref(amount); }
+    }
+}
+
+pub struct GraphsDrawRelease;
+
+unsafe impl RocRelease<GraphsDraw> for GraphsDrawRelease {
+    unsafe fn release(value: GraphsDraw, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl Game {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.config.decref(roc_host); }
+        unsafe { decref_erased_callable(value.draw, roc_host); }
+        unsafe { decref_erased_callable(value.init_bang, roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.config.incref(amount); }
+        unsafe { incref_erased_callable(value.draw, amount); }
+        unsafe { incref_erased_callable(value.init_bang, amount); }
+    }
+}
+
+pub struct GameRelease;
+
+unsafe impl RocRelease<Game> for GameRelease {
+    unsafe fn release(value: Game, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+/// Release one owned reference to a `RocList<ValidatedRenderGraphHostGraph>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_validated_render_graph_host_graph(value: RocList<ValidatedRenderGraphHostGraph>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ValidatedRenderGraphHostGraphRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<ValidatedRenderGraphHostPipeline>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_validated_render_graph_host_pipeline(value: RocList<ValidatedRenderGraphHostPipeline>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ValidatedRenderGraphHostPipelineRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<ValidatedRenderGraphHostUniform>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_validated_render_graph_host_uniform(value: RocList<ValidatedRenderGraphHostUniform>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ValidatedRenderGraphHostUniformRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RocListWith<u8, false>>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_list_of_type56(value: RocList<RocListWith<u8, false>>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RocListSpineRelease>(roc_host); }
+}
+
+extern "C" fn decref_box_payload_type57(data_ptr: *mut c_void, roc_host: *mut RocHost) {
+    if data_ptr.is_null() || roc_host.is_null() {
+        return;
+    }
+    let payload = unsafe { *(data_ptr as *const Game) };
+    let roc_host = unsafe { &*roc_host };
+    unsafe { payload.decref(roc_host); }
 }
 
 
@@ -1884,20 +2689,52 @@ pub fn make_roc_host(env: *mut c_void) -> RocHost {
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     /// Entrypoint: init_for_host!
-    pub fn roc_init() -> InitConfig;
+    pub fn roc_init() -> GameInit;
+
+    /// Entrypoint: config_for_host
+    pub fn roc_config() -> GameHostConfig;
+
+    /// Entrypoint: draw_for_host
+    pub fn roc_draw(arg0: GameFrame) -> GraphsDraw;
 
 }
 
-const _: () = assert!(core::mem::size_of::<RocOwned<InitConfig, InitConfigRelease>>() == core::mem::size_of::<InitConfig>(), "roc_init owned result size mismatch");
-const _: () = assert!(core::mem::align_of::<RocOwned<InitConfig, InitConfigRelease>>() == core::mem::align_of::<InitConfig>(), "roc_init owned result alignment mismatch");
+const _: () = assert!(core::mem::size_of::<RocOwned<GameInit, GameInitRelease>>() == core::mem::size_of::<GameInit>(), "roc_init owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<GameInit, GameInitRelease>>() == core::mem::align_of::<GameInit>(), "roc_init owned result alignment mismatch");
 
 /// Owning wrapper for `roc_init`. The returned value is recursively
 /// released on Drop with no runtime descriptor or extra storage.
 ///
 /// # Safety
 /// The raw entrypoint and its arguments must satisfy the generated host ABI.
-pub unsafe fn roc_init_owned() -> RocOwned<InitConfig, InitConfigRelease> {
+pub unsafe fn roc_init_owned() -> RocOwned<GameInit, GameInitRelease> {
     let value = unsafe { roc_init() };
+    unsafe { RocOwned::from_raw(value) }
+}
+
+const _: () = assert!(core::mem::size_of::<RocOwned<GameHostConfig, GameHostConfigRelease>>() == core::mem::size_of::<GameHostConfig>(), "roc_config owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<GameHostConfig, GameHostConfigRelease>>() == core::mem::align_of::<GameHostConfig>(), "roc_config owned result alignment mismatch");
+
+/// Owning wrapper for `roc_config`. The returned value is recursively
+/// released on Drop with no runtime descriptor or extra storage.
+///
+/// # Safety
+/// The raw entrypoint and its arguments must satisfy the generated host ABI.
+pub unsafe fn roc_config_owned() -> RocOwned<GameHostConfig, GameHostConfigRelease> {
+    let value = unsafe { roc_config() };
+    unsafe { RocOwned::from_raw(value) }
+}
+
+const _: () = assert!(core::mem::size_of::<RocOwned<GraphsDraw, GraphsDrawRelease>>() == core::mem::size_of::<GraphsDraw>(), "roc_draw owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<GraphsDraw, GraphsDrawRelease>>() == core::mem::align_of::<GraphsDraw>(), "roc_draw owned result alignment mismatch");
+
+/// Owning wrapper for `roc_draw`. The returned value is recursively
+/// released on Drop with no runtime descriptor or extra storage.
+///
+/// # Safety
+/// The raw entrypoint and its arguments must satisfy the generated host ABI.
+pub unsafe fn roc_draw_owned(arg0: GameFrame) -> RocOwned<GraphsDraw, GraphsDrawRelease> {
+    let value = unsafe { roc_draw(arg0) };
     unsafe { RocOwned::from_raw(value) }
 }
 
