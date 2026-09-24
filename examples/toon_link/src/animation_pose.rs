@@ -125,6 +125,7 @@ impl PreparedClip {
 
     fn evaluate_inner(&self, frame: f32) -> Result<Pose> {
         ensure!(frame.is_finite(), "frame: nonfinite");
+
         let mut model_space: Vec<Mat4> = Vec::with_capacity(self.joints.len());
         let mut local_scales: Vec<Vec3> = Vec::with_capacity(self.joints.len());
         for (index, (joint, bind)) in self
@@ -147,16 +148,19 @@ impl PreparedClip {
                         sample_rotation(&axis.rotation, frame, self.clip.rotation_decimal_shift)
                             .with_context(|| format!("axes[{axis_index}].rotation"))?;
                 }
+
                 let compensation = if bind.parent >= 0 && bind.scale_compensate {
                     let parent_scale = local_scales[bind.parent as usize];
                     ensure!(
                         parent_scale.abs().min_element() > COMPENSATION_SCALE_MIN,
                         "compensation: parent local scale {parent_scale:?} has divisor abs <= {COMPENSATION_SCALE_MIN}"
                     );
+
                     parent_scale.recip()
                 } else {
                     Vec3::ONE
                 };
+
                 let local = local_matrix(translation, rotation, scale, compensation)?;
                 let matrix = if bind.parent < 0 {
                     local
@@ -167,6 +171,7 @@ impl PreparedClip {
 
                 Ok((matrix, scale))
             };
+
             let (matrix, scale) = sample().with_context(|| format!("joints[{index}]"))?;
             model_space.push(matrix);
             local_scales.push(scale);
@@ -192,12 +197,15 @@ fn local_matrix(
     let rotation = Mat4::from_rotation_z(radians[2])
         * Mat4::from_rotation_y(radians[1])
         * Mat4::from_rotation_x(radians[0]);
+
     // J3D Maya compensation scales ROWS of R*S, not columns. Translation stays
     // untouched: T * inverse(parent LOCAL S) * Rz * Ry * Rx * S.
     let compensated = Mat4::from_scale(compensation) * rotation;
     finite_matrix(compensated)?;
+
     let linear = compensated * Mat4::from_scale(scale);
     finite_matrix(linear)?;
+
     let local = Mat4::from_translation(translation) * linear;
     finite_matrix(local)?;
 
@@ -205,15 +213,20 @@ fn local_matrix(
 }
 
 fn hermite(frame: f32, left: [f32; 3], right: [f32; 3]) -> Result<f32> {
+    // `outgoing` and `incoming` refer to the keyframes,
+    // not this curve between them
     let [start_time, start_value, outgoing] = left;
     let [end_time, end_value, incoming] = right;
+
     let interval = end_time - start_time;
     ensure!(
         interval.is_finite() && interval > 0.0,
-        "Hermite interval: invalid"
+        "Hermite interval: {interval} invalid"
     );
+
     let fraction = (frame - start_time) / interval;
     ensure!(fraction.is_finite(), "Hermite fraction: nonfinite");
+
     let squared = fraction * fraction;
     let cubed = squared * fraction;
     let start_slope = interval * outgoing;
@@ -222,12 +235,14 @@ fn hermite(frame: f32, left: [f32; 3], right: [f32; 3]) -> Result<f32> {
         start_slope.is_finite() && end_slope.is_finite(),
         "Hermite interval-scaled tangent: nonfinite"
     );
+
     let terms = [
         (2.0 * cubed - 3.0 * squared + 1.0) * start_value,
         (cubed - 2.0 * squared + fraction) * start_slope,
         (-2.0 * cubed + 3.0 * squared) * end_value,
         (cubed - squared) * end_slope,
     ];
+
     let mut value = 0.0;
     for term in terms {
         ensure!(term.is_finite(), "Hermite term: nonfinite");
@@ -264,6 +279,7 @@ fn sample_f32(track: &TrackF32, frame: f32, default: f32) -> Result<f32> {
             }
         }
     };
+
     ensure!(value.is_finite(), "sample: nonfinite");
 
     Ok(value)
@@ -282,6 +298,7 @@ fn sample_rotation(track: &TrackI16, frame: f32, shift: u8) -> Result<i16> {
                 let index = keys.partition_point(|key| f32::from(key.time) <= frame);
                 let a = keys[index - 1];
                 let b = keys[index];
+
                 hermite(
                     frame,
                     [a.time, a.value, a.tangent_out].map(f32::from),
@@ -290,10 +307,13 @@ fn sample_rotation(track: &TrackI16, frame: f32, shift: u8) -> Result<i16> {
             }
         }
     };
+
     ensure!(raw.is_finite(), "rotation sample: nonfinite");
+
     // Reduce before integer conversion: Rust's saturating float casts must not
     // replace the source's signed-16 wrap for overshooting Hermite curves.
     let wrapped = raw.trunc().rem_euclid(65536.0) as u32;
+
     Ok((wrapped << shift) as u16 as i16)
 }
 
@@ -354,19 +374,19 @@ mod tests {
         );
     }
 
-    fn rotation_keys(a: i16, b: i16) -> TrackI16 {
+    fn rotation_keys(start_value: i16, end_value: i16) -> TrackI16 {
         TrackI16::Keyed {
             tangent_type: 7,
             keys: vec![
                 KeyI16 {
                     time: 10,
-                    value: a,
+                    value: start_value,
                     tangent_in: 0,
                     tangent_out: 2,
                 },
                 KeyI16 {
                     time: 20,
-                    value: b,
+                    value: end_value,
                     tangent_in: 4,
                     tangent_out: 0,
                 },
@@ -380,10 +400,10 @@ mod tests {
             hermite(15.0, [10.0, 100.0, 2.0], [20.0, 300.0, 4.0]).unwrap(),
             197.5
         );
-        assert_eq!(
-            sample_rotation(&rotation_keys(100, 300), 15.0, 3).unwrap(),
-            1576
-        );
+    }
+
+    #[test]
+    fn bck_f32_interpolation_uses_interval_scaled_outgoing_and_incoming_tangents() {
         let track = TrackF32::Keyed {
             tangent_type: 9,
             keys: vec![
@@ -401,15 +421,24 @@ mod tests {
                 },
             ],
         };
+
         assert_eq!(sample_f32(&track, 6.5, 0.0).unwrap(), 20.25);
     }
 
     #[test]
-    fn bck_rotation_truncate_shift_wrap() {
+    fn bck_rotation_truncates_toward_zero_before_shifting() {
+        assert_eq!(
+            sample_rotation(&rotation_keys(100, 300), 15.0, 3).unwrap(),
+            1576
+        );
         assert_eq!(
             sample_rotation(&rotation_keys(-300, -100), 15.0, 3).unwrap(),
             -1616
         );
+    }
+
+    #[test]
+    fn bck_constant_rotation_wraps_after_shifting() {
         assert_eq!(
             sample_rotation(&TrackI16::Constant { value: 32767 }, 0.0, 3).unwrap(),
             -8
@@ -418,6 +447,10 @@ mod tests {
             sample_rotation(&TrackI16::Constant { value: -32768 }, 0.0, 3).unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn bck_rotation_interpolates_across_signed_boundary_without_shortest_arc() {
         let track = TrackI16::Keyed {
             tangent_type: 0,
             keys: vec![
@@ -435,7 +468,12 @@ mod tests {
                 },
             ],
         };
+
         assert_eq!(sample_rotation(&track, 1.0, 0).unwrap(), 0); // not shortest arc
+    }
+
+    #[test]
+    fn bck_rotation_wraps_hermite_overshoot() {
         let overshoot = TrackI16::Keyed {
             tangent_type: 1,
             keys: vec![
@@ -453,53 +491,60 @@ mod tests {
                 },
             ],
         };
+
         assert_eq!(sample_rotation(&overshoot, 50.0, 0).unwrap(), 32743); // 819175 modulo 65536
     }
 
     #[test]
-    fn bck_track_defaults_and_clamps() {
-        assert_eq!(sample_f32(&TrackF32::Default, 4.0, 1.0).unwrap(), 1.0);
-        assert_eq!(sample_f32(&TrackF32::Default, 4.0, 0.0).unwrap(), 0.0);
+    fn bck_track_defaults_and_constants() {
+        assert_eq!(sample_f32(&TrackF32::Default, 4.0, 7.0).unwrap(), 7.0);
         assert_eq!(
             sample_f32(&TrackF32::Constant { value: -2.0 }, -8.0, 0.0).unwrap(),
             -2.0
         );
         assert_eq!(sample_rotation(&TrackI16::Default, 4.0, 3).unwrap(), 0);
+    }
+
+    #[test]
+    fn bck_rotation_clamps_to_track_endpoints() {
         for (frame, expected) in [(-10.0, 100), (10.0, 100), (20.0, 300), (100.0, 300)] {
             assert_eq!(
                 sample_rotation(&rotation_keys(100, 300), frame, 0).unwrap(),
-                expected
+                expected,
+                "frame {frame}"
             );
         }
+    }
+
+    #[test]
+    fn bck_default_tracks_evaluate_to_unit_scale_and_zero_translation() {
         let mut bind = skeleton(&[-1]);
         bind.joints[0].t = [3.0, 4.0, 5.0];
         let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
         let data = clip(1);
         let pose = prepared
-            .prepare_clip(Rc::new(data.clone()))
+            .prepare_clip(Rc::new(data))
             .unwrap()
             .evaluate(0.0)
             .unwrap();
+
         close(pose.model_space[0].transform_point3(Vec3::ZERO), Vec3::ZERO);
         assert_eq!(pose.local_scales, [Vec3::ONE]);
     }
 
-    #[test]
-    fn bck_bind_identity_nontrivial_hierarchy() {
+    fn nontrivial_bind_skeleton() -> Skeleton {
         let mut bind = skeleton(&[-1, 0, 1]);
         bind.joints[0].t = [3.0, -4.0, 1.0];
         bind.joints[0].r_s16 = [4096, 8192, -2048];
         bind.joints[1].t = [-2.0, 3.0, 7.0];
         bind.joints[1].r_s16 = [-8192, 1024, 16384];
         bind.joints[2].t = [1.0, 2.0, -3.0];
-        let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
-        let pose = prepared.bind_pose().unwrap();
-        for matrix in pose.palette {
-            for point in [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z] {
-                close(matrix.transform_point3(point), point);
-            }
-        }
-        let mut data = clip(3);
+
+        bind
+    }
+
+    fn clip_with_bind_translation_and_rotation(bind: &Skeleton) -> BckClip {
+        let mut data = clip(bind.joints.len());
         for (animated, joint) in data.joints.iter_mut().zip(&bind.joints) {
             for axis in 0..3 {
                 animated.axes[axis].translation = TrackF32::Constant {
@@ -510,13 +555,34 @@ mod tests {
                 };
             }
         }
-        for matrix in prepared
-            .prepare_clip(Rc::new(data.clone()))
+
+        data
+    }
+
+    #[test]
+    fn bck_bind_identity_nontrivial_hierarchy() {
+        let bind = nontrivial_bind_skeleton();
+        let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
+        let pose = prepared.bind_pose().unwrap();
+        for matrix in pose.palette {
+            for point in [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z] {
+                close(matrix.transform_point3(point), point);
+            }
+        }
+    }
+
+    #[test]
+    fn bck_clip_matching_bind_has_identity_palette() {
+        let bind = nontrivial_bind_skeleton();
+        let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
+        let data = clip_with_bind_translation_and_rotation(&bind);
+        let pose = prepared
+            .prepare_clip(Rc::new(data))
             .unwrap()
             .evaluate(0.0)
-            .unwrap()
-            .palette
-        {
+            .unwrap();
+
+        for matrix in pose.palette {
             close(
                 matrix.transform_point3(Vec3::new(2.0, -1.0, 3.0)),
                 Vec3::new(2.0, -1.0, 3.0),
@@ -535,17 +601,7 @@ mod tests {
         bind.joints[1].r_s16 = [-8192, 1024, 16384];
         let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
         // Start from bind, then move the root +1 on x and re-rotate the child.
-        let mut data = clip(2);
-        for (animated, joint) in data.joints.iter_mut().zip(&bind.joints) {
-            for axis in 0..3 {
-                animated.axes[axis].translation = TrackF32::Constant {
-                    value: joint.t[axis],
-                };
-                animated.axes[axis].rotation = TrackI16::Constant {
-                    value: joint.r_s16[axis],
-                };
-            }
-        }
+        let mut data = clip_with_bind_translation_and_rotation(&bind);
         data.joints[0].axes[0].translation = TrackF32::Constant {
             value: bind.joints[0].t[0] + 1.0,
         };
@@ -589,18 +645,8 @@ mod tests {
         let actual = pose.model_space[0].transform_point3(Vec3::new(1.0, 2.0, 3.0));
         let half_root = std::f32::consts::FRAC_1_SQRT_2;
         let expected = Vec3::new(5.0 * half_root, -half_root, -1.0);
-        assert!(
-            (actual - expected).abs().max_element() <= 1e-5,
-            "{actual:?} != {expected:?}"
-        );
-        // Other Z placements, derived with the same scalar rotation rules.
-        for wrong in [
-            Vec3::new(2.0, -2.0 * half_root, -4.0 * half_root), // Ry Rz Rx
-            Vec3::new(3.0 * half_root, -3.0, half_root),        // Ry Rx Rz
-            Vec3::new(3.0, -half_root, 3.0 * half_root),        // Rx Ry Rz
-        ] {
-            assert!((actual - wrong).abs().max_element() > 1.0);
-        }
+
+        close(actual, expected);
     }
 
     #[test]
@@ -612,6 +658,7 @@ mod tests {
         for (axis, value) in [2.0, 3.0, 4.0].into_iter().enumerate() {
             data.joints[0].axes[axis].scale = TrackF32::Constant { value };
         }
+
         data.joints[0].axes[2].rotation = TrackI16::Constant { value: 16384 };
         data.joints[0].axes[0].translation = TrackF32::Constant { value: 10.0 };
         data.joints[1].axes[2].rotation = TrackI16::Constant { value: 16384 };
@@ -621,9 +668,10 @@ mod tests {
                 value: (axis + 1) as f32,
             };
         }
+
         let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
         let pose = prepared
-            .prepare_clip(Rc::new(data.clone()))
+            .prepare_clip(Rc::new(data))
             .unwrap()
             .evaluate(0.0)
             .unwrap();
@@ -643,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn bck_scale_divisor_threshold_negative_and_zero() {
+    fn bck_compensation_accepts_divisors_above_threshold() {
         let mut bind = skeleton(&[-1, 0]);
         bind.joints[1].scale_compensate = true;
         let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
@@ -655,37 +703,55 @@ mod tests {
             let mut data = clip(2);
             data.joints[0].axes[0].scale = TrackF32::Constant { value };
             let pose = prepared
-                .prepare_clip(Rc::new(data.clone()))
+                .prepare_clip(Rc::new(data))
                 .unwrap()
                 .evaluate(0.0)
-                .unwrap();
-            close(pose.model_space[1].transform_point3(Vec3::X), Vec3::X);
+                .unwrap_or_else(|error| panic!("scale {value}: {error:#}"));
+            let actual = pose.model_space[1].transform_point3(Vec3::X);
+            assert!(
+                (actual - Vec3::X).abs().max_element() <= TOLERANCE,
+                "scale {value}: {actual:?} != {:?}",
+                Vec3::X
+            );
         }
+    }
+
+    #[test]
+    fn bck_compensation_rejects_divisors_at_or_below_threshold() {
+        let mut bind = skeleton(&[-1, 0]);
+        bind.joints[1].scale_compensate = true;
+        let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
+
         for value in [0.0, COMPENSATION_SCALE_MIN, -COMPENSATION_SCALE_MIN] {
             let mut data = clip(2);
             data.joints[0].axes[0].scale = TrackF32::Constant { value };
             assert!(
                 prepared
-                    .prepare_clip(Rc::new(data.clone()))
+                    .prepare_clip(Rc::new(data))
                     .unwrap()
                     .evaluate(0.0)
-                    .is_err()
+                    .is_err(),
+                "scale {value} must be rejected as a compensation divisor"
             );
         }
-        bind.joints[1].scale_compensate = false;
-        let prepared = Rc::new(PreparedSkeleton::new(&bind).unwrap());
+    }
+
+    #[test]
+    fn bck_zero_scale_is_valid_without_compensation() {
+        let prepared = Rc::new(PreparedSkeleton::new(&skeleton(&[-1, 0])).unwrap());
         let mut data = clip(2);
         data.joints[0].axes[0].scale = TrackF32::Constant { value: 0.0 };
         let pose = prepared
-            .prepare_clip(Rc::new(data.clone()))
+            .prepare_clip(Rc::new(data))
             .unwrap()
             .evaluate(0.0)
             .unwrap();
+
         close(pose.model_space[1].transform_point3(Vec3::X), Vec3::ZERO);
     }
 
     #[test]
-    fn bck_later_hermite_and_hierarchy_fail_without_publication() {
+    fn bck_hermite_overflow_fails_between_valid_endpoints() {
         let prepared = Rc::new(PreparedSkeleton::new(&skeleton(&[-1, 0])).unwrap());
         let mut data = clip(2);
         data.joints[0].axes[0].scale = TrackF32::Keyed {
@@ -705,26 +771,34 @@ mod tests {
                 },
             ],
         };
-        let candidate = prepared.prepare_clip(Rc::new(data.clone())).unwrap();
-        let initial = candidate.evaluate(0.0).unwrap();
-        assert!(format!("{:#}", candidate.evaluate(5.0).unwrap_err()).contains("Hermite"));
-        assert_eq!(initial.local_scales, [Vec3::ONE; 2]);
-        assert!(candidate.evaluate(f32::NAN).is_err());
+        let candidate = prepared.prepare_clip(Rc::new(data)).unwrap();
+
+        assert!(candidate.evaluate(0.0).is_ok());
+        let error = candidate.evaluate(5.0).unwrap_err();
+        assert!(format!("{error:#}").contains("Hermite"), "{error:#}");
         assert!(candidate.evaluate(10.0).is_ok());
+    }
+
+    #[test]
+    fn bck_evaluation_rejects_nonfinite_frame() {
+        let prepared = Rc::new(PreparedSkeleton::new(&skeleton(&[-1])).unwrap());
+        let candidate = prepared.prepare_clip(Rc::new(clip(1))).unwrap();
+
+        assert!(candidate.evaluate(f32::NAN).is_err());
+    }
+
+    #[test]
+    fn bck_evaluation_rejects_hierarchy_overflow() {
+        let prepared = Rc::new(PreparedSkeleton::new(&skeleton(&[-1, 0])).unwrap());
+        let mut data = clip(2);
         for joint in &mut data.joints {
             joint.axes[0].scale = TrackF32::Constant { value: 1e30 };
         }
-        assert!(
-            format!(
-                "{:#}",
-                prepared
-                    .prepare_clip(Rc::new(data.clone()))
-                    .unwrap()
-                    .evaluate(0.0)
-                    .unwrap_err()
-            )
-            .contains("hierarchy")
-        );
+
+        let candidate = prepared.prepare_clip(Rc::new(data)).unwrap();
+        let error = candidate.evaluate(0.0).unwrap_err();
+
+        assert!(format!("{error:#}").contains("hierarchy"), "{error:#}");
     }
 
     #[test]
@@ -751,7 +825,7 @@ mod tests {
         data.joints[0].axes[0].scale = track.clone();
         data.joints[1].axes[1].translation = track;
         data.joints.reverse();
-        let candidate = prepared.prepare_clip(Rc::new(data.clone())).unwrap();
+        let candidate = prepared.prepare_clip(Rc::new(data)).unwrap();
         for (frame, expected) in [
             (-1.0, -2.0),
             (2.0, -2.0),
@@ -769,16 +843,15 @@ mod tests {
     }
 
     #[test]
-    fn bck_preparation_rejects_invalid_hierarchy_and_tracks() {
+    fn bck_skeleton_preparation_rejects_invalid_hierarchy() {
         assert!(PreparedSkeleton::new(&skeleton(&[-1, 1])).is_err());
+    }
+
+    #[test]
+    fn bck_clip_preparation_rejects_invalid_rotation_shift() {
         let prepared = Rc::new(PreparedSkeleton::new(&skeleton(&[-1])).unwrap());
         let mut data = clip(1);
         data.rotation_decimal_shift = 4;
-        assert!(prepared.prepare_clip(Rc::new(data.clone())).is_err());
-        data.rotation_decimal_shift = 0;
-        data.joints[0].axes[0].scale = TrackF32::Constant {
-            value: f32::INFINITY,
-        };
-        assert!(prepared.prepare_clip(Rc::new(data.clone())).is_err());
+        assert!(prepared.prepare_clip(Rc::new(data)).is_err());
     }
 }
