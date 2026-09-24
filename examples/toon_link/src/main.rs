@@ -1250,7 +1250,7 @@ fn selected_mode(index: usize) -> SelectedMode {
 struct AnimationHost {
     player: Option<AnimationPlayer>,
     /// Why there is no player: the skeleton could not produce a bind pose.
-    /// Both modes then keep rendering the static model (AC5).
+    /// Both modes then keep rendering the static model.
     unavailable: Option<String>,
 }
 

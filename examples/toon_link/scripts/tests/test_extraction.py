@@ -139,8 +139,10 @@ class CheckoutEnvironment(Harness):
 
 
 class ExtractionScopeAndIdentity(Harness):
-    """AC.1 tests: extraction_scope_and_identity + real_inventory_matches_selection
-    (the latter runs as verify-driver step 1 on the real raw tree)."""
+    """Check extraction scope and identity on synthetic fixtures.
+
+    The verify driver checks the real inventory against the selection.
+    """
     def test_exclusion_reasons_and_skipped_dirs(self) -> None:
         sel = self.bootstrap()
         entries = {(e["archive"], e["member"]): e for e in sel["entries"]}
@@ -238,7 +240,7 @@ class ExtractionScopeAndIdentity(Harness):
 
 
 class ExtractionRejectsUnsafePaths(Harness):
-    """AC.1 test: extraction_rejects_unsafe_paths."""
+    """Reject unsafe paths during extraction."""
     def test_traversal_named_file_rejected(self) -> None:
         members = sample_members()
         members["bcks/..evil.bck"] = members.pop("bcks/a_ok.bck")
@@ -252,7 +254,7 @@ class ExtractionRejectsUnsafePaths(Harness):
 
 
 class ExtractionRepeatable(Harness):
-    """AC.2 test: extraction_repeatable."""
+    """Check that repeated extraction produces identical output."""
     def test_bootstrap_is_byte_identical(self) -> None:
         self.bootstrap()
         first = (self.out / "candidate" / "selection.json").read_bytes()
@@ -330,7 +332,7 @@ class GoldenGates(Harness):
 
 
 class BootstrapIsExplicit(GoldenGates):
-    """AC.2 test: bootstrap_is_explicit (the class is the test)."""
+    """Require explicit bootstrap when golden files are absent."""
     def test_no_goldens_bootstrap_works_normal_fails(self) -> None:
         # No goldens in play: bootstrap must succeed and write only the
         # candidate tree; the production raw tree must not exist.

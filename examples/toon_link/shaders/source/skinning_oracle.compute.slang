@@ -1,6 +1,6 @@
 #language slang 2026
 
-// The production-shader numerical oracle (AC10).
+// The production-shader numerical oracle for skinning.
 //
 // One thread per synthetic case runs the SAME `skinning.slang` functions the
 // two render modes call, and writes every intermediate the CPU test compares:

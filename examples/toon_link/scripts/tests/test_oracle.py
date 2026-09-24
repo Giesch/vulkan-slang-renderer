@@ -23,7 +23,7 @@ def axis(s, r, t) -> dict:
 
 
 class OracleSyntheticEdgeCases(unittest.TestCase):
-    """AC.5 test: oracle_synthetic_edge_cases (the class is the test)."""
+    """Check synthetic edge cases in the independent animation oracle."""
     def test_zero_one_and_multi_keys(self):
         # axis x: all default; axis y: constants; axis z: keyed S (shared
         # tangent) and keyed R (split tangent). Pools sized exactly.

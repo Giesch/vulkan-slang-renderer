@@ -25,7 +25,7 @@
 //   `m[0..2].xyz` are the columns of the linear part `L`. The oracle's
 //   nonsymmetric-matrix case pins this convention.
 //
-// Normal policy (AC7)
+// Normal transformation for blended joint matrices
 //   Let `L` be the blended 3x3 linear part with columns `c0, c1, c2`, and
 //   `det = dot(c0, cross(c1, c2))`. The scale-aware conditioning number is
 //   the Hadamard ratio
@@ -181,7 +181,7 @@ float3 skinCofactorNormal(float3x3 columns, float3 normal) {
         + cross(columns[0], columns[1]) * normal.z;
 }
 
-// The AC7 normal policy for the blended linear part `columns`.
+// Transform a normal using the blended linear part `columns`.
 float3 skinNormal(float3x3 columns, float3 normal) {
     let useFallback = skinNormalUsesFallback(columns);
     if (useFallback) {
