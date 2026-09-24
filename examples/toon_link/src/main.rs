@@ -277,7 +277,7 @@ fn group_batches(manifest: &Manifest) -> anyhow::Result<DrawGroups> {
     // composite over the wrong surface.
     let face_hair_names: Vec<&str> = face_hair
         .iter()
-        .map(|b: &BatchIndex| material_of(&manifest.batches[b.raw()]).name.as_str())
+        .map(|batch: &BatchIndex| material_of(&manifest.batches[batch.raw()]).name.as_str())
         .collect();
     anyhow::ensure!(
         face_hair_names.len() == 2
@@ -458,6 +458,7 @@ impl LightRig {
         let dir = |az: f32, el: f32| {
             Vec3::new(el.cos() * az.sin(), el.sin(), el.cos() * az.cos()).normalize()
         };
+
         [
             dir(LIGHT0_AZIMUTH, LIGHT0_ELEVATION).extend(0.0),
             // Model space to world space by the same Y rotation the vertices
@@ -474,6 +475,7 @@ impl LightRig {
         } else {
             LIGHT1_COLOR
         };
+
         [LIGHT0_COLOR.extend(1.0), light1.extend(1.0)]
     }
 }
@@ -500,6 +502,7 @@ fn load_manifest(dir: &Path) -> anyhow::Result<Manifest> {
             path.display()
         )
     })?;
+
     Ok(serde_json::from_slice(&bytes)?)
 }
 
@@ -513,6 +516,7 @@ fn read_records(path: &Path, count: u32, stride: usize, what: &str) -> anyhow::R
         path.display(),
         bytes.len()
     );
+
     Ok(bytes)
 }
 
@@ -525,17 +529,19 @@ struct ModelVertex {
 
 fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<ModelVertex>> {
     let bytes = read_records(path, expected_count, VERTEX_STRIDE, "vertices")?;
-    let read_f32 = |b: &[u8], i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
+    let read_f32 =
+        |chunk: &[u8], i: usize| f32::from_le_bytes(chunk[i * 4..i * 4 + 4].try_into().unwrap());
     let vertices = bytes
         .as_chunks::<VERTEX_STRIDE>()
         .0
         .iter()
-        .map(|v| ModelVertex {
-            position: Vec3::new(read_f32(v, 0), read_f32(v, 1), read_f32(v, 2)),
-            normal: Vec3::new(read_f32(v, 3), read_f32(v, 4), read_f32(v, 5)),
-            uv0: Vec2::new(read_f32(v, 6), read_f32(v, 7)),
+        .map(|chunk| ModelVertex {
+            position: Vec3::new(read_f32(chunk, 0), read_f32(chunk, 1), read_f32(chunk, 2)),
+            normal: Vec3::new(read_f32(chunk, 3), read_f32(chunk, 4), read_f32(chunk, 5)),
+            uv0: Vec2::new(read_f32(chunk, 6), read_f32(chunk, 7)),
         })
         .collect();
+
     Ok(vertices)
 }
 
@@ -545,8 +551,9 @@ fn load_indices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<u32>> {
         .as_chunks::<4>()
         .0
         .iter()
-        .map(|b| u32::from_le_bytes(*b))
+        .map(|chunk| u32::from_le_bytes(*chunk))
         .collect();
+
     Ok(indices)
 }
 
@@ -600,6 +607,7 @@ fn validate_manifest(
             material.name
         );
     }
+
     Ok(())
 }
 
@@ -616,6 +624,7 @@ fn texture_options(entry: &TextureEntry) -> anyhow::Result<TextureOptions> {
         mm::FilterMode::Nearest => TextureFilter::Nearest,
         other => anyhow::bail!("unmapped GX texture filter {other}"),
     };
+
     Ok(TextureOptions {
         sampler: SamplerOptions {
             filter,
@@ -651,6 +660,7 @@ fn load_textures(
             textures.push(None);
             continue;
         }
+
         // `entry.file` is manifest-relative.
         let image = ImageReader::open(dir.join(&entry.file))
             .with_context(|| format!("opening texture {}", entry.file))?
@@ -1250,7 +1260,7 @@ fn selected_mode(index: usize) -> SelectedMode {
 struct AnimationHost {
     player: Option<AnimationPlayer>,
     /// Why there is no player: the skeleton could not produce a bind pose.
-    /// Both modes then keep rendering the static model (AC5).
+    /// Both modes then keep rendering the static model.
     unavailable: Option<String>,
 }
 
@@ -1659,6 +1669,7 @@ impl Game for ToonLinkHost {
             SelectedMode::GameCube => self.classic.update(),
             SelectedMode::Modern => self.modern.update(),
         }
+
         self.edit_state
             .pull_selected(&self.classic.edit_state, self.modern.edit_state());
     }
@@ -1684,6 +1695,7 @@ impl Game for ToonLinkHost {
             eprintln!("toon_link: {message}");
             animation.disable(message);
         }
+
         let edit_state = HostEditState {
             mode: RadioButton::new(&["GameCube", "Modern"]),
             game_cube: classic.edit_state.clone(),
@@ -1704,17 +1716,19 @@ impl Game for ToonLinkHost {
     fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let spin = self.start_time.elapsed().as_secs_f32() * MODEL_SPIN;
         // One pose per frame, shared by both modes.
-        let palette = self.animation.prepare_frame(&mut self.edit_state.animation);
+        let joint_palette = self.animation.prepare_frame(&mut self.edit_state.animation);
+
         match self.edit_state.selected_settings() {
             SelectedSettings::GameCube(settings) => {
                 self.classic.host_spin = Some(spin);
                 self.classic.edit_state = settings.clone();
-                self.classic.draw_posed(renderer, palette)
+                self.classic.draw_posed(renderer, joint_palette)
             }
+
             SelectedSettings::Modern(settings) => {
                 self.modern.set_spin(spin);
                 *self.modern.edit_state_mut() = settings.clone();
-                self.modern.draw_posed(renderer, palette)
+                self.modern.draw_posed(renderer, joint_palette)
             }
         }
     }

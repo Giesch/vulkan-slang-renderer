@@ -147,7 +147,7 @@ link-test-animations:
     echo "ANIMATION TESTS OK"
 
 
-# GPU skinning oracle (AC10): run the production skinning.slang helpers on
+# GPU skinning oracle: run the production skinning.slang helpers on
 # lavapipe over synthetic fixtures and compare with the CPU reference. Needs
 # no game assets. Fails loudly (never skips) without lavapipe or SDL offscreen.
 [unix]

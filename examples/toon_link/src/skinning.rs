@@ -31,7 +31,7 @@ pub struct SkinningBuffers {
     staging: Vec<SkinJoint>,
     /// `Some` when the skin data was rejected: the buffers then hold a rigid
     /// rest skin and a one-entry identity palette, and `write_palette` is a
-    /// no-op, so the static model still renders (AC5). The host reads it to
+    /// no-op, so the static model still renders. The host reads it to
     /// disable playback, so the UI never claims to animate a model that
     /// cannot move.
     static_reason: Option<String>,
@@ -753,7 +753,7 @@ mod tests {
         );
     }
 
-    /// AC10: run the production `skinning.slang` helpers on Vulkan and compare
+    /// Run the production `skinning.slang` helpers on Vulkan and compare
     /// with the CPU reference. Fails, never skips, without a GPU.
     #[test]
     #[ignore = "needs Vulkan (lavapipe) and SDL offscreen; run `just toon_link test-skinning-gpu`"]

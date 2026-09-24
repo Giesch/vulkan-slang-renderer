@@ -9,7 +9,7 @@ acting on anything here.
 
 ## Operator-approved amendments
 
-1. **GPU oracle infrastructure (AC10).** The plan's "stop for scope review"
+1. **GPU oracle infrastructure.** The plan's "stop for scope review"
    gate fired: the renderer had no numerical readback surface, only the
    single-pixel picking result. Operator approved a codegen-based readback
    API with Slang structs as the source of truth (`GPURead` generated per
@@ -18,8 +18,8 @@ acting on anything here.
    reviewed, and verified under lavapipe. See `docs/testing.md`
    "Typed GPU readback".
 
-2. **Animated scale — supersedes AC5's "unit/default/constant-1 scale only …
-   reject all keyed scale" and the matching Compatibility text.** The
+2. **Animated scale — supersedes the earlier restriction to unit, default, or
+   constant-1 scale and rejection of keyed scale.** The
    real-asset audit rejected 158/594 clips for scale (77 with non-unit
    constant scale, 116 with varying keyed scale, 35 overlap), so the unit-scale
    boundary was wrong for the actual catalog. Operator approved: export
@@ -79,7 +79,7 @@ Final verification log:
 The earlier Fable delta re-review failed because the provider model was not
 available; it was not counted as a pass. Subsequent Astra review found the
 lifecycle defects above, and a fresh independent Astra review passed their fixes.
-The full-story acceptance remains incomplete until the visual cases below are
+Visual verification remains incomplete until the cases below are
 observed; neither the structural audit nor the compute oracle substitutes for
 both rendering modes' call-site verification.
 
