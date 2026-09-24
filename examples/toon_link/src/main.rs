@@ -59,7 +59,7 @@ use mltrs::renderer::{
 
 use crate::animation_player::{
     AnimationPlayer, CatalogRow, Command, LoopPolicy, LoopPreference, MAX_SPEED, MIN_SPEED,
-    TransportState,
+    PlaybackState,
 };
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::tev::{GXAlphaOp, GXCompare};
@@ -1328,7 +1328,7 @@ pub struct AnimationView {
     selected_identity: Option<ClipIdentity>,
     selected_label: Option<String>,
     /// `None` without a player.
-    transport: Option<TransportState>,
+    transport: Option<PlaybackState>,
     frame: f32,
     duration_frames: Option<u16>,
     speed: f32,
@@ -1351,7 +1351,7 @@ impl AnimationView {
             diagnostic: player.diagnostic().map(str::to_owned),
             selected_identity: player.selected_identity().cloned(),
             selected_label: player.selected_label().map(str::to_owned),
-            transport: Some(player.transport()),
+            transport: Some(player.playback_state()),
             frame: player.frame(),
             duration_frames: player.duration_frames(),
             speed: player.speed(),
@@ -1525,10 +1525,10 @@ impl AnimationControls {
         let clip = view.selected_label.as_deref().unwrap_or("bind pose");
         ui.label(format!("Clip: {clip}"));
         let transport = match view.transport {
-            Some(TransportState::Stopped) if view.is_static => "Stopped (static clip)",
-            Some(TransportState::Stopped) => "Stopped",
-            Some(TransportState::Playing) => "Playing",
-            Some(TransportState::Paused) => "Paused",
+            Some(PlaybackState::Stopped) if view.is_static => "Stopped (static clip)",
+            Some(PlaybackState::Stopped) => "Stopped",
+            Some(PlaybackState::Playing) => "Playing",
+            Some(PlaybackState::Paused) => "Paused",
             None => "unavailable",
         };
         ui.label(format!("Transport: {transport}"));
@@ -2147,14 +2147,14 @@ mod host_tests {
         }
 
         /// Everything a mode switch must leave alone.
-        fn playback(&mut self) -> (Option<ClipIdentity>, f32, TransportState, Vec<Mat4>) {
+        fn playback(&mut self) -> (Option<ClipIdentity>, f32, PlaybackState, Vec<Mat4>) {
             let palette = self.palette();
             let player = self.player();
 
             (
                 player.selected_identity().cloned(),
                 player.frame(),
-                player.transport(),
+                player.playback_state(),
                 palette,
             )
         }
@@ -2231,7 +2231,7 @@ mod host_tests {
         assert_eq!(bench.tick(0.1), 0);
         let playing = bench.playback();
         assert_eq!(playing.0.as_ref(), Some(&walk));
-        assert_eq!(playing.2, TransportState::Playing);
+        assert_eq!(playing.2, PlaybackState::Playing);
         bench.assert_frame(3.0);
         assert_ne!(playing.3, bind);
 
@@ -2253,7 +2253,7 @@ mod host_tests {
         assert_eq!(bench.commands(), [Command::Pause]);
         assert_eq!(bench.tick(0.0), 1);
         let paused = bench.playback();
-        assert_eq!(paused.2, TransportState::Paused);
+        assert_eq!(paused.2, PlaybackState::Paused);
         bench.assert_frame(6.0);
         for mode in ["GameCube", "Modern", "GameCube"] {
             bench.select_mode(mode);
@@ -2342,7 +2342,7 @@ mod host_tests {
 
         bench.click("Pause");
         assert_eq!(bench.tick(0.0), 1);
-        assert_eq!(bench.player().transport(), TransportState::Paused);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Paused);
 
         // One click buffers one command, however many UI frames follow.
         bench.click("Play");
@@ -2353,7 +2353,7 @@ mod host_tests {
         // It applies once, after that update's advance, so the draw shows it.
         assert_eq!(bench.tick(0.5), 1);
         assert!(bench.commands().is_empty());
-        assert_eq!(bench.player().transport(), TransportState::Playing);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Playing);
         bench.assert_frame(0.0);
         bench.assert_root_x(0.0);
         assert_eq!(bench.player().evaluation_count(), 1);
@@ -2374,7 +2374,7 @@ mod host_tests {
         // A scrub requested by the UI wins over that frame's advancement.
         bench.settings.animation.commands.push(Command::Scrub(7.5));
         assert_eq!(bench.tick(1.0), 1);
-        assert_eq!(bench.player().transport(), TransportState::Paused);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Paused);
         bench.assert_frame(7.5);
         bench.assert_root_x(7.5);
         assert_eq!(bench.player().evaluation_count(), 3);
@@ -2425,7 +2425,7 @@ mod host_tests {
             Some(error.as_str())
         );
         assert_eq!(bench.settings.animation.view.frame, 0.0);
-        assert_eq!(bench.player().transport(), TransportState::Paused);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Paused);
         bench.settings.animation.commands.push(Command::Scrub(10.0));
         assert!(bench.settings.animation.view.diagnostic.is_some());
         bench.assert_root_x(10.0);
@@ -2505,7 +2505,7 @@ mod host_tests {
         bench.click(RISE);
         assert_eq!(bench.tick(0.0), 1);
         assert!(bench.player().is_static());
-        assert_eq!(bench.player().transport(), TransportState::Stopped);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Stopped);
         assert!(bench.ui.has_text("Transport: Stopped (static clip)"));
         assert!(bench.ui.has_text("Frame: 0.00 / 0"));
         assert!(bench.ui.has_text("Effective policy: none"));
@@ -2524,7 +2524,7 @@ mod host_tests {
         }
         assert!(bench.commands().is_empty());
         assert_eq!(bench.tick(1.0), 0);
-        assert_eq!(bench.player().transport(), TransportState::Stopped);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Stopped);
         bench.assert_root_x(4.0);
 
         // A positive-duration clip re-enables the transport.
@@ -2574,7 +2574,7 @@ mod host_tests {
         }
         assert!(bench.commands().is_empty());
         assert_eq!(bench.tick(0.5), 0);
-        assert_eq!(bench.player().transport(), TransportState::Stopped);
+        assert_eq!(bench.player().playback_state(), PlaybackState::Stopped);
         assert_eq!(bench.player().selected_identity(), None);
         assert_eq!(bench.palette(), vec![Mat4::IDENTITY; 2]);
         assert_eq!(bench.player().evaluation_count(), 0);

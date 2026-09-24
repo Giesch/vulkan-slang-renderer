@@ -26,9 +26,9 @@ struct OracleCase {
 }
 
 struct OracleOutput {
-    // xyz: skinVertex position; w: det(L) of the blended linear part
+    // xyz: SkinnedVertex position; w: det(L) of the blended linear part
     float4 position;
-    // xyz: skinVertex normal; w: skinConditioning(L)
+    // xyz: SkinnedVertex normal; w: skinConditioning(L)
     float4 normal;
     // xyz: skinSafeNormalize(rawVector); w: length(rawVector)
     float4 safeNormalized;
@@ -61,7 +61,7 @@ void computeMain(uint3 id : SV_DispatchThreadID) {
 
     let oracleCase = params.cases[i];
     let skin = params.skinning[i];
-    let skinned = skinVertex(params.palette, skin, oracleCase.position.xyz, oracleCase.normal.xyz);
+    let skinned = SkinnedVertex(params.palette, skin, oracleCase.position.xyz, oracleCase.normal.xyz);
     let blended = skinBlendedTransform(params.palette, skin);
     let columns = skinLinearColumns(blended);
     let rawVector = oracleCase.rawVector.xyz;
