@@ -67,16 +67,6 @@ Graphs(args) :: {
 		Ok(Graphs.({ definitions, build }))
 	}
 
-	# TODO: Remove this function once we can use an Ok(...) destructure instead:
-	# https://github.com/roc-lang/roc/issues/11532
-	## An invalid render graph becomes a compile-time error that carries the
-	## validation message.
-	or_crash : Try(Graphs(args), Invalid) -> Graphs(args)
-	or_crash = |result| match result {
-		Ok(graphs) => graphs
-		Err(InvalidRenderGraph(message)) => crash message
-	}
-
 	to_graphs : Graphs(args) -> Try(Graphs(args), Invalid)
 	to_graphs = |graphs| Ok(graphs)
 

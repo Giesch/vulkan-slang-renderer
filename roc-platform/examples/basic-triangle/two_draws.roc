@@ -10,7 +10,7 @@ import pf.ShaderReflection
 import Generated/BasicTriangle
 import Generated/Mltrs
 
-graphs = Graphs.or_crash(Graphs.single(render_graph))
+Ok(graphs) = Graphs.single(render_graph)
 
 game : Game
 game = Game.new({ init!, draw, graphs })

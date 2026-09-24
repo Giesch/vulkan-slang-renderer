@@ -51,7 +51,7 @@ import Generated/Mltrs
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-graphs = Graphs.or_crash(Graphs.single(RenderGraph.draw_indexed(triangle)))
+Ok(graphs) = Graphs.single(RenderGraph.draw_indexed(triangle))
 
 init! : {} => Game.Init
 init! = |_| { window_title: "Basic Triangle from Roc!" }
@@ -89,9 +89,10 @@ that could accidentally refer to another node or graph.
 The game is a constant: `Graphs.single`
 runs during compile-time constant evaluation and returns
 `Err(InvalidRenderGraph(message))` for an invalid render graph, where `message` is
-the same aggregated message the Rust validator reports. `Graphs.or_crash` turns
-that `Err` into a compile-time error, so an invalid graph fails `roc check`
-with the message. The `game : Game` annotation is load-bearing:
+the same aggregated message the Rust validator reports. A top-level `Ok(graphs)`
+destructure makes an invalid graph fail `roc check` with a nonexhaustive
+destructure error. Roc does not currently show the validation message in that
+error. The `game : Game` annotation is load-bearing:
 `roc check` evaluates annotated constants only, and an unannotated game is
 first evaluated by `roc build`. The example builds its projection from the frame's aspect ratio, so
 resizing the window keeps the triangle's proportions.
@@ -125,9 +126,9 @@ and payload order.
   two nodes with different values. `ValidatedRenderGraph` is internal to the platform.
 - `Graphs` is the collection the app hands to the host. `Graphs.single`
   validates one `RenderGraph` and returns `Try(Graphs(ValidatedGraph(frame)), [InvalidRenderGraph(Str)])`.
-  `Graphs.or_crash` unwraps that `Try`; `Graphs.map2` combines two
-  collections (or render graphs) into one. The only way to build a `Graphs` is
-  through validation, so every graph the host registers passed it.
+  A top-level `Ok(graphs)` destructure unwraps that `Try`; `Graphs.map2`
+  combines two collections (or render graphs) into one. The only way to build
+  a `Graphs` is through validation, so every graph the host registers passed it.
 - `Game.new` takes `{ init!, draw, graphs }`, checks that `draw` and `graphs`
   share the same generic collection type through `Graphs.Submission(g)`.
   It returns an opaque `Game` with a type-erasing draw closure.
@@ -144,10 +145,10 @@ A graph with two or more nodes uses a tuple of render graphs. Tuple position is
 both the draw order and the frame-value order:
 
 ```roc
-graphs = Graphs.or_crash(Graphs.single(RenderGraph.from_tuple_2((
+Ok(graphs) = Graphs.single(RenderGraph.from_tuple_2((
 	RenderGraph.draw_indexed(mesh_pipeline),
 	RenderGraph.draw_vertex_count(sky_pipeline, 3),
-))))
+)))
 
 draw = |frame| graphs.draw((mvp_for(frame), light_for(frame)))
 ```
@@ -167,7 +168,7 @@ nesting. A single-node render graph consumes its uniform value directly.
 For a collection containing multiple graphs, select each one at module scope:
 
 ```roc
-graphs = Graphs.or_crash({ triangle: triangle_graph, sky: sky_graph }.Graphs)
+Ok(graphs) = { triangle: triangle_graph, sky: sky_graph }.Graphs
 triangle = graphs.select(|registered| registered.triangle)
 sky = graphs.select(|registered| registered.sky)
 
@@ -249,7 +250,7 @@ Each Roc example lives in `examples/<name>/`, with `main.roc`,
 writes `examples/<name>/main`. Files beside the example are fixtures,
 not runnable examples, and `ci/all_tests.sh` runs them:
 
-- `invalid_graph.roc` must fail `roc check` with the validation message.
+- `invalid_graph.roc` must fail `roc check` with a nonexhaustive destructure.
 - `invalid_values.roc`, `invalid_selected_values.roc`,
   `invalid_extra_values.roc`, and `invalid_value_type.roc` must fail with a
   type mismatch at `draw`, covering missing, extra, and mistyped frame values.
