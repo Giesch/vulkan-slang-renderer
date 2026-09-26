@@ -44,14 +44,14 @@ app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
 import pf.RenderGraph
-import pf.Graphs
+import pf.GraphSet
 import Generated/BasicTriangle
 import Generated/Mltrs
 
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-Ok(graphs) = Graphs.single(RenderGraph.draw_indexed(triangle))
+Ok(graphs) = GraphSet.single(RenderGraph.draw_indexed(triangle))
 
 init! : {} => Game.Init
 init! = |_| { window_title: "Basic Triangle from Roc!" }
@@ -77,16 +77,16 @@ module-level `graphs`: a single-graph collection exposes
 scope with `graphs.select(|registered| registered.triangle)`, then call the
 selection's `draw(values)`. Both paths supply concrete local
 types for inference. Their opaque
-`Graphs.Submission(g)` result retains the collection type, which `Game.new`
-unifies with the registered `Graphs(g)`. Only the stored host callback erases
-that type to `Graphs.Draw`; the nominal `Game` and host ABI stay monomorphic.
+`GraphSet.Submission(g)` result retains the collection type, which `Game.new`
+unifies with the registered `GraphSet(g)`. Only the stored host callback erases
+that type to `GraphSet.Draw`; the nominal `Game` and host ABI stay monomorphic.
 This checks type equality, not collection identity: two collections with the
 same type can contain different definitions or orderings. Use the same
 module-level collection for registration and drawing. The selector can also
 capture a graph from another collection; collection identity is not proved.
 Each selected graph retains its own packer, so frame values carry no slots
 that could accidentally refer to another node or graph.
-The game is a constant: `Graphs.single`
+The game is a constant: `GraphSet.single`
 runs during compile-time constant evaluation and returns
 `Err(InvalidRenderGraph(message))` for an invalid render graph, where `message` is
 the same aggregated message the Rust validator reports. A top-level `Ok(graphs)`
@@ -97,7 +97,7 @@ error. The `game : Game` annotation is load-bearing:
 first evaluated by `roc build`. The example builds its projection from the frame's aspect ratio, so
 resizing the window keeps the triangle's proportions.
 
-The render-graph API uses `RenderGraph`, `Graphs`, the internal `ValidatedRenderGraph`,
+The render-graph API uses `RenderGraph`, `GraphSet`, the internal `ValidatedRenderGraph`,
 and `Game.new`. Names are for messages only; tuple position determines draw
 and payload order.
 
@@ -124,15 +124,15 @@ and payload order.
   `Try(ValidatedRenderGraph(frame), [InvalidRenderGraph(Str)])`. Each node owns its
   pipeline and its uniform buffer, so one pipeline declaration can be drawn by
   two nodes with different values. `ValidatedRenderGraph` is internal to the platform.
-- `Graphs` is the collection the app hands to the host. `Graphs.single`
-  validates one `RenderGraph` and returns `Try(Graphs(ValidatedGraph(frame)), [InvalidRenderGraph(Str)])`.
-  A top-level `Ok(graphs)` destructure unwraps that `Try`; `Graphs.map2`
+- `GraphSet` is the collection the app hands to the host. `GraphSet.single`
+  validates one `RenderGraph` and returns `Try(GraphSet(ValidatedGraph(frame)), [InvalidRenderGraph(Str)])`.
+  A top-level `Ok(graphs)` destructure unwraps that `Try`; `GraphSet.map2`
   combines two collections (or render graphs) into one. The only way to build
-  a `Graphs` is through validation, so every graph the host registers passed it.
+  a `GraphSet` is through validation, so every graph the host registers passed it.
 - `Game.new` takes `{ init!, draw, graphs }`, checks that `draw` and `graphs`
-  share the same generic collection type through `Graphs.Submission(g)`.
+  share the same generic collection type through `GraphSet.Submission(g)`.
   It returns an opaque `Game` with a type-erasing draw closure.
-- `Graphs.select` takes a collection and a selector, and returns an opaque
+- `GraphSet.select` takes a collection and a selector, and returns an opaque
   `SelectedGraph(g, frame)`. Its `draw(values)` accepts `frame` and returns
   `Submission(g)`. A module-level selection stores the registered graph's
   packer and ordinal without retaining the selector or host assets.
@@ -145,7 +145,7 @@ A graph with two or more nodes uses a tuple of render graphs. Tuple position is
 both the draw order and the frame-value order:
 
 ```roc
-Ok(graphs) = Graphs.single(RenderGraph.from_tuple_2((
+Ok(graphs) = GraphSet.single(RenderGraph.from_tuple_2((
 	RenderGraph.draw_indexed(mesh_pipeline),
 	RenderGraph.draw_vertex_count(sky_pipeline, 3),
 )))
@@ -168,7 +168,7 @@ nesting. A single-node render graph consumes its uniform value directly.
 For a collection containing multiple graphs, select each one at module scope:
 
 ```roc
-Ok(graphs) = { triangle: triangle_graph, sky: sky_graph }.Graphs
+Ok(graphs) = { triangle: triangle_graph, sky: sky_graph }.GraphSet
 triangle = graphs.select(|registered| registered.triangle)
 sky = graphs.select(|registered| registered.sky)
 
@@ -182,9 +182,9 @@ Both selections retain the full collection type. A frame may return either
 selection's submission even when their uniform shapes differ. A submission
 from a differently typed collection fails at `Game.new`.
 
-The current `.Graphs` record builder supports two fields. A flat record with
-three or more fields fails because the intermediate `Try(Graphs(...), ...)`
-has no `to_graphs` method. Nest validated two-field collections for larger
+The current `.GraphSet` record builder supports two fields. A flat record with
+three or more fields fails because the intermediate `Try(GraphSet(...), ...)`
+has no `to_graph_set` method. Nest validated two-field collections for larger
 collections; selections can follow nested fields, such as
 `graphs.select(|registered| registered.pair.triangle)`.
 
@@ -207,11 +207,11 @@ passes `Game.Frame` to `draw`. An app can write the initialization record
 literally under its `Game.Init` annotation; no separate wrapper is needed.
 The generated host glue names these types `GameInit` and `GameFrame`.
 Nominal types keep those Rust names stable when fields change; anonymous
-records instead receive names containing a structural hash. `Graphs.Draw`
+records instead receive names containing a structural hash. `GraphSet.Draw`
 and the types it holds are nominal for the same reason.
 
 `Game.HostConfig` holds the static host configuration. `Game.new` builds it
-from `Graphs.definitions`, which returns the collection's validated graph
+from `GraphSet.definitions`, which returns the collection's validated graph
 definitions. The platform provides this configuration through `roc_config`;
 the generated Rust type is `GameHostConfig`.
 
@@ -352,7 +352,7 @@ Three checks guard the committed artifacts:
   value types, and GPU byte packing helpers that generated Roc shader modules
   import.
 - `platform/RenderGraph.roc` — opaque draw declarations and typed tuple packers.
-- `platform/Graphs.roc` — graph collections, selections, and the `Draw` bundle.
+- `platform/GraphSet.roc` — graph collections, selections, and the `Draw` bundle.
 - `platform/ValidatedRenderGraph.roc` — internal validated graph definitions.
 - `platform/RenderGraphDesc.roc`, `RenderGraphLower.roc`,
   `RenderGraphValidate.roc` — the description, lowering, and validation port.

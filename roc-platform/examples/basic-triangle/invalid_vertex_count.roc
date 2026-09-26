@@ -4,22 +4,22 @@ app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
 import pf.RenderGraph
-import pf.Graphs
+import pf.GraphSet
 import pf.ShaderReflection
 import Generated/BasicTriangle
 import Generated/Mltrs
 
-G : Graphs.ValidatedGraph(Mltrs.MvpMatrices)
+G : GraphSet.ValidatedGraph(Mltrs.MvpMatrices)
 
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-Ok(graphs) = Graphs.single(RenderGraph.draw_vertex_count(no_vertices, 3))
+Ok(graphs) = GraphSet.single(RenderGraph.draw_vertex_count(no_vertices, 3))
 
 init! : {} => Game.Init
 init! = |_| { window_title: "invalid vertex count" }
 
-draw : Game.Frame -> Graphs.Submission(G)
+draw : Game.Frame -> GraphSet.Submission(G)
 draw = |_frame| graphs.draw({ model: zero, view: zero, proj: zero })
 
 no_vertices : RenderGraph.VertexCountPipeline(Mltrs.MvpMatrices)

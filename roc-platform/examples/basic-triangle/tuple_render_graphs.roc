@@ -2,14 +2,14 @@
 app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
-import pf.Graphs
+import pf.GraphSet
 import pf.RenderGraph
 import Generated/BasicTriangle
 
 game : Game
 game = Game.new({ init!: |_| { window_title: "tuple render graphs" }, graphs, draw: |_| graphs.draw((1, "two")) })
 
-Ok(graphs) = Graphs.single(RenderGraph.from_tuple_2((byte_node, text_node)))
+Ok(graphs) = GraphSet.single(RenderGraph.from_tuple_2((byte_node, text_node)))
 
 vertex : BasicTriangle.Vertex
 vertex = { position: { x: 0.0, y: 0.0, z: 0.0 }, color: { x: 0.0, y: 0.0, z: 0.0 } }
@@ -124,9 +124,9 @@ expect {
 }
 
 ## Each graph retains its own packer even when frame types are identical.
-Ok(left) = Graphs.single(byte_node)
+Ok(left) = GraphSet.single(byte_node)
 
-Ok(right) = Graphs.single(node("offset", |v| bytes(v + 1)))
+Ok(right) = GraphSet.single(node("offset", |v| bytes(v + 1)))
 
 expect {
 	left.draw(7).to_host() != right.draw(7).to_host()

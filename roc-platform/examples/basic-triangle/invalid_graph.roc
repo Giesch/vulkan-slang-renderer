@@ -4,14 +4,14 @@ app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
 import pf.RenderGraph
-import pf.Graphs
+import pf.GraphSet
 import pf.ShaderReflection
 import Generated/BasicTriangle
 import Generated/Mltrs
 
-G : Graphs.ValidatedGraph(Mltrs.MvpMatrices)
+G : GraphSet.ValidatedGraph(Mltrs.MvpMatrices)
 
-Ok(graphs) = Graphs.single(RenderGraph.draw_indexed(triangle))
+Ok(graphs) = GraphSet.single(RenderGraph.draw_indexed(triangle))
 
 game : Game
 game = Game.new({ init!, draw, graphs })
@@ -19,7 +19,7 @@ game = Game.new({ init!, draw, graphs })
 init! : {} => Game.Init
 init! = |_| { window_title: "invalid" }
 
-draw : Game.Frame -> Graphs.Submission(G)
+draw : Game.Frame -> GraphSet.Submission(G)
 draw = |_frame| graphs.draw({ model: zero, view: zero, proj: zero })
 
 ## Hand-built, as if taken from a shader with two constant buffers. The
