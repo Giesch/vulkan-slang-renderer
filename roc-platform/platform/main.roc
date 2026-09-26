@@ -2,7 +2,7 @@ platform ""
 	requires {
 		game : Game
 	}
-	exposes [Stdout, Stderr, Game, ShaderReflection, Graphs, RenderGraph]
+	exposes [Stdout, Stderr, Game, ShaderReflection, GraphSet, RenderGraph]
 	packages {}
 	provides {
 		"roc_init": init_for_host!,
@@ -24,7 +24,7 @@ import Stderr
 import Host
 import Game
 import ShaderReflection
-import Graphs
+import GraphSet
 import RenderGraph
 
 ## The return type is nominal so the generated glue names it. An anonymous
@@ -38,5 +38,5 @@ config_for_host : {} -> Game.HostConfig
 config_for_host = |{}| game.host_config()
 
 ## Frames transfer only the selected graph ordinal and packed values.
-draw_for_host : Game.Frame -> Graphs.Draw
+draw_for_host : Game.Frame -> GraphSet.Draw
 draw_for_host = |frame| game.draw(frame)

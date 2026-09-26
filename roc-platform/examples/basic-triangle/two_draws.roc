@@ -4,13 +4,13 @@ app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
 import pf.RenderGraph
-import pf.Graphs
+import pf.GraphSet
 import pf.ShaderReflection
 
 import Generated/BasicTriangle
 import Generated/Mltrs
 
-Ok(graphs) = Graphs.single(render_graph)
+Ok(graphs) = GraphSet.single(render_graph)
 
 game : Game
 game = Game.new({ init!, draw, graphs })
@@ -20,7 +20,7 @@ init! = |_| { window_title: "two draws" }
 
 draw = |_frame| two_draws(zero, one)
 
-two_draws : Mltrs.MvpMatrices, Mltrs.MvpMatrices -> Graphs.Submission(_)
+two_draws : Mltrs.MvpMatrices, Mltrs.MvpMatrices -> GraphSet.Submission(_)
 two_draws = |a, b| graphs.draw((a, b))
 
 vertex : BasicTriangle.Vertex
@@ -71,7 +71,7 @@ expect {
 		vertices: List.repeat(vertex, 3),
 		indices: [0, 1, 2],
 	})
-	match Graphs.single(RenderGraph.draw_indexed(invalid)) {
+	match GraphSet.single(RenderGraph.draw_indexed(invalid)) {
 		Err(InvalidRenderGraph(message)) => message.contains("binds uniform foreign")
 		Ok(_) => False
 	}
