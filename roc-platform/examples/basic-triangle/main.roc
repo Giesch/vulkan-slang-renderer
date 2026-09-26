@@ -2,7 +2,7 @@ app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
 import pf.RenderGraph exposing [IndexedPipeline]
-import pf.Graphs
+import pf.GraphSet
 import pf.ShaderReflection exposing [Float4x4]
 
 import Generated/BasicTriangle
@@ -11,13 +11,13 @@ import Generated/Mltrs
 game = Game.new({ init!, draw, graphs: graph })
 
 Ok(graph) = RenderGraph.draw_indexed(pipeline)
-	|> Graphs.single
+	|> GraphSet.single
 
 init! : {} => Game.Init
 init! = |_|
 	{ window_title: "Basic Triangle from Roc!" }
 
-draw : Game.Frame -> Graphs.Submission(_)
+draw : Game.Frame -> GraphSet.Submission(_)
 draw = |frame| {
 	camera = mvp_with_aspect_ratio(frame.aspect_ratio)
 
