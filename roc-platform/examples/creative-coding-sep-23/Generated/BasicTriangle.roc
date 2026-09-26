@@ -1,0 +1,258 @@
+import pf.ShaderReflection exposing [Float3, GraphicsReflection, StructType, UniformBinding, VertexInput]
+
+import Mltrs
+
+import "../shaders/compiled/basic_triangle.vert.spv" as vertex_bytes : List(U8)
+import "../shaders/compiled/basic_triangle.frag.spv" as fragment_bytes : List(U8)
+import "../shaders/compiled/basic_triangle.json" as reflection_json : Str
+
+## Generated; logical values are not GPU memory layouts.
+BasicTriangle := {}.{
+	Params := {
+		matrices : Mltrs.MvpMatrices,
+		time : F32,
+	}.{
+		is_eq : _
+
+		gpu_size : U32
+		gpu_size = 208
+
+		to_bytes : Params -> List(U8)
+		to_bytes = |value|
+			ShaderReflection.pack(
+				gpu_size.to_u64(),
+				[
+					(0, Mltrs.MvpMatrices.to_bytes(value.matrices)),
+					(192, ShaderReflection.f32_bytes(value.time)),
+				],
+			)
+	}
+
+	Vertex := {
+		position : Float3,
+		color : Float3,
+	}.{
+		is_eq : _
+
+		gpu_size : U32
+		gpu_size = 32
+
+		to_bytes : Vertex -> List(U8)
+		to_bytes = |value|
+			ShaderReflection.pack(
+				gpu_size.to_u64(),
+				[
+					(0, Float3.to_bytes(value.position)),
+					(12, Float3.to_bytes(value.color)),
+				],
+			)
+	}
+
+	mvp_matrices_type : StructType
+	mvp_matrices_type = StructType.{
+		type_name: "MVPMatrices",
+		fields: [
+			Matrix({
+				field_name: "model",
+				binding: Uniform({
+					offset: 0,
+					size: 64,
+				}),
+				row_count: 4,
+				column_count: 4,
+				element_type: Scalar({
+					scalar_type: Float32,
+				}),
+			}),
+			Matrix({
+				field_name: "view",
+				binding: Uniform({
+					offset: 64,
+					size: 64,
+				}),
+				row_count: 4,
+				column_count: 4,
+				element_type: Scalar({
+					scalar_type: Float32,
+				}),
+			}),
+			Matrix({
+				field_name: "proj",
+				binding: Uniform({
+					offset: 128,
+					size: 64,
+				}),
+				row_count: 4,
+				column_count: 4,
+				element_type: Scalar({
+					scalar_type: Float32,
+				}),
+			}),
+		],
+	}
+
+	params_type : StructType
+	params_type = StructType.{
+		type_name: "Params",
+		fields: [
+			Struct({
+				field_name: "matrices",
+				binding: Uniform({
+					offset: 0,
+					size: 192,
+				}),
+				struct_type: mvp_matrices_type,
+			}),
+			Scalar({
+				field_name: "time",
+				binding: Uniform({
+					offset: 192,
+					size: 4,
+				}),
+				scalar_type: Float32,
+			}),
+		],
+	}
+
+	reflection : GraphicsReflection
+	reflection = {
+		source_file_name: "basic_triangle.shader.slang",
+		global_parameters: [
+			ParameterBlock({
+				parameter_name: "params",
+				element_type: params_type,
+			}),
+		],
+		vertex_entry_point: {
+			entry_point_name: "vertexMain",
+			stage: Vertex,
+			parameters: [
+				Struct({
+					parameter_name: "vertex",
+					binding: Some(
+						VaryingInput({
+							index: 0,
+							count: 2,
+						}),
+					),
+					type_name: "Vertex",
+					fields: [
+						Vector(
+							Bound({
+								field_name: "position",
+								binding: VaryingInput({
+									index: 0,
+									count: 1,
+								}),
+								element_count: 3,
+								element_type: Scalar({
+									scalar_type: Float32,
+								}),
+							}),
+						),
+						Vector(
+							Bound({
+								field_name: "color",
+								binding: VaryingInput({
+									index: 1,
+									count: 1,
+								}),
+								element_count: 3,
+								element_type: Scalar({
+									scalar_type: Float32,
+								}),
+							}),
+						),
+					],
+				}),
+			],
+		},
+		fragment_entry_point: {
+			entry_point_name: "fragmentMain",
+			stage: Fragment,
+			parameters: [
+				Struct({
+					parameter_name: "vert",
+					binding: Some(
+						VaryingInput({
+							index: 0,
+							count: 1,
+						}),
+					),
+					type_name: "FragInput",
+					fields: [
+						Vector(
+							Semantic({
+								field_name: "position",
+								semantic_name: "SV_POSITION",
+								element_count: 4,
+								element_type: Scalar({
+									scalar_type: Float32,
+								}),
+							}),
+						),
+						Vector(
+							Bound({
+								field_name: "color",
+								binding: VaryingInput({
+									index: 0,
+									count: 1,
+								}),
+								element_count: 3,
+								element_type: Scalar({
+									scalar_type: Float32,
+								}),
+							}),
+						),
+					],
+				}),
+			],
+		},
+		pipeline_layout: {
+			descriptor_set_layouts: [
+				{
+					binding_ranges: [
+						{
+							binding: 0,
+							descriptor_type: ConstantBuffer,
+							descriptor_count: 1,
+							stage_flags: All,
+							size: 208,
+						},
+					],
+				},
+			],
+			push_constant_ranges: [],
+			bindless_heap_set: None,
+		},
+	}
+
+	stages = {
+		vertex: vertex_bytes,
+		fragment: fragment_bytes,
+	}
+
+	## The pipeline inputs a render graph needs: stages, reflection, its
+	## JSON form for the host, vertex input, and a single packable uniform.
+	shader = {
+		name: "basic_triangle",
+		vertex_spv: vertex_bytes,
+		fragment_spv: fragment_bytes,
+		reflection_json,
+		reflection,
+		uniform: params,
+		vertex: VertexInput.{
+			stride: Vertex.gpu_size,
+			to_bytes: Vertex.to_bytes,
+		},
+	}
+
+	## The `params` constant buffer, position 0 in descriptor-set-layout order.
+	params : UniformBinding(Params)
+	params = {
+		name: "params",
+		index: 0,
+		size: Params.gpu_size,
+		to_bytes: Params.to_bytes,
+	}
+}
