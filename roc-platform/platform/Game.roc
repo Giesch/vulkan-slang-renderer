@@ -1,8 +1,8 @@
-import Graphs
+import GraphSet
 import ValidatedRenderGraph
 
 ## An app's initialization and draw callback, with its graph type erased.
-Game :: { init! : {} => Init, config : HostConfig, draw : Frame -> Graphs.Draw }.{
+Game :: { init! : {} => Init, config : HostConfig, draw : Frame -> GraphSet.Draw }.{
 	Config : { window_title : Str }
 
 	## Static configuration provided to the host before drawing.
@@ -16,10 +16,10 @@ Game :: { init! : {} => Init, config : HostConfig, draw : Frame -> Graphs.Draw }
 		init! : {} => Init,
 
 		## registered render graphs
-		graphs : Graphs.Graphs(g),
+		graphs : GraphSet.GraphSet(g),
 
 		## the draw function called every frame
-		draw : Frame -> Graphs.Submission(g),
+		draw : Frame -> GraphSet.Submission(g),
 	}
 
 	# These are nominal types so that they get picked up by the glue script
@@ -53,6 +53,6 @@ Game :: { init! : {} => Init, config : HostConfig, draw : Frame -> Graphs.Draw }
 	host_config : Game -> HostConfig
 	host_config = |Game.(game)| game.config
 
-	draw : Game, Frame -> Graphs.Draw
+	draw : Game, Frame -> GraphSet.Draw
 	draw = |Game.(game), frame| (game.draw)(frame)
 }

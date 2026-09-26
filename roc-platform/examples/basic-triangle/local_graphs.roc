@@ -3,14 +3,14 @@ app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
 import pf.RenderGraph
-import pf.Graphs
+import pf.GraphSet
 import pf.ShaderReflection
 import Generated/BasicTriangle
 import Generated/Mltrs
 
-Ok(pair) = { first: render_graph, second: render_graph }.Graphs
+Ok(pair) = { first: render_graph, second: render_graph }.GraphSet
 
-Ok(graphs) = { pair, single: RenderGraph.draw_indexed(triangle) }.Graphs
+Ok(graphs) = { pair, single: RenderGraph.draw_indexed(triangle) }.GraphSet
 
 game : Game
 game = Game.new({ init!, draw, graphs })
@@ -82,7 +82,7 @@ expect {
 		vertices: List.repeat(vertex, 3),
 		indices: [0, 1, 2],
 	})
-	match Graphs.single(RenderGraph.draw_indexed(invalid)) {
+	match GraphSet.single(RenderGraph.draw_indexed(invalid)) {
 		Err(InvalidRenderGraph(message)) => message.contains("binds uniform foreign")
 		Ok(_) => False
 	}

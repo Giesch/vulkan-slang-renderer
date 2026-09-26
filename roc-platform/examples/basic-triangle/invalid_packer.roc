@@ -4,14 +4,14 @@ app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
 import pf.RenderGraph
-import pf.Graphs
+import pf.GraphSet
 import pf.ShaderReflection
 import Generated/BasicTriangle
 import Generated/Mltrs
 
-G : Graphs.ValidatedGraph(Mltrs.MvpMatrices)
+G : GraphSet.ValidatedGraph(Mltrs.MvpMatrices)
 
-Ok(graphs) = Graphs.single(RenderGraph.draw_indexed(triangle))
+Ok(graphs) = GraphSet.single(RenderGraph.draw_indexed(triangle))
 
 game : Game
 game = Game.new({ init!, draw, graphs })
@@ -19,7 +19,7 @@ game = Game.new({ init!, draw, graphs })
 init! : {} => Game.Init
 init! = |_| { window_title: "invalid" }
 
-draw : Game.Frame -> Graphs.Submission(G)
+draw : Game.Frame -> GraphSet.Submission(G)
 draw = |_frame| graphs.draw({ model: zero, view: zero, proj: zero })
 
 ## Valid metadata with an invalid packer.
@@ -45,5 +45,5 @@ zero = {
 	row_3: { x: 0.0, y: 0.0, z: 0.0, w: 0.0 },
 }
 
-packed : Graphs.Draw
+packed : GraphSet.Draw
 packed = Game.draw(game, { aspect_ratio: 1.0, elapsed: 0.0 })
