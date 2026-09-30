@@ -119,6 +119,25 @@ public float3 skinSafeNormalize(float3 vector) {
     return vector * rsqrt(lengthSq);
 }
 
+float skinMaxComponent(float3 vector) {
+    let magnitude = abs(vector);
+
+    return max(magnitude.x, max(magnitude.y, magnitude.z));
+}
+
+// Normalize a direction without imposing a scale-dependent length cutoff.
+float3 skinNormalizeDirection(float3 vector) {
+    let magnitude = skinMaxComponent(vector);
+    let zeroDirection = !(magnitude > 0.0);
+    if (zeroDirection) {
+        return float3(0.0);
+    }
+
+    let scaled = vector / magnitude;
+
+    return scaled * rsqrt(dot(scaled, scaled));
+}
+
 // The weighted sum of the four influences' palette matrices.
 public float4x4 skinBlendedTransform(mltrs::ImmutableAddr<SkinJoint> palette, VertexSkinning skin) {
     var blended = palette[skin.joints.x].transform * skin.weights.x;
@@ -155,16 +174,11 @@ public float skinDeterminant(float3x3 columns) {
 
 // The Hadamard ratio `det / (|c0| |c1| |c2|)`; 0 when any column is zero.
 public float skinConditioning(float3x3 columns) {
-    let det = skinDeterminant(columns);
-    let scale = length(columns[0]) * length(columns[1]) * length(columns[2]);
+    let first = skinNormalizeDirection(columns[0]);
+    let second = skinNormalizeDirection(columns[1]);
+    let third = skinNormalizeDirection(columns[2]);
 
-    // Written so that a NaN scale also takes the early return.
-    let zeroColumn = !(scale > 0.0);
-    if (zeroColumn) {
-        return 0.0;
-    }
-
-    return det / scale;
+    return dot(first, cross(second, third));
 }
 
 public bool skinNormalUsesFallback(float3x3 columns) {
@@ -183,10 +197,21 @@ float3 skinCofactorNormal(float3x3 columns, float3 normal) {
 
 // Transform a normal using the blended linear part `columns`.
 float3 skinNormal(float3x3 columns, float3 normal) {
-    let useFallback = skinNormalUsesFallback(columns);
-    if (useFallback) {
-        return skinSafeNormalize(skinApplyLinear(columns, normal));
+    let inputNormal = skinSafeNormalize(normal);
+    let magnitude = max(skinMaxComponent(columns[0]),
+        max(skinMaxComponent(columns[1]), skinMaxComponent(columns[2])));
+    let zeroTransform = !(magnitude > 0.0);
+    if (zeroTransform) {
+        return float3(0.0);
     }
 
-    return skinSafeNormalize(skinCofactorNormal(columns, normal));
+    // A common positive scale preserves both linear and cofactor directions.
+    // Divide before products to avoid overflow and underflow at animation scales.
+    let scaledColumns = columns / magnitude;
+    let useFallback = skinNormalUsesFallback(scaledColumns);
+    if (useFallback) {
+        return skinNormalizeDirection(skinApplyLinear(scaledColumns, inputNormal));
+    }
+
+    return skinNormalizeDirection(skinCofactorNormal(scaledColumns, inputNormal));
 }

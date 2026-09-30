@@ -207,6 +207,7 @@ pub mod reference {
 
     /// The scale-aware conditioning number in `[-1, 1]`; 0 for a zero column.
     pub fn conditioning(linear: &Mat3) -> f32 {
+        let linear = linear.as_dmat3();
         let det = linear.x_axis.dot(linear.y_axis.cross(linear.z_axis));
         let scale = linear.x_axis.length() * linear.y_axis.length() * linear.z_axis.length();
         let zero_column = scale.is_nan() || scale <= 0.0;
@@ -214,7 +215,7 @@ pub mod reference {
             return 0.0;
         }
 
-        det / scale
+        (det / scale) as f32
     }
 
     pub fn uses_fallback(linear: &Mat3) -> bool {
@@ -226,11 +227,20 @@ pub mod reference {
     /// Inverse-transpose inside the domain, `L * n` outside it; both safely
     /// normalized. Translation never enters.
     pub fn expected_normal(linear: &Mat3, normal: Vec3) -> Vec3 {
-        if uses_fallback(linear) {
-            return safe_normalize(*linear * normal);
+        let near_zero = normal.length_squared() < SAFE_NORMALIZE_MIN_LENGTH_SQ;
+        if near_zero {
+            return Vec3::ZERO;
         }
 
-        safe_normalize(linear.inverse().transpose() * normal)
+        let use_fallback = uses_fallback(linear);
+        let linear = linear.as_dmat3();
+        let transformed = if use_fallback {
+            linear * normal.as_dvec3()
+        } else {
+            linear.inverse().transpose() * normal.as_dvec3()
+        };
+
+        transformed.normalize_or_zero().as_vec3()
     }
 
     pub fn expected_position(transform: &Mat4, point: Vec3) -> Vec3 {
@@ -591,6 +601,11 @@ mod tests {
             // = 5e-4, below the threshold but still invertible
             skew(7e-4),
             skew(3e-4),
+            // 13–16: scale must not change the normal direction or conditioning.
+            Mat4::from_scale(Vec3::splat(1e-4)),
+            Mat4::from_scale(Vec3::splat(1e12)),
+            Mat4::from_scale(Vec3::new(1e-4, 2e-4, 4e-4)),
+            Mat4::from_scale(Vec3::new(1e12, 2e12, 4e12)),
         ]
     }
 
@@ -609,7 +624,7 @@ mod tests {
         let oblique = Vec3::new(1.0, 2.0, 3.0).normalize();
         let cancelled = Vec3::X * 0.5 + Vec3::NEG_X * 0.5;
 
-        vec![
+        let mut fixtures = vec![
             OracleFixture {
                 name: "identity_bind",
                 joints: identity_joints,
@@ -722,7 +737,35 @@ mod tests {
                 expect_fallback: true,
                 literal_normal: Some(Vec3::NEG_X),
             },
-        ]
+        ];
+        for (joint, name, literal_normal) in [
+            (13, "small_uniform_scale", oblique),
+            (14, "large_uniform_scale", oblique),
+            (
+                15,
+                "small_nonuniform_scale",
+                Vec3::new(1.0, 1.0, 0.75).normalize(),
+            ),
+            (
+                16,
+                "large_nonuniform_scale",
+                Vec3::new(1.0, 1.0, 0.75).normalize(),
+            ),
+        ] {
+            let (joints, weights) = rigid(joint);
+            fixtures.push(OracleFixture {
+                name,
+                joints,
+                weights,
+                position: Vec3::ZERO,
+                normal: oblique,
+                raw: oblique,
+                expect_fallback: false,
+                literal_normal: Some(literal_normal),
+            });
+        }
+
+        fixtures
     }
 
     #[test]

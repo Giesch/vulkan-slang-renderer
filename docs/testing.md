@@ -47,8 +47,8 @@ converted golden hashes.
 Install the local hook with `just setup-precommit`. `just pre-commit` builds
 the workspace graph with `just _workspace-graph`, which reduces
 `cargo metadata --no-deps` with `jq` to one `{name, dir, dependencies}` object
-per package. It passes the graph to `scripts/pre-commit-checks.rs` as the
-first argument and pipes the staged paths into it. The script prints `just`
+per package. It passes the graph to `scripts/pre-commit-checks.rs` through
+`MLTRS_WORKSPACE_GRAPH` and pipes the staged paths into it. The script prints `just`
 arguments, one per line, and the recipe passes them to `just` unchanged. The
 script always names at least one recipe:
 
@@ -164,10 +164,14 @@ every generated module through Roc, and evaluates imported SPIR-V bytes and
 reflection values from a consumer. It also runs missing-file and false-byte
 negative controls. `ROC` defaults to `roc` on `PATH`; a missing or incompatible
 compiler is a failure, not a skip. Generation itself never invokes Roc. Roc
-shader codegen was verified locally with `/home/danknutson/.local/bin/roc`,
-`release-fast-42fbc4b0`. Compatibility with the platform's recorded
-`release-fast-62a50c46` build and CI source pin `40fe7ddc…` remains unverified;
-this gate does not change or upgrade either platform pin.
+shader codegen was verified locally with `release-fast-42fbc4b0` and, after
+changing test app headers to relative platform paths, `release-fast-89d9ea97`.
+Compatibility with the platform's recorded
+`release-fast-62a50c46` host-glue compiler and CI nightly
+`nightly-2026-09-22-e494788` remains unverified. The CI compiler is selected by
+`roc-platform/ci/roc_nightly.txt`; it is separate from the compiler provenance
+of committed host glue described in `roc-platform/README.md`. This gate does
+not change the CI pin or regenerate that host glue.
 
 `cargo insta accept` does nothing after `just test`. The recipe sets
 `INSTA_UPDATE=no`, so `just test` writes no `.snap.new` files for it to review.
