@@ -1241,7 +1241,7 @@ mod tests {
             generated.join("main.roc"),
             format!(
                 "app [game] {{ pf: platform \"{}\" }}\n{body}",
-                platform.display()
+                import_path(&generated.canonicalize().unwrap(), &platform).unwrap()
             ),
         )
         .unwrap();

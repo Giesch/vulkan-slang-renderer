@@ -41,6 +41,23 @@ fn write_app_main(generated: &Path) {
         .join("../../roc-platform/platform/main.roc")
         .canonicalize()
         .unwrap();
+    let generated_dir = generated.canonicalize().unwrap();
+    let common = generated_dir
+        .ancestors()
+        .find(|ancestor| platform.starts_with(ancestor))
+        .expect("app and platform must share a filesystem root");
+    let mut relative_platform = std::path::PathBuf::new();
+    for _ in generated_dir.strip_prefix(common).unwrap().components() {
+        relative_platform.push("..");
+    }
+    relative_platform.push(platform.strip_prefix(common).unwrap());
+    let relative_platform = relative_platform.to_str().unwrap().replace('\\', "/");
+    assert!(
+        !relative_platform
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '"' | '$')),
+        "platform path must be representable in a Roc string"
+    );
     let example = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../roc-platform/examples/basic-triangle/main.roc"),
@@ -51,7 +68,7 @@ fn write_app_main(generated: &Path) {
         generated.join("main.roc"),
         format!(
             "app [game] {{ pf: platform \"{}\" }}\n{body}",
-            platform.display()
+            relative_platform
         ),
     )
     .unwrap();
