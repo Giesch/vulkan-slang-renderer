@@ -176,13 +176,23 @@
                   "binding": {
                     "kind": "uniform",
                     "offset": 0,
-                    "size": 16
+                    "size": 12
                   },
-                  "elementCount": 4,
+                  "elementCount": 3,
                   "elementType": {
                     "kind": "scalar",
                     "scalarType": "float32"
                   }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "determinant",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
                 },
                 {
                   "kind": "vector",
@@ -190,13 +200,23 @@
                   "binding": {
                     "kind": "uniform",
                     "offset": 16,
-                    "size": 16
+                    "size": 12
                   },
-                  "elementCount": 4,
+                  "elementCount": 3,
                   "elementType": {
                     "kind": "scalar",
                     "scalarType": "float32"
                   }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "conditioning",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 28,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
                 },
                 {
                   "kind": "vector",

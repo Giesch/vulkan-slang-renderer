@@ -114,6 +114,8 @@ Slang pure-data structs reached through shader parameters or address pointees no
 receive checked `GPURead` decoders. Generated decoders use reflected field offsets
 and sizes, initialize Rust padding, and reject invalid enum discriminants. Types
 containing GPU addresses or resource handles are not readable output types.
+Packed `float3` struct fields decode from their 12 reflected bytes; arrays of
+`float3` remain excluded because their storage stride is 16 bytes.
 
 `Renderer::dispatch_readback` is a blocking diagnostic API: it drains pending GPU
 work, clears the current output buffer slot, runs one compute dispatch, applies a

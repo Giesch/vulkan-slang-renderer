@@ -119,6 +119,30 @@ impl GPURead for DebugBox {
     }
 }
 
+impl GPURead for Sprite {
+    const GPU_SIZE: usize = 64;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for Sprite"
+        );
+
+        Ok(Self {
+            scale: GPURead::read_gpu(&bytes[0..8])?,
+            flags: GPURead::read_gpu(&bytes[8..12])?,
+            debug_box_id: GPURead::read_gpu(&bytes[12..16])?,
+            position: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[16..28])?),
+            rotation: GPURead::read_gpu(&bytes[28..32])?,
+            tex_u: GPURead::read_gpu(&bytes[32..36])?,
+            tex_v: GPURead::read_gpu(&bytes[36..40])?,
+            tex_w: GPURead::read_gpu(&bytes[40..44])?,
+            tex_h: GPURead::read_gpu(&bytes[44..48])?,
+            color: GPURead::read_gpu(&bytes[48..64])?,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SpaceInvadersParamsData {
     pub projection: Projection,

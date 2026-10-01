@@ -33,8 +33,10 @@ const _: () = assert!(std::mem::size_of::<Addr<OracleOutput>>() == 8);
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct OracleOutput {
-    pub position: glam::Vec4,
-    pub normal: glam::Vec4,
+    pub position: glam::Vec3,
+    pub determinant: f32,
+    pub normal: glam::Vec3,
+    pub conditioning: f32,
     pub safe_normalized: glam::Vec4,
     pub flags: glam::UVec4,
 }
@@ -42,9 +44,13 @@ pub struct OracleOutput {
 impl GPUWrite for OracleOutput {}
 const _: () = assert!(std::mem::size_of::<OracleOutput>() == 64);
 const _: () = assert!(std::mem::offset_of!(OracleOutput, position) == 0);
-const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(OracleOutput, determinant) == 12);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
 const _: () = assert!(std::mem::offset_of!(OracleOutput, normal) == 16);
-const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(OracleOutput, conditioning) == 28);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
 const _: () = assert!(std::mem::offset_of!(OracleOutput, safe_normalized) == 32);
 const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
 const _: () = assert!(std::mem::offset_of!(OracleOutput, flags) == 48);
@@ -102,8 +108,10 @@ impl GPURead for OracleOutput {
         );
 
         Ok(Self {
-            position: GPURead::read_gpu(&bytes[0..16])?,
-            normal: GPURead::read_gpu(&bytes[16..32])?,
+            position: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[0..12])?),
+            determinant: GPURead::read_gpu(&bytes[12..16])?,
+            normal: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[16..28])?),
+            conditioning: GPURead::read_gpu(&bytes[28..32])?,
             safe_normalized: GPURead::read_gpu(&bytes[32..48])?,
             flags: GPURead::read_gpu(&bytes[48..64])?,
         })

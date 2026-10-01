@@ -26,10 +26,11 @@ struct OracleCase {
 }
 
 struct OracleOutput {
-    // xyz: SkinnedVertex position; w: det(L) of the blended linear part
-    float4 position;
-    // xyz: SkinnedVertex normal; w: skinConditioning(L)
-    float4 normal;
+    float3 position;
+    // det(L) of the blended linear part
+    float determinant;
+    float3 normal;
+    float conditioning;
     // xyz: skinSafeNormalize(rawVector); w: length(rawVector)
     float4 safeNormalized;
     // x: 1 when the fallback branch decided the normal; y: the case index
@@ -48,7 +49,9 @@ struct SkinningOraclePush {
 }
 
 ParameterBlock<SkinningOracleParams> params;
-[[vk::push_constant]] ConstantBuffer<SkinningOraclePush> pc;
+
+[[vk::push_constant]]
+ConstantBuffer<SkinningOraclePush> pc;
 
 [numthreads(1, 1, 1)]
 [shader("compute")]
@@ -65,9 +68,12 @@ void computeMain(uint3 id : SV_DispatchThreadID) {
     let blended = skinBlendedTransform(params.palette, skin);
     let columns = skinLinearColumns(blended);
     let rawVector = oracleCase.rawVector.xyz;
+    let usedFallback = skinNormalUsesFallback(columns) ? 1 : 0;
 
-    pc.output[i].position = float4(skinned.position, skinDeterminant(columns));
-    pc.output[i].normal = float4(skinned.normal, skinConditioning(columns));
+    pc.output[i].position = skinned.position;
+    pc.output[i].determinant = skinDeterminant(columns);
+    pc.output[i].normal = skinned.normal;
+    pc.output[i].conditioning = skinConditioning(columns);
     pc.output[i].safeNormalized = float4(skinSafeNormalize(rawVector), length(rawVector));
-    pc.output[i].flags = uint4(skinNormalUsesFallback(columns) ? 1 : 0, i, 0, 0);
+    pc.output[i].flags = uint4(usedFallback, i, 0, 0);
 }

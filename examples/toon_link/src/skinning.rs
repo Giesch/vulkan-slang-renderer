@@ -893,8 +893,8 @@ mod tests {
             let expected_cond = conditioning(&linear);
             let expected_fallback = uses_fallback(&linear);
             let expected_safe = safe_normalize(fixture.raw);
-            let actual_position = actual.position.truncate();
-            let actual_normal = actual.normal.truncate();
+            let actual_position = actual.position;
+            let actual_normal = actual.normal;
             let actual_safe = actual.safe_normalized.truncate();
             let actual_fallback = actual.flags.x != 0;
 
@@ -907,16 +907,18 @@ mod tests {
             );
             println!(
                 "  cond     expected={expected_cond:e} actual={:e} det={:e} fallback expected={expected_fallback} actual={actual_fallback}",
-                actual.normal.w, actual.position.w
+                actual.conditioning, actual.determinant
             );
             println!(
                 "  safe     input={:?} expected={expected_safe:?} actual={actual_safe:?} |input|={}",
                 fixture.raw, actual.safe_normalized.w
             );
 
-            let finite = [actual.position, actual.normal, actual.safe_normalized]
-                .iter()
-                .all(|v| v.is_finite());
+            let finite = actual.position.is_finite()
+                && actual.determinant.is_finite()
+                && actual.normal.is_finite()
+                && actual.conditioning.is_finite()
+                && actual.safe_normalized.is_finite();
             if !finite {
                 fail("nonfinite output".to_owned());
             }
@@ -941,7 +943,7 @@ mod tests {
                     fixture.expect_fallback
                 ));
             }
-            let cond_error = (actual.normal.w - expected_cond).abs();
+            let cond_error = (actual.conditioning - expected_cond).abs();
             if exceeds(cond_error, CONDITIONING_TOLERANCE) {
                 fail(format!("conditioning error {cond_error:e}"));
             }

@@ -159,6 +159,24 @@ impl GPURead for DebugView {
     }
 }
 
+impl GPURead for PigmentKM {
+    const GPU_SIZE: usize = 32;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for PigmentKM"
+        );
+
+        Ok(Self {
+            absorption: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[0..12])?),
+            _padding_0: [0; 4],
+            scattering: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[16..28])?),
+            _padding_1: [0; 4],
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct DisplayParamsData {
     pub texel_size: glam::Vec2,
