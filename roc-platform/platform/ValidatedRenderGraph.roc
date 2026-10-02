@@ -3,7 +3,7 @@ import RenderGraphLower
 import RenderGraphValidate
 import RenderGraph
 
-## Internal validated definition. Only Graphs turns definitions into registered
+## Internal validated definition. Only GraphSet turns definitions into registered
 ## packers; raw definitions cannot submit frames.
 ValidatedRenderGraph(frame) :: {
 	wire : Wire,

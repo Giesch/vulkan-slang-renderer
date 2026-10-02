@@ -60,7 +60,7 @@ fn write_app_main(generated: &Path) {
     );
     // The gate's app draws an empty graph: it depends on no generated shader,
     // so every fixture tree can host it.
-    let body = "import pf.Game\nimport pf.RenderGraph\nimport pf.Graphs\n\ngame : Game\ngame = Game.new({ init!, graphs, draw })\n\nOk(graphs) = Graphs.single(RenderGraph.empty)\n\ninit! : {} => Game.Init\ninit! = |_| { window_title: \"codegen gate\" }\n\ndraw = |_frame| graphs.draw({})\n";
+    let body = "import pf.Game\nimport pf.RenderGraph\nimport pf.GraphSet\n\ngame : Game\ngame = Game.new({ init!, graphs, draw })\n\nOk(graphs) = GraphSet.single(RenderGraph.empty)\n\ninit! : {} => Game.Init\ninit! = |_| { window_title: \"codegen gate\" }\n\ndraw = |_frame| graphs.draw({})\n";
     fs::write(
         generated.join("main.roc"),
         format!(

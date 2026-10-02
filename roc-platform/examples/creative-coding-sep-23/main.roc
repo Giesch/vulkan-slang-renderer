@@ -3,15 +3,14 @@ app [game] { pf: platform "../../platform/main.roc" }
 import pf.Game
 import pf.RenderGraph exposing [IndexedPipeline]
 import pf.GraphSet
-import pf.ShaderReflection exposing [Float4x4]
+import pf.ShaderReflection exposing [Float4x4, Float3]
 
 import Generated/BasicTriangle
 import Generated/Mltrs
 
 game = Game.new({ init!, draw, graphs: graph })
 
-Ok(graph) = RenderGraph.draw_indexed(pipeline)
-	|> GraphSet.single
+Ok(graph) = RenderGraph.draw_indexed(pipeline) |> GraphSet.single
 
 init! : {} => Game.Init
 init! = |_|
@@ -21,7 +20,10 @@ draw : Game.Frame -> GraphSet.Submission(_)
 draw = |frame| {
 	camera = mvp_with_aspect_ratio(frame.aspect_ratio)
 
-	graph.draw(camera)
+	graph.draw({
+		matrices: camera,
+		time: frame.elapsed,
+	})
 }
 
 pipeline : IndexedPipeline(_, _)
@@ -29,24 +31,80 @@ pipeline = RenderGraph.indexed_pipeline({
 	name: "basic_triangle",
 	shader: BasicTriangle.shader,
 	vertices,
-	indices: [0, 1, 2],
+	indices: plain_indices,
 })
+
+plain_indices : List(U32)
+plain_indices = {
+	len = vertices.len().to_u32_wrap()
+	(0..<len).iter().collect()
+}
+
+expect plain_indices == [0, 1, 2, 3, 4, 5]
+
+RGB := { r : U8, g : U8, b : U8 }.{
+	to_float3 : RGB -> Float3
+	to_float3 = |{ r, g, b }| {
+		x: r.to_f32() / 255.0,
+		y: g.to_f32() / 255.0,
+		z: b.to_f32() / 255.0,
+	}
+}
 
 vertices : List(BasicTriangle.Vertex)
 vertices = {
-	red = { x: 1.0, y: 0.0, z: 0.0 }
-	blue = { x: 0.0, y: 1.0, z: 0.0 }
-	green = { x: 0.0, y: 0.0, z: 1.0 }
+	_orange = RGB.{ r: 252, g: 144, b: 3 }
+	dark_orange = RGB.{ r: 252, g: 94, b: 3 }
+	red = RGB.{ r: 252, g: 53, b: 3 }
+	yellow = RGB.{ r: 252, g: 198, b: 3 }
 
-	left = { x: -1.0, y: -1.0, z: 0.0 }
-	top = { x: 1.0, y: -1.0, z: 0.0 }
-	right = { x: 0.0, y: 1.0, z: 0.0 }
+	top_tri = {
+		left : Float3
+		left = { x: -1.0, y: -0.0, z: 0.0 }
+		right = { x: 1.0, y: -0.0, z: 0.0 }
+		top = { x: 0.0, y: 2.0, z: 0.0 }
+
+		[
+			{ position: left, color: dark_orange },
+			{ position: right, color: dark_orange },
+			{ position: top, color: red },
+		]
+	}
+
+	left_tri = {
+		left : Float3
+		left = { x: -2.0, y: -2.0, z: 0.0 }
+		right = { x: 0.0, y: -2.0, z: 0.0 }
+		top = { x: -1.0, y: 0.0, z: 0.0 }
+
+		[
+			{ position: left, color: dark_orange },
+			{ position: right, color: yellow },
+			{ position: top, color: dark_orange },
+		]
+	}
+
+	right_tri = {
+		left : Float3
+		left = { x: 0.0, y: -2.0, z: 0.0 }
+		right = { x: 2.0, y: -2.0, z: 0.0 }
+		top = { x: 1.0, y: 0.0, z: 0.0 }
+
+		[
+			{ position: left, color: yellow },
+			{ position: right, color: yellow },
+			{ position: top, color: dark_orange },
+		]
+	}
+
+	with_color_as_float3 = |v| { position: v.position, color: v.color.to_float3() }
+	triangle_as_vertices = |tri| tri.map(with_color_as_float3)
 
 	[
-		{ position: left, color: red },
-		{ position: top, color: blue },
-		{ position: right, color: green },
-	]
+		top_tri,
+		left_tri,
+		right_tri,
+	].join_map(triangle_as_vertices)
 }
 
 # Column-major like glam: `row_i` holds column `i`,
