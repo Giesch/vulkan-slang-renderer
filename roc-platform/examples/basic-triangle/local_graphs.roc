@@ -90,14 +90,17 @@ expect {
 
 ## Both branches produce the registered collection's type. Distinct graph
 ## ordinals must survive type erasure even when payloads are identical.
-expect Game.draw(game, { aspect_ratio: 2.0 }) != Game.draw(game, { aspect_ratio: 1.0 })
+expect {
+	Game.draw(game, { aspect_ratio: 2.0, elapsed: 0.0 }) !=
+		Game.draw(game, { aspect_ratio: 1.0, elapsed: 0.0 })
+}
 
 expect {
-	Game.draw(game, { aspect_ratio: 2.0 }) == second.draw((zero, one)).to_host()
+	Game.draw(game, { aspect_ratio: 2.0, elapsed: 0.0 }) == second.draw((zero, one)).to_host()
 }
 
 ## A different uniform shape still returns the same collection's submission.
 expect {
 	registered = graphs.register()
-	Game.draw(game, { aspect_ratio: 0.5 }) == registered.single.draw(zero)
+	Game.draw(game, { aspect_ratio: 0.5, elapsed: 0.0 }) == registered.single.draw(zero)
 }

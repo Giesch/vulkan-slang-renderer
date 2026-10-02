@@ -22,16 +22,23 @@ Game :: { init! : {} => Init, config : HostConfig, draw : Frame -> Graphs.Draw }
 		draw : Frame -> Graphs.Submission(g),
 	}
 
+	# These are nominal types so that they get picked up by the glue script
+
 	## What an app's `init!` returns.
-	## Nominal so the generated host glue gives it a stable Rust type name.
 	Init := { window_title : Str }
 
-	## What the host passes to `draw`: the window's width divided by its height.
-	## Nominal so the generated host glue gives it a stable Rust type name.
-	Frame := { aspect_ratio : F32 }
+	## Data passed to `draw` every frame
+	Frame := {
 
-	## The collection and draw callback must agree on the registered graph type.
-	## The app uses its own collection; only the host closure erases its type.
+		## aspect ratio of the window; width / height
+		aspect_ratio : F32,
+
+		## total time since the app opened (in seconds)
+		elapsed : F32,
+	}
+
+	## Create a game to hand off to the platform.
+	## The render graphs and draw function have to agree on the graph type.
 	new : Definition(g) -> Game
 	new = |{ init!, graphs, draw }| {
 		config = HostConfig.({ graphs: graphs.definitions() })

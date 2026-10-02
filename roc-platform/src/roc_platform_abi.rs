@@ -1098,6 +1098,31 @@ unsafe impl<T> RocRelease<*mut T> for RocBoxSpineRelease<T> {
     }
 }
 
+/// Element type for Game.Init
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameInit {
+    pub window_title: RocStr,
+}
+
+/// Element type for Game.Init
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameInit {
+    pub window_title: RocStr,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<GameInit>() == 24, "GameInit size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<GameInit>() == 8, "GameInit alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<GameInit>() == 12, "GameInit size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<GameInit>() == 4, "GameInit alignment mismatch");
+
 /// Element type for Game.HostConfig
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
@@ -1270,56 +1295,6 @@ const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostUniform>() ==
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostUniform>() == 4, "ValidatedRenderGraphHostUniform alignment mismatch");
 
-/// Element type for Game.Init
-#[cfg(target_pointer_width = "32")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct GameInit {
-    pub window_title: RocStr,
-}
-
-/// Element type for Game.Init
-#[cfg(not(target_pointer_width = "32"))]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct GameInit {
-    pub window_title: RocStr,
-}
-
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<GameInit>() == 24, "GameInit size mismatch");
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<GameInit>() == 8, "GameInit alignment mismatch");
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<GameInit>() == 12, "GameInit size mismatch");
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<GameInit>() == 4, "GameInit alignment mismatch");
-
-/// Element type for Game.Frame
-#[cfg(target_pointer_width = "32")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct GameFrame {
-    pub aspect_ratio: f32,
-}
-
-/// Element type for Game.Frame
-#[cfg(not(target_pointer_width = "32"))]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct GameFrame {
-    pub aspect_ratio: f32,
-}
-
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<GameFrame>() == 4, "GameFrame size mismatch");
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<GameFrame>() == 4, "GameFrame alignment mismatch");
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<GameFrame>() == 4, "GameFrame size mismatch");
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<GameFrame>() == 4, "GameFrame alignment mismatch");
-
 /// Element type for Graphs.Draw
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
@@ -1347,34 +1322,32 @@ const _: () = assert!(core::mem::size_of::<GraphsDraw>() == 16, "GraphsDraw size
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::align_of::<GraphsDraw>() == 4, "GraphsDraw alignment mismatch");
 
-/// Element type for Game
+/// Element type for Game.Frame
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct Game {
-    pub config: GameHostConfig,
-    pub draw: RocErasedCallable,
-    pub init_bang: RocErasedCallable,
+pub struct GameFrame {
+    pub aspect_ratio: f32,
+    pub elapsed: f32,
 }
 
-/// Element type for Game
+/// Element type for Game.Frame
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct Game {
-    pub config: GameHostConfig,
-    pub draw: RocErasedCallable,
-    pub init_bang: RocErasedCallable,
+pub struct GameFrame {
+    pub aspect_ratio: f32,
+    pub elapsed: f32,
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<Game>() == 40, "Game size mismatch");
+const _: () = assert!(core::mem::size_of::<GameFrame>() == 8, "GameFrame size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<Game>() == 8, "Game alignment mismatch");
+const _: () = assert!(core::mem::align_of::<GameFrame>() == 4, "GameFrame alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<Game>() == 20, "Game size mismatch");
+const _: () = assert!(core::mem::size_of::<GameFrame>() == 8, "GameFrame size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<Game>() == 4, "Game alignment mismatch");
+const _: () = assert!(core::mem::align_of::<GameFrame>() == 4, "GameFrame alignment mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -2030,6 +2003,35 @@ unsafe impl RocRelease<HostStdinLineResult> for HostStdinLineResultRelease {
     }
 }
 
+impl GameInit {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.window_title.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.window_title.incref(amount); }
+    }
+}
+
+pub struct GameInitRelease;
+
+unsafe impl RocRelease<GameInit> for GameInitRelease {
+    unsafe fn release(value: GameInit, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
 impl GameHostConfig {
     /// Recursively decrement Roc-owned fields.
     ///
@@ -2300,14 +2302,14 @@ unsafe impl RocRelease<ValidatedRenderGraphHostUniform> for ValidatedRenderGraph
     }
 }
 
-impl GameInit {
+impl GraphsDraw {
     /// Recursively decrement Roc-owned fields.
     ///
     /// # Safety
     /// `self` must own one live Roc reference for each refcounted field.
     pub unsafe fn decref(self, roc_host: &RocHost) {
         let value = self;
-        unsafe { value.window_title.decref(roc_host); }
+        unsafe { decref_list_of_list_of_type45(value.values, roc_host); }
     }
 
     /// Increment Roc-owned fields.
@@ -2317,14 +2319,14 @@ impl GameInit {
     /// be balanced by later decrefs.
     pub unsafe fn incref(self, amount: isize) {
         let value = self;
-        unsafe { value.window_title.incref(amount); }
+        unsafe { value.values.incref(amount); }
     }
 }
 
-pub struct GameInitRelease;
+pub struct GraphsDrawRelease;
 
-unsafe impl RocRelease<GameInit> for GameInitRelease {
-    unsafe fn release(value: GameInit, roc_host: &RocHost) {
+unsafe impl RocRelease<GraphsDraw> for GraphsDrawRelease {
+    unsafe fn release(value: GraphsDraw, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -2356,68 +2358,6 @@ pub struct GameFrameRelease;
 
 unsafe impl RocRelease<GameFrame> for GameFrameRelease {
     unsafe fn release(value: GameFrame, roc_host: &RocHost) {
-        unsafe { value.decref(roc_host); }
-    }
-}
-
-impl GraphsDraw {
-    /// Recursively decrement Roc-owned fields.
-    ///
-    /// # Safety
-    /// `self` must own one live Roc reference for each refcounted field.
-    pub unsafe fn decref(self, roc_host: &RocHost) {
-        let value = self;
-        unsafe { decref_list_of_list_of_type56(value.values, roc_host); }
-    }
-
-    /// Increment Roc-owned fields.
-    ///
-    /// # Safety
-    /// `self` must point at live Roc allocations. The retained references must
-    /// be balanced by later decrefs.
-    pub unsafe fn incref(self, amount: isize) {
-        let value = self;
-        unsafe { value.values.incref(amount); }
-    }
-}
-
-pub struct GraphsDrawRelease;
-
-unsafe impl RocRelease<GraphsDraw> for GraphsDrawRelease {
-    unsafe fn release(value: GraphsDraw, roc_host: &RocHost) {
-        unsafe { value.decref(roc_host); }
-    }
-}
-
-impl Game {
-    /// Recursively decrement Roc-owned fields.
-    ///
-    /// # Safety
-    /// `self` must own one live Roc reference for each refcounted field.
-    pub unsafe fn decref(self, roc_host: &RocHost) {
-        let value = self;
-        unsafe { value.config.decref(roc_host); }
-        unsafe { decref_erased_callable(value.draw, roc_host); }
-        unsafe { decref_erased_callable(value.init_bang, roc_host); }
-    }
-
-    /// Increment Roc-owned fields.
-    ///
-    /// # Safety
-    /// `self` must point at live Roc allocations. The retained references must
-    /// be balanced by later decrefs.
-    pub unsafe fn incref(self, amount: isize) {
-        let value = self;
-        unsafe { value.config.incref(amount); }
-        unsafe { incref_erased_callable(value.draw, amount); }
-        unsafe { incref_erased_callable(value.init_bang, amount); }
-    }
-}
-
-pub struct GameRelease;
-
-unsafe impl RocRelease<Game> for GameRelease {
-    unsafe fn release(value: Game, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -2462,17 +2402,8 @@ pub unsafe fn decref_list_of_validated_render_graph_host_uniform(value: RocList<
 ///
 /// # Safety
 /// `value` must own one live Roc list reference.
-pub unsafe fn decref_list_of_list_of_type56(value: RocList<RocListWith<u8, false>>, roc_host: &RocHost) {
+pub unsafe fn decref_list_of_list_of_type45(value: RocList<RocListWith<u8, false>>, roc_host: &RocHost) {
     unsafe { value.release_with::<RocListSpineRelease>(roc_host); }
-}
-
-extern "C" fn decref_box_payload_type57(data_ptr: *mut c_void, roc_host: *mut RocHost) {
-    if data_ptr.is_null() || roc_host.is_null() {
-        return;
-    }
-    let payload = unsafe { *(data_ptr as *const Game) };
-    let roc_host = unsafe { &*roc_host };
-    unsafe { payload.decref(roc_host); }
 }
 
 
