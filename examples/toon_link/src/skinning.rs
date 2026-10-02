@@ -895,7 +895,7 @@ mod tests {
             let expected_safe = safe_normalize(fixture.raw);
             let actual_position = actual.position;
             let actual_normal = actual.normal;
-            let actual_safe = actual.safe_normalized.truncate();
+            let actual_safe = actual.safe_normalized;
             let actual_fallback = actual.flags.x != 0;
 
             println!("case {index} {}", fixture.name);
@@ -911,14 +911,15 @@ mod tests {
             );
             println!(
                 "  safe     input={:?} expected={expected_safe:?} actual={actual_safe:?} |input|={}",
-                fixture.raw, actual.safe_normalized.w
+                fixture.raw, actual.raw_vector_length
             );
 
             let finite = actual.position.is_finite()
                 && actual.determinant.is_finite()
                 && actual.normal.is_finite()
                 && actual.conditioning.is_finite()
-                && actual.safe_normalized.is_finite();
+                && actual.safe_normalized.is_finite()
+                && actual.raw_vector_length.is_finite();
             if !finite {
                 fail("nonfinite output".to_owned());
             }

@@ -31,8 +31,8 @@ struct OracleOutput {
     float determinant;
     float3 normal;
     float conditioning;
-    // xyz: skinSafeNormalize(rawVector); w: length(rawVector)
-    float4 safeNormalized;
+    float3 safeNormalized;
+    float rawVectorLength;
     // x: 1 when the fallback branch decided the normal; y: the case index
     uint4 flags;
 }
@@ -74,6 +74,7 @@ void computeMain(uint3 id : SV_DispatchThreadID) {
     pc.output[i].determinant = skinDeterminant(columns);
     pc.output[i].normal = skinned.normal;
     pc.output[i].conditioning = skinConditioning(columns);
-    pc.output[i].safeNormalized = float4(skinSafeNormalize(rawVector), length(rawVector));
+    pc.output[i].safeNormalized = skinSafeNormalize(rawVector);
+    pc.output[i].rawVectorLength = length(rawVector);
     pc.output[i].flags = uint4(usedFallback, i, 0, 0);
 }

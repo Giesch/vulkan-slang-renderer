@@ -224,13 +224,23 @@
                   "binding": {
                     "kind": "uniform",
                     "offset": 32,
-                    "size": 16
+                    "size": 12
                   },
-                  "elementCount": 4,
+                  "elementCount": 3,
                   "elementType": {
                     "kind": "scalar",
                     "scalarType": "float32"
                   }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "rawVectorLength",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 44,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
                 },
                 {
                   "kind": "vector",

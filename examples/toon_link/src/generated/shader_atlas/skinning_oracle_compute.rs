@@ -37,7 +37,8 @@ pub struct OracleOutput {
     pub determinant: f32,
     pub normal: glam::Vec3,
     pub conditioning: f32,
-    pub safe_normalized: glam::Vec4,
+    pub safe_normalized: glam::Vec3,
+    pub raw_vector_length: f32,
     pub flags: glam::UVec4,
 }
 
@@ -52,7 +53,9 @@ const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 const _: () = assert!(std::mem::offset_of!(OracleOutput, conditioning) == 28);
 const _: () = assert!(std::mem::size_of::<f32>() == 4);
 const _: () = assert!(std::mem::offset_of!(OracleOutput, safe_normalized) == 32);
-const _: () = assert!(std::mem::size_of::<glam::Vec4>() == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(OracleOutput, raw_vector_length) == 44);
+const _: () = assert!(std::mem::size_of::<f32>() == 4);
 const _: () = assert!(std::mem::offset_of!(OracleOutput, flags) == 48);
 const _: () = assert!(std::mem::size_of::<glam::UVec4>() == 16);
 
@@ -112,7 +115,10 @@ impl GPURead for OracleOutput {
             determinant: GPURead::read_gpu(&bytes[12..16])?,
             normal: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[16..28])?),
             conditioning: GPURead::read_gpu(&bytes[28..32])?,
-            safe_normalized: GPURead::read_gpu(&bytes[32..48])?,
+            safe_normalized: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(
+                &bytes[32..44],
+            )?),
+            raw_vector_length: GPURead::read_gpu(&bytes[44..48])?,
             flags: GPURead::read_gpu(&bytes[48..64])?,
         })
     }
