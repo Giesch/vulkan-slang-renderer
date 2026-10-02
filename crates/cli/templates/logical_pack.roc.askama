@@ -1,0 +1,17 @@
+gpu_size : U32
+gpu_size = {{ size }}
+
+to_bytes : {{ name }} -> List(U8)
+to_bytes = |value|
+{%- if fields.is_empty() %}
+    ShaderReflection.pack(gpu_size.to_u64(), [])
+{%- else %}
+    ShaderReflection.pack(
+        gpu_size.to_u64(),
+        [
+{%- for field in fields %}
+            ({{ field.offset }}, {{ field.expr }}),
+{%- endfor %}
+        ],
+    )
+{%- endif %}
