@@ -1,5 +1,44 @@
 use crate::generated::readback_compute::{ReadbackOutput, ReadbackTag};
+use crate::generated::{std140_vec3_padding, std430_vec3_padding};
 use crate::renderer::gpu_read::GPURead;
+
+/// `float3 a; float b; float3 c; float d;` with a distinct value in every
+/// 4-byte slot, so a decoder that reads a neighbouring slot gets a wrong value.
+fn packed_vec3_bytes() -> Vec<u8> {
+    [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect()
+}
+
+#[test]
+fn packed_vec3_fields_decode_from_their_own_twelve_bytes() {
+    let bytes = packed_vec3_bytes();
+
+    let std430 = std430_vec3_padding::Vec3Data::read_gpu(&bytes).unwrap();
+    assert_eq!(std430.a, glam::vec3(1.0, 2.0, 3.0));
+    assert_eq!(std430.b, 4.0);
+    assert_eq!(std430.c, glam::vec3(5.0, 6.0, 7.0));
+    assert_eq!(std430.d, 8.0);
+
+    let std140 = std140_vec3_padding::Vec3Data::read_gpu(&bytes).unwrap();
+    assert_eq!(std140.a, glam::vec3(1.0, 2.0, 3.0));
+    assert_eq!(std140.b, 4.0);
+    assert_eq!(std140.c, glam::vec3(5.0, 6.0, 7.0));
+    assert_eq!(std140.d, 8.0);
+}
+
+#[test]
+fn packed_vec3_readback_rejects_wrong_lengths() {
+    assert_eq!(std430_vec3_padding::Vec3Data::GPU_SIZE, 32);
+    assert_eq!(std140_vec3_padding::Vec3Data::GPU_SIZE, 32);
+    let mut bytes = packed_vec3_bytes();
+    bytes.push(0);
+    for length in [0, 12, 31, 33] {
+        assert!(std430_vec3_padding::Vec3Data::read_gpu(&bytes[..length]).is_err());
+        assert!(std140_vec3_padding::Vec3Data::read_gpu(&bytes[..length]).is_err());
+    }
+}
 
 fn output_bytes() -> Vec<u8> {
     let mut bytes = vec![0xab; 160];
