@@ -1374,7 +1374,13 @@ impl GeneratedStructDefinition {
                 } else {
                     let offset = field.offset.expect("readable field has reflected offset");
                     let end = offset + field.size.expect("readable field has reflected size");
-                    format!("{name}: GPURead::read_gpu(&bytes[{offset}..{end}])?,")
+                    if field.type_name == "glam::Vec3" {
+                        format!(
+                            "{name}: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[{offset}..{end}])?),"
+                        )
+                    } else {
+                        format!("{name}: GPURead::read_gpu(&bytes[{offset}..{end}])?,")
+                    }
                 }
             })
             .collect()
@@ -2043,8 +2049,9 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
 /// Only types with a supported, wholly data-only representation get a decoder.
 /// Resolve nested types before splitting definitions into shared modules.
 fn mark_readable_structs(defs: &mut GeneratedTypeDefs) {
-    // Match the runtime GPURead codecs. Three-component vectors are excluded:
-    // their packed field size is 12 bytes, but their storage array stride is 16.
+    // Match the runtime GPURead codecs. A packed Vec3 field is decoded below
+    // from exactly 12 bytes; Vec3 arrays remain excluded because their std430
+    // element stride is 16 bytes.
     let mut readable: HashSet<String> = [
         "f32",
         "i32",
@@ -2077,7 +2084,8 @@ fn mark_readable_structs(defs: &mut GeneratedTypeDefs) {
                         .is_some_and(|(offset, length)| {
                             offset.checked_add(length).is_some_and(|end| end <= size)
                         })
-                        && readable.contains(graph_field_element_type(&field.type_name)))
+                        && (readable.contains(graph_field_element_type(&field.type_name))
+                            || (field.type_name == "glam::Vec3" && field.size == Some(12))))
             }) {
                 def.gpu_read = true;
                 readable.insert(def.type_name.clone());
@@ -2738,7 +2746,7 @@ mod tests {
     }
 
     #[test]
-    fn readback_excludes_three_component_vectors_transitively() {
+    fn readback_accepts_packed_vec3_fields_but_excludes_vec3_arrays() {
         let mut defs = GeneratedTypeDefs::default();
         for (name, ty, field_size, size) in [
             ("Outer", "Float3", 16, 16),
@@ -2767,7 +2775,7 @@ mod tests {
             .filter(|def| def.gpu_read)
             .map(|def| def.type_name.as_str())
             .collect();
-        assert_eq!(readable, ["Float4"]);
+        assert_eq!(readable, ["Outer", "Float3", "Float4"]);
     }
 
     // Tests for std140 and std430 alignment edge cases

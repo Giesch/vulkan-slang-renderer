@@ -27,3 +27,21 @@ const _: () = assert!(std::mem::offset_of!(Cube, position) == 0);
 const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 const _: () = assert!(std::mem::offset_of!(Cube, radii) == 16);
 const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+
+impl GPURead for Cube {
+    const GPU_SIZE: usize = 32;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for Cube"
+        );
+
+        Ok(Self {
+            position: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[0..12])?),
+            _padding_0: [0; 4],
+            radii: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[16..28])?),
+            _padding_1: [0; 4],
+        })
+    }
+}

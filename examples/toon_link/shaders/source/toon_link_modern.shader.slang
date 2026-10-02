@@ -2,6 +2,7 @@
 
 module toon_link_modern;
 import mltrs;
+import skinning;
 
 ParameterBlock<ModernParams> params;
 
@@ -35,6 +36,10 @@ struct ModernParams {
     Sampler2D.Handle rampTexture;
     ModernRamp ramp;
     ModernDiagnostic diagnostic;
+    // The joint palette and per-vertex influences, indexed by SV_VertexID.
+    // Same deformation as the GameCube mode; see skinning.slang.
+    mltrs::ImmutableAddr<SkinJoint> palette;
+    mltrs::ImmutableAddr<VertexSkinning> skinning;
 }
 
 enum ModernRamp : uint {
@@ -65,10 +70,13 @@ struct ModernFragment {
 }
 
 [shader("vertex")]
-ModernFragment vertMain(ModernVertex vertex, uint drawIndex : SV_DrawIndex) {
+ModernFragment vertMain(ModernVertex vertex, uint vertexId : SV_VertexID, uint drawIndex : SV_DrawIndex) {
+    // Skin in model space before projection and before any shading input.
+    let skinned = SkinnedVertex(params.palette, params.skinning[vertexId], vertex.position, vertex.normal);
+
     return ModernFragment(
-        params.mvp.project(vertex.position),
-        params.mvp.rotateDirection(vertex.normal),
+        params.mvp.project(skinned.position),
+        params.mvp.rotateDirection(skinned.normal),
         vertex.uv0,
         drawIndex
     );
@@ -100,7 +108,9 @@ float4 fragMain(ModernFragment fragment) : SV_TARGET {
         albedo.rgb *= material.pupil.Sample(pupilUv).rgb;
     }
 
-    let normal = normalize(fragment.normal);
+    // Interpolation can cancel a nonzero vertex normal to zero. A zero normal
+    // shades as fully in shadow (every cosine is 0), never as NaN.
+    let normal = skinSafeNormalize(fragment.normal);
     let cosine = saturate(dot(normal, params.mainDirection.xyz));
     let secondaryCosine = params.controls.w > 0.0
         ? saturate(dot(normal, params.secondaryDirection.xyz))

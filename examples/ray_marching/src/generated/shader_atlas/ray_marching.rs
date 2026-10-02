@@ -94,6 +94,43 @@ pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<RayMarchingParams>,
 }
 
+impl GPURead for BoxRect {
+    const GPU_SIZE: usize = 96;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for BoxRect"
+        );
+
+        Ok(Self {
+            transform: GPURead::read_gpu(&bytes[0..64])?,
+            radii: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[64..76])?),
+            _padding_0: [0; 4],
+            color: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[80..92])?),
+            _padding_1: [0; 4],
+        })
+    }
+}
+
+impl GPURead for Sphere {
+    const GPU_SIZE: usize = 32;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for Sphere"
+        );
+
+        Ok(Self {
+            center: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[0..12])?),
+            radius: GPURead::read_gpu(&bytes[12..16])?,
+            color: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[16..28])?),
+            _padding_0: [0; 4],
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RayMarchingParamsData {
     pub camera: RayMarchCamera,
