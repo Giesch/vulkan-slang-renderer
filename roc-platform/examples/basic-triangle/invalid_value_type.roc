@@ -14,7 +14,7 @@ G : Graphs.ValidatedGraph((Mltrs.MvpMatrices, Mltrs.MvpMatrices))
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-graphs = Graphs.or_crash(Graphs.single(render_graph))
+Ok(graphs) = Graphs.single(render_graph)
 
 init! : {} => Game.Init
 init! = |_| { window_title: "invalid values" }

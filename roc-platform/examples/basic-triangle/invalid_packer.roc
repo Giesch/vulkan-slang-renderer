@@ -11,7 +11,7 @@ import Generated/Mltrs
 
 G : Graphs.ValidatedGraph(Mltrs.MvpMatrices)
 
-graphs = Graphs.or_crash(Graphs.single(RenderGraph.draw_indexed(triangle)))
+Ok(graphs) = Graphs.single(RenderGraph.draw_indexed(triangle))
 
 game : Game
 game = Game.new({ init!, draw, graphs })
