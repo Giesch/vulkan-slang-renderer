@@ -564,7 +564,7 @@ pub(crate) fn validate(
                 errors.push(GraphError::UploadTargetKind {
                     upload: upload.name.clone(),
                     kind: match buffer.kind {
-                        BufferKind::GpuOnlyFlight => "gpu-only",
+                        BufferKind::GpuUpdatedFlight => "gpu-updated",
                         BufferKind::Singleton => "singleton",
                         _ => "buffer",
                     },
@@ -1279,9 +1279,9 @@ mod tests {
     }
 
     #[test]
-    fn upload_to_gpu_only_rejects() {
+    fn upload_to_gpu_updated_rejects() {
         let mut builder = DescBuilder::new(0);
-        let buffer = builder.buffer_decl(BufferKind::GpuOnlyFlight, Some(4));
+        let buffer = builder.buffer_decl(BufferKind::GpuUpdatedFlight, Some(4));
         let elem = builder.schemas.push(SchemaDesc {
             name: "elem".into(),
             size: 4,
@@ -1297,7 +1297,7 @@ mod tests {
 
         assert!(builder.errors().contains(&GraphError::UploadTargetKind {
             upload: "upload0".into(),
-            kind: "gpu-only",
+            kind: "gpu-updated",
         }));
     }
 

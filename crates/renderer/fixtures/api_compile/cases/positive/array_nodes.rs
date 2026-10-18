@@ -9,11 +9,11 @@
 use glam::Vec2;
 use mltrs_renderer::renderer::pipeline::{Compute, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, ComputePipelineKey, GpuOnlySlot, GraphNode, PreparedRenderGraph, StorageSlot,
+    ComputeNode, ComputePipelineKey, GpuUpdatedSlot, GraphNode, PreparedRenderGraph, CpuUpdatedSlot,
     UploadNode, dispatch, upload,
 };
 use mltrs_renderer::renderer::{
-    DrawError, FrameRenderer, GpuOnlyBufferHandle, StorageBufferHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, GpuUpdatedBufferHandle, CpuUpdatedBufferHandle, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -29,11 +29,11 @@ type Graph = (Sims, UploadNode<Particle>);
 fn graph(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
-    points: &StorageBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
+    points: &CpuUpdatedBufferHandle<Particle>,
 ) -> Graph {
     let sim_pipeline_key = ComputePipelineKey::from(sim_pipeline);
-    let slots = GpuOnlySlot::from(particles);
+    let slots = GpuUpdatedSlot::from(particles);
     let bindings = SimParamsBindings {
         particles_in: slots.previous(),
         particles_out: slots.current(),
@@ -43,7 +43,7 @@ fn graph(
         std::array::from_fn(|_| {
             dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(bindings)
         }),
-        upload(StorageSlot::from(points)),
+        upload(CpuUpdatedSlot::from(points)),
     )
 }
 

@@ -6,8 +6,9 @@ use glam::{Vec2, Vec4};
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, DrawError, DrawVertexCountNode, FrameRenderer, GpuOnlyBufferHandle, GpuOnlySlot,
-    PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, UniformBufferHandle,
+    ComputeNode, DrawError, DrawVertexCountNode, FrameRenderer, GpuUpdatedBufferHandle,
+    GpuUpdatedSlot, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
+    UniformBufferHandle,
     render_graph::{dispatch, draw_vertex_count},
 };
 
@@ -30,7 +31,7 @@ type ParticlesGraph = PreparedRenderGraph<(
 struct Particles {
     last_frame: Instant,
     graph: ParticlesGraph,
-    _particle_buffer: GpuOnlyBufferHandle<particle::Particle>,
+    _particle_buffer: GpuUpdatedBufferHandle<particle::Particle>,
     _sim_params_buffer: UniformBufferHandle<particles_compute::SimParams>,
     _render_params_buffer: UniformBufferHandle<particle_render::RenderParams>,
 }
@@ -54,14 +55,14 @@ impl Game for Particles {
         let initial_particles = create_initial_particles();
 
         let mut particle_buffer =
-            renderer.create_gpu_only_buffer::<particle::Particle>(NUM_PARTICLES)?;
+            renderer.create_gpu_updated_buffer::<particle::Particle>(NUM_PARTICLES)?;
 
         let sim_params_buffer = renderer.create_uniform_buffer::<particles_compute::SimParams>()?;
 
         let render_params_buffer =
             renderer.create_uniform_buffer::<particle_render::RenderParams>()?;
 
-        renderer.write_gpu_only_all_frames(&mut particle_buffer, &initial_particles);
+        renderer.write_gpu_updated_all_frames(&mut particle_buffer, &initial_particles);
 
         let compute_resources = particles_compute::Resources {
             sim_params_buffer: &sim_params_buffer,
@@ -79,7 +80,7 @@ impl Game for Particles {
         let workgroup_count = NUM_PARTICLES.div_ceil(workgroup_size);
         let vertex_count = NUM_PARTICLES * 6; // 6 vertices per particle quad
 
-        let particles = GpuOnlySlot::from(&particle_buffer);
+        let particles = GpuUpdatedSlot::from(&particle_buffer);
 
         let graph = RenderGraph::new(
             ResourcePlanner::new(),

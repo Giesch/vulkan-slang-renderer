@@ -82,8 +82,8 @@ fn storage_case(target: Option<UploadTarget>, succeeds: bool) {
     let graph = RenderGraph::new(
         ResourcePlanner::new(),
         (
-            upload(StorageSlot::<u32>::from_backend(0, 1)),
-            upload(StorageSlot::<u32>::from_backend(1, 1000)),
+            upload(CpuUpdatedSlot::<u32>::from_backend(0, 1)),
+            upload(CpuUpdatedSlot::<u32>::from_backend(1, 1000)),
         ),
     )
     .unwrap();

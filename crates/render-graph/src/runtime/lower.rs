@@ -192,13 +192,13 @@ impl LowerCtx {
                     BufferBindingKind::Storage => {
                         (BufferKind::Storage, SlotSel::Current, BufAccess::Mutate)
                     }
-                    BufferBindingKind::GpuOnlyCurrent => (
-                        BufferKind::GpuOnlyFlight,
+                    BufferBindingKind::GpuUpdatedCurrent => (
+                        BufferKind::GpuUpdatedFlight,
                         SlotSel::Current,
                         BufAccess::Mutate,
                     ),
-                    BufferBindingKind::GpuOnlyPrevious => (
-                        BufferKind::GpuOnlyFlight,
+                    BufferBindingKind::GpuUpdatedPrevious => (
+                        BufferKind::GpuUpdatedFlight,
                         SlotSel::Previous,
                         BufAccess::Read,
                     ),
@@ -898,10 +898,10 @@ mod tests {
         assert!(out.desc.values.iter().all(|value| value.optional));
     }
 
-    /// the two slots of one gpu-only buffer are one resource with two
+    /// the two slots of one GPU-updated buffer are one resource with two
     /// selectors, not two buffers
     #[test]
-    fn gpu_only_current_and_previous_intern_to_one_buffer() {
+    fn gpu_updated_current_and_previous_intern_to_one_buffer() {
         let mut cx = LowerCtx::new(vec![]);
         cx.dispatch(
             0,
@@ -909,8 +909,8 @@ mod tests {
             uni(
                 0,
                 vec![
-                    buf(BufferBindingKind::GpuOnlyPrevious, 3),
-                    buf(BufferBindingKind::GpuOnlyCurrent, 3),
+                    buf(BufferBindingKind::GpuUpdatedPrevious, 3),
+                    buf(BufferBindingKind::GpuUpdatedCurrent, 3),
                 ],
             ),
             None,
@@ -919,7 +919,7 @@ mod tests {
 
         assert_eq!(out.desc.buffers.len(), 1);
         assert_eq!(out.buffer_indices, vec![3]);
-        assert_eq!(out.desc.buffers[0].kind, BufferKind::GpuOnlyFlight);
+        assert_eq!(out.desc.buffers[0].kind, BufferKind::GpuUpdatedFlight);
         let slots: Vec<_> = uniform_refs(&out, UniformId(0))
             .into_iter()
             .map(|resource| match resource {
@@ -1282,8 +1282,8 @@ mod tests {
             uni(
                 0,
                 vec![
-                    buf(BufferBindingKind::GpuOnlyPrevious, 0),
-                    buf(BufferBindingKind::GpuOnlyCurrent, 0),
+                    buf(BufferBindingKind::GpuUpdatedPrevious, 0),
+                    buf(BufferBindingKind::GpuUpdatedCurrent, 0),
                 ],
             ),
             None,
@@ -1291,7 +1291,7 @@ mod tests {
         cx.draw(
             0,
             LowerDrawCall::VertexCount(4096),
-            uni(1, vec![buf(BufferBindingKind::GpuOnlyCurrent, 0)]),
+            uni(1, vec![buf(BufferBindingKind::GpuUpdatedCurrent, 0)]),
             None,
         );
         let out = cx.finish();

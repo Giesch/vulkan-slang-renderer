@@ -24,7 +24,7 @@ bytes. Before queueing graph work, the renderer validates every staged destinati
 against backend-owned liveness, mapping, upload access, and logical byte capacity.
 Uniform payload sizes must match exactly; storage payloads must fit. Allocation
 padding is not writable payload capacity. Forged slot metadata cannot authorize
-uploads to immutable/GPU-only storage or bypass these checks; rejection returns
+uploads to immutable/GPU-updated storage or bypass these checks; rejection returns
 `DrawError` without applying any writes, submitting, or committing graph state.
 The renderer applies writes after the flight-slot wait and preserves
 previously queued work. The submission callback commits texture cursors exactly
@@ -73,7 +73,7 @@ struct GameState {
 Construction inputs are graph-owned values. Typed adapters mint them from
 live renderer handles. Node constructors take `impl Into<Key>`, so a
 pipeline handle reference (`&pipeline`) converts at the call site. Mint
-buffer slots with `UniformSlot::from(&buffer)`, `StorageSlot::from(&buffer)`,
+buffer slots with `UniformSlot::from(&buffer)`, `CpuUpdatedSlot::from(&buffer)`,
 or `(&buffer).into()` inline. The keys are `Copy`. Each key carries the
 pipeline's family and push interface in its type. A vertex-count pipeline
 cannot drive an indexed draw. A push-constant pipeline cannot build a
@@ -201,12 +201,21 @@ slot before planning and returns an error identifying any dropped buffer.
 Keep these handles alive for the graph's lifetime, including buffers in skipped
 optional nodes.
 
+`CpuUpdatedBufferHandle<T>` permits CPU updates during frame execution;
+`GpuUpdatedBufferHandle<T>` is maintained by the GPU during frame execution.
+Both permit CPU initialization. These names describe update access, not memory
+placement: GPU-updated buffers also support synchronized diagnostic readback.
+Use `create_cpu_updated_buffer` / `create_gpu_updated_buffer` to allocate them,
+and `write_cpu_updated_all_frames` / `write_gpu_updated_all_frames` to initialize
+all flight slots. During frame updates, `Gpu::write_cpu_updated` writes the
+current CPU-updated slot.
+
 ```rust
-let points = StorageSlot::from(&stroke_points_buffer);
+let points = CpuUpdatedSlot::from(&stroke_points_buffer);
 points.addr()        // Addr<T> for the current flight slot
 points.read_addr()   // ReadAddr<T>
 
-let sim = GpuOnlySlot::from(&particle_buffer);
+let sim = GpuUpdatedSlot::from(&particle_buffer);
 sim.current()        // Addr<T>, current flight slot
 sim.previous()       // ReadAddr<T>, previous flight slot
 
@@ -215,14 +224,14 @@ table.addr_at(i)     // ImmutableAddr<T> of element i; bounds-checked here
 ```
 
 A shader field declared `ReadAddr<T>` takes a `ReadBufferBinding<T>`. Besides
-`read_addr()` (storage) and `previous()` (GPU-only), an immutable or singleton
+`read_addr()` (CPU-updated) and `previous()` (GPU-updated), an immutable or singleton
 buffer's `ImmutableBufferBinding<T>` converts with `.into()`: the binding keeps
 its immutable/singleton identity, so lowering still records the read-only
 access and the resolver still routes it to the immutable/singleton storage.
 `examples/ray_marching` binds its sphere singleton this way.
 
 `upload(slot)` is a node that copies a `Vec<T>` from the params tuple
-into the buffer each frame; the slot is a `StorageSlot<T>`, or the storage
+into the buffer each frame; the slot is a `CpuUpdatedSlot<T>`, or the storage
 buffer handle it is minted from. An oversized vector returns an error identifying
 the storage slot and capacity, before any staged writes reach GPU memory.
 
@@ -233,7 +242,7 @@ execution order. Compute nodes precede draw nodes. Pipelines and uniform
 buffers are created as usual; each constructor takes `impl Into<..>` for its
 pipeline and its buffers, so a handle reference passes directly. An explicit
 key or slot (`ComputePipelineKey::from(&pipeline)`,
-`StorageSlot::from(&buffer)`, …) is `Copy` and names one resource across many
+`CpuUpdatedSlot::from(&buffer)`, …) is `Copy` and names one resource across many
 nodes:
 
 ```rust

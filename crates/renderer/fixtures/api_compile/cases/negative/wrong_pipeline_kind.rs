@@ -8,7 +8,7 @@
 
 use mltrs_renderer::renderer::pipeline::{DrawVertexCount, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{DrawVertexCountKey, draw_indexed};
-use mltrs_renderer::renderer::{GpuOnlyBufferHandle, GpuOnlySlot, UniformBufferHandle};
+use mltrs_renderer::renderer::{GpuUpdatedBufferHandle, GpuUpdatedSlot, UniformBufferHandle};
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
 use render_graph_api_checks::generated::shader_atlas::render::{
@@ -18,13 +18,13 @@ use render_graph_api_checks::generated::shader_atlas::render::{
 fn wrong(
     render_pipeline: &PipelineHandle<DrawVertexCount, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
 ) {
     let _ = draw_indexed(
         DrawVertexCountKey::from(render_pipeline),
         render_params,
         RenderParamsBindings {
-            particles: GpuOnlySlot::from(particles).current().into(),
+            particles: GpuUpdatedSlot::from(particles).current().into(),
         },
     );
 }

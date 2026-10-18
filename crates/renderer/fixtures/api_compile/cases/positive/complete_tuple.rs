@@ -8,11 +8,11 @@
 
 use mltrs_renderer::renderer::pipeline::{Compute, DrawIndexed, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, ComputePipelineKey, DrawIndexedKey, DrawNode, GpuOnlySlot, PreparedRenderGraph,
+    ComputeNode, ComputePipelineKey, DrawIndexedKey, DrawNode, GpuUpdatedSlot, PreparedRenderGraph,
     RenderGraph, dispatch, draw_indexed,
 };
 use mltrs_renderer::renderer::{
-    DrawError, FrameRenderer, GpuOnlyBufferHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, GpuUpdatedBufferHandle, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -28,14 +28,14 @@ type Graph = (ComputeNode<SimParams>, DrawNode<RenderParams>);
 fn graph(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
     render_pipeline: &PipelineHandle<DrawIndexed, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
 ) -> Graph {
     let sim_pipeline_key = ComputePipelineKey::from(sim_pipeline);
     let render_pipeline_key = DrawIndexedKey::from(render_pipeline);
 
-    let slots = GpuOnlySlot::from(particles);
+    let slots = GpuUpdatedSlot::from(particles);
 
     (
         dispatch(sim_pipeline_key, sim_params, [1, 1, 1]).with_param_bindings(SimParamsBindings {

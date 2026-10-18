@@ -345,7 +345,7 @@ fn backend_upload_capacity_rejected() {
     let mut backend = Fake::default();
     let mut prepared = RenderGraph::new(
         ResourcePlanner::new(),
-        upload(StorageSlot::<u32>::from_backend(0, 1)),
+        upload(CpuUpdatedSlot::<u32>::from_backend(0, 1)),
     )
     .unwrap()
     .prepare(&mut backend)
@@ -479,10 +479,10 @@ struct Addresses;
 impl GraphBindingSet for Addresses {
     fn visit(&self, visit: &mut dyn FnMut(GraphBinding)) {
         visit(GraphBinding::Buffer(
-            GpuOnlySlot::<u32>::from_backend(2).current().erased(),
+            GpuUpdatedSlot::<u32>::from_backend(2).current().erased(),
         ));
         visit(GraphBinding::Buffer(
-            GpuOnlySlot::<u32>::from_backend(2).previous().erased(),
+            GpuUpdatedSlot::<u32>::from_backend(2).previous().erased(),
         ));
         visit(GraphBinding::Buffer(
             SingletonSlot::<u32>::from_backend(3, 4).addr_at(2).erased(),
@@ -506,13 +506,13 @@ impl GraphShaderParams for AddressParams {
     fn assemble_input(_: &Addresses, resolver: &BindingResolver<'_>) -> Self {
         assert_eq!(
             resolver
-                .buf(GpuOnlySlot::<u32>::from_backend(2).current())
+                .buf(GpuUpdatedSlot::<u32>::from_backend(2).current())
                 .to_raw(),
             1200
         );
         assert_eq!(
             resolver
-                .read_buf(GpuOnlySlot::<u32>::from_backend(2).previous())
+                .read_buf(GpuUpdatedSlot::<u32>::from_backend(2).previous())
                 .to_raw(),
             2200
         );

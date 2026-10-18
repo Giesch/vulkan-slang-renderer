@@ -7,7 +7,7 @@ use mltrs_renderer::renderer::pipeline::{Compute, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
     ComputeNode, ComputePipelineKey, RenderGraph, ResourcePlanner, dispatch,
 };
-use mltrs_renderer::renderer::{GpuOnlyBufferHandle, GpuOnlySlot, UniformBufferHandle};
+use mltrs_renderer::renderer::{GpuUpdatedBufferHandle, GpuUpdatedSlot, UniformBufferHandle};
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
 use render_graph_api_checks::generated::shader_atlas::sim_compute::{
@@ -25,9 +25,9 @@ fn wrong(
 fn build(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
 ) -> RenderGraph<(ComputeNode<SimParams>,)> {
-    let slots = GpuOnlySlot::from(particles);
+    let slots = GpuUpdatedSlot::from(particles);
     RenderGraph::new(
         ResourcePlanner::new(),
         (dispatch(

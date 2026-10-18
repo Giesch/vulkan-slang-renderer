@@ -9,7 +9,7 @@ use super::pipeline::{
     PickingPipelineHandle, PipelineHandle, PushBlock as RendererPushBlock,
 };
 use super::storage_buffer::{
-    GpuOnlyBufferHandle, ImmutableBufferHandle, SingletonBufferHandle, StorageBufferHandle,
+    CpuUpdatedBufferHandle, GpuUpdatedBufferHandle, ImmutableBufferHandle, SingletonBufferHandle,
 };
 use super::uniform_buffer::UniformBufferHandle;
 
@@ -18,13 +18,13 @@ impl<T> From<&UniformBufferHandle<T>> for UniformSlot<T> {
         Self::from_backend(handle.index())
     }
 }
-impl<T> From<&StorageBufferHandle<T>> for StorageSlot<T> {
-    fn from(handle: &StorageBufferHandle<T>) -> Self {
+impl<T> From<&CpuUpdatedBufferHandle<T>> for CpuUpdatedSlot<T> {
+    fn from(handle: &CpuUpdatedBufferHandle<T>) -> Self {
         Self::from_backend(handle.index(), handle.len())
     }
 }
-impl<T> From<&GpuOnlyBufferHandle<T>> for GpuOnlySlot<T> {
-    fn from(handle: &GpuOnlyBufferHandle<T>) -> Self {
+impl<T> From<&GpuUpdatedBufferHandle<T>> for GpuUpdatedSlot<T> {
+    fn from(handle: &GpuUpdatedBufferHandle<T>) -> Self {
         Self::from_backend(handle.index())
     }
 }

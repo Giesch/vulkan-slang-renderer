@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
     let pipeline = renderer.create_compute_pipeline(shader.pipeline_config(Resources {
         params_buffer: &params,
     }))?;
-    let output = renderer.create_gpu_only_buffer::<ReadbackOutput>(2)?;
+    let output = renderer.create_gpu_updated_buffer::<ReadbackOutput>(2)?;
     let values = renderer.dispatch_readback(&pipeline, &output, [2, 1, 1], |gpu, output| {
         gpu.write_uniform(
             &mut params,

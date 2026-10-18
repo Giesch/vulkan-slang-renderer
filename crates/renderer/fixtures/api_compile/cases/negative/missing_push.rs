@@ -6,9 +6,9 @@
 
 use mltrs_renderer::renderer::pipeline::{Compute, PipelineHandle, PushBlock};
 use mltrs_renderer::renderer::render_graph::{
-    ComputePipelineKey, RenderGraph, ResourcePlanner, StorageSlot, dispatch,
+    ComputePipelineKey, RenderGraph, ResourcePlanner, CpuUpdatedSlot, dispatch,
 };
-use mltrs_renderer::renderer::{StorageBufferHandle, UniformBufferHandle};
+use mltrs_renderer::renderer::{CpuUpdatedBufferHandle, UniformBufferHandle};
 
 use render_graph_api_checks::generated::shader_atlas::particle::OtherElement;
 use render_graph_api_checks::generated::shader_atlas::push_compute::{
@@ -18,7 +18,7 @@ use render_graph_api_checks::generated::shader_atlas::push_compute::{
 fn wrong(
     push_pipeline: &PipelineHandle<Compute, PushBlock<ScalePush>>,
     push_params: &UniformBufferHandle<ScaleParams>,
-    items: &StorageBufferHandle<OtherElement>,
+    items: &CpuUpdatedBufferHandle<OtherElement>,
 ) {
     let graph = RenderGraph::new(
         ResourcePlanner::new(),
@@ -28,7 +28,7 @@ fn wrong(
             [4, 1, 1],
         )
         .with_param_bindings(ScaleParamsBindings {
-            items: StorageSlot::from(items).addr(),
+            items: CpuUpdatedSlot::from(items).addr(),
         }),),
     )
     .unwrap();

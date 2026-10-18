@@ -5,9 +5,9 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph,
-    Renderer, ResourcePlanner, StorageBufferHandle, StorageSlot, UniformBufferHandle, UploadNode,
-    dispatch, draw_vertex_count, upload,
+    ComputeNode, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawVertexCountNode,
+    FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
+    UniformBufferHandle, UploadNode, dispatch, draw_vertex_count, upload,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -30,7 +30,7 @@ struct Recipes {
     /// The graph captured these buffers' slots at build time; the handles
     /// stay here to keep the buffers alive.
     _compute_params_buffer: UniformBufferHandle<recipes_compute::IngredientParams>,
-    _solution_buffer: StorageBufferHandle<shared::Solution>,
+    _solution_buffer: CpuUpdatedBufferHandle<shared::Solution>,
     _render_params_buffer: UniformBufferHandle<recipe_render::RenderParams>,
 }
 
@@ -46,8 +46,8 @@ impl Game for Recipes {
     where
         Self: Sized,
     {
-        let mut solution_buffer = renderer.create_storage_buffer::<shared::Solution>(1)?;
-        renderer.write_storage_all_frames(
+        let mut solution_buffer = renderer.create_cpu_updated_buffer::<shared::Solution>(1)?;
+        renderer.write_cpu_updated_all_frames(
             &mut solution_buffer,
             &[shared::Solution { maximum_score: 0 }],
         );
@@ -72,7 +72,7 @@ impl Game for Recipes {
         // 2. written by the compute pass, and
         // 3. read back by the render pass
         // in that order, every frame.
-        let solution = StorageSlot::from(&solution_buffer);
+        let solution = CpuUpdatedSlot::from(&solution_buffer);
         let graph = RenderGraph::new(
             ResourcePlanner::new(),
             (

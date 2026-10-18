@@ -7,17 +7,17 @@
 
 use glam::Vec2;
 use mltrs_renderer::renderer::render_graph::{
-    GraphNode, OptionalNode, PreparedRenderGraph, RenderGraph, StorageSlot, UploadNode, optional,
+    GraphNode, OptionalNode, PreparedRenderGraph, RenderGraph, CpuUpdatedSlot, UploadNode, optional,
     upload,
 };
-use mltrs_renderer::renderer::{DrawError, FrameRenderer, StorageBufferHandle};
+use mltrs_renderer::renderer::{DrawError, FrameRenderer, CpuUpdatedBufferHandle};
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
 
 type Graph = OptionalNode<UploadNode<Particle>>;
 
-fn graph(points: &StorageBufferHandle<Particle>) -> Graph {
-    optional(upload(StorageSlot::from(points)))
+fn graph(points: &CpuUpdatedBufferHandle<Particle>) -> Graph {
+    optional(upload(CpuUpdatedSlot::from(points)))
 }
 
 fn frame_contract() {

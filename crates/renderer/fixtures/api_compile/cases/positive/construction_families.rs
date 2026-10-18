@@ -14,12 +14,12 @@ use mltrs_renderer::renderer::pipeline::{
 };
 use mltrs_renderer::renderer::render_graph::{
     self, ComputeNode, ComputePipelineKey, DrawIndexedIndirectKey, DrawIndexedKey,
-    DrawVertexCountKey, DrawVertexCountNode, GraphShaderParams, StorageSlot, UniformSlot, dispatch,
+    DrawVertexCountKey, DrawVertexCountNode, GraphShaderParams, CpuUpdatedSlot, UniformSlot, dispatch,
     draw_index_range, draw_indexed, draw_indexed_indirect, draw_vertex_count,
 };
 use mltrs_renderer::renderer::{
-    DrawIndexedIndirectCommand, GpuOnlyBufferHandle, GpuOnlySlot, ImmutableBufferHandle,
-    ImmutableSlot, PickingCursor, Renderer, StorageBufferHandle, UniformBufferHandle,
+    DrawIndexedIndirectCommand, GpuUpdatedBufferHandle, GpuUpdatedSlot, ImmutableBufferHandle,
+    ImmutableSlot, PickingCursor, Renderer, CpuUpdatedBufferHandle, UniformBufferHandle,
 };
 
 fn upload_indirect_commands(
@@ -62,8 +62,8 @@ impl PickingCursor for Cursor {
     }
 }
 
-fn sim_bindings(particles: &GpuOnlyBufferHandle<Particle>) -> SimParamsBindings {
-    let slots = GpuOnlySlot::from(particles);
+fn sim_bindings(particles: &GpuUpdatedBufferHandle<Particle>) -> SimParamsBindings {
+    let slots = GpuUpdatedSlot::from(particles);
     SimParamsBindings {
         particles_in: slots.previous(),
         particles_out: slots.current(),
@@ -76,11 +76,11 @@ fn sim_bindings(particles: &GpuOnlyBufferHandle<Particle>) -> SimParamsBindings 
 fn no_push_families(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
     render_pipeline: &PipelineHandle<DrawVertexCount, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
     picking_pipeline: &PickingPipelineHandle,
-    storage: &StorageBufferHandle<Particle>,
+    storage: &CpuUpdatedBufferHandle<Particle>,
 ) {
     let _ =
         dispatch(sim_pipeline, sim_params, [4, 1, 1]).with_param_bindings(sim_bindings(particles));
@@ -89,10 +89,10 @@ fn no_push_families(
         render_params,
         6,
         RenderParamsBindings {
-            particles: GpuOnlySlot::from(particles).current().into(),
+            particles: GpuUpdatedSlot::from(particles).current().into(),
         },
     );
-    let _ = render_graph::upload(StorageSlot::from(storage));
+    let _ = render_graph::upload(CpuUpdatedSlot::from(storage));
     let _ = render_graph::picking::<Cursor>(picking_pipeline);
 }
 
@@ -100,7 +100,7 @@ fn no_push_families(
 fn logical_then_prepared(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
     render_pipeline: &PipelineHandle<DrawVertexCount, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
     renderer: &mut Renderer,
@@ -120,7 +120,7 @@ fn logical_then_prepared(
                 render_params,
                 6,
                 RenderParamsBindings {
-                    particles: GpuOnlySlot::from(particles).current().into(),
+                    particles: GpuUpdatedSlot::from(particles).current().into(),
                 },
             ),
         ),
@@ -134,13 +134,13 @@ fn logical_then_prepared(
 fn indexed_families(
     render_pipeline: &PipelineHandle<DrawIndexed, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
     indirect_pipeline: &PipelineHandle<DrawIndexedIndirect, NoPush>,
     indirect_params: &UniformBufferHandle<RenderParams>,
     args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
 ) {
     let bindings = RenderParamsBindings {
-        particles: GpuOnlySlot::from(particles).current().into(),
+        particles: GpuUpdatedSlot::from(particles).current().into(),
     };
     let _ = draw_indexed(render_pipeline, render_params, bindings);
     let _ = draw_index_range(
@@ -167,7 +167,7 @@ fn indexed_families(
 fn push_families(
     push_pipeline: &PipelineHandle<Compute, PushBlock<ScalePush>>,
     push_params: &UniformBufferHandle<ScaleParams>,
-    items: &StorageBufferHandle<OtherElement>,
+    items: &CpuUpdatedBufferHandle<OtherElement>,
     vertex_push_pipeline: &PipelineHandle<DrawVertexCount, PushBlock<ScalePush>>,
     vertex_push_params: &UniformBufferHandle<ScaleParams>,
     indexed_push_pipeline: &PipelineHandle<DrawIndexed, PushBlock<ScalePush>>,
@@ -176,7 +176,7 @@ fn push_families(
     indirect_push_params: &UniformBufferHandle<ScaleParams>,
     args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
 ) {
-    let items_addr = StorageSlot::from(items).addr();
+    let items_addr = CpuUpdatedSlot::from(items).addr();
     let push_input = || {
         ScalePush::input(
             &ScalePushData { factor: 2.0 },
