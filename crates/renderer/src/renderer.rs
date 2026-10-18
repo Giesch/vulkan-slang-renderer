@@ -65,15 +65,15 @@ pub mod render_graph;
 // GPU-data traits and graph push markers are exposed only under render_graph.
 pub use render_graph::{
     BindingResolver, BufferBinding, ComputeNode, ComputeNodeWithPush, ComputePipelineKey,
-    DrawIndexedIndirectCommand, DrawIndexedIndirectKey, DrawIndexedKey, DrawNode,
-    DrawVertexCountKey, DrawVertexCountNode, GpuOnlySlot, GraphBinding, GraphBindingSet,
+    CpuUpdatedSlot, DrawIndexedIndirectCommand, DrawIndexedIndirectKey, DrawIndexedKey, DrawNode,
+    DrawVertexCountKey, DrawVertexCountNode, GpuUpdatedSlot, GraphBinding, GraphBindingSet,
     GraphFormat, GraphNode, GraphParamBindingSet, GraphPipelinePush, GraphPush, GraphPushPayload,
     GraphShaderParams, GraphTex, ImmutableBufferBinding, ImmutableSlot, LoopCount, OptionalNode,
     PendingParamBindings, PendingPush, PickingCursor, PickingNode, PickingPipelineKey, PlanCtx,
     PreparedRenderGraph, PushValues, RawBufferBinding, ReadBufferBinding, RenderGraph, RepeatNode,
-    ResourcePlanner, SampledTexBinding, SingletonSlot, StorageSlot, StorageTexBinding, UniformSlot,
-    UploadNode, dispatch, draw_index_range, draw_indexed, draw_indexed_indirect, draw_vertex_count,
-    optional, picking, repeat, upload,
+    ResourcePlanner, SampledTexBinding, SingletonSlot, StorageTexBinding, UniformSlot, UploadNode,
+    dispatch, draw_index_range, draw_indexed, draw_indexed_indirect, draw_vertex_count, optional,
+    picking, repeat, upload,
 };
 
 pub mod egui;
@@ -1079,10 +1079,10 @@ impl Renderer {
         }
     }
 
-    pub fn create_storage_buffer<T: GPUWrite>(
+    pub fn create_cpu_updated_buffer<T: GPUWrite>(
         &mut self,
         len: u32,
-    ) -> anyhow::Result<StorageBufferHandle<T>> {
+    ) -> anyhow::Result<CpuUpdatedBufferHandle<T>> {
         let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
         Ok(self.storage_buffers.add(buffers_per_frame, len))
     }
@@ -1107,12 +1107,12 @@ impl Renderer {
         Ok(buffer)
     }
 
-    pub fn create_gpu_only_buffer<T: GPUWrite>(
+    pub fn create_gpu_updated_buffer<T: GPUWrite>(
         &mut self,
         len: u32,
-    ) -> anyhow::Result<GpuOnlyBufferHandle<T>> {
+    ) -> anyhow::Result<GpuUpdatedBufferHandle<T>> {
         let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
-        Ok(self.storage_buffers.add_gpu_only(buffers_per_frame, len))
+        Ok(self.storage_buffers.add_gpu_updated(buffers_per_frame, len))
     }
 
     pub fn create_singleton_buffer<T: GPUWrite>(
@@ -1198,7 +1198,11 @@ impl Renderer {
         self.singleton_buffers.element_addr(singleton_buffer, index)
     }
 
-    pub fn write_storage_all_frames<T>(&mut self, buf: &mut StorageBufferHandle<T>, data: &[T]) {
+    pub fn write_cpu_updated_all_frames<T>(
+        &mut self,
+        buf: &mut CpuUpdatedBufferHandle<T>,
+        data: &[T],
+    ) {
         debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
         for frame in 0..MAX_FRAMES_IN_FLIGHT {
@@ -1227,15 +1231,19 @@ impl Renderer {
         }
     }
 
-    /// setup-time initialization for a GPU-only buffer; the only CPU write
+    /// setup-time initialization for a GPU-updated buffer; the only CPU write
     /// path it has, safe because nothing is in flight yet
-    pub fn write_gpu_only_all_frames<T>(&mut self, buf: &mut GpuOnlyBufferHandle<T>, data: &[T]) {
+    pub fn write_gpu_updated_all_frames<T>(
+        &mut self,
+        buf: &mut GpuUpdatedBufferHandle<T>,
+        data: &[T],
+    ) {
         debug_assert!(data.len() <= buf.len() as usize);
         let len = data.len().min(buf.len() as usize);
         for frame in 0..MAX_FRAMES_IN_FLIGHT {
             let mapped = self
                 .storage_buffers
-                .get_mapped_mem_for_frame_gpu_only(buf, frame);
+                .get_mapped_mem_for_frame_gpu_updated(buf, frame);
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), mapped, len);
             }
@@ -1243,7 +1251,7 @@ impl Renderer {
     }
 
     #[expect(dead_code)]
-    fn drop_storage_buffer<T>(&mut self, storage_buffer: StorageBufferHandle<T>) {
+    fn drop_storage_buffer<T>(&mut self, storage_buffer: CpuUpdatedBufferHandle<T>) {
         let buffers_per_frame = self.storage_buffers.take(storage_buffer);
         for raw_storage_buffer in buffers_per_frame {
             self.destroy_storage_buffer(raw_storage_buffer);
@@ -1265,8 +1273,8 @@ impl Renderer {
     }
 
     #[expect(dead_code)]
-    fn drop_gpu_only_buffer<T>(&mut self, gpu_only_buffer: GpuOnlyBufferHandle<T>) {
-        let buffers_per_frame = self.storage_buffers.take_gpu_only(gpu_only_buffer);
+    fn drop_gpu_updated_buffer<T>(&mut self, gpu_updated_buffer: GpuUpdatedBufferHandle<T>) {
+        let buffers_per_frame = self.storage_buffers.take_gpu_updated(gpu_updated_buffer);
         for raw_storage_buffer in buffers_per_frame {
             self.destroy_storage_buffer(raw_storage_buffer);
         }
@@ -2793,7 +2801,7 @@ impl Renderer {
     pub fn dispatch_readback<T: gpu_read::GPURead + GPUWrite, P: PushConstantBlock>(
         &mut self,
         pipeline: &PipelineHandle<Compute, PushBlock<P>>,
-        output: &GpuOnlyBufferHandle<T>,
+        output: &GpuUpdatedBufferHandle<T>,
         group_count: [u32; 3],
         prepare: impl FnOnce(&mut Gpu<'_>, Addr<T>) -> P,
     ) -> anyhow::Result<Vec<T>> {
@@ -5827,7 +5835,11 @@ impl<'f> Gpu<'f> {
         *mapped_mem = data;
     }
 
-    pub fn write_storage<T>(&mut self, storage_buffer: &mut StorageBufferHandle<T>, data: &[T]) {
+    pub fn write_cpu_updated<T>(
+        &mut self,
+        storage_buffer: &mut CpuUpdatedBufferHandle<T>,
+        data: &[T],
+    ) {
         debug_assert!(data.len() <= storage_buffer.len() as usize);
         let len_to_copy = data.len().min(storage_buffer.len() as usize);
 
@@ -5858,7 +5870,7 @@ impl<'f> Gpu<'f> {
     }
 
     /// A pointer to the current frame's buffer
-    pub fn addr<T>(&self, storage_buffer: &StorageBufferHandle<T>) -> Addr<T> {
+    pub fn addr<T>(&self, storage_buffer: &CpuUpdatedBufferHandle<T>) -> Addr<T> {
         Addr::from_raw(
             self.storage_buffers
                 .get_device_address_for_frame(storage_buffer, self.flight_slot),
@@ -5867,24 +5879,24 @@ impl<'f> Gpu<'f> {
 
     /// A pointer to the current frame's ping-pong buffer
     ///
-    /// We distinguish between current and previous only for gpu-only buffers,
+    /// We distinguish between current and previous only for GPU-updated buffers,
     /// as these are the only ones that can read the previous frame's output.
-    pub fn current_addr<T>(&self, gpu_only_buffer: &GpuOnlyBufferHandle<T>) -> Addr<T> {
+    pub fn current_addr<T>(&self, gpu_updated_buffer: &GpuUpdatedBufferHandle<T>) -> Addr<T> {
         Addr::from_raw(
             self.storage_buffers
-                .get_device_address_for_frame_gpu_only(gpu_only_buffer, self.flight_slot),
+                .get_device_address_for_frame_gpu_updated(gpu_updated_buffer, self.flight_slot),
         )
     }
 
     /// A pointer to the previous frame's ping-pong buffer
     ///
-    /// We distinguish between current and previous only for gpu-only buffers,
+    /// We distinguish between current and previous only for GPU-updated buffers,
     /// as these are the only ones that can read the previous frame's output.
-    pub fn previous_addr<T>(&self, gpu_only_buffer: &GpuOnlyBufferHandle<T>) -> ReadAddr<T> {
+    pub fn previous_addr<T>(&self, gpu_updated_buffer: &GpuUpdatedBufferHandle<T>) -> ReadAddr<T> {
         let prev_frame = (self.flight_slot + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
         ReadAddr::from_raw(
             self.storage_buffers
-                .get_device_address_for_frame_gpu_only(gpu_only_buffer, prev_frame),
+                .get_device_address_for_frame_gpu_updated(gpu_updated_buffer, prev_frame),
         )
     }
 

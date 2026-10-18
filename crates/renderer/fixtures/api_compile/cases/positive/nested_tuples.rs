@@ -10,12 +10,12 @@
 use glam::Vec2;
 use mltrs_renderer::renderer::pipeline::{Compute, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, ComputePipelineKey, GpuOnlySlot, GraphFormat, GraphNode, LoopCount, OptionalNode,
-    PreparedRenderGraph, RenderGraph, RepeatNode, ResourcePlanner, StorageSlot, UploadNode,
+    ComputeNode, ComputePipelineKey, GpuUpdatedSlot, GraphFormat, GraphNode, LoopCount, OptionalNode,
+    PreparedRenderGraph, RenderGraph, RepeatNode, ResourcePlanner, CpuUpdatedSlot, UploadNode,
     dispatch, optional, repeat, upload,
 };
 use mltrs_renderer::renderer::{
-    DrawError, FrameRenderer, GpuOnlyBufferHandle, StorageBufferHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, GpuUpdatedBufferHandle, CpuUpdatedBufferHandle, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -41,15 +41,15 @@ fn graph(
     resources: &mut ResourcePlanner,
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
     tex_pipeline: &PipelineHandle<Compute, NoPush>,
     tex_params: &UniformBufferHandle<TexParams>,
-    points: &StorageBufferHandle<Particle>,
+    points: &CpuUpdatedBufferHandle<Particle>,
 ) -> Graph {
     let sim_pipeline_key = ComputePipelineKey::from(sim_pipeline);
     let tex_pipeline_key = ComputePipelineKey::from(tex_pipeline);
 
-    let slots = GpuOnlySlot::from(particles);
+    let slots = GpuUpdatedSlot::from(particles);
     let height_in = resources.texture("height_in", 8, 8, GraphFormat::R32Float);
     let height_out = resources.texture("height_out", 8, 8, GraphFormat::R32Float);
 
@@ -61,7 +61,7 @@ fn graph(
                     particles_out: slots.current(),
                 },
             ),
-            upload(StorageSlot::from(points)),
+            upload(CpuUpdatedSlot::from(points)),
         ),
         (
             repeat(
@@ -72,7 +72,7 @@ fn graph(
                     },
                 ),
             ),
-            optional(upload(StorageSlot::from(points))),
+            optional(upload(CpuUpdatedSlot::from(points))),
         ),
     )
 }

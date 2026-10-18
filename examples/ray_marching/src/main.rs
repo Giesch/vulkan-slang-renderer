@@ -8,9 +8,9 @@ use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
-    ResourcePlanner, SingletonBufferHandle, SingletonSlot, StorageBufferHandle, StorageSlot,
-    UniformBufferHandle, UploadNode, draw_vertex_count, upload,
+    CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawVertexCountNode, FrameRenderer,
+    PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, SingletonBufferHandle,
+    SingletonSlot, UniformBufferHandle, UploadNode, draw_vertex_count, upload,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -40,7 +40,7 @@ struct RayMarching {
     _spheres_buffer: SingletonBufferHandle<Sphere>,
     /// The graph uploads into this buffer every frame; the handle stays here
     /// to keep the buffer alive.
-    _boxes_buffer: StorageBufferHandle<BoxRect>,
+    _boxes_buffer: CpuUpdatedBufferHandle<BoxRect>,
     spheres: Vec<Sphere>,
     boxes: Vec<BoxRect>,
     intent: Intent,
@@ -70,7 +70,7 @@ impl Game for RayMarching {
 
         let params_buffer = renderer.create_uniform_buffer::<RayMarchingParams>()?;
         let spheres_buffer = renderer.create_singleton_buffer(&spheres)?;
-        let boxes_buffer = renderer.create_storage_buffer::<BoxRect>(SHAPE_BUFFER_SIZE)?;
+        let boxes_buffer = renderer.create_cpu_updated_buffer::<BoxRect>(SHAPE_BUFFER_SIZE)?;
         let resources = Resources {
             params_buffer: &params_buffer,
         };
@@ -97,7 +97,7 @@ impl Game for RayMarching {
 
         let bindings = RayMarchingParamsBindings {
             spheres: SingletonSlot::from(&spheres_buffer).addr().into(),
-            boxes: StorageSlot::from(&boxes_buffer).read_addr(),
+            boxes: CpuUpdatedSlot::from(&boxes_buffer).read_addr(),
         };
 
         let graph = RenderGraph::new(

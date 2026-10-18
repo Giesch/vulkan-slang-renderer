@@ -13,9 +13,9 @@ use glam::{Vec2, Vec3, Vec4};
 use mltrs::editor::{Label, Slider};
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, ComputeNodeWithPush, DrawError, DrawVertexCountNode, FrameRenderer, GraphFormat,
-    LoopCount, OptionalNode, PreparedRenderGraph, RenderGraph, Renderer, RepeatNode,
-    ResourcePlanner, StorageBufferHandle, StorageSlot, StorageTextureHandle, TextureHandle,
+    ComputeNode, ComputeNodeWithPush, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError,
+    DrawVertexCountNode, FrameRenderer, GraphFormat, LoopCount, OptionalNode, PreparedRenderGraph,
+    RenderGraph, Renderer, RepeatNode, ResourcePlanner, StorageTextureHandle, TextureHandle,
     UniformBufferHandle, UploadNode, optional,
     render_graph::{dispatch, draw_vertex_count},
     repeat, upload,
@@ -98,7 +98,7 @@ struct Watercolor {
 
     // The graph holds slots into these buffers; the handles stay here for
     // eventual cleanup.
-    _stroke_points_buffer: StorageBufferHandle<paint_brush_compute::StrokePoint>,
+    _stroke_points_buffer: CpuUpdatedBufferHandle<paint_brush_compute::StrokePoint>,
     _brush_params_buffer: UniformBufferHandle<paint_brush_compute::BrushParams>,
     _display_params_buffer: UniformBufferHandle<paint_display::DisplayParams>,
     _update_vel_params_buffer: UniformBufferHandle<wc_update_velocity_compute::Params>,
@@ -359,7 +359,7 @@ impl Game for Watercolor {
 
         // Create buffers
         let stroke_points_buffer = renderer
-            .create_storage_buffer::<paint_brush_compute::StrokePoint>(
+            .create_cpu_updated_buffer::<paint_brush_compute::StrokePoint>(
                 MAX_STROKE_POINTS_PER_FRAME,
             )?;
         let brush_params_buffer =
@@ -466,7 +466,7 @@ impl Game for Watercolor {
         ))?;
 
         let paper = paper_height_sampled.bindless_handle();
-        let stroke_points = StorageSlot::from(&stroke_points_buffer);
+        let stroke_points = CpuUpdatedSlot::from(&stroke_points_buffer);
 
         let graph = RenderGraph::new(
             res,

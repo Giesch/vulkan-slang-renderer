@@ -59,7 +59,7 @@ pub(crate) struct BufferDecl {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum BufferKind {
-    GpuOnlyFlight,
+    GpuUpdatedFlight,
     Singleton,
     Immutable,
     Storage,

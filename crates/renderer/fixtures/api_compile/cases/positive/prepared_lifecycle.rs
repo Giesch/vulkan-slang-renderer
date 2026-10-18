@@ -13,7 +13,7 @@ use mltrs_renderer::renderer::render_graph::{
     RenderGraph, ResourcePlanner, dispatch, draw_vertex_count,
 };
 use mltrs_renderer::renderer::{
-    DrawError, FrameRenderer, GpuOnlyBufferHandle, GpuOnlySlot, Renderer, UniformBufferHandle,
+    DrawError, FrameRenderer, GpuUpdatedBufferHandle, GpuUpdatedSlot, Renderer, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -30,11 +30,11 @@ pub type Graph = (ComputeNode<SimParams>, DrawVertexCountNode<RenderParams>);
 fn logical_construction(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
     render_pipeline: &PipelineHandle<DrawVertexCount, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
 ) -> RenderGraph<Graph> {
-    let slots = GpuOnlySlot::from(particles);
+    let slots = GpuUpdatedSlot::from(particles);
     RenderGraph::new(
         ResourcePlanner::new(),
         (

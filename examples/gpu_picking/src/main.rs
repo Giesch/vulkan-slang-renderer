@@ -5,8 +5,8 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PickingPipelineHandle, PipelineHandle, Renderer,
-    StorageBufferHandle, UniformBufferHandle,
+    CpuUpdatedBufferHandle, DrawError, DrawVertexCount, FrameRenderer, PickingPipelineHandle,
+    PipelineHandle, Renderer, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -23,7 +23,7 @@ const MAX_CUBES: u32 = 256;
 struct GpuPicking {
     params_buffer: UniformBufferHandle<GpuPickingParams>,
     picking_params_buffer: UniformBufferHandle<gpu_picking_id::GpuPickingIdParams>,
-    cubes_buffer: StorageBufferHandle<Cube>,
+    cubes_buffer: CpuUpdatedBufferHandle<Cube>,
     pipeline: PipelineHandle<DrawVertexCount>,
     picking_pipeline: PickingPipelineHandle,
     cubes: Vec<Cube>,
@@ -42,7 +42,7 @@ impl Game for GpuPicking {
     fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
         // Visual shader pipeline
         let params_buffer = renderer.create_uniform_buffer::<GpuPickingParams>()?;
-        let cubes_buffer = renderer.create_storage_buffer::<Cube>(MAX_CUBES)?;
+        let cubes_buffer = renderer.create_cpu_updated_buffer::<Cube>(MAX_CUBES)?;
         let visual_resources = Resources {
             params_buffer: &params_buffer,
         };
@@ -116,7 +116,7 @@ impl Game for GpuPicking {
                     cubes: gpu.addr(&self.cubes_buffer).into(),
                 };
                 gpu.write_uniform(&mut self.params_buffer, picking_params);
-                gpu.write_storage(&mut self.cubes_buffer, &self.cubes);
+                gpu.write_cpu_updated(&mut self.cubes_buffer, &self.cubes);
 
                 let picking_id_params = gpu_picking_id::GpuPickingIdParams {
                     camera,

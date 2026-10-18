@@ -2214,7 +2214,7 @@ fn shared_imports_for_shader(
         for field in &def.fields {
             for (module_name, module) in shared_modules {
                 for module_def in &module.struct_defs {
-                    // Check exact match or contained within generic type (e.g., StorageBufferHandle<Cube>)
+                    // Check exact match or contained within generic type (e.g., CpuUpdatedBufferHandle<Cube>)
                     if field.type_name == module_def.type_name
                         || field.type_name.contains(&module_def.type_name)
                     {

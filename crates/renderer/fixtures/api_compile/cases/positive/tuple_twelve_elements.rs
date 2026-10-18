@@ -6,10 +6,10 @@
 
 use mltrs_renderer::renderer::pipeline::{Compute, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, ComputePipelineKey, GpuOnlySlot, GraphNode, PreparedRenderGraph, dispatch,
+    ComputeNode, ComputePipelineKey, GpuUpdatedSlot, GraphNode, PreparedRenderGraph, dispatch,
 };
 use mltrs_renderer::renderer::{
-    DrawError, FrameRenderer, GpuOnlyBufferHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, GpuUpdatedBufferHandle, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -36,10 +36,10 @@ type Graph = (
 fn graph(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
-    particles: &GpuOnlyBufferHandle<Particle>,
+    particles: &GpuUpdatedBufferHandle<Particle>,
 ) -> Graph {
     let sim_pipeline_key = ComputePipelineKey::from(sim_pipeline);
-    let slots = GpuOnlySlot::from(particles);
+    let slots = GpuUpdatedSlot::from(particles);
     let bindings = SimParamsBindings {
         particles_in: slots.previous(),
         particles_out: slots.current(),

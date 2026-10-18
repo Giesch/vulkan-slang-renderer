@@ -863,7 +863,7 @@ mod tests {
         let skin_buffer = renderer.create_singleton_buffer(&records).expect("skin");
         let case_buffer = renderer.create_singleton_buffer(&cases).expect("cases");
         let output = renderer
-            .create_gpu_only_buffer::<OracleOutput>(case_count)
+            .create_gpu_updated_buffer::<OracleOutput>(case_count)
             .expect("output");
         let params_data = SkinningOracleParams {
             palette: renderer.singleton_addr(&palette_buffer),

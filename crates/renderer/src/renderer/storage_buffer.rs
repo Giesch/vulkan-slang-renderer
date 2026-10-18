@@ -6,15 +6,18 @@ use ash::vk;
 use super::MAX_FRAMES_IN_FLIGHT;
 use super::addr::ImmutableAddr;
 
+/// A storage buffer the CPU can update during frame execution.
+///
+/// Shader access is read-write; the name describes CPU update access, not memory placement.
 #[derive(Debug)]
-pub struct StorageBufferHandle<T> {
+pub struct CpuUpdatedBufferHandle<T> {
     index: usize,
     len: u32,
     _phantom_data: PhantomData<T>,
 }
 
 #[expect(clippy::len_without_is_empty)] // vulkan does not allow allocating an empty buffer
-impl<T> StorageBufferHandle<T> {
+impl<T> CpuUpdatedBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
@@ -91,16 +94,17 @@ impl<T> SingletonBufferHandle<T> {
 /// hazard the frame_timeline wait does not cover. It is ordered by the barrier
 /// at the top of every command buffer instead; see `record_command_buffer`.
 ///
-/// Initialize with `Renderer::write_gpu_only_all_frames`.
+/// Initialize with `Renderer::write_gpu_updated_all_frames`.
+/// Synchronized diagnostic readback is supported; this is not a memory-placement guarantee.
 #[derive(Debug)]
-pub struct GpuOnlyBufferHandle<T> {
+pub struct GpuUpdatedBufferHandle<T> {
     index: usize,
     len: u32,
     _phantom_data: PhantomData<T>,
 }
 
 #[expect(clippy::len_without_is_empty)] // vulkan does not allow allocating an empty buffer
-impl<T> GpuOnlyBufferHandle<T> {
+impl<T> GpuUpdatedBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
@@ -113,7 +117,7 @@ impl<T> GpuOnlyBufferHandle<T> {
 pub(super) struct RawStorageBuffer {
     pub(super) buffer: vk::Buffer,
     pub(super) byte_size: u64,
-    /// Set only when registered as CPU-writable storage, never for immutable/GPU-only handles.
+    /// Set only for CPU-updated storage, never for immutable/GPU-updated handles.
     pub(super) graph_upload: bool,
     pub(super) allocation: vk_mem::Allocation,
     /// cached from the persistently-mapped allocation's info
@@ -130,7 +134,7 @@ impl StorageBufferStorage {
     pub(super) fn readback_buffer<T>(
         &self,
         // GPU-written output; CPU readback is synchronized by dispatch_readback.
-        handle: &GpuOnlyBufferHandle<T>,
+        handle: &GpuUpdatedBufferHandle<T>,
         frame: usize,
     ) -> &RawStorageBuffer {
         &self.0[handle.index].as_ref().unwrap()[frame]
@@ -148,12 +152,12 @@ impl StorageBufferStorage {
         &mut self,
         buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
-    ) -> StorageBufferHandle<T> {
+    ) -> CpuUpdatedBufferHandle<T> {
         let buffers_per_frame = buffers_per_frame.map(|mut raw| {
             raw.graph_upload = true;
             raw
         });
-        let handle = StorageBufferHandle {
+        let handle = CpuUpdatedBufferHandle {
             index: self.0.len(),
             len,
             _phantom_data: PhantomData::<T>,
@@ -166,7 +170,7 @@ impl StorageBufferStorage {
 
     pub(super) fn get_device_address_for_frame<T>(
         &self,
-        handle: &StorageBufferHandle<T>,
+        handle: &CpuUpdatedBufferHandle<T>,
         frame: usize,
     ) -> vk::DeviceAddress {
         self.0[handle.index].as_ref().unwrap()[frame].device_address
@@ -174,7 +178,7 @@ impl StorageBufferStorage {
 
     pub(super) fn get_mapped_mem_for_frame<T>(
         &mut self,
-        handle: &mut StorageBufferHandle<T>,
+        handle: &mut CpuUpdatedBufferHandle<T>,
         frame: usize,
     ) -> *mut T {
         let raw_storage_buffer = &mut self.0[handle.index].as_mut().unwrap()[frame];
@@ -184,7 +188,7 @@ impl StorageBufferStorage {
     #[expect(dead_code)]
     pub fn take<T>(
         &mut self,
-        handle: StorageBufferHandle<T>,
+        handle: CpuUpdatedBufferHandle<T>,
     ) -> [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT] {
         self.0[handle.index].take().unwrap()
     }
@@ -280,19 +284,19 @@ impl StorageBufferStorage {
         self.0[handle.index].take().unwrap()
     }
 
-    // GPU-only buffers also share this storage; their handle type is what
+    // GPU-updated buffers also share this storage; their handle type is what
     // keeps them out of Gpu's per-frame CPU write methods.
 
-    pub fn add_gpu_only<T>(
+    pub fn add_gpu_updated<T>(
         &mut self,
         buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
-    ) -> GpuOnlyBufferHandle<T> {
+    ) -> GpuUpdatedBufferHandle<T> {
         let buffers_per_frame = buffers_per_frame.map(|mut raw| {
             raw.graph_upload = false;
             raw
         });
-        let handle = GpuOnlyBufferHandle {
+        let handle = GpuUpdatedBufferHandle {
             index: self.0.len(),
             len,
             _phantom_data: PhantomData::<T>,
@@ -303,17 +307,17 @@ impl StorageBufferStorage {
         handle
     }
 
-    pub(super) fn get_device_address_for_frame_gpu_only<T>(
+    pub(super) fn get_device_address_for_frame_gpu_updated<T>(
         &self,
-        handle: &GpuOnlyBufferHandle<T>,
+        handle: &GpuUpdatedBufferHandle<T>,
         frame: usize,
     ) -> vk::DeviceAddress {
         self.0[handle.index].as_ref().unwrap()[frame].device_address
     }
 
-    pub(super) fn get_mapped_mem_for_frame_gpu_only<T>(
+    pub(super) fn get_mapped_mem_for_frame_gpu_updated<T>(
         &mut self,
-        handle: &mut GpuOnlyBufferHandle<T>,
+        handle: &mut GpuUpdatedBufferHandle<T>,
         frame: usize,
     ) -> *mut T {
         let raw_storage_buffer = &mut self.0[handle.index].as_mut().unwrap()[frame];
@@ -321,9 +325,9 @@ impl StorageBufferStorage {
     }
 
     #[expect(dead_code)]
-    pub fn take_gpu_only<T>(
+    pub fn take_gpu_updated<T>(
         &mut self,
-        handle: GpuOnlyBufferHandle<T>,
+        handle: GpuUpdatedBufferHandle<T>,
     ) -> [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT] {
         self.0[handle.index].take().unwrap()
     }

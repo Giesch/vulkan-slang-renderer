@@ -11,8 +11,8 @@ use mltrs::game::*;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, RasterState, Renderer,
-    StorageBufferHandle, TextureFilter, TextureHandle, UniformBufferHandle,
+    CpuUpdatedBufferHandle, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, RasterState,
+    Renderer, TextureFilter, TextureHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -26,8 +26,8 @@ struct SpaceInvaders {
     frame_counter: usize,
     pipeline: PipelineHandle<DrawVertexCount>,
     params_buffer: UniformBufferHandle<SpaceInvadersParams>,
-    sprites_buffer: StorageBufferHandle<Sprite>,
-    debug_boxes_buffer: StorageBufferHandle<DebugBox>,
+    sprites_buffer: CpuUpdatedBufferHandle<Sprite>,
+    debug_boxes_buffer: CpuUpdatedBufferHandle<DebugBox>,
     sprites: Vec<Sprite>,
     sprite_sheet_texture: TextureHandle,
     debug_boxes: Vec<DebugBox>,
@@ -157,8 +157,8 @@ impl Game for SpaceInvaders {
         }
 
         let params_buffer = renderer.create_uniform_buffer::<SpaceInvadersParams>()?;
-        let debug_boxes_buffer = renderer.create_storage_buffer::<DebugBox>(MAX_DEBUG_BOXES)?;
-        let sprites_buffer = renderer.create_storage_buffer::<Sprite>(sprites.len() as u32)?;
+        let debug_boxes_buffer = renderer.create_cpu_updated_buffer::<DebugBox>(MAX_DEBUG_BOXES)?;
+        let sprites_buffer = renderer.create_cpu_updated_buffer::<Sprite>(sprites.len() as u32)?;
 
         let sprite_sheet_texture = load_texture(renderer, "sprite_sheet.ktx2")?;
 
@@ -395,11 +395,11 @@ impl Game for SpaceInvaders {
             };
             gpu.write_uniform(&mut self.params_buffer, params);
 
-            gpu.write_storage(&mut self.debug_boxes_buffer, &self.debug_boxes);
+            gpu.write_cpu_updated(&mut self.debug_boxes_buffer, &self.debug_boxes);
 
             let mut sorted_sprites = self.sprites.clone();
             sorted_sprites.sort_by(sprite_draw_order);
-            gpu.write_storage(&mut self.sprites_buffer, &sorted_sprites);
+            gpu.write_cpu_updated(&mut self.sprites_buffer, &sorted_sprites);
         })
     }
 }

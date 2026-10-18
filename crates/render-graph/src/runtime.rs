@@ -271,8 +271,8 @@ enum StorageRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum BufferBindingKind {
     Storage,
-    GpuOnlyCurrent,
-    GpuOnlyPrevious,
+    GpuUpdatedCurrent,
+    GpuUpdatedPrevious,
     Immutable,
     Singleton,
 }
@@ -421,14 +421,14 @@ pub struct UniformSlot<T> {
 }
 
 /// A `Copy` key for a storage buffer.
-pub struct StorageSlot<T> {
+pub struct CpuUpdatedSlot<T> {
     index: usize,
     len: u32,
     _elem: PhantomData<fn() -> T>,
 }
 
-/// A `Copy` key for a gpu-only buffer.
-pub struct GpuOnlySlot<T> {
+/// A `Copy` key for a buffer updated by the GPU during frame execution.
+pub struct GpuUpdatedSlot<T> {
     index: usize,
     _elem: PhantomData<fn() -> T>,
 }
@@ -455,18 +455,18 @@ impl<T> Clone for UniformSlot<T> {
     }
 }
 impl<T> Copy for UniformSlot<T> {}
-impl<T> Clone for StorageSlot<T> {
+impl<T> Clone for CpuUpdatedSlot<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T> Copy for StorageSlot<T> {}
-impl<T> Clone for GpuOnlySlot<T> {
+impl<T> Copy for CpuUpdatedSlot<T> {}
+impl<T> Clone for GpuUpdatedSlot<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T> Copy for GpuOnlySlot<T> {}
+impl<T> Copy for GpuUpdatedSlot<T> {}
 impl<T> Clone for ImmutableSlot<T> {
     fn clone(&self) -> Self {
         *self
@@ -489,7 +489,7 @@ impl<T> UniformSlot<T> {
         }
     }
 }
-impl<T> StorageSlot<T> {
+impl<T> CpuUpdatedSlot<T> {
     /// Backend integration: index and capacity must describe a live storage buffer of T.
     pub fn from_backend(index: usize, len: u32) -> Self {
         Self {
@@ -499,8 +499,8 @@ impl<T> StorageSlot<T> {
         }
     }
 }
-impl<T> GpuOnlySlot<T> {
-    /// Backend integration: index must identify a live GPU-only buffer of T.
+impl<T> GpuUpdatedSlot<T> {
+    /// Backend integration: index must identify a live GPU-updated buffer of T.
     pub fn from_backend(index: usize) -> Self {
         Self {
             index,
@@ -530,7 +530,7 @@ impl<T> SingletonSlot<T> {
     }
 }
 
-impl<T> StorageSlot<T> {
+impl<T> CpuUpdatedSlot<T> {
     /// A read-write pointer to the current flight slot's buffer.
     pub fn addr(self) -> BufferBinding<T> {
         BufferBinding::new(BufferBindingKind::Storage, self.index)
@@ -542,15 +542,15 @@ impl<T> StorageSlot<T> {
     }
 }
 
-impl<T> GpuOnlySlot<T> {
+impl<T> GpuUpdatedSlot<T> {
     /// A read-write pointer to the current flight slot's buffer.
     pub fn current(self) -> BufferBinding<T> {
-        BufferBinding::new(BufferBindingKind::GpuOnlyCurrent, self.index)
+        BufferBinding::new(BufferBindingKind::GpuUpdatedCurrent, self.index)
     }
 
     /// A read-only pointer to the previous flight slot's buffer.
     pub fn previous(self) -> ReadBufferBinding<T> {
-        ReadBufferBinding::new(BufferBindingKind::GpuOnlyPrevious, self.index)
+        ReadBufferBinding::new(BufferBindingKind::GpuUpdatedPrevious, self.index)
     }
 }
 
@@ -669,9 +669,9 @@ impl BindingResolver<'_> {
         use mltrs_render_graph::backend::BufferAddressKind;
         let kind = match raw.kind {
             BufferBindingKind::Storage
-            | BufferBindingKind::GpuOnlyCurrent
+            | BufferBindingKind::GpuUpdatedCurrent
             | BufferBindingKind::Immutable => BufferAddressKind::Current,
-            BufferBindingKind::GpuOnlyPrevious => BufferAddressKind::Previous,
+            BufferBindingKind::GpuUpdatedPrevious => BufferAddressKind::Previous,
             BufferBindingKind::Singleton => BufferAddressKind::Singleton,
         };
 
@@ -1229,10 +1229,10 @@ impl<C: PickingCursor> GraphNode for PickingNode<C> {
 
 /// A per-frame CPU upload into a storage buffer.
 pub struct UploadNode<T> {
-    slot: StorageSlot<T>,
+    slot: CpuUpdatedSlot<T>,
 }
 
-pub fn upload<T: GPUWrite>(slot: impl Into<StorageSlot<T>>) -> UploadNode<T> {
+pub fn upload<T: GPUWrite>(slot: impl Into<CpuUpdatedSlot<T>>) -> UploadNode<T> {
     UploadNode { slot: slot.into() }
 }
 
@@ -1496,7 +1496,7 @@ impl StagedWrites {
         start..start + len
     }
 
-    fn stage_storage<T>(&mut self, slot: StorageSlot<T>, data: &[T]) -> anyhow::Result<()> {
+    fn stage_storage<T>(&mut self, slot: CpuUpdatedSlot<T>, data: &[T]) -> anyhow::Result<()> {
         anyhow::ensure!(
             data.len() <= slot.len as usize,
             "render graph: upload to storage buffer {} has {} elements; capacity is {}",
@@ -1954,7 +1954,7 @@ mod tests {
     fn missing_captured_buffer_slots_return_named_errors() {
         let mut graph = super::PreparedRenderGraph::<_, EmptyBackend> {
             nodes: (super::UploadNode::<u32> {
-                slot: super::StorageSlot {
+                slot: super::CpuUpdatedSlot {
                     index: 42,
                     len: 1,
                     _elem: std::marker::PhantomData,
@@ -1975,7 +1975,7 @@ mod tests {
         for kind in [
             super::desc::BufferKind::Storage,
             super::desc::BufferKind::Immutable,
-            super::desc::BufferKind::GpuOnlyFlight,
+            super::desc::BufferKind::GpuUpdatedFlight,
             super::desc::BufferKind::Singleton,
         ] {
             graph.buffer_slots = vec![super::CapturedBufferSlot {
@@ -1996,7 +1996,7 @@ mod tests {
 
     #[test]
     fn oversized_upload_returns_error_without_staging_writes() {
-        let slot = super::StorageSlot::<u32> {
+        let slot = super::CpuUpdatedSlot::<u32> {
             index: 42,
             len: 2,
             _elem: std::marker::PhantomData,
@@ -2320,7 +2320,7 @@ mod tests {
         };
         assert_eq!(copied(uniform), (1, 1));
 
-        let storage = StorageSlot::<NotCopy> {
+        let storage = CpuUpdatedSlot::<NotCopy> {
             index: 2,
             len: 3,
             _elem: PhantomData,
@@ -2328,12 +2328,12 @@ mod tests {
         let storage_copy = storage;
         assert_eq!((storage.index, storage_copy.len), (2, 3));
 
-        let gpu_only = GpuOnlySlot::<NotCopy> {
+        let gpu_updated = GpuUpdatedSlot::<NotCopy> {
             index: 4,
             _elem: PhantomData,
         };
-        let gpu_only_copy = gpu_only.clone();
-        assert_eq!(gpu_only.index, gpu_only_copy.index);
+        let gpu_updated_copy = gpu_updated.clone();
+        assert_eq!(gpu_updated.index, gpu_updated_copy.index);
 
         let immutable = ImmutableSlot::<NotCopy> {
             index: 5,

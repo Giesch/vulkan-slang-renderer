@@ -5,10 +5,10 @@
 
 #![allow(dead_code)]
 
-use mltrs_renderer::renderer::StorageBufferHandle;
+use mltrs_renderer::renderer::CpuUpdatedBufferHandle;
 use mltrs_renderer::renderer::UniformBufferHandle;
 use mltrs_renderer::renderer::pipeline::{Compute, PipelineHandle, PushBlock};
-use mltrs_renderer::renderer::render_graph::{StorageSlot, dispatch};
+use mltrs_renderer::renderer::render_graph::{CpuUpdatedSlot, dispatch};
 
 use render_graph_api_checks::generated::shader_atlas::particle::OtherElement;
 use render_graph_api_checks::generated::shader_atlas::push_compute::{
@@ -19,10 +19,10 @@ use render_graph_api_checks::generated::shader_atlas::push_other_compute::OtherP
 fn wrong(
     scale_push_pipeline: &PipelineHandle<Compute, PushBlock<ScalePush>>,
     scale_params: &UniformBufferHandle<ScaleParams>,
-    items: &StorageBufferHandle<OtherElement>,
+    items: &CpuUpdatedBufferHandle<OtherElement>,
     push: OtherPushInput,
 ) {
-    let items_addr = StorageSlot::from(items).addr();
+    let items_addr = CpuUpdatedSlot::from(items).addr();
     let _ = dispatch(scale_push_pipeline, scale_params, [4, 1, 1])
         .with_param_bindings(ScaleParamsBindings { items: items_addr })
         .with_push_constant(push);
