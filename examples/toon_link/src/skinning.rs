@@ -115,9 +115,11 @@ impl SkinningBuffers {
             self.staging.len(),
             "palette must hold one entry per skeleton joint"
         );
+
         for (joint, &transform) in self.staging.iter_mut().zip(palette) {
             joint.transform = transform;
         }
+
         gpu.write_immutable(&mut self.palette, &self.staging);
     }
 

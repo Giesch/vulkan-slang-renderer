@@ -87,6 +87,9 @@ use picking::PickingResources;
 mod descriptor_heap;
 use descriptor_heap::DescriptorHeap;
 
+/// the Vulkan API version the renderer requires and creates the instance with
+const VULKAN_API_VERSION: u32 = vk::API_VERSION_1_3;
+
 /// enables both the validation layer and debug utils logging
 pub const ENABLE_VALIDATION: bool = cfg!(debug_assertions);
 /// applies MSAA-like sampling within textures
@@ -311,7 +314,7 @@ impl Renderer {
             .engine_name(c"No Engine")
             .application_version(vk::make_api_version(0, 0, 1, 0))
             .engine_version(vk::make_api_version(0, 0, 1, 0))
-            .api_version(vk::API_VERSION_1_3);
+            .api_version(VULKAN_API_VERSION);
 
         let mut enabled_extension_names = vec![];
         let window_required_extensions: Vec<_> = window
@@ -361,7 +364,7 @@ impl Renderer {
         let allocator = {
             let mut allocator_create_info =
                 vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
-            allocator_create_info.vulkan_api_version = vk::API_VERSION_1_3;
+            allocator_create_info.vulkan_api_version = VULKAN_API_VERSION;
             // matches the buffer_device_address feature enabled at device creation
             allocator_create_info.flags |= vk_mem::AllocatorCreateFlags::BUFFER_DEVICE_ADDRESS;
             std::mem::ManuallyDrop::new(unsafe { vk_mem::Allocator::new(allocator_create_info)? })
@@ -3585,7 +3588,7 @@ fn choose_physical_device(
     for physical_device in physical_devices {
         let props = unsafe { instance.get_physical_device_properties(physical_device) };
 
-        if props.api_version < vk::API_VERSION_1_3 {
+        if props.api_version < VULKAN_API_VERSION {
             let device_name = device_name_as_string(props);
             let major = vk::api_version_major(props.api_version);
             let minor = vk::api_version_minor(props.api_version);
