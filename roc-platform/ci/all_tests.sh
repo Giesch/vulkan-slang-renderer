@@ -67,9 +67,9 @@ else
     echo "PASS: generate.sh refuses a mismatched glibc floor"
 fi
 
-# An invalid graph must fail `roc check` while the app's constants evaluate,
-# with the same aggregated message the Rust validator reports. The fixture
-# lives beside the example so it shares its generated shader modules.
+# An invalid graph must fail `roc check` when the top-level Ok destructure
+# encounters Err during constant evaluation. The fixture lives beside the
+# example so it shares its generated shader modules.
 echo ""
 echo "--- invalid graph ---"
 invalid_out=$(cd examples/basic-triangle && roc check invalid_graph.roc 2>&1)
@@ -77,7 +77,7 @@ invalid_code=$?
 if [ $invalid_code -eq 0 ]; then
     echo "FAIL(invalid graph): roc check accepted an invalid render graph"
     failed=1
-elif ! echo "$invalid_out" | grep -q "render graph validation failed"; then
+elif ! echo "$invalid_out" | grep -q "non exhaustive destructure"; then
     echo "FAIL(invalid graph): roc check failed for another reason:"
     echo "$invalid_out" | sed 's/^/    /'
     failed=1

@@ -1819,7 +1819,7 @@ mod tests {
             .canonicalize()
             .unwrap();
         // An empty-graph app depends on no generated shader module.
-        let body = "import pf.Game\nimport pf.RenderGraph\nimport pf.Graphs\n\ngame : Game\ngame = Game.new({ init!, graphs, draw })\n\ngraphs = Graphs.or_crash(Graphs.single(RenderGraph.empty))\n\ninit! : {} => Game.Init\ninit! = |_| { window_title: \"codegen test\" }\n\ndraw = |_frame| graphs.draw({})\n";
+        let body = "import pf.Game\nimport pf.RenderGraph\nimport pf.Graphs\n\ngame : Game\ngame = Game.new({ init!, graphs, draw })\n\nOk(graphs) = Graphs.single(RenderGraph.empty)\n\ninit! : {} => Game.Init\ninit! = |_| { window_title: \"codegen test\" }\n\ndraw = |_frame| graphs.draw({})\n";
         fs::write(
             generated.join("main.roc"),
             format!(
