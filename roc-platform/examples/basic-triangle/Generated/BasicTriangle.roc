@@ -1,11 +1,35 @@
-# Generated; logical values are not GPU memory layouts.
-import pf.ShaderReflection
+import pf.ShaderReflection exposing [Float3, GraphicsReflection, StructType, UniformBinding, VertexInput]
+
+import Mltrs
+
 import "../shaders/compiled/basic_triangle.vert.spv" as vertex_bytes : List(U8)
 import "../shaders/compiled/basic_triangle.frag.spv" as fragment_bytes : List(U8)
+import "../shaders/compiled/basic_triangle.json" as reflection_json : Str
 
+## Generated; logical values are not GPU memory layouts.
 BasicTriangle := {}.{
-	mvp_matrices_type : ShaderReflection.StructType
-	mvp_matrices_type = ShaderReflection.StructType.{
+	Vertex := {
+		position : Float3,
+		color : Float3,
+	}.{
+		is_eq : _
+
+		gpu_size : U32
+		gpu_size = 32
+
+		to_bytes : Vertex -> List(U8)
+		to_bytes = |value|
+			ShaderReflection.pack(
+				gpu_size.to_u64(),
+				[
+					(0, Float3.to_bytes(value.position)),
+					(12, Float3.to_bytes(value.color)),
+				],
+			)
+	}
+
+	mvp_matrices_type : StructType
+	mvp_matrices_type = StructType.{
 		type_name: "MVPMatrices",
 		fields: [
 			Matrix({
@@ -47,7 +71,7 @@ BasicTriangle := {}.{
 		],
 	}
 
-	reflection : ShaderReflection.GraphicsReflection
+	reflection : GraphicsReflection
 	reflection = {
 		source_file_name: "basic_triangle.shader.slang",
 		global_parameters: [
@@ -163,5 +187,29 @@ BasicTriangle := {}.{
 	stages = {
 		vertex: vertex_bytes,
 		fragment: fragment_bytes,
+	}
+
+	## The pipeline inputs a render graph needs: stages, reflection, its
+	## JSON form for the host, vertex input, and a single packable uniform.
+	shader = {
+		name: "basic_triangle",
+		vertex_spv: vertex_bytes,
+		fragment_spv: fragment_bytes,
+		reflection_json,
+		reflection,
+		uniform: matrices,
+		vertex: VertexInput.{
+			stride: Vertex.gpu_size,
+			to_bytes: Vertex.to_bytes,
+		},
+	}
+
+	## The `matrices` constant buffer, position 0 in descriptor-set-layout order.
+	matrices : UniformBinding(Mltrs.MvpMatrices)
+	matrices = {
+		name: "matrices",
+		index: 0,
+		size: Mltrs.MvpMatrices.gpu_size,
+		to_bytes: Mltrs.MvpMatrices.to_bytes,
 	}
 }
