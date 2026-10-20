@@ -48,7 +48,7 @@ fn graph(
 }
 
 fn frame_contract() {
-    fn frame_is<N: GraphNode<Frame = ([SimParamsData; SIM_COUNT], Vec<Particle>)>>() {}
+    fn frame_is<N: GraphNode<FrameInput = ([SimParamsData; SIM_COUNT], Vec<Particle>)>>() {}
     frame_is::<Graph>();
 }
 

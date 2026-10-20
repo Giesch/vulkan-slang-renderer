@@ -21,7 +21,7 @@ fn graph(points: &CpuUpdatedBufferHandle<Particle>) -> Graph {
 }
 
 fn frame_contract() {
-    fn frame_is<N: GraphNode<Frame = Option<Vec<Particle>>>>() {}
+    fn frame_is<N: GraphNode<FrameInput = Option<Vec<Particle>>>>() {}
     frame_is::<Graph>();
 }
 

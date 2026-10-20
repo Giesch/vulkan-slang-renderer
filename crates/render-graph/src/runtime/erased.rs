@@ -3,15 +3,15 @@
 //! A host that receives its graph as plain data (the Roc platform) cannot
 //! name a `GraphShaderParams` type per shader. An erased node carries the
 //! parameter block's GPU size and takes its per-frame value as already
-//! packed bytes. It lowers through the same `LowerCtx` and validates under
+//! packed bytes. It lowers through the same `GraphBuildCtx` and validates under
 //! the same rules as a typed node.
 
 use crate::commands::{DrawCallConfig, PendingDrawCommand};
 
-use super::lower::{LowerCtx, LowerDrawCall, UniformInput};
+use super::lower::{GraphBuildCtx, LowerDrawCall, UniformInput};
 use super::{
-    BackendTypes, DrawIndexedKey, DrawVertexCountKey, GraphBinding, GraphNode, NoPush, PlanCtx,
-    UniformSlot, compatible,
+    BackendTypes, DrawIndexedKey, DrawVertexCountKey, FramePlanCtx, GraphBinding, GraphNode,
+    NoPush, UniformSlot, compatible,
 };
 
 /// The draw call of an erased node. Indirect draws stay typed: their argument
@@ -125,9 +125,9 @@ impl DynDrawNode {
 }
 
 impl GraphNode for DynDrawNode {
-    type Frame = Vec<u8>;
+    type FrameInput = Vec<u8>;
 
-    fn lower(&self, cx: &mut LowerCtx) {
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
         cx.draw(
             self.pipeline_index,
             self.call,
@@ -141,7 +141,11 @@ impl GraphNode for DynDrawNode {
         )
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             frame_data.len() == self.gpu_size as usize,
             "render graph: uniform buffer slot {} received {} bytes; its parameter block is {} bytes",

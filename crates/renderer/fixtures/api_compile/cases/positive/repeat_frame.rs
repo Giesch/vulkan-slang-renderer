@@ -39,7 +39,7 @@ fn graph(
 }
 
 fn frame_contract() {
-    fn frame_is<N: GraphNode<Frame = (LoopCount, SimParamsData)>>() {}
+    fn frame_is<N: GraphNode<FrameInput = (LoopCount, SimParamsData)>>() {}
     frame_is::<Graph>();
 }
 

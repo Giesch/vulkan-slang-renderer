@@ -264,7 +264,7 @@ picking::<Cursor>(&picking_pipeline)
 ```
 
 An array `[N; K]` of one node type is a node. It runs its elements in index
-order, and its frame element is `[N::Frame; K]`. `std::array::from_fn` builds
+order, and its frame element is `[N::FrameInput; K]`. `std::array::from_fn` builds
 both arrays from one table of per-node data.
 
 ### Erased nodes
@@ -282,9 +282,9 @@ DynDrawNode::vertex_count(&vertex_count_pipeline, &uniform_buffer, gpu_size, cou
 
 Its frame value is a `Vec<u8>` of exactly `gpu_size` packed bytes; any other
 length is an execution error before submission. Erased nodes lower through
-the same `LowerCtx` and pass the same validation as typed nodes; they carry no
+the same `GraphBuildCtx` and pass the same validation as typed nodes; they carry no
 resource bindings or push block yet. A `Vec<N>` of one node type is a node
-whose frame is a `Vec<N::Frame>` of the same length, checked at execution.
+whose frame is a `Vec<N::FrameInput>` of the same length, checked at execution.
 The host creates the uniform buffer with `create_uniform_buffer_bytes` and the
 pipeline from a `RuntimeShader` (`shaders::runtime`) with `with_vertex_bytes`.
 

@@ -55,7 +55,7 @@ enum Scope {
     },
 }
 
-pub struct LowerCtx {
+pub struct GraphBuildCtx {
     desc: GraphDesc,
     schemas: SchemaTable,
     errors: Vec<GraphError>,
@@ -74,7 +74,7 @@ pub struct LowerCtx {
     uniforms: HashMap<usize, UniformId>,
 }
 
-impl LowerCtx {
+impl GraphBuildCtx {
     pub(crate) fn new(textures: Vec<TexDecl>) -> Self {
         Self {
             desc: GraphDesc {
@@ -599,7 +599,7 @@ mod tests {
     };
     use super::super::validate::{GraphError, ScopeKind, validate};
     use super::super::{BufferBindingKind, GraphBinding, GraphTex, RawBufferBinding};
-    use super::{LowerCtx, LowerDrawCall, LowerOutput, PushInput, UniformInput};
+    use super::{GraphBuildCtx, LowerDrawCall, LowerOutput, PushInput, UniformInput};
 
     const GROUPS: [u32; 3] = [1, 1, 1];
 
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn nested_repeat_is_an_error() {
-        let mut cx = LowerCtx::new(textures(1));
+        let mut cx = GraphBuildCtx::new(textures(1));
         cx.begin_repeat();
         cx.begin_repeat();
         cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
@@ -691,7 +691,7 @@ mod tests {
 
     #[test]
     fn repeat_after_exit_is_allowed() {
-        let mut cx = LowerCtx::new(textures(1));
+        let mut cx = GraphBuildCtx::new(textures(1));
         cx.begin_repeat();
         cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
         cx.end_repeat();
@@ -712,7 +712,7 @@ mod tests {
 
     #[test]
     fn a_second_picking_node_is_an_error() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.draw(0, LowerDrawCall::VertexCount(3), uni(0, vec![]), None);
         cx.picking(0);
         cx.picking(1);
@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn picking_without_draws_is_an_error() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.picking(0);
         let out = cx.finish();
 
@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn picking_with_a_draw_is_allowed() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.draw(0, LowerDrawCall::VertexCount(3), uni(0, vec![]), None);
         cx.picking(7);
         let out = cx.finish();
@@ -745,7 +745,7 @@ mod tests {
     /// its bytes cannot both write it
     #[test]
     fn two_nodes_sharing_a_uniform_slot_reject() {
-        let mut cx = LowerCtx::new(textures(1));
+        let mut cx = GraphBuildCtx::new(textures(1));
         cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
         let mut second = uni(0, vec![sampled(0)]);
         second.data_size = 32;
@@ -762,7 +762,7 @@ mod tests {
     /// two sightings that agree merge, leaving no orphan value or schema rows
     #[test]
     fn identical_uniform_source_merges() {
-        let mut cx = LowerCtx::new(textures(1));
+        let mut cx = GraphBuildCtx::new(textures(1));
         cx.dispatch(0, GROUPS, uni(4, vec![sampled(0)]), None);
         let before = (cx.desc.values.len(), cx.schemas.schemas.len());
         cx.dispatch(1, GROUPS, uni(4, vec![sampled(0)]), None);
@@ -787,7 +787,7 @@ mod tests {
 
     #[test]
     fn same_slot_differing_bindings_reject() {
-        let mut cx = LowerCtx::new(textures(2));
+        let mut cx = GraphBuildCtx::new(textures(2));
         cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
         cx.dispatch(1, GROUPS, uni(0, vec![sampled(1)]), None);
         let out = cx.finish();
@@ -801,7 +801,7 @@ mod tests {
 
     #[test]
     fn optional_inside_repeat_rejects() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.begin_repeat();
         cx.begin_optional();
         cx.dispatch(0, GROUPS, uni(0, vec![]), None);
@@ -817,7 +817,7 @@ mod tests {
 
     #[test]
     fn repeat_inside_optional_rejects() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.begin_optional();
         cx.begin_repeat();
         cx.dispatch(0, GROUPS, uni(0, vec![]), None);
@@ -833,7 +833,7 @@ mod tests {
 
     #[test]
     fn nested_optional_rejects() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.begin_optional();
         cx.begin_optional();
         cx.dispatch(0, GROUPS, uni(0, vec![]), None);
@@ -849,7 +849,7 @@ mod tests {
 
     #[test]
     fn optional_picking_has_an_optional_cursor_value() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.draw(0, LowerDrawCall::VertexCount(3), uni(0, vec![]), None);
         cx.begin_optional();
         cx.picking(1);
@@ -870,7 +870,7 @@ mod tests {
 
     #[test]
     fn empty_optional_scope_is_an_error() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.begin_optional();
         cx.end_optional();
         let out = cx.finish();
@@ -880,7 +880,7 @@ mod tests {
 
     #[test]
     fn optional_gate_is_first_scope_value_and_all_scope_values_optional() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.begin_optional();
         cx.upload(0, 8, 16);
         cx.dispatch(0, GROUPS, uni(0, vec![]), None);
@@ -902,7 +902,7 @@ mod tests {
     /// selectors, not two buffers
     #[test]
     fn gpu_updated_current_and_previous_intern_to_one_buffer() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.dispatch(
             0,
             GROUPS,
@@ -932,7 +932,7 @@ mod tests {
 
     #[test]
     fn external_sampled_handle_interns_once() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.dispatch(0, GROUPS, uni(0, vec![external_sampled(9)]), None);
         cx.dispatch(1, GROUPS, uni(1, vec![external_sampled(9)]), None);
         let out = cx.finish();
@@ -944,7 +944,7 @@ mod tests {
 
     #[test]
     fn mutable_external_storage_binding_rejects() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.dispatch(0, GROUPS, uni(0, vec![external_storage(2)]), None);
         let out = cx.finish();
 
@@ -958,7 +958,7 @@ mod tests {
     /// the one lowering error does not cascade into shape errors
     #[test]
     fn failed_binding_drops_its_schema_field() {
-        let mut cx = LowerCtx::new(textures(1));
+        let mut cx = GraphBuildCtx::new(textures(1));
         cx.dispatch(
             0,
             GROUPS,
@@ -979,7 +979,7 @@ mod tests {
 
     #[test]
     fn dispatch_names_advance_inside_repeat() {
-        let mut cx = LowerCtx::new(textures(1));
+        let mut cx = GraphBuildCtx::new(textures(1));
         cx.begin_repeat();
         cx.dispatch(0, GROUPS, uni(0, vec![sampled(0)]), None);
         cx.dispatch(1, GROUPS, uni(1, vec![sampled(0)]), None);
@@ -1001,7 +1001,7 @@ mod tests {
 
     #[test]
     fn top_level_draws_coalesce_into_one_raster_pass() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.draw(0, LowerDrawCall::VertexCount(3), uni(0, vec![]), None);
         cx.draw(1, LowerDrawCall::WholeIndexed, uni(1, vec![]), None);
         let out = cx.finish();
@@ -1019,7 +1019,7 @@ mod tests {
     /// error message has on a resource
     #[test]
     fn lowered_tables_carry_diagnostic_names() {
-        let mut cx = LowerCtx::new(textures(1));
+        let mut cx = GraphBuildCtx::new(textures(1));
         cx.upload(2, 8, 16);
         cx.dispatch(
             5,
@@ -1047,7 +1047,7 @@ mod tests {
 
     #[test]
     fn external_import_decls_carry_names() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.dispatch(0, GROUPS, uni(0, vec![external_sampled(4)]), None);
         let out = cx.finish();
 
@@ -1056,7 +1056,7 @@ mod tests {
 
     #[test]
     fn draw_call_variants_lower_one_to_one() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.draw(0, LowerDrawCall::VertexCount(6), uni(0, vec![]), None);
         cx.draw(1, LowerDrawCall::WholeIndexed, uni(1, vec![]), None);
         cx.draw(
@@ -1112,7 +1112,7 @@ mod tests {
     #[test]
     fn watercolor_shaped_lowering_parity() {
         const PAPER: u32 = 12;
-        let mut cx = LowerCtx::new(textures(14));
+        let mut cx = GraphBuildCtx::new(textures(14));
         cx.begin_optional();
         cx.upload(0, 32, 4096);
         cx.dispatch(
@@ -1275,7 +1275,7 @@ mod tests {
 
     #[test]
     fn particles_shaped_lowering_parity() {
-        let mut cx = LowerCtx::new(vec![]);
+        let mut cx = GraphBuildCtx::new(vec![]);
         cx.dispatch(
             0,
             [16, 1, 1],

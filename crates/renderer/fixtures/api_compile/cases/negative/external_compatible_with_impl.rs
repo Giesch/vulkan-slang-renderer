@@ -3,9 +3,9 @@ mod support;
 use mltrs_render_graph::*;
 struct ExternalNode;
 impl GraphNode for ExternalNode {
-    type Frame = ();
-    fn lower(&self, _: &mut LowerCtx) {}
-    fn plan(&self, _: &(), _: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    type FrameInput = ();
+    fn add_to_graph(&self, _: &mut GraphBuildCtx) {}
+    fn plan_frame(&self, _: &(), _: &mut FramePlanCtx<'_>) -> anyhow::Result<()> {
         Ok(())
     }
 }
