@@ -27,6 +27,8 @@ mod compile;
     )
 )]
 mod desc;
+mod erased;
+pub use erased::{DynDrawCall, DynDrawNode};
 #[cfg_attr(
     not(test),
     allow(
@@ -55,7 +57,7 @@ use crate::backend::{BackendTypes, BindingLookup, FrameBackend, FrameLookup, Pre
 use crate::commands::{DrawCallConfig, PendingDrawCommand, PickingDrawConfig, PushConstantBytes};
 use desc::{SizeClass, TexDecl, TexUsage};
 use expand::TexRunState;
-use lower::{LowerCtx, LowerDrawCall, PushInput, UniformInput};
+use lower::{GraphBuildCtx, LowerDrawCall, PushInput, UniformInput};
 
 use super::addr::{Addr, ImmutableAddr, ReadAddr};
 use super::bindless::{BindlessHandle, RwTexture2D, Sampler2D};
@@ -710,13 +712,17 @@ pub struct LoopCount(pub u32);
 /// Games compose values, they do not implement this.
 pub trait GraphNode {
     /// The per-frame value this node consumes from the params tuple.
-    type Frame;
+    type FrameInput;
 
     /// Lowers this node into the graph's build-time representation.
-    fn lower(&self, cx: &mut LowerCtx);
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx);
 
     /// Plans this node's commands and data writes for the current frame.
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()>;
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()>;
 }
 
 /// A compute dispatch writing one uniform params buffer per frame.
@@ -790,9 +796,9 @@ impl<S: GraphShaderParams, P> ComputeNode<S, P, PendingParamBindings<S::Bindings
 }
 
 impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for ComputeNode<S, P> {
-    type Frame = S::Data;
+    type FrameInput = S::Data;
 
-    fn lower(&self, cx: &mut LowerCtx) {
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
         cx.dispatch(
             self.pipeline_index,
             self.group_count,
@@ -806,7 +812,11 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for ComputeNode<S,
         )
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()> {
         let resolver = cx.resolver();
         let value = S::assemble(frame_data, &self.bindings, &resolver);
         let push = self.push.payload(&resolver);
@@ -1091,12 +1101,12 @@ impl<S: GraphShaderParams, B: GraphShaderParams + PushConstantBlock, I>
 impl<S: GraphShaderParams + GPUWrite, P: GraphPush, I: crate::backend::IndexedIndirectArgs>
     GraphNode for IndirectDrawNode<S, P, I>
 {
-    type Frame = S::Data;
-    fn lower(&self, cx: &mut LowerCtx) {
-        self.draw.lower(cx);
+    type FrameInput = S::Data;
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
+        self.draw.add_to_graph(cx);
     }
-    fn plan(&self, data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
-        self.draw.plan(data, cx)
+    fn plan_frame(&self, data: &Self::FrameInput, cx: &mut FramePlanCtx<'_>) -> anyhow::Result<()> {
+        self.draw.plan_frame(data, cx)
     }
 }
 
@@ -1128,9 +1138,9 @@ pub fn draw_indexed_indirect<
 }
 
 impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for DrawNode<S, P> {
-    type Frame = S::Data;
+    type FrameInput = S::Data;
 
-    fn lower(&self, cx: &mut LowerCtx) {
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
         cx.draw(
             self.pipeline_index,
             self.call,
@@ -1144,7 +1154,11 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for DrawNode<S, P>
         )
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()> {
         let pipeline_index = self.pipeline_index;
         let value = S::assemble(frame_data, &self.bindings, &cx.resolver());
         cx.stage_uniform(self.uniform, &value);
@@ -1211,13 +1225,17 @@ pub fn picking<C: PickingCursor>(pipeline: impl Into<PickingPipelineKey>) -> Pic
 }
 
 impl<C: PickingCursor> GraphNode for PickingNode<C> {
-    type Frame = C;
+    type FrameInput = C;
 
-    fn lower(&self, cx: &mut LowerCtx) {
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
         cx.picking(self.pipeline_index)
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()> {
         cx.picking = Some(PickingDrawConfig {
             pipeline_index: self.pipeline_index,
             position: frame_data.position(),
@@ -1237,9 +1255,9 @@ pub fn upload<T: GPUWrite>(slot: impl Into<CpuUpdatedSlot<T>>) -> UploadNode<T> 
 }
 
 impl<T: GPUWrite> GraphNode for UploadNode<T> {
-    type Frame = Vec<T>;
+    type FrameInput = Vec<T>;
 
-    fn lower(&self, cx: &mut LowerCtx) {
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
         cx.upload(
             self.slot.index,
             std::mem::size_of::<T>() as u32,
@@ -1247,7 +1265,11 @@ impl<T: GPUWrite> GraphNode for UploadNode<T> {
         )
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()> {
         cx.staged.stage_storage(self.slot, frame_data)?;
 
         Ok(())
@@ -1265,17 +1287,21 @@ pub fn repeat<B: GraphNode>(body: B) -> RepeatNode<B> {
 }
 
 impl<B: GraphNode> GraphNode for RepeatNode<B> {
-    type Frame = (LoopCount, B::Frame);
+    type FrameInput = (LoopCount, B::FrameInput);
 
-    fn lower(&self, cx: &mut LowerCtx) {
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
         cx.begin_repeat();
-        self.body.lower(cx);
+        self.body.add_to_graph(cx);
         cx.end_repeat();
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()> {
         for _ in 0..frame_data.0.0 {
-            self.body.plan(&frame_data.1, cx)?;
+            self.body.plan_frame(&frame_data.1, cx)?;
         }
 
         Ok(())
@@ -1293,17 +1319,21 @@ pub fn optional<B: GraphNode>(inner: B) -> OptionalNode<B> {
 }
 
 impl<B: GraphNode> GraphNode for OptionalNode<B> {
-    type Frame = Option<B::Frame>;
+    type FrameInput = Option<B::FrameInput>;
 
-    fn lower(&self, cx: &mut LowerCtx) {
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
         cx.begin_optional();
-        self.inner.lower(cx);
+        self.inner.add_to_graph(cx);
         cx.end_optional();
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()> {
         match frame_data {
-            Some(inner_frame) => self.inner.plan(inner_frame, cx),
+            Some(inner_frame) => self.inner.plan_frame(inner_frame, cx),
             None => Ok(()),
         }
     }
@@ -1336,19 +1366,54 @@ impl<T: GPUWrite, B: BackendTypes> compatible::Sealed<B> for UploadNode<T> {}
 impl<N: CompatibleWith<B>, B: BackendTypes> compatible::Sealed<B> for RepeatNode<N> {}
 impl<N: CompatibleWith<B>, B: BackendTypes> compatible::Sealed<B> for OptionalNode<N> {}
 impl<N: CompatibleWith<B>, B: BackendTypes, const K: usize> compatible::Sealed<B> for [N; K] {}
+impl<N: CompatibleWith<B>, B: BackendTypes> compatible::Sealed<B> for Vec<N> {}
 
-impl<N: GraphNode, const K: usize> GraphNode for [N; K] {
-    type Frame = [N::Frame; K];
+/// A runtime-length list of one node type, for graphs built from data. Its
+/// frame is a `Vec` of the same length; a mismatch is an execution error.
+impl<N: GraphNode> GraphNode for Vec<N> {
+    type FrameInput = Vec<N::FrameInput>;
 
-    fn lower(&self, cx: &mut LowerCtx) {
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
         for node in self {
-            node.lower(cx);
+            node.add_to_graph(cx);
         }
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            frame_data.len() == self.len(),
+            "render graph: {} nodes received {} frame values",
+            self.len(),
+            frame_data.len(),
+        );
         for (node, frame) in self.iter().zip(frame_data) {
-            node.plan(frame, cx)?;
+            node.plan_frame(frame, cx)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<N: GraphNode, const K: usize> GraphNode for [N; K] {
+    type FrameInput = [N::FrameInput; K];
+
+    fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
+        for node in self {
+            node.add_to_graph(cx);
+        }
+    }
+
+    fn plan_frame(
+        &self,
+        frame_data: &Self::FrameInput,
+        cx: &mut FramePlanCtx<'_>,
+    ) -> anyhow::Result<()> {
+        for (node, frame) in self.iter().zip(frame_data) {
+            node.plan_frame(frame, cx)?;
         }
 
         Ok(())
@@ -1359,14 +1424,14 @@ macro_rules! impl_graph_node_for_tuple {
     ($(($n:ident, $f:tt)),+) => {
         impl<Backend: BackendTypes, $($n: CompatibleWith<Backend>),+> compatible::Sealed<Backend> for ($($n,)+) {}
         impl<$($n: GraphNode),+> GraphNode for ($($n,)+) {
-            type Frame = ($($n::Frame,)+);
+            type FrameInput = ($($n::FrameInput,)+);
 
-            fn lower(&self, cx: &mut LowerCtx) {
-                $(self.$f.lower(cx);)+
+            fn add_to_graph(&self, cx: &mut GraphBuildCtx) {
+                $(self.$f.add_to_graph(cx);)+
             }
 
-            fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
-                $(self.$f.plan(&frame_data.$f, cx)?;)+
+            fn plan_frame(&self, frame_data: &Self::FrameInput, cx: &mut FramePlanCtx<'_>) -> anyhow::Result<()> {
+                $(self.$f.plan_frame(&frame_data.$f, cx)?;)+
 
                 Ok(())
             }
@@ -1516,7 +1581,7 @@ impl StagedWrites {
 
 /// Execute-time planning state: the working texture cursors and the command,
 /// draw, and CPU-write plans accumulated by the node walk.
-pub struct PlanCtx<'a> {
+pub struct FramePlanCtx<'a> {
     tex: Vec<TexRunState>,
     phys: &'a [PhysTex],
     renderer: &'a dyn FrameLookup,
@@ -1526,7 +1591,7 @@ pub struct PlanCtx<'a> {
     picking: Option<PickingDrawConfig>,
 }
 
-impl PlanCtx<'_> {
+impl FramePlanCtx<'_> {
     fn resolver(&self) -> BindingResolver<'_> {
         BindingResolver {
             tex: &self.tex,
@@ -1541,9 +1606,13 @@ impl PlanCtx<'_> {
     }
 
     fn stage_uniform<S>(&mut self, slot: UniformSlot<S>, value: &S) {
-        let byte_range = self.staged.stage(std::slice::from_ref(value));
+        self.stage_uniform_bytes(slot.index, std::slice::from_ref(value));
+    }
+
+    fn stage_uniform_bytes<T>(&mut self, buffer_index: usize, value: &[T]) {
+        let byte_range = self.staged.stage(value);
         self.staged.targets.push(StagedTarget::Uniform {
-            buffer_index: slot.index,
+            buffer_index,
             byte_range,
         });
     }
@@ -1575,8 +1644,8 @@ pub struct RenderGraph<N: GraphNode> {
 impl<N: GraphNode> RenderGraph<N> {
     /// Validate and create the graph.
     pub fn new(resources: ResourcePlanner, nodes: N) -> anyhow::Result<Self> {
-        let mut lower = LowerCtx::new(resources.decls);
-        nodes.lower(&mut lower);
+        let mut lower = GraphBuildCtx::new(resources.decls);
+        nodes.add_to_graph(&mut lower);
         let lowered = lower.finish();
         let analysis = validate::validate(&lowered.desc, &lowered.schemas);
         let mut errors = lowered.errors;
@@ -1713,13 +1782,13 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
     pub fn execute<F: FrameBackend<Backend = B>>(
         &mut self,
         frame: F,
-        params: &N::Frame,
+        params: &N::FrameInput,
     ) -> Result<(), F::Error>
     where
         N: CompatibleWith<B>,
     {
         self.validate_buffers(frame.lookup())?;
-        let mut cx = PlanCtx {
+        let mut cx = FramePlanCtx {
             tex: self.tex.clone(),
             phys: &self.phys,
             renderer: frame.lookup(),
@@ -1728,8 +1797,8 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
             staged: StagedWrites::default(),
             picking: None,
         };
-        self.nodes.plan(params, &mut cx)?;
-        let PlanCtx {
+        self.nodes.plan_frame(params, &mut cx)?;
+        let FramePlanCtx {
             tex,
             dispatches,
             draws,
@@ -1882,7 +1951,7 @@ mod tests {
             }
         }
 
-        fn frame_is_u64<N: GraphNode<Frame = u64>>() {}
+        fn frame_is_u64<N: GraphNode<FrameInput = u64>>() {}
         frame_is_u64::<ComputeNode<Block>>();
         frame_is_u64::<ComputeNodeWithPush<Block, Block>>();
 

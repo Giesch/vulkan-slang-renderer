@@ -80,7 +80,7 @@ fn graph(
 fn frame_contract() {
     fn frame_is<
         N: GraphNode<
-            Frame = (
+            FrameInput = (
                 (SimParamsData, Vec<Particle>),
                 ((LoopCount, TexParamsData), Option<Vec<Particle>>),
             ),

@@ -66,14 +66,14 @@ pub mod render_graph;
 pub use render_graph::{
     BindingResolver, BufferBinding, ComputeNode, ComputeNodeWithPush, ComputePipelineKey,
     CpuUpdatedSlot, DrawIndexedIndirectCommand, DrawIndexedIndirectKey, DrawIndexedKey, DrawNode,
-    DrawVertexCountKey, DrawVertexCountNode, GpuUpdatedSlot, GraphBinding, GraphBindingSet,
-    GraphFormat, GraphNode, GraphParamBindingSet, GraphPipelinePush, GraphPush, GraphPushPayload,
-    GraphShaderParams, GraphTex, ImmutableBufferBinding, ImmutableSlot, LoopCount, OptionalNode,
-    PendingParamBindings, PendingPush, PickingCursor, PickingNode, PickingPipelineKey, PlanCtx,
-    PreparedRenderGraph, PushValues, RawBufferBinding, ReadBufferBinding, RenderGraph, RepeatNode,
-    ResourcePlanner, SampledTexBinding, SingletonSlot, StorageTexBinding, UniformSlot, UploadNode,
-    dispatch, draw_index_range, draw_indexed, draw_indexed_indirect, draw_vertex_count, optional,
-    picking, repeat, upload,
+    DrawVertexCountKey, DrawVertexCountNode, FramePlanCtx, GpuUpdatedSlot, GraphBinding,
+    GraphBindingSet, GraphFormat, GraphNode, GraphParamBindingSet, GraphPipelinePush, GraphPush,
+    GraphPushPayload, GraphShaderParams, GraphTex, ImmutableBufferBinding, ImmutableSlot,
+    LoopCount, OptionalNode, PendingParamBindings, PendingPush, PickingCursor, PickingNode,
+    PickingPipelineKey, PreparedRenderGraph, PushValues, RawBufferBinding, ReadBufferBinding,
+    RenderGraph, RepeatNode, ResourcePlanner, SampledTexBinding, SingletonSlot, StorageTexBinding,
+    UniformSlot, UploadNode, dispatch, draw_index_range, draw_indexed, draw_indexed_indirect,
+    draw_vertex_count, optional, picking, repeat, upload,
 };
 
 pub mod egui;
