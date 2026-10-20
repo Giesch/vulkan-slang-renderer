@@ -96,7 +96,7 @@ textures:
 vendor-shaders:
     #!/usr/bin/env bash
     set -euo pipefail
-    for d in examples/*/ roc-platform/ roc-platform/examples/*/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
+    for d in examples/*/ roc-platform/examples/*/; do cargo run -p mltrs-cli -- shaders init --dir "$d/shaders/source" --force; done
     cargo fmt
 
 # e.g. `just mltrs shaders compile --crate-dir examples/sdf_2d`

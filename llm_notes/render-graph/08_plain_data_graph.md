@@ -1221,10 +1221,16 @@ entire structure in types.
 Decision 12 makes required frame-input presence a type-level contract. Dynamic
 counts, array lengths, and internal byte-layout invariants still need runtime checks.
 
-ANNOTATION (2026-09-20): the Rust builder exists. The typestate builders
-`.with_param_bindings` and `.with_push_constant` reject an incomplete
-command at compile time. The Roc side has reflection codegen and no graph
-builder.
+#### Update 2026-09-20: erased nodes for the Roc platform
+
+The Roc platform receives its graph as plain data. Rather than a public raw
+description ingestion path, the crate gained `DynDrawNode` (`runtime/erased.rs`):
+a draw node built from a pipeline key, a uniform slot, and a GPU size whose
+frame value is packed bytes. It lowers through `LowerCtx` and validates under
+the same rules as typed nodes, so decision 10 holds: neither language exposes
+unchecked construction. The Roc side ports description, lowering, and
+validation (`roc-platform/platform/RenderGraph*.roc`) and validates during
+constant evaluation; the host re-validates in Rust at setup.
 
 ### 11. Invalid frame values cause controlled shutdown
 
