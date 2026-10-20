@@ -17,7 +17,64 @@ use super::*;
 use crate::backend::{BufferAddressKind, PhysicalImage};
 use std::{cell::RefCell, rc::Rc};
 
-type Events = Rc<RefCell<Vec<String>>>;
+type Events = Rc<RefCell<Vec<Event>>>;
+
+#[derive(Debug, PartialEq)]
+enum Event {
+    Allocate {
+        id: usize,
+        width: u32,
+        height: u32,
+        format: GraphFormat,
+    },
+    Clear(usize),
+    Alias(usize),
+    Drop(usize),
+    Address {
+        kind: BufferAddressKind,
+        index: usize,
+    },
+    Wait,
+    Write {
+        uniform: bool,
+        index: usize,
+        byte_len: usize,
+    },
+    Compute {
+        pipeline: usize,
+        groups: [u32; 3],
+        push: Option<Vec<u8>>,
+    },
+    Draw {
+        pipeline: usize,
+        call: DrawEvent,
+        push: Option<Vec<u8>>,
+    },
+    Picking {
+        pipeline: usize,
+        position: [f32; 2],
+    },
+    Submit,
+    Commit,
+    Present,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DrawEvent {
+    VertexCount(u32),
+    IndexCount(u32),
+    IndexRange {
+        first_index: u32,
+        index_count: u32,
+    },
+    IndexedIndirect {
+        buffer: usize,
+        offset: u64,
+        draw_count: u32,
+        stride: usize,
+        alignment: usize,
+    },
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FailPoint {
@@ -33,7 +90,7 @@ struct Resource {
 
 impl Drop for Resource {
     fn drop(&mut self) {
-        self.events.borrow_mut().push(format!("drop:{}", self.id));
+        self.events.borrow_mut().push(Event::Drop(self.id));
     }
 }
 
@@ -77,9 +134,12 @@ impl PreparationBackend for Fake {
         format: GraphFormat,
     ) -> anyhow::Result<(PhysicalImage, Self::Resource)> {
         let id = self.allocated;
-        self.events
-            .borrow_mut()
-            .push(format!("allocate:{id}:{width}:{height}:{format:?}"));
+        self.events.borrow_mut().push(Event::Allocate {
+            id,
+            width,
+            height,
+            format,
+        });
         anyhow::ensure!(self.fail_allocation != Some(id), "allocation failed");
         self.allocated += 1;
         let resource = Rc::new(Resource {
@@ -89,7 +149,7 @@ impl PreparationBackend for Fake {
         self.registered.push(resource.clone());
         self.events
             .borrow_mut()
-            .extend([format!("clear:{id}"), format!("alias:{id}")]);
+            .extend([Event::Clear(id), Event::Alias(id)]);
 
         Ok((
             PhysicalImage {
@@ -105,7 +165,8 @@ impl BindingLookup for Fake {
     fn buffer_address(&self, kind: BufferAddressKind, index: usize) -> u64 {
         self.events
             .borrow_mut()
-            .push(format!("address:{kind:?}:{index}"));
+            .push(Event::Address { kind, index });
+
         (match kind {
             BufferAddressKind::Current => 1000,
             BufferAddressKind::Previous => 2000,
@@ -147,53 +208,62 @@ impl FrameBackend for Frame<'_> {
         batch: crate::commands::CommandBatch,
         on_submitted: impl FnOnce(),
     ) -> anyhow::Result<()> {
-        let event = |name: &str| self.0.events.borrow_mut().push(name.to_owned());
-        event("wait");
+        let event = |event| self.0.events.borrow_mut().push(event);
+        event(Event::Wait);
         anyhow::ensure!(self.0.fail != Some(FailPoint::Wait), "wait failed");
         batch.visit_writes(|uniform, index, bytes| {
-            event(&format!("write:{uniform}:{index}:{}", bytes.len()))
+            event(Event::Write {
+                uniform,
+                index,
+                byte_len: bytes.len(),
+            });
         });
         for (pipeline, groups, push) in batch.dispatches() {
-            event(&format!(
-                "compute:{pipeline}:{groups:?}:{}",
-                push.as_ref().map_or(0, |p| p.as_slice().len())
-            ));
+            event(Event::Compute {
+                pipeline: *pipeline,
+                groups: *groups,
+                push: push.as_ref().map(|push| push.as_slice().to_vec()),
+            });
         }
+
         for draw in batch.draws() {
             let call = match draw.draw_call() {
-                DrawCallConfig::VertexCount(count) => format!("vertex:{count}"),
-                DrawCallConfig::IndexCount(count) => format!("index:{count}"),
+                DrawCallConfig::VertexCount(count) => DrawEvent::VertexCount(count),
+                DrawCallConfig::IndexCount(count) => DrawEvent::IndexCount(count),
                 DrawCallConfig::IndexRange {
                     first_index,
                     index_count,
-                } => format!("range:{first_index}:{index_count}"),
-                DrawCallConfig::IndexedIndirect(request) => format!(
-                    "indirect:{}:{}:{}:{}:{}",
-                    request.buffer(),
-                    request.offset(),
-                    request.draw_count(),
-                    request.stride(),
-                    request.alignment()
-                ),
+                } => DrawEvent::IndexRange {
+                    first_index,
+                    index_count,
+                },
+                DrawCallConfig::IndexedIndirect(request) => DrawEvent::IndexedIndirect {
+                    buffer: request.buffer(),
+                    offset: request.offset(),
+                    draw_count: request.draw_count(),
+                    stride: request.stride(),
+                    alignment: request.alignment(),
+                },
             };
-            event(&format!(
-                "draw:{}:{call}:{:?}",
-                draw.pipeline_index(),
-                draw.push_constants().map(|push| push.as_slice())
-            ));
+            event(Event::Draw {
+                pipeline: draw.pipeline_index(),
+                call,
+                push: draw.push_constants().map(|push| push.as_slice().to_vec()),
+            });
         }
+
         if let Some(picking) = batch.picking() {
-            event(&format!(
-                "picking:{}:{:?}",
-                picking.pipeline_index(),
-                picking.position()
-            ));
+            event(Event::Picking {
+                pipeline: picking.pipeline_index(),
+                position: picking.position(),
+            });
         }
-        event("submit");
+
+        event(Event::Submit);
         anyhow::ensure!(self.0.fail != Some(FailPoint::Submit), "submit failed");
         on_submitted();
-        event("commit");
-        event("present");
+        event(Event::Commit);
+        event(Event::Present);
         anyhow::ensure!(self.0.fail != Some(FailPoint::Present), "present failed");
 
         Ok(())
@@ -271,12 +341,22 @@ fn backend_prepare_physical_images() {
     assert_eq!(
         *backend.events.borrow(),
         [
-            "allocate:0:8:8:R32Float",
-            "clear:0",
-            "alias:0",
-            "allocate:1:8:8:R32Float",
-            "clear:1",
-            "alias:1"
+            Event::Allocate {
+                id: 0,
+                width: 8,
+                height: 8,
+                format: GraphFormat::R32Float
+            },
+            Event::Clear(0),
+            Event::Alias(0),
+            Event::Allocate {
+                id: 1,
+                width: 8,
+                height: 8,
+                format: GraphFormat::R32Float
+            },
+            Event::Clear(1),
+            Event::Alias(1)
         ]
     );
 }
@@ -291,18 +371,19 @@ fn backend_prepared_resources_kept_alive() {
             .events
             .borrow()
             .iter()
-            .any(|e| e.starts_with("drop:"))
+            .any(|event| matches!(event, Event::Drop(_)))
     );
     drop(prepared);
-    assert_eq!(
-        backend
-            .events
-            .borrow()
-            .iter()
-            .filter(|e| e.starts_with("drop:"))
-            .count(),
-        2
-    );
+    let dropped: Vec<_> = backend
+        .events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            Event::Drop(id) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dropped, [0, 1]);
 }
 
 #[test]
@@ -318,10 +399,10 @@ fn backend_partial_prepare_failure() {
             .events
             .borrow()
             .iter()
-            .any(|e| e.starts_with("drop:"))
+            .any(|event| matches!(event, Event::Drop(_)))
     );
     backend.registered.clear();
-    assert!(backend.events.borrow().contains(&"drop:0".to_owned()));
+    assert!(backend.events.borrow().contains(&Event::Drop(0)));
 }
 
 #[test]
@@ -460,15 +541,40 @@ fn backend_command_plan() {
         .unwrap();
     let events = backend.events.borrow();
     for expected in [
-        "compute:1:[4, 2, 1]:0",
-        "draw:2:vertex:3:Some([1, 1, 1, 1])",
-        "draw:3:index:12:None",
-        "draw:4:indirect:5:20:2:20:4:None",
-        "picking:6:[12.5, 7.0]",
+        Event::Compute {
+            pipeline: 1,
+            groups: [4, 2, 1],
+            push: None,
+        },
+        Event::Draw {
+            pipeline: 2,
+            call: DrawEvent::VertexCount(3),
+            push: Some(vec![1, 1, 1, 1]),
+        },
+        Event::Draw {
+            pipeline: 3,
+            call: DrawEvent::IndexCount(12),
+            push: None,
+        },
+        Event::Draw {
+            pipeline: 4,
+            call: DrawEvent::IndexedIndirect {
+                buffer: 5,
+                offset: 20,
+                draw_count: 2,
+                stride: 20,
+                alignment: 4,
+            },
+            push: None,
+        },
+        Event::Picking {
+            pipeline: 6,
+            position: [12.5, 7.0],
+        },
     ] {
         assert!(
-            events.iter().any(|event| event == expected),
-            "missing {expected}: {events:?}"
+            events.contains(&expected),
+            "missing {expected:?}: {events:?}"
         );
     }
 }
@@ -544,11 +650,23 @@ fn backend_current_previous_addresses() {
     prepared.execute(Frame(&backend), &()).unwrap();
     let events = backend.events.borrow();
     for expected in [
-        "address:Current:2",
-        "address:Previous:2",
-        "address:Singleton:3",
+        Event::Address {
+            kind: BufferAddressKind::Current,
+            index: 2,
+        },
+        Event::Address {
+            kind: BufferAddressKind::Previous,
+            index: 2,
+        },
+        Event::Address {
+            kind: BufferAddressKind::Singleton,
+            index: 3,
+        },
     ] {
-        assert!(events.iter().any(|event| event == expected));
+        assert!(
+            events.contains(&expected),
+            "missing {expected:?}: {events:?}"
+        );
     }
 }
 
@@ -604,14 +722,30 @@ fn backend_erased_draw_plan() {
         .unwrap();
     let events = backend.events.borrow();
     for expected in [
-        "write:true:3:192",
-        "write:true:4:16",
-        "draw:3:index:12:None",
-        "draw:4:vertex:6:None",
+        Event::Write {
+            uniform: true,
+            index: 3,
+            byte_len: 192,
+        },
+        Event::Write {
+            uniform: true,
+            index: 4,
+            byte_len: 16,
+        },
+        Event::Draw {
+            pipeline: 3,
+            call: DrawEvent::IndexCount(12),
+            push: None,
+        },
+        Event::Draw {
+            pipeline: 4,
+            call: DrawEvent::VertexCount(6),
+            push: None,
+        },
     ] {
         assert!(
-            events.iter().any(|event| event == expected),
-            "missing {expected}: {events:?}"
+            events.contains(&expected),
+            "missing {expected:?}: {events:?}"
         );
     }
 }

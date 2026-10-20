@@ -2,9 +2,17 @@ use super::*;
 use mltrs_render_graph::{backend::*, *};
 use std::cell::RefCell;
 
+#[derive(Debug, PartialEq, Eq)]
+enum Event {
+    Wait,
+    Write,
+    Submit,
+    Commit,
+}
+
 struct Backend {
     targets: Vec<Option<UploadTarget>>,
-    events: RefCell<Vec<&'static str>>,
+    events: RefCell<Vec<Event>>,
 }
 impl BackendTypes for Backend {
     type IndirectCommand = DrawIndexedIndirectCommand;
@@ -57,13 +65,15 @@ impl FrameBackend for Frame<'_> {
         let writes = validate_uploads(&batch, |_, index| {
             self.0.targets.get(index).copied().flatten()
         })?;
-        self.0.events.borrow_mut().push("wait");
+        self.0.events.borrow_mut().push(Event::Wait);
         for _ in writes {
-            self.0.events.borrow_mut().push("write");
+            self.0.events.borrow_mut().push(Event::Write);
         }
-        self.0.events.borrow_mut().push("submit");
+
+        self.0.events.borrow_mut().push(Event::Submit);
         commit();
-        self.0.events.borrow_mut().push("commit");
+        self.0.events.borrow_mut().push(Event::Commit);
+
         Ok(())
     }
 }
@@ -102,7 +112,13 @@ fn storage_case(target: Option<UploadTarget>, succeeds: bool) {
     } else {
         assert_eq!(
             *backend.events.borrow(),
-            ["wait", "write", "write", "submit", "commit"]
+            [
+                Event::Wait,
+                Event::Write,
+                Event::Write,
+                Event::Submit,
+                Event::Commit
+            ]
         );
     }
 }
