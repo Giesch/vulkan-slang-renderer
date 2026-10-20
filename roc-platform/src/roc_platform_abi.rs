@@ -1295,32 +1295,32 @@ const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostUniform>() ==
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostUniform>() == 4, "ValidatedRenderGraphHostUniform alignment mismatch");
 
-/// Element type for Graphs.Draw
+/// Element type for GraphSet.Draw
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct GraphsDraw {
+pub struct GraphSetDraw {
     pub values: RocList<RocListWith<u8, false>>,
     pub graph_id: u32,
 }
 
-/// Element type for Graphs.Draw
+/// Element type for GraphSet.Draw
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct GraphsDraw {
+pub struct GraphSetDraw {
     pub values: RocList<RocListWith<u8, false>>,
     pub graph_id: u32,
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<GraphsDraw>() == 32, "GraphsDraw size mismatch");
+const _: () = assert!(core::mem::size_of::<GraphSetDraw>() == 32, "GraphSetDraw size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<GraphsDraw>() == 8, "GraphsDraw alignment mismatch");
+const _: () = assert!(core::mem::align_of::<GraphSetDraw>() == 8, "GraphSetDraw alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<GraphsDraw>() == 16, "GraphsDraw size mismatch");
+const _: () = assert!(core::mem::size_of::<GraphSetDraw>() == 16, "GraphSetDraw size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<GraphsDraw>() == 4, "GraphsDraw alignment mismatch");
+const _: () = assert!(core::mem::align_of::<GraphSetDraw>() == 4, "GraphSetDraw alignment mismatch");
 
 /// Element type for Game.Frame
 #[cfg(target_pointer_width = "32")]
@@ -2302,7 +2302,7 @@ unsafe impl RocRelease<ValidatedRenderGraphHostUniform> for ValidatedRenderGraph
     }
 }
 
-impl GraphsDraw {
+impl GraphSetDraw {
     /// Recursively decrement Roc-owned fields.
     ///
     /// # Safety
@@ -2323,10 +2323,10 @@ impl GraphsDraw {
     }
 }
 
-pub struct GraphsDrawRelease;
+pub struct GraphSetDrawRelease;
 
-unsafe impl RocRelease<GraphsDraw> for GraphsDrawRelease {
-    unsafe fn release(value: GraphsDraw, roc_host: &RocHost) {
+unsafe impl RocRelease<GraphSetDraw> for GraphSetDrawRelease {
+    unsafe fn release(value: GraphSetDraw, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -2626,7 +2626,7 @@ unsafe extern "C" {
     pub fn roc_config() -> GameHostConfig;
 
     /// Entrypoint: draw_for_host
-    pub fn roc_draw(arg0: GameFrame) -> GraphsDraw;
+    pub fn roc_draw(arg0: GameFrame) -> GraphSetDraw;
 
 }
 
@@ -2656,15 +2656,15 @@ pub unsafe fn roc_config_owned() -> RocOwned<GameHostConfig, GameHostConfigRelea
     unsafe { RocOwned::from_raw(value) }
 }
 
-const _: () = assert!(core::mem::size_of::<RocOwned<GraphsDraw, GraphsDrawRelease>>() == core::mem::size_of::<GraphsDraw>(), "roc_draw owned result size mismatch");
-const _: () = assert!(core::mem::align_of::<RocOwned<GraphsDraw, GraphsDrawRelease>>() == core::mem::align_of::<GraphsDraw>(), "roc_draw owned result alignment mismatch");
+const _: () = assert!(core::mem::size_of::<RocOwned<GraphSetDraw, GraphSetDrawRelease>>() == core::mem::size_of::<GraphSetDraw>(), "roc_draw owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<GraphSetDraw, GraphSetDrawRelease>>() == core::mem::align_of::<GraphSetDraw>(), "roc_draw owned result alignment mismatch");
 
 /// Owning wrapper for `roc_draw`. The returned value is recursively
 /// released on Drop with no runtime descriptor or extra storage.
 ///
 /// # Safety
 /// The raw entrypoint and its arguments must satisfy the generated host ABI.
-pub unsafe fn roc_draw_owned(arg0: GameFrame) -> RocOwned<GraphsDraw, GraphsDrawRelease> {
+pub unsafe fn roc_draw_owned(arg0: GameFrame) -> RocOwned<GraphSetDraw, GraphSetDrawRelease> {
     let value = unsafe { roc_draw(arg0) };
     unsafe { RocOwned::from_raw(value) }
 }
