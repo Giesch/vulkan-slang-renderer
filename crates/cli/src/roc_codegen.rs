@@ -1198,7 +1198,12 @@ impl Logical {
 }
 
 #[cfg(test)]
+#[path = "../tests/support/roc_app.rs"]
+mod roc_app;
+
+#[cfg(test)]
 mod tests {
+    use super::roc_app::write_app_main;
     use super::*;
 
     struct TempProject(PathBuf);
@@ -1228,23 +1233,72 @@ mod tests {
         }
     }
 
-    fn write_app_main(generated: &Path) {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let platform = repo
-            .join("roc-platform/platform/main.roc")
-            .canonicalize()
-            .unwrap();
-        let example =
-            fs::read_to_string(repo.join("roc-platform/examples/basic-triangle/main.roc")).unwrap();
-        let body = example.split_once('\n').unwrap().1;
-        fs::write(
-            generated.join("main.roc"),
-            format!(
-                "app [game] {{ pf: platform \"{}\" }}\n{body}",
-                import_path(&generated.canonicalize().unwrap(), &platform).unwrap()
-            ),
+    #[test]
+    fn test_app_platform_sources_survive_generation_and_relocation() {
+        let project = TempProject::new();
+        let original = project.0.join("original project with spaces");
+        let generated = original.join("Generated");
+        fs::create_dir_all(&generated).unwrap();
+        write_app_main(&generated);
+        let app = fs::read_to_string(generated.join("main.roc")).unwrap();
+        assert_eq!(
+            app.lines().next().unwrap(),
+            "app [game] { pf: platform \"../platform/main.roc\" }"
+        );
+        let example = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../roc-platform/examples/basic-triangle/main.roc"),
         )
         .unwrap();
+        assert_eq!(
+            app.split_once('\n').unwrap().1,
+            example.split_once('\n').unwrap().1
+        );
+
+        // Managed output replacement must not remove the copied platform sources.
+        let mut config = project.config();
+        config.project_root = original.clone();
+        config.roc_source_dir = generated.clone();
+        write_precompiled_roc_shaders(config).unwrap();
+        assert!(!generated.join("main.roc").exists());
+        fs::write(generated.join("main.roc"), &app).unwrap();
+        let relocated = project.0.join("relocated project with spaces");
+        fs::rename(&original, &relocated).unwrap();
+        assert!(!original.exists());
+        let platform = relocated.join("Generated/../platform");
+        assert_eq!(
+            platform.join("main.roc").canonicalize().unwrap(),
+            relocated.join("platform/main.roc").canonicalize().unwrap()
+        );
+
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../roc-platform/platform");
+        let mut source_names = Vec::new();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let is_roc_source = entry.path().extension().is_some_and(|ext| ext == "roc");
+            if is_roc_source {
+                let name = entry.file_name();
+                assert_eq!(
+                    fs::read(entry.path()).unwrap(),
+                    fs::read(platform.join(&name)).unwrap()
+                );
+                source_names.push(name);
+            }
+        }
+
+        let mut staged_names = fs::read_dir(&platform)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        source_names.sort();
+        staged_names.sort();
+        assert!(source_names.contains(&"main.roc".into()));
+        assert!(source_names.contains(&"ShaderReflection.roc".into()));
+        assert_eq!(staged_names, source_names);
+        assert_eq!(
+            fs::read_to_string(relocated.join("Generated/main.roc")).unwrap(),
+            app
+        );
     }
 
     #[test]
