@@ -27,8 +27,8 @@ mod compile;
     )
 )]
 mod desc;
-mod erased;
-pub use erased::{DynDrawCall, DynDrawNode};
+mod dynamic;
+pub use dynamic::{DynDrawCall, DynDrawNode};
 #[cfg_attr(
     not(test),
     allow(

@@ -267,7 +267,7 @@ An array `[N; K]` of one node type is a node. It runs its elements in index
 order, and its frame element is `[N::Frame; K]`. `std::array::from_fn` builds
 both arrays from one table of per-node data.
 
-### Erased nodes
+### Dynamic nodes
 
 `DynDrawNode` is a draw node built from runtime data instead of a generated
 params type, for a host whose graph arrives as plain data (the Roc platform).
@@ -281,7 +281,7 @@ DynDrawNode::vertex_count(&vertex_count_pipeline, &uniform_buffer, gpu_size, cou
 ```
 
 Its frame value is a `Vec<u8>` of exactly `gpu_size` packed bytes; any other
-length is an execution error before submission. Erased nodes lower through
+length is an execution error before submission. Dynamic nodes lower through
 the same `LowerCtx` and pass the same validation as typed nodes; they carry no
 resource bindings or push block yet. A `Vec<N>` of one node type is a node
 whose frame is a `Vec<N::Frame>` of the same length, checked at execution.

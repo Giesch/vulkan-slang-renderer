@@ -563,7 +563,7 @@ fn backend_commit_once() {
 }
 
 #[test]
-fn backend_erased_draw_plan() {
+fn backend_dynamic_draw_plan() {
     let mut backend = Fake::default();
     let nodes = vec![
         DynDrawNode::indexed(

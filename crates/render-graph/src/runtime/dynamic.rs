@@ -1,7 +1,7 @@
 //! Draw nodes built from runtime data instead of generated shader types.
 //!
 //! A host that receives its graph as plain data (the Roc platform) cannot
-//! name a `GraphShaderParams` type per shader. An erased node carries the
+//! name a `GraphShaderParams` type per shader. A dynamic node carries the
 //! parameter block's GPU size and takes its per-frame value as already
 //! packed bytes. It lowers through the same `LowerCtx` and validates under
 //! the same rules as a typed node.
@@ -14,7 +14,7 @@ use super::{
     UniformSlot, compatible,
 };
 
-/// The draw call of an erased node. Indirect draws stay typed: their argument
+/// The draw call of a dynamic node. Indirect draws stay typed: their argument
 /// record is checked against the backend at the type level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DynDrawCall {
@@ -114,7 +114,7 @@ impl DynDrawNode {
             },
             LowerDrawCall::VertexCount(count) => DynDrawCall::VertexCount(count),
             LowerDrawCall::IndexedIndirect { .. } => {
-                unreachable!("erased nodes have no indirect constructor")
+                unreachable!("dynamic nodes have no indirect constructor")
             }
         }
     }
@@ -173,7 +173,7 @@ impl GraphNode for DynDrawNode {
                 }
             }
             LowerDrawCall::IndexedIndirect { .. } => {
-                unreachable!("erased nodes have no indirect constructor")
+                unreachable!("dynamic nodes have no indirect constructor")
             }
         };
         cx.draws.push(PendingDrawCommand {
@@ -194,7 +194,7 @@ mod tests {
     use crate::{RenderGraph, ResourcePlanner};
 
     #[test]
-    fn erased_draws_lower_into_one_main_pass() {
+    fn dynamic_draws_lower_into_one_main_pass() {
         let nodes = vec![
             DynDrawNode::indexed(
                 DrawIndexedKey::<NoPush>::new(3),
