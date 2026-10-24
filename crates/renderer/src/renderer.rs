@@ -2907,7 +2907,6 @@ impl Renderer {
 
         // `as_chunks` needs a const generic argument,
         // and an associated const of a type parameter cannot be one on stable.
-        #[expect(clippy::chunks_exact_to_as_chunks)]
         bytes.chunks_exact(T::GPU_SIZE).map(T::read_gpu).collect()
     }
 
