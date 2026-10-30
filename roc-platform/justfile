@@ -26,6 +26,12 @@ bundle:
 bundle-test:
     bash ci/bundle_test.sh
 
+# remove the cargo build output, the host archive, and the bundle
+clean:
+    cargo clean
+    rm -rf dist
+    rm -f platform/targets/*/libhost.a
+
 # regenerate the committed link inputs; asserts the glibc floor, needs gcc and binutils
 stubs:
     bash stubs/generate.sh

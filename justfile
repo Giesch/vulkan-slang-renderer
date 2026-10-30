@@ -233,6 +233,12 @@ lint:
     cargo clippy --workspace --all-targets --release -- -D warnings
 
 
+# remove the build output of the workspace and the Roc platform
+clean:
+    cargo clean
+    {{just_executable()}} roc-platform clean
+
+
 # set up git pre-commit hook
 [unix]
 setup-precommit:
