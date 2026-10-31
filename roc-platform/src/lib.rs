@@ -10,7 +10,7 @@ use std::mem::ManuallyDrop;
 use mltrs::game::Game;
 
 mod game;
-mod generated;
+mod graph_lifecycle;
 
 // `roc glue rust_glue` emits edition-2021 code: unsafe operations sit directly
 // in unsafe fn bodies, which edition 2024 rejects.
@@ -190,18 +190,19 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const i8) -> i32 {
 
 /// Main entry point for the Roc program.
 pub fn rust_main() -> i32 {
-    let mut roc_host = make_roc_host(core::ptr::null_mut());
-    set_roc_host(&mut roc_host);
+    // Roc allocates and frees through this host for the whole process: the
+    // draw bundle is fetched every frame.
+    let roc_host = Box::leak(Box::new(make_roc_host(core::ptr::null_mut())));
+    set_roc_host(roc_host);
 
     let title = window_title_from_roc();
-    set_roc_host(core::ptr::null_mut());
 
     if game::set_window_title(title).is_err() {
         eprintln!("roc host error: window title already set");
         return 1;
     }
 
-    match game::BasicTriangle::run() {
+    match game::RocGame::run() {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("{err:?}");

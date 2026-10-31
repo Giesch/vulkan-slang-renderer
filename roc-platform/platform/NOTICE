@@ -12,8 +12,8 @@ dependency graph with the licence its manifest declares.
 --------------------------------------------------------------------------
 1. The platform
 --------------------------------------------------------------------------
-Files:  main.roc, Game.roc, Host.roc, InitConfig.roc, Stdin.roc, Stdout.roc,
-        Stderr.roc, targets/x64glibc/libc_forward.a
+Files:  main.roc, Game.roc, Host.roc, Stdout.roc, Stderr.roc,
+        targets/x64glibc/libc_forward.a
 Licence: The Universal Permissive License (UPL), Version 1.0
 Text:   LICENSES/platform-UPL-1.0.txt
 Source: https://github.com/Giesch/vulkan-slang-renderer
