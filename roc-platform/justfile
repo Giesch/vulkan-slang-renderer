@@ -29,6 +29,7 @@ bundle-test:
 # remove the cargo build output, the host archive, and the bundle
 clean:
     cargo clean
+    cargo clean --manifest-path tests/lifecycle/Cargo.toml
     rm -rf dist
     rm -f platform/targets/*/libhost.a
 

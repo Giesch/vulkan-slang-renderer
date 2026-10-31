@@ -4,22 +4,22 @@ app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
 import pf.RenderGraph
-import pf.Graphs
+import pf.GraphSet
 import pf.ShaderReflection
 import Generated/BasicTriangle
 import Generated/Mltrs
 
-G : Graphs.ValidatedGraph((Mltrs.MvpMatrices, Mltrs.MvpMatrices))
+G : GraphSet.ValidatedGraph((Mltrs.MvpMatrices, Mltrs.MvpMatrices))
 
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-Ok(graphs) = Graphs.single(render_graph)
+Ok(graphs) = GraphSet.single(render_graph)
 
 init! : {} => Game.Init
 init! = |_| { window_title: "invalid values" }
 
-draw : Game.Frame -> Graphs.Submission(G)
+draw : Game.Frame -> GraphSet.Submission(G)
 draw = |_frame| graphs.draw(zero)
 
 vertex : BasicTriangle.Vertex
