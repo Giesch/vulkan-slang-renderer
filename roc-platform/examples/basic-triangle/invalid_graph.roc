@@ -1,5 +1,5 @@
 # Not an example: a pipeline whose uniform handle does not belong to its
-# shader. `roc check` must fail with the render graph validation message.
+# shader. `roc check` must fail at the top-level Ok destructure.
 app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
@@ -11,7 +11,7 @@ import Generated/Mltrs
 
 G : Graphs.ValidatedGraph(Mltrs.MvpMatrices)
 
-graphs = Graphs.or_crash(Graphs.single(RenderGraph.draw_indexed(triangle)))
+Ok(graphs) = Graphs.single(RenderGraph.draw_indexed(triangle))
 
 game : Game
 game = Game.new({ init!, draw, graphs })
