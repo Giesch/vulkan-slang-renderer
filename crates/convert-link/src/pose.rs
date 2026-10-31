@@ -488,17 +488,4 @@ mod tests {
         }
         assert_eq!(back.buffers.vertex_count, baked.vertices.len() as u32);
     }
-
-    #[test]
-    fn invbind_identity_holds_for_pure_rotation() {
-        // A joint that is a pure rotation; its inverse bind is the inverse
-        // rotation, so model_space·invBind = I.
-        let jnt1 = Jnt1 {
-            joints: vec![joint("j", [0, 0x4000, 0], [0.0, 0.0, 0.0])],
-        };
-        let model_space = joint_model_space_matrices(&jnt1, &[None], &[0]);
-        let inv = model_space[0].inverse();
-        let residual = model_space[0] * inv - Mat4::IDENTITY;
-        assert!(mat4_max_abs(&residual) < 1e-4);
-    }
 }

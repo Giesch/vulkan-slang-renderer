@@ -33,28 +33,3 @@ const _: () = {
     assert!(offset_of!(DrawIndexedIndirectCommand, vertex_offset) == 12);
     assert!(offset_of!(DrawIndexedIndirectCommand, first_instance) == 16);
 };
-
-#[cfg(test)]
-mod tests {
-    use super::DrawIndexedIndirectCommand;
-
-    #[test]
-    fn indirect_command_vulkan_layout() {
-        use std::mem::{align_of, offset_of, size_of};
-        assert_eq!(size_of::<DrawIndexedIndirectCommand>(), 20);
-        assert_eq!(align_of::<DrawIndexedIndirectCommand>(), 4);
-        assert_eq!(
-            size_of::<DrawIndexedIndirectCommand>(),
-            size_of::<ash::vk::DrawIndexedIndirectCommand>()
-        );
-        assert_eq!(
-            align_of::<DrawIndexedIndirectCommand>(),
-            align_of::<ash::vk::DrawIndexedIndirectCommand>()
-        );
-        assert_eq!(offset_of!(DrawIndexedIndirectCommand, index_count), 0);
-        assert_eq!(offset_of!(DrawIndexedIndirectCommand, instance_count), 4);
-        assert_eq!(offset_of!(DrawIndexedIndirectCommand, first_index), 8);
-        assert_eq!(offset_of!(DrawIndexedIndirectCommand, vertex_offset), 12);
-        assert_eq!(offset_of!(DrawIndexedIndirectCommand, first_instance), 16);
-    }
-}

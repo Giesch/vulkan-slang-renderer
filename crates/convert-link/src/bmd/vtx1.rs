@@ -200,12 +200,6 @@ mod tests {
 
     const FORMAT_ENTRY_SIZE: usize = 0x10;
 
-    #[test]
-    fn s16_shift8_uv_decodes() {
-        // 0x0180 with shift 8 = 384/256 = 1.5
-        assert_eq!(384_f32 / 256.0, 1.5);
-    }
-
     /// A minimal VTX1 with pos (2 verts), nrm (2), tex0 s16 shift-8 (2).
     #[test]
     fn parses_three_arrays() {

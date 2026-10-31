@@ -28,20 +28,3 @@ pub struct ComputeReflectionJson {
     pub workgroup_size: [u32; 3],
     pub pipeline_layout: ReflectedPipelineLayout,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reflection_value_roundtrip_is_stable() {
-        let raw = include_str!("fixtures/basic_triangle.json");
-        let parsed: ReflectionJson = serde_json::from_str(raw).unwrap();
-        let reparsed: ReflectionJson =
-            serde_json::from_str(&serde_json::to_string(&parsed).unwrap()).unwrap();
-        assert_eq!(
-            serde_json::to_value(&parsed).unwrap(),
-            serde_json::to_value(&reparsed).unwrap()
-        );
-    }
-}

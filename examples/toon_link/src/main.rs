@@ -1738,14 +1738,6 @@ impl Game for ToonLinkHost {
 mod host_tests {
     use super::*;
 
-    fn assert_game<T: Game>() {}
-
-    #[test]
-    fn both_modes_satisfy_game_bound() {
-        assert_game::<ToonLink>();
-        assert_game::<ToonLinkModern>();
-    }
-
     fn classic_settings() -> EditState {
         EditState {
             fps: Label::new("FPS: --"),

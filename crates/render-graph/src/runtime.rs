@@ -2044,14 +2044,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn texture_names_come_from_the_caller() {
-        let mut resources = ResourcePlanner::new();
-        resources.texture("height", 8, 8, GraphFormat::R32Float);
-
-        assert_eq!(resources.decls[0].name, "height");
-    }
-
     // ---- GPU-free logical construction --------------------------------
 
     /// A shader-params fixture for logical tests: two resource bindings and

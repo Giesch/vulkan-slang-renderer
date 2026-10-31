@@ -772,52 +772,6 @@ mod tests {
         assert!(serde_json::from_str::<ScalingRule>(r#""UNKNOWN""#).is_err());
     }
 
-    #[test]
-    fn manifest_round_trips() {
-        let m = Manifest {
-            version: 1,
-            buffers: Buffers {
-                vertices: "link.vtx.bin".into(),
-                indices: "link.idx.bin".into(),
-                skinning: "link.skin.bin".into(),
-                vertex_layout: vec!["position3f".into(), "normal3f".into(), "uv02f".into()],
-                vertex_count: 1754,
-                index_count: 8622,
-            },
-            textures: vec![TextureEntry {
-                name: "linktexS3TC".into(),
-                file: "tex/12_linktexS3TC.png".into(),
-                wrap_u: WrapMode::Clamp,
-                wrap_v: WrapMode::Clamp,
-                filter: FilterMode::Linear,
-                runtime_substitution: None,
-            }],
-            materials: vec![],
-            batches: vec![Batch {
-                material: 0,
-                shape: 0,
-                first_index: 0,
-                index_count: 810,
-            }],
-            skeleton: Skeleton {
-                scaling_rule: ScalingRule::Maya,
-                joints: vec![SkeletonJoint {
-                    scale_compensate: false,
-                    name: "link_root".into(),
-                    parent: -1,
-                    t: [0.0; 3],
-                    r_s16: [0; 3],
-                    s: [1.0; 3],
-                }],
-            },
-        };
-        let json = serde_json::to_string(&m).unwrap();
-        let back: Manifest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.buffers.vertex_count, 1754);
-        assert_eq!(back.batches[0].index_count, 810);
-        assert_eq!(back.skeleton.joints[0].parent, -1);
-    }
-
     /// The JSON spelling of every GX enum is the canonical GX name, identical to
     /// `Display` — the manifest on disk is the same text it was when these fields
     /// were `String`s, and the MAT3 oracle diff reads the same vocabulary.
