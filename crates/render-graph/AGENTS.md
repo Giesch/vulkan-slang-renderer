@@ -1,6 +1,6 @@
 # Render graph
 
-Last verified: 2026-09-13
+Last verified: 2026-10-24
 
 ## Purpose and dependencies
 
@@ -18,6 +18,10 @@ backend interfaces; graph does not depend on renderer, ash, vk-mem, SDL, or Slan
   nodes only for the backend's exact associated record through sealed recursive
   `CompatibleWith` bounds. Erased request and batch construction remains private.
 - Retain upload staging as `MaybeUninit` bytes; do not read Rust padding as `u8`.
+- Dynamic nodes (`runtime/dynamic.rs`) lower through
+  `LowerCtx` and validate like typed nodes. Their constructors take typed
+  pipeline keys so a draw call cannot name the wrong pipeline family. There is
+  no raw description ingestion.
 - Prepared graphs retain backend resource ownership. Preparation rejects extent
   limits before allocation; partial failures preserve backend registration policy.
 - Frame submission applies writes after the flight-slot wait. Commit texture

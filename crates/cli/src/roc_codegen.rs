@@ -1198,7 +1198,12 @@ impl Logical {
 }
 
 #[cfg(test)]
+#[path = "../tests/support/roc_app.rs"]
+mod roc_app;
+
+#[cfg(test)]
 mod tests {
+    use super::roc_app::write_app_main;
     use super::*;
 
     struct TempProject(PathBuf);
@@ -1226,25 +1231,6 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
-    }
-
-    fn write_app_main(generated: &Path) {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let platform = repo
-            .join("roc-platform/platform/main.roc")
-            .canonicalize()
-            .unwrap();
-        let example =
-            fs::read_to_string(repo.join("roc-platform/examples/basic-triangle/main.roc")).unwrap();
-        let body = example.split_once('\n').unwrap().1;
-        fs::write(
-            generated.join("main.roc"),
-            format!(
-                "app [game] {{ pf: platform \"{}\" }}\n{body}",
-                import_path(&generated.canonicalize().unwrap(), &platform).unwrap()
-            ),
-        )
-        .unwrap();
     }
 
     #[test]
