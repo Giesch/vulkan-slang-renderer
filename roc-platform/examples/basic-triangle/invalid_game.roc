@@ -18,7 +18,7 @@ draw = |_frame| selected.draw({ model: zero, view: zero, proj: zero })
 
 selected = other_graphs.select(|g| g.first)
 
-other_graphs = Graphs.or_crash({ first: graphs, second: graphs }.Graphs)
+Ok(other_graphs) = { first: graphs, second: graphs }.Graphs
 
 zero : ShaderReflection.Float4x4
 zero = {
@@ -28,7 +28,7 @@ zero = {
 	row_3: { x: 0.0, y: 0.0, z: 0.0, w: 0.0 },
 }
 
-graphs = Graphs.or_crash(Graphs.single(RenderGraph.draw_indexed(triangle)))
+Ok(graphs) = Graphs.single(RenderGraph.draw_indexed(triangle))
 
 triangle = RenderGraph.indexed_pipeline({
 	name: "basic_triangle",

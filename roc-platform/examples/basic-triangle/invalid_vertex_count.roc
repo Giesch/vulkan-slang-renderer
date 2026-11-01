@@ -14,7 +14,7 @@ G : Graphs.ValidatedGraph(Mltrs.MvpMatrices)
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-graphs = Graphs.or_crash(Graphs.single(RenderGraph.draw_vertex_count(no_vertices, 3)))
+Ok(graphs) = Graphs.single(RenderGraph.draw_vertex_count(no_vertices, 3))
 
 init! : {} => Game.Init
 init! = |_| { window_title: "invalid vertex count" }

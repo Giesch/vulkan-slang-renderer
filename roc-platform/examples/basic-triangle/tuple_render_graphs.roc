@@ -9,7 +9,7 @@ import Generated/BasicTriangle
 game : Game
 game = Game.new({ init!: |_| { window_title: "tuple render graphs" }, graphs, draw: |_| graphs.draw((1, "two")) })
 
-graphs = Graphs.or_crash(Graphs.single(RenderGraph.from_tuple_2((byte_node, text_node))))
+Ok(graphs) = Graphs.single(RenderGraph.from_tuple_2((byte_node, text_node)))
 
 vertex : BasicTriangle.Vertex
 vertex = { position: { x: 0.0, y: 0.0, z: 0.0 }, color: { x: 0.0, y: 0.0, z: 0.0 } }
@@ -124,9 +124,11 @@ expect {
 }
 
 ## Each graph retains its own packer even when frame types are identical.
+Ok(left) = Graphs.single(byte_node)
+
+Ok(right) = Graphs.single(node("offset", |v| bytes(v + 1)))
+
 expect {
-	left = Graphs.or_crash(Graphs.single(byte_node))
-	right = Graphs.or_crash(Graphs.single(node("offset", |v| bytes(v + 1))))
 	left.draw(7).to_host() != right.draw(7).to_host()
 }
 
