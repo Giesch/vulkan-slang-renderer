@@ -10,11 +10,11 @@ ValidatedRenderGraph(frame) :: {
 	pack : frame -> List(List(U8)),
 }.{
 
-	## Lower and validate the nodes. Rejects the blueprint with the aggregated
+	## Lower and validate the nodes. Rejects the render graph with the aggregated
 	## validation message.
 	new : RenderGraph(frame) -> Try(ValidatedRenderGraph(frame), [InvalidRenderGraph(Str)])
-	new = |bp| {
-		decls = RenderGraph.decls(bp)
+	new = |render_graph| {
+		decls = RenderGraph.decls(render_graph)
 		checked = decls.map_with_index(|node, index| check_node(node, index.to_u32_wrap()))
 		draws = decls.map_with_index(
 			|node, index| {
@@ -57,14 +57,14 @@ ValidatedRenderGraph(frame) :: {
 								},
 							),
 						},
-						pack: RenderGraph.packer(bp),
+						pack: RenderGraph.packer(render_graph),
 					},
 				),
 			)
 		}
 	}
 
-	## The blueprint's packer preserves validated node order.
+	## The render graph's packer preserves validated node order.
 	packer : ValidatedRenderGraph(frame) -> (frame -> List(List(U8)))
 	packer = |graph| graph.pack
 
