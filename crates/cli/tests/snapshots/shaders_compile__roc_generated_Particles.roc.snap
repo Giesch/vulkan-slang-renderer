@@ -2,13 +2,37 @@
 source: crates/cli/tests/shaders_compile.rs
 expression: text
 ---
-# Generated; logical values are not GPU memory layouts.
-import pf.ShaderReflection
-import "../compiled with space/particles.comp.spv" as compute_bytes : List(U8)
+import pf.ShaderReflection exposing [ComputeReflection, PointerAddress, StructType]
 
+import "../compiled with space/particles.comp.spv" as compute_bytes : List(U8)
+import "../compiled with space/particles.comp.json" as reflection_json : Str
+
+## Generated; logical values are not GPU memory layouts.
 Particles := {}.{
-	particle_type : ShaderReflection.StructType
-	particle_type = ShaderReflection.StructType.{
+	SimParams := {
+		particles_in : PointerAddress,
+		particles_out : PointerAddress,
+		delta_time : F32,
+	}.{
+		is_eq : _
+
+		gpu_size : U32
+		gpu_size = 32
+
+		to_bytes : SimParams -> List(U8)
+		to_bytes = |value|
+			ShaderReflection.pack(
+				gpu_size.to_u64(),
+				[
+					(0, PointerAddress.to_bytes(value.particles_in)),
+					(8, PointerAddress.to_bytes(value.particles_out)),
+					(16, ShaderReflection.f32_bytes(value.delta_time)),
+				],
+			)
+	}
+
+	particle_type : StructType
+	particle_type = StructType.{
 		type_name: "Particle",
 		fields: [
 			Vector(
@@ -53,8 +77,8 @@ Particles := {}.{
 		],
 	}
 
-	sim_params_type : ShaderReflection.StructType
-	sim_params_type = ShaderReflection.StructType.{
+	sim_params_type : StructType
+	sim_params_type = StructType.{
 		type_name: "SimParams",
 		fields: [
 			Pointer({
@@ -88,7 +112,7 @@ Particles := {}.{
 		],
 	}
 
-	reflection : ShaderReflection.ComputeReflection
+	reflection : ComputeReflection
 	reflection = {
 		source_file_name: "particles.compute.slang",
 		global_parameters: [

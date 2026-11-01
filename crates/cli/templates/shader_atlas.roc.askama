@@ -1,12 +1,13 @@
-# Generated; directories are tool-owned.
 {% for entry in modules -%}
 import {{ entry.module }}
-{% endfor %}
+{% endfor -%}
+{% if !modules.is_empty() %}
+{% endif -%}
+## Generated; directories are tool-owned.
 ShaderAtlas := {}.{
-    shader_names : List(Str)
-    shader_names = [{{ self.shader_names() }}]
 {%- for entry in modules %}
-
+{%- if !loop.first %}
+{% endif %}
     {{ entry.value }} = {
         reflection: {{ entry.module }}.reflection,
         stages: {{ entry.module }}.stages,
