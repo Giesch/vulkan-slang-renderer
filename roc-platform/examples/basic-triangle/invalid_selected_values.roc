@@ -4,7 +4,7 @@ app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
 import pf.RenderGraph
-import pf.Graphs
+import pf.GraphSet
 import pf.ShaderReflection
 import Generated/BasicTriangle
 import Generated/Mltrs
@@ -12,7 +12,7 @@ import Generated/Mltrs
 game : Game
 game = Game.new({ init!, draw, graphs })
 
-Ok(graphs) = { first: render_graph, second: render_graph }.Graphs
+Ok(graphs) = { first: render_graph, second: render_graph }.GraphSet
 
 selected = graphs.select(|g| g.second)
 

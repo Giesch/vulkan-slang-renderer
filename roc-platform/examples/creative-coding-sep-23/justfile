@@ -1,0 +1,3 @@
+watch:
+    watchexec --restart --watch shaders/source --watch main.roc \
+        -- 'just --justfile ../../justfile shaders creative-coding-sep-23 && roc main.roc'

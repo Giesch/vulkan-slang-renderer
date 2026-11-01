@@ -1,23 +1,23 @@
 import RenderGraph
 import ValidatedRenderGraph
 
-coll.ToGraphs(args) :
+coll.ToGraphSet(args) :
 	where [
-		coll.to_graphs : coll -> Try(Graphs(args), Graphs.Invalid),
+		coll.to_graph_set : coll -> Try(GraphSet(args), GraphSet.Invalid),
 	]
 
-# avoids a RenderGraph-to-Graphs import cycle.
-RenderGraphToGraphsExtension := [].{
-	to_graphs : RenderGraph(frame) -> Try(
-		Graphs(Graphs.ValidatedGraph(frame)),
-		Graphs.Invalid,
+# avoids a RenderGraph-to-GraphSet import cycle.
+RenderGraphToGraphSetExtension := [].{
+	to_graph_set : RenderGraph(frame) -> Try(
+		GraphSet(GraphSet.ValidatedGraph(frame)),
+		GraphSet.Invalid,
 	)
-	to_graphs = |render_graph| Graphs.single(render_graph)
+	to_graph_set = |render_graph| GraphSet.single(render_graph)
 }
 
 ## The application's collection of RenderGraphs.
 ## Defined and validated at compile time.
-Graphs(args) :: {
+GraphSet(args) :: {
 	definitions : List(ValidatedRenderGraph.HostGraph),
 	build : U32 -> args,
 }.{
@@ -43,11 +43,11 @@ Graphs(args) :: {
 
 	## Define selections at module scope to retain the selected packer.
 	## This checks collection types, not the identity of captured graphs.
-	select : Graphs(args), (args -> ValidatedGraph(frame)) -> SelectedGraph(args, frame)
+	select : GraphSet(args), (args -> ValidatedGraph(frame)) -> SelectedGraph(args, frame)
 	select = |graphs, choose| SelectedGraph.(choose(graphs.register()))
 
 	## A single-graph collection needs no selector.
-	draw : Graphs(ValidatedGraph(frame)), frame -> Submission(ValidatedGraph(frame))
+	draw : GraphSet(ValidatedGraph(frame)), frame -> Submission(ValidatedGraph(frame))
 	draw = |graphs, values| Submission.(graphs.register().draw(values))
 
 	Draw :: { graph_id : U32, values : List(List(U8)) }.{
@@ -56,7 +56,7 @@ Graphs(args) :: {
 
 	Invalid : [InvalidRenderGraph(Str)]
 
-	single : RenderGraph(frame) -> Try(Graphs(ValidatedGraph(frame)), Invalid)
+	single : RenderGraph(frame) -> Try(GraphSet(ValidatedGraph(frame)), Invalid)
 	single = |render_graph| {
 		graph = ValidatedRenderGraph.new(render_graph)?
 
@@ -64,17 +64,17 @@ Graphs(args) :: {
 		pack = graph.packer()
 		build = |id| ValidatedGraph.({ id, pack })
 
-		Ok(Graphs.({ definitions, build }))
+		Ok(GraphSet.({ definitions, build }))
 	}
 
-	to_graphs : Graphs(args) -> Try(Graphs(args), Invalid)
-	to_graphs = |graphs| Ok(graphs)
+	to_graph_set : GraphSet(args) -> Try(GraphSet(args), Invalid)
+	to_graph_set = |graphs| Ok(graphs)
 
-	map2 : left, right, (a, b -> c) -> Try(Graphs(c), Invalid)
-		where [left.ToGraphs(a), right.ToGraphs(b)]
+	map2 : left, right, (a, b -> c) -> Try(GraphSet(c), Invalid)
+		where [left.ToGraphSet(a), right.ToGraphSet(b)]
 	map2 = |left, right, combine| {
-		Graphs.(l) = left.to_graphs()?
-		Graphs.(r) = right.to_graphs()?
+		GraphSet.(l) = left.to_graph_set()?
+		GraphSet.(r) = right.to_graph_set()?
 
 		count = l.definitions.len() + r.definitions.len()
 		if count > 4294967295 {
@@ -88,12 +88,12 @@ Graphs(args) :: {
 			combine((l.build)(base), (r.build)(right_offset))
 		}
 
-		Ok(Graphs.({ definitions, build }))
+		Ok(GraphSet.({ definitions, build }))
 	}
 
-	register : Graphs(args) -> args
-	register = |Graphs.(graphs)| (graphs.build)(0)
+	register : GraphSet(args) -> args
+	register = |GraphSet.(graphs)| (graphs.build)(0)
 
-	definitions : Graphs(args) -> List(ValidatedRenderGraph.HostGraph)
-	definitions = |Graphs.(graphs)| graphs.definitions
+	definitions : GraphSet(args) -> List(ValidatedRenderGraph.HostGraph)
+	definitions = |GraphSet.(graphs)| graphs.definitions
 }

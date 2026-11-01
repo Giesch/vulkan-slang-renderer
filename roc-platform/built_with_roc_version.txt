@@ -1,1 +1,1 @@
-Roc compiler version release-fast-e922395e
+Roc compiler version release-fast-89d9ea97
