@@ -21,7 +21,7 @@
 
 use std::fmt::Write as _;
 
-use anyhow::{Context, Result};
+use eros::{IntoUnion, context};
 use gx::animation_manifest::{
     AnimationCatalog, AnimationClip, AxisSrt, BasMetadata, CATALOG_VERSION, CatalogClip, ClipData,
     TrackF32, TrackI16,
@@ -214,8 +214,9 @@ pub fn clip_output_file(archive: &str, member: &str) -> String {
 
 /// Serialize a document deterministically: pretty JSON, fixed field order,
 /// one trailing newline.
-pub fn json_bytes<T: serde::Serialize>(doc: &T) -> Result<Vec<u8>> {
-    let mut text = serde_json::to_string_pretty(doc).context("serializing animation document")?;
+#[context("serialize animation document")]
+pub fn json_bytes<T: serde::Serialize>(doc: &T) -> eros::Result<Vec<u8>, (serde_json::Error,)> {
+    let mut text = serde_json::to_string_pretty(doc).union()?;
     text.push('\n');
     Ok(text.into_bytes())
 }

@@ -18,61 +18,78 @@
 //!   {scale, rotation, translation} key descriptors. See `calcTransform`
 //!   in J3DAnimation.cpp.
 
-use anyhow::{Context, Result, anyhow, bail};
+use eros::{Context, IntoUnion, ReshapeUnion, context};
 
 use gx::animation_manifest::{BasMetadata, BckClip, BckJoint};
 
+use super::error::{AnimationParseErrors, BasErrors, BasInsideChunk, InvalidCount, RangeOverflow};
 use super::tracks::AxisDescriptors;
 
 pub(crate) const SOUND_ABSENT: u32 = 0xFFFF_FFFF;
 
-pub fn parse(data: &[u8], what: &str) -> Result<BckClip> {
-    let header = super::j3d_single_chunk(data, what, "bck1", b"ANK1")
-        .with_context(|| format!("{what}: not a readable BCK"))?;
+/// Parse a whole BCK file; `_what` names the clip (`archive/member`) in the
+/// error context. (Underscored because `#[context]` is its only use, and the
+/// body the macro moves into an inner function would warn otherwise.)
+#[context("Parse BCK {}", _what)]
+pub fn parse(data: &[u8], _what: &str) -> eros::Result<BckClip, AnimationParseErrors> {
+    let header = super::j3d_single_chunk(data, b"bck1", b"ANK1").widen()?;
     let chunk = super::chunk_slice(data, &header);
 
-    let joint_count = super::u16_at(chunk, 0x0C, "ANK1 joint count")? as usize;
+    let joint_count = super::u16_at(chunk, 0x0C, "ANK1 joint count").widen()? as usize;
     let (scale_count, rot_count, trans_count) = (
-        super::u16_at(chunk, 0x0E, "ANK1 scale pool count")? as usize,
-        super::u16_at(chunk, 0x10, "ANK1 rotation pool count")? as usize,
-        super::u16_at(chunk, 0x12, "ANK1 translation pool count")? as usize,
+        super::u16_at(chunk, 0x0E, "ANK1 scale pool count").widen()? as usize,
+        super::u16_at(chunk, 0x10, "ANK1 rotation pool count").widen()? as usize,
+        super::u16_at(chunk, 0x12, "ANK1 translation pool count").widen()? as usize,
     );
-    let table_off = super::u32_at(chunk, 0x14, "ANK1 table offset")? as usize;
-    let scale_off = super::u32_at(chunk, 0x18, "ANK1 scale pool offset")? as usize;
-    let rot_off = super::u32_at(chunk, 0x1C, "ANK1 rotation pool offset")? as usize;
-    let trans_off = super::u32_at(chunk, 0x20, "ANK1 translation pool offset")? as usize;
+    let table_off = super::u32_at(chunk, 0x14, "ANK1 table offset").widen()? as usize;
+    let scale_off = super::u32_at(chunk, 0x18, "ANK1 scale pool offset").widen()? as usize;
+    let rot_off = super::u32_at(chunk, 0x1C, "ANK1 rotation pool offset").widen()? as usize;
+    let trans_off = super::u32_at(chunk, 0x20, "ANK1 translation pool offset").widen()? as usize;
 
-    let scale_pool = super::pool(chunk, scale_off, scale_count * 4, "scale", what)?;
-    let rot_pool = super::pool(chunk, rot_off, rot_count * 2, "rotation", what)?;
-    let trans_pool = super::pool(chunk, trans_off, trans_count * 4, "translation", what)?;
+    let scale_pool = super::pool(chunk, scale_off, scale_count * 4, "scale pool").widen()?;
+    let rot_pool = super::pool(chunk, rot_off, rot_count * 2, "rotation pool").widen()?;
+    let trans_pool = super::pool(chunk, trans_off, trans_count * 4, "translation pool").widen()?;
 
     // 42 joints -> 126 table entries; reject counts that cannot be triplets.
     if joint_count == 0 || joint_count > 512 {
-        bail!("{what}: implausible joint count {joint_count}");
+        return Err(InvalidCount {
+            field: "ANK1 joint count",
+            count: joint_count,
+            rule: "is outside the plausible range 1..=512",
+        })
+        .union();
     }
     let table_len = joint_count
         .checked_mul(3)
         .and_then(|n| n.checked_mul(0x12))
-        .ok_or_else(|| anyhow!("{what}: joint count overflows"))?;
-    let table = super::pool(chunk, table_off, table_len, "key table", what)?;
+        .ok_or_else(|| RangeOverflow {
+            what: "ANK1 key table".to_string(),
+        })
+        .union()?;
+    let table = super::pool(chunk, table_off, table_len, "key table").widen()?;
 
     let mut joints = Vec::with_capacity(joint_count);
     for j in 0..joint_count {
         let mut axes = Vec::with_capacity(3);
         for axis in 0..3 {
-            let what_track = format!("{what}: joint {j} axis {axis}");
+            let what_track = format!("joint {j} axis {axis}");
             let off = (j * 3 + axis) * 0x12;
-            let desc = AxisDescriptors::read(table, off).with_context(|| what_track.clone())?;
+            let desc = AxisDescriptors::read(table, off)
+                .with_context(|| what_track.clone())
+                .widen()?;
             // Reachability check before decoding: each descriptor's index must
             // lie inside its pool so the error names the pool, not the word.
-            for (desc, pool_len, elem, kind) in [
-                (desc.scale, scale_count, 4usize, "scale"),
-                (desc.rotation, rot_count, 2, "rotation"),
-                (desc.translation, trans_count, 4, "translation"),
+            for (desc, pool_len, kind) in [
+                (desc.scale, scale_count, "scale"),
+                (desc.rotation, rot_count, "rotation"),
+                (desc.translation, trans_count, "translation"),
             ] {
-                super::check_descriptor(desc, pool_len, elem, &format!("{what_track} {kind}"))?;
+                super::check_descriptor(desc, pool_len, &format!("{what_track} {kind}")).widen()?;
             }
-            axes.push(desc.decode(scale_pool, rot_pool, trans_pool, &what_track)?);
+            axes.push(
+                desc.decode(scale_pool, rot_pool, trans_pool, &what_track)
+                    .widen()?,
+            );
         }
         let axes = <[_; 3]>::try_from(axes).expect("three axes per joint");
         joints.push(BckJoint {
@@ -81,11 +98,11 @@ pub fn parse(data: &[u8], what: &str) -> Result<BckClip> {
         });
     }
 
-    let bas = bas_metadata(data, what)?;
+    let bas = bas_metadata(data).widen()?;
     Ok(BckClip {
-        duration_frames: super::u16_at(chunk, 0x0A, "ANK1 duration")?,
-        loop_attribute: super::u8_at(chunk, 0x08, "ANK1 loop attribute")?,
-        rotation_decimal_shift: super::u8_at(chunk, 0x09, "ANK1 decimal shift")?,
+        duration_frames: super::u16_at(chunk, 0x0A, "ANK1 duration").widen()?,
+        loop_attribute: super::u8_at(chunk, 0x08, "ANK1 loop attribute").widen()?,
+        rotation_decimal_shift: super::u8_at(chunk, 0x09, "ANK1 decimal shift").widen()?,
         joints,
         bas,
     })
@@ -94,8 +111,9 @@ pub fn parse(data: &[u8], what: &str) -> Result<BckClip> {
 /// BAS trailer location metadata. Validates the u16 entry count and the
 /// `8 + count * 0x20` extent against the file when present, and that the
 /// trailer starts after the declared chunk (matching the extraction-side
-/// rule; a "trailer" inside the chunk is corruption).
-pub(crate) fn bas_metadata(data: &[u8], what: &str) -> Result<BasMetadata> {
+/// rule; a "trailer" inside the chunk is corruption). `data` must already
+/// have passed [`super::j3d_single_chunk`].
+pub(crate) fn bas_metadata(data: &[u8]) -> eros::Result<BasMetadata, BasErrors> {
     let sound_off = u32::from_be_bytes([data[0x1C], data[0x1D], data[0x1E], data[0x1F]]);
     if sound_off == SOUND_ABSENT {
         return Ok(BasMetadata {
@@ -107,29 +125,35 @@ pub(crate) fn bas_metadata(data: &[u8], what: &str) -> Result<BasMetadata> {
 
     let off = sound_off as u64;
     if off + 2 > data.len() as u64 {
-        bail!("{what}: BAS offset {off:#x} out of bounds");
+        return Err(super::out_of_bounds(
+            data,
+            sound_off as usize,
+            2,
+            "BAS entry count",
+        ))
+        .union();
     }
 
     let count = u16::from_be_bytes([data[sound_off as usize], data[sound_off as usize + 1]]) as u64;
-    let length = 8u64
-        .checked_add(
-            count
-                .checked_mul(0x20)
-                .ok_or_else(|| anyhow!("{what}: BAS count overflows"))?,
-        )
-        .ok_or_else(|| anyhow!("{what}: BAS length overflows"))?;
+    // count <= 0xFFFF, so 8 + count * 0x20 cannot overflow u64.
+    let length = 8 + count * 0x20;
     if off + length > data.len() as u64 {
-        bail!(
-            "{what}: BAS trailer at {off:#x} spans {length} bytes, past the {}-byte file",
-            data.len()
-        );
+        return Err(super::out_of_bounds(
+            data,
+            sound_off as usize,
+            length as usize,
+            "BAS trailer",
+        ))
+        .union();
     }
     let declared_chunk_end =
         0x20u64 + u32::from_be_bytes([data[0x24], data[0x25], data[0x26], data[0x27]]) as u64;
     if off < declared_chunk_end {
-        bail!(
-            "{what}: BAS trailer at {off:#x} starts inside the declared chunk (ends {declared_chunk_end:#x})"
-        );
+        return Err(BasInsideChunk {
+            offset: off,
+            chunk_end: declared_chunk_end,
+        })
+        .union();
     }
 
     Ok(BasMetadata {
