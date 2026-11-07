@@ -6,7 +6,10 @@
 //! packed bytes. It lowers through the same `LowerCtx` and validates under
 //! the same rules as a typed node.
 
+use eros::IntoUnion;
+
 use crate::commands::{DrawCallConfig, PendingDrawCommand};
+use crate::error::{IndexRangeOutOfBounds, PlanErrors, UniformSizeMismatch};
 
 use super::lower::{LowerCtx, LowerDrawCall, UniformInput};
 use super::{
@@ -141,14 +144,15 @@ impl GraphNode for DynDrawNode {
         )
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            frame_data.len() == self.gpu_size as usize,
-            "render graph: uniform buffer slot {} received {} bytes; its parameter block is {} bytes",
-            self.uniform_index,
-            frame_data.len(),
-            self.gpu_size,
-        );
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
+        if frame_data.len() != self.gpu_size as usize {
+            return Err(UniformSizeMismatch {
+                slot: self.uniform_index,
+                received: frame_data.len(),
+                expected: self.gpu_size,
+            })
+            .union();
+        }
         cx.stage_uniform_bytes(self.uniform_index, frame_data);
 
         let pipeline_index = self.pipeline_index;
@@ -162,11 +166,14 @@ impl GraphNode for DynDrawNode {
                 index_count,
             } => {
                 let whole = cx.whole_index_count(pipeline_index);
-                anyhow::ensure!(
-                    super::range_in_bounds(first_index, index_count, whole),
-                    "render graph: index range [{first_index}, {first_index} + {index_count}) \
-                     is out of bounds (index count {whole})",
-                );
+                if !super::range_in_bounds(first_index, index_count, whole) {
+                    return Err(IndexRangeOutOfBounds {
+                        first_index,
+                        index_count,
+                        whole,
+                    })
+                    .union();
+                }
                 DrawCallConfig::IndexRange {
                     first_index,
                     index_count,

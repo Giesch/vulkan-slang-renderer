@@ -24,6 +24,12 @@ backend interfaces; graph does not depend on renderer, ash, vk-mem, SDL, or Slan
   no raw description ingestion.
 - Prepared graphs retain backend resource ownership. Preparation rejects extent
   limits before allocation; partial failures preserve backend registration policy.
+- Errors are typed eros unions (`src/error.rs`): one small `thiserror` type per
+  failure kind, grouped per stage by the `NewErrors`, `PrepareErrors<E>`,
+  `PlanErrors` and `ExecuteErrors<E>` aliases. Backend failures stay opaque to
+  the graph as the backend trait's associated error (`PreparationBackend::
+  PrepareError`, `FrameBackend::Error`, both `eros::SendSyncError`), the last
+  member of the prepare/execute sets. Do not add anyhow or `AnyError` here.
 - Frame submission applies writes after the flight-slot wait. Commit texture
   cursors once after successful submission, before presentation; a presentation
   error does not undo submitted state.
