@@ -67,7 +67,8 @@ fn execute(
             std::array::from_fn(|_| SimParamsData { delta_time: 0.016 }),
             points,
         ),
-    )
+    )?;
+    Ok(())
 }
 
 fn main() {}

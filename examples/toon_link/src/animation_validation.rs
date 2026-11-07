@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::path::{Component, Path};
 
-use anyhow::{Context, Result, bail, ensure};
+use eros::{Context, Result, bail, context, ensure};
 use gx::animation_manifest::{
     AnimationCatalog, AnimationClip, AnimationFormat, BckClip, CATALOG_VERSION, CLIP_VERSION,
     CatalogClip, ClipData, TrackF32, TrackI16,
@@ -131,7 +131,7 @@ pub fn validate_model_skin(model: &Manifest, bytes: &[u8]) -> Result<Vec<VertexS
     validate_skeleton(&model.skeleton)?;
     let expected = usize::try_from(model.buffers.vertex_count)?
         .checked_mul(PACKED_SKIN_VERTEX_BYTES)
-        .context("skin byte count overflow")?;
+        .ok_or_else(|| eros::error!("skin byte count overflow"))?;
     ensure!(
         bytes.len() == expected,
         "skin.length: expected {expected}, got {}",
@@ -173,40 +173,36 @@ pub fn validate_model_skin(model: &Manifest, bytes: &[u8]) -> Result<Vec<VertexS
     Ok(vertices)
 }
 
+#[context("Validate clip {}", catalog_label(entry))]
 pub fn validate_clip<'a>(
     entry: &CatalogClip,
     document: &'a AnimationClip,
     skeleton: &Skeleton,
 ) -> Result<&'a BckClip> {
-    let label = catalog_label(entry);
-    let validate = || -> Result<&'a BckClip> {
-        ensure!(
-            document.version == CLIP_VERSION,
-            "clip.version: unsupported {}",
-            document.version
-        );
-        let identity = &document.identity;
-        ensure!(
-            identity.archive == entry.archive
-                && identity.member == entry.member
-                && identity.entry_index == entry.entry_index
-                && identity.resource_id == entry.resource_id
-                && identity.sha256 == entry.sha256,
-            "clip.identity: differs from catalog"
-        );
-        ensure!(
-            entry.format == AnimationFormat::Bck,
-            "clip.format: expected catalog BCK"
-        );
-        let ClipData::Bck(clip) = &document.data else {
-            bail!("clip.format: expected catalog BCK");
-        };
-        validate_bck(clip, skeleton)?;
-
-        Ok(clip)
+    ensure!(
+        document.version == CLIP_VERSION,
+        "clip.version: unsupported {}",
+        document.version
+    );
+    let identity = &document.identity;
+    ensure!(
+        identity.archive == entry.archive
+            && identity.member == entry.member
+            && identity.entry_index == entry.entry_index
+            && identity.resource_id == entry.resource_id
+            && identity.sha256 == entry.sha256,
+        "clip.identity: differs from catalog"
+    );
+    ensure!(
+        entry.format == AnimationFormat::Bck,
+        "clip.format: expected catalog BCK"
+    );
+    let ClipData::Bck(clip) = &document.data else {
+        bail!("clip.format: expected catalog BCK");
     };
+    validate_bck(clip, skeleton)?;
 
-    validate().with_context(|| label)
+    Ok(clip)
 }
 
 pub fn validate_bck(clip: &BckClip, skeleton: &Skeleton) -> Result<()> {
@@ -680,7 +676,7 @@ mod tests {
                 }
             }
             let error = validate_clip(&row, &bad, &model().skeleton).unwrap_err();
-            assert!(format!("{error:#}").contains(&catalog_label(&row)));
+            assert!(format!("{error:#?}").contains(&catalog_label(&row)));
         }
     }
 
@@ -756,8 +752,8 @@ mod tests {
                     }
                 }
                 Err(error) => {
-                    println!("REJECT {label}: {error:#}");
-                    rejected.push((label, format!("{error:#}")));
+                    println!("REJECT {label}: {error:#?}");
+                    rejected.push((label, format!("{error:#?}")));
                 }
             }
         }

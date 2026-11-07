@@ -11,7 +11,7 @@ use facet::Facet;
 use serde::Serialize;
 
 #[allow(unused_imports)]
-use crate::renderer::gpu_read::GPURead;
+use crate::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 #[allow(unused_imports)]
 use crate::renderer::render_graph::GPUWrite;
 
@@ -56,9 +56,12 @@ impl TryFrom<u32> for SharedMode {
 impl GPURead for SharedMode {
     const GPU_SIZE: usize = 4;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
         let tag = <u32 as GPURead>::read_gpu(bytes)?;
 
-        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid SharedMode tag: {tag}"))
+        eros::IntoUnion::union(Self::try_from(tag).map_err(|tag| InvalidGpuEnumTag {
+            type_name: "SharedMode",
+            tag: i128::from(tag),
+        }))
     }
 }

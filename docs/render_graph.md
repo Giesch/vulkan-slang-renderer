@@ -25,7 +25,12 @@ against backend-owned liveness, mapping, upload access, and logical byte capacit
 Uniform payload sizes must match exactly; storage payloads must fit. Allocation
 padding is not writable payload capacity. Forged slot metadata cannot authorize
 uploads to immutable/GPU-updated storage or bypass these checks; rejection returns
-`DrawError` without applying any writes, submitting, or committing graph state.
+`DrawError::Upload` (or `DrawError::Indirect` for a rejected indirect request),
+as the backend member of `execute`'s typed `ExecuteErrors<DrawError>` set,
+without applying any writes, submitting, or committing graph state.
+`Game::draw` returns `Result<(), DrawError>`; `self.graph.execute(..)?` there
+returns a held `DrawError` as is and wraps the graph's own per-frame errors in
+`DrawError::Graph` (see [`error_handling.md`](error_handling.md)).
 The renderer applies writes after the flight-slot wait and preserves
 previously queued work. The submission callback commits texture cursors exactly
 once after successful queue submission, before presentation. A pre-submit error
@@ -112,7 +117,7 @@ Errors arrive in three stages, each with its own scope:
 - `prepared.execute` — runtime conditions on live resources: dropped buffer
   slots and oversized uploads. These are re-checked on every execution, so
   resources dropped after preparation are rejected rather than
-  dereferenced.
+  dereferenced. In `Game::draw`, `?` turns these into `DrawError::Graph`.
 
 The stages report independently; a prepare-time error does not re-aggregate
 logical errors, which were already ruled out by construction.

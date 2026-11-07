@@ -119,12 +119,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anyhow"
-version = "1.0.100"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
-
-[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -200,8 +194,8 @@ dependencies = [
 name = "basic_triangle"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -384,8 +378,8 @@ dependencies = [
 name = "convert-link"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "convert-link",
+ "eros",
  "glam",
  "gx",
  "image",
@@ -393,6 +387,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -492,8 +487,8 @@ checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 name = "depth_texture"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -525,8 +520,8 @@ dependencies = [
 name = "dragon"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -636,13 +631,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "eros"
+version = "0.9.0-rc.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9e965d9d7b09f2b5762deb31c9dd0e03853572cb903f4c6fa3f5f95b512ad5f"
+dependencies = [
+ "eros-macros",
+]
+
+[[package]]
+name = "eros-macros"
+version = "0.9.0-rc.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc66b3c6ca0453ae4bf14922789b53b947b0c98cdf423436aa6078866653db9"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -824,8 +840,8 @@ dependencies = [
 name = "gpu_picking"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -999,8 +1015,8 @@ dependencies = [
 name = "koch_curve"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1140,9 +1156,9 @@ dependencies = [
 name = "mltrs"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "egui",
+ "eros",
  "facet",
  "glam",
  "ktx2",
@@ -1152,6 +1168,7 @@ dependencies = [
  "sdl3",
  "serde",
  "serde_json",
+ "thiserror 2.0.17",
  "zstd",
 ]
 
@@ -1159,15 +1176,16 @@ dependencies = [
 name = "mltrs-cli"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "askama",
  "clap",
+ "eros",
  "glam",
  "heck",
  "insta",
  "mltrs-slang-reflection",
  "rspirv",
  "serde_json",
+ "thiserror 2.0.17",
  "uuid",
 ]
 
@@ -1175,19 +1193,20 @@ dependencies = [
 name = "mltrs-render-graph"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "eros",
  "serde",
  "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
 name = "mltrs-renderer"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "egui",
  "egui-ash-renderer",
+ "eros",
  "facet",
  "facet-core",
  "glam",
@@ -1208,10 +1227,11 @@ dependencies = [
 name = "mltrs-slang-reflection"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "eros",
  "serde",
  "serde_json",
  "shader-slang",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -1228,8 +1248,8 @@ dependencies = [
 name = "multi_mesh"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1511,8 +1531,8 @@ dependencies = [
 name = "particles"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1613,8 +1633,8 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 name = "ray_marching"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1626,8 +1646,8 @@ dependencies = [
 name = "recipes"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1724,7 +1744,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1758,8 +1778,8 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "sdf_2d"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "log",
@@ -1884,8 +1904,8 @@ dependencies = [
 name = "serenity_crt"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1951,8 +1971,8 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 name = "space_invaders"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1973,8 +1993,8 @@ dependencies = [
 name = "sprite_batch"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1993,8 +2013,8 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 name = "suzanne"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -2176,9 +2196,9 @@ dependencies = [
 name = "toon_link"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "egui",
+ "eros",
  "facet",
  "glam",
  "gx",
@@ -2251,8 +2271,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "viking_room"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -2382,8 +2402,8 @@ dependencies = [
 name = "watercolor"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "image",
@@ -2408,7 +2428,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

@@ -15,7 +15,7 @@ use crate::generated::shader_atlas::serenity_crt::*;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     SerenityCRT::run()
 }
 
@@ -61,7 +61,7 @@ impl Game for SerenityCRT {
         Some(("Serenity CRT", &mut self.edit_state))
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -138,6 +138,7 @@ impl Game for SerenityCRT {
                 curvature: self.edit_state.curvature.value,
                 flicker_strength: self.edit_state.flicker_strength.value,
             },
-        )
+        )?;
+        Ok(())
     }
 }

@@ -6,7 +6,7 @@ use facet::Facet;
 use serde::Serialize;
 
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_read::GPURead;
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 #[allow(unused_imports)]
 use mltrs::renderer::render_graph::GPUWrite;
 
@@ -216,31 +216,40 @@ const _: () = assert!(std::mem::size_of::<[glam::Vec4; 2]>() == 32);
 impl GPURead for GXCompare {
     const GPU_SIZE: usize = 4;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
         let tag = <u32 as GPURead>::read_gpu(bytes)?;
 
-        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid GXCompare tag: {tag}"))
+        eros::IntoUnion::union(Self::try_from(tag).map_err(|tag| InvalidGpuEnumTag {
+            type_name: "GXCompare",
+            tag: i128::from(tag),
+        }))
     }
 }
 
 impl GPURead for GXAlphaOp {
     const GPU_SIZE: usize = 4;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
         let tag = <u32 as GPURead>::read_gpu(bytes)?;
 
-        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid GXAlphaOp tag: {tag}"))
+        eros::IntoUnion::union(Self::try_from(tag).map_err(|tag| InvalidGpuEnumTag {
+            type_name: "GXAlphaOp",
+            tag: i128::from(tag),
+        }))
     }
 }
 
 impl GPURead for GXAlphaCompare {
     const GPU_SIZE: usize = 20;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for GXAlphaCompare"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "GXAlphaCompare",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             comp0: GPURead::read_gpu(&bytes[0..4])?,
@@ -255,11 +264,14 @@ impl GPURead for GXAlphaCompare {
 impl GPURead for TevParams {
     const GPU_SIZE: usize = 1264;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for TevParams"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "TevParams",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             stage_color_in: GPURead::read_gpu(&bytes[0..128])?,
@@ -285,11 +297,14 @@ impl GPURead for TevParams {
 impl GPURead for GXTevColorOverride {
     const GPU_SIZE: usize = 64;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for GXTevColorOverride"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "GXTevColorOverride",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             actor_c0: GPURead::read_gpu(&bytes[0..16])?,
@@ -304,11 +319,14 @@ impl GPURead for GXTevColorOverride {
 impl GPURead for GXLights {
     const GPU_SIZE: usize = 64;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for GXLights"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "GXLights",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             dir: GPURead::read_gpu(&bytes[0..32])?,

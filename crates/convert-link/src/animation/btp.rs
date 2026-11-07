@@ -14,66 +14,91 @@
 //! (`J3DAnmTexPattern::searchUpdateMaterialID`), so rows keep both the name
 //! and the raw u16.
 
-use anyhow::{Context, Result};
+use eros::{IntoUnion, ReshapeUnion, context};
 
 use gx::animation_manifest::{BtpClip, BtpTarget};
 
-pub fn parse(data: &[u8], what: &str) -> Result<BtpClip> {
-    let header = super::j3d_single_chunk(data, what, "btp1", b"TPT1")
-        .with_context(|| format!("{what}: not a readable BTP"))?;
+use super::error::{AnimationParseErrors, KeyDataOutOfPool, NameCountMismatch, RangeOverflow};
+
+/// Parse a whole BTP file; `_what` names the clip (`archive/member`) in the
+/// error context. (Underscored because `#[context]` is its only use, and the
+/// body the macro moves into an inner function would warn otherwise.)
+#[context("Parse BTP {}", _what)]
+pub fn parse(data: &[u8], _what: &str) -> eros::Result<BtpClip, AnimationParseErrors> {
+    let header = super::j3d_single_chunk(data, b"btp1", b"TPT1").widen()?;
     let chunk = super::chunk_slice(data, &header);
 
-    let anim_count = super::u16_at(chunk, 0x0C, "TPT1 anim count")? as usize;
-    let value_count = super::u16_at(chunk, 0x0E, "TPT1 value count")? as usize;
-    let table_off = super::u32_at(chunk, 0x10, "TPT1 table offset")? as usize;
-    let values_off = super::u32_at(chunk, 0x14, "TPT1 values offset")? as usize;
-    let remap_off = super::u32_at(chunk, 0x18, "TPT1 remap offset")? as usize;
-    let names_off = super::u32_at(chunk, 0x1C, "TPT1 names offset")? as usize;
+    let anim_count = super::u16_at(chunk, 0x0C, "TPT1 anim count").widen()? as usize;
+    let value_count = super::u16_at(chunk, 0x0E, "TPT1 value count").widen()? as usize;
+    let table_off = super::u32_at(chunk, 0x10, "TPT1 table offset").widen()? as usize;
+    let values_off = super::u32_at(chunk, 0x14, "TPT1 values offset").widen()? as usize;
+    let remap_off = super::u32_at(chunk, 0x18, "TPT1 remap offset").widen()? as usize;
+    let names_off = super::u32_at(chunk, 0x1C, "TPT1 names offset").widen()? as usize;
 
-    let table = super::pool(chunk, table_off, anim_count * 8, "anim table", what)?;
-    let values = super::pool(chunk, values_off, value_count * 2, "value pool", what)?;
-    let remap = super::pool(chunk, remap_off, anim_count * 2, "remap table", what)?;
+    let table = super::pool(chunk, table_off, anim_count * 8, "anim table").widen()?;
+    let values = super::pool(chunk, values_off, value_count * 2, "value pool").widen()?;
+    let remap = super::pool(chunk, remap_off, anim_count * 2, "remap table").widen()?;
 
-    let names =
-        super::tracks::read_name_table(chunk, names_off, &format!("{what}: TPT1 material names"))?;
+    let names = super::tracks::read_name_table(chunk, names_off, "TPT1 material names").widen()?;
     if names.len() != anim_count {
-        anyhow::bail!(
-            "{what}: TPT1 has {anim_count} anim rows but {} material names",
-            names.len()
-        );
+        return Err(NameCountMismatch {
+            what: "TPT1",
+            rows: anim_count,
+            names: names.len(),
+        })
+        .union();
     }
 
     let mut targets = Vec::with_capacity(anim_count);
     for (i, material) in names.iter().enumerate() {
-        let row = i * 8;
-        let what_row = format!("{what}: anim row {i}");
-        let count = super::u16_at(table, row, "row sample count")? as usize;
-        let index = super::u16_at(table, row + 2, "row sample index")? as usize;
-        let texture_map_slot = super::u8_at(table, row + 4, "row tex-map slot")?;
-        let end = index
-            .checked_add(count)
-            .ok_or_else(|| anyhow::anyhow!("{what_row}: sample range overflows"))?;
-        if end > value_count {
-            anyhow::bail!(
-                "{what_row}: samples {index}..{end} exceed the {value_count}-entry value pool"
-            );
-        }
-        let mut texture_indices = Vec::with_capacity(count);
-        for k in 0..count {
-            texture_indices.push(super::u16_at(values, (index + k) * 2, "texture index")?);
-        }
-        targets.push(BtpTarget {
-            material: material.clone(),
-            material_remap: super::u16_at(remap, i * 2, "material remap")?,
-            texture_map_slot,
-            texture_indices,
-        });
+        targets.push(parse_row(table, values, remap, i, material)?);
     }
 
     Ok(BtpClip {
-        duration_frames: super::u16_at(chunk, 0x0A, "TPT1 duration")?,
-        loop_attribute: super::u8_at(chunk, 0x08, "TPT1 loop attribute")?,
+        duration_frames: super::u16_at(chunk, 0x0A, "TPT1 duration").widen()?,
+        loop_attribute: super::u8_at(chunk, 0x08, "TPT1 loop attribute").widen()?,
         targets,
+    })
+}
+
+/// Decode anim-table row `i` and its stepped samples from the value pool.
+#[context("anim row {i} ({material})")]
+fn parse_row(
+    table: &[u8],
+    values: &[u8],
+    remap: &[u8],
+    i: usize,
+    material: &str,
+) -> eros::Result<BtpTarget, AnimationParseErrors> {
+    let row = i * 8;
+    let value_count = values.len() / 2;
+    let count = super::u16_at(table, row, "row sample count").widen()? as usize;
+    let index = super::u16_at(table, row + 2, "row sample index").widen()? as usize;
+    let texture_map_slot = super::u8_at(table, row + 4, "row tex-map slot").widen()?;
+    let end = index
+        .checked_add(count)
+        .ok_or_else(|| RangeOverflow {
+            what: "sample range".to_string(),
+        })
+        .union()?;
+    if end > value_count {
+        return Err(KeyDataOutOfPool {
+            what: "samples".to_string(),
+            start: index,
+            end,
+            pool_words: value_count,
+        })
+        .union();
+    }
+    let mut texture_indices = Vec::with_capacity(count);
+    for k in 0..count {
+        texture_indices.push(super::u16_at(values, (index + k) * 2, "texture index").widen()?);
+    }
+    Ok(BtpTarget {
+        material: material.to_string(),
+        material_remap: super::u16_at(remap, i * 2, "material remap").widen()?,
+        texture_map_slot,
+        texture_indices,
     })
 }
 

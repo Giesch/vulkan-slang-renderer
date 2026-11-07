@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
+use eros::{Context, context};
 use facet::Facet;
 use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
@@ -68,7 +68,7 @@ use crate::modern::ToonLinkModern;
 use crate::skinning::SkinningBuffers;
 use gx::animation_manifest::ClipIdentity;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     ToonLinkHost::run()
 }
 
@@ -127,12 +127,12 @@ impl BatchIndex {
 
 /// Whether the J3D pixel-engine mode is translucent. This mode separates the
 /// eye and brow decals from the opaque model.
-fn is_translucent(material: &MaterialEntry) -> anyhow::Result<bool> {
+fn is_translucent(material: &MaterialEntry) -> eros::Result<bool> {
     match material.pe_mode {
         mm::PixelEngineMode::Opaque => Ok(false),
         mm::PixelEngineMode::Translucent => Ok(true),
         // cl.bdl has none
-        other => anyhow::bail!("unmapped pe_mode {other} on material {:?}", material.name),
+        other => eros::bail!("unmapped pe_mode {other} on material {:?}", material.name),
     }
 }
 
@@ -175,7 +175,7 @@ enum DecalRole {
 /// assertion message.
 ///
 /// Returns `Ok(None)` for every opaque material.
-fn decal_role(material: &MaterialEntry) -> anyhow::Result<Option<DecalRole>> {
+fn decal_role(material: &MaterialEntry) -> eros::Result<Option<DecalRole>> {
     if !is_translucent(material)? {
         return Ok(None);
     }
@@ -192,7 +192,7 @@ fn decal_role(material: &MaterialEntry) -> anyhow::Result<Option<DecalRole>> {
         Some(mm::BlendMode::None) | None => Ok(Some(DecalRole::Erase)),
         Some(other @ (mm::BlendMode::Logic | mm::BlendMode::Subtract)) => {
             let mat = &material.name;
-            anyhow::bail!("translucent material {mat:?} has unclassifiable GX blend mode {other}")
+            eros::bail!("translucent material {mat:?} has unclassifiable GX blend mode {other}")
         }
     }
 }
@@ -237,7 +237,7 @@ impl DrawGroups {
 
 /// Classify every batch into its group, preserving INF1 order within each
 /// group.
-fn group_batches(manifest: &Manifest) -> anyhow::Result<DrawGroups> {
+fn group_batches(manifest: &Manifest) -> eros::Result<DrawGroups> {
     let material_of = |batch: &Batch| -> &MaterialEntry {
         &manifest.materials[MaterialSlot::from_manifest(batch.material).raw()]
     };
@@ -261,7 +261,7 @@ fn group_batches(manifest: &Manifest) -> anyhow::Result<DrawGroups> {
     // converter change perturbs the material table. It also covers "every
     // translucent batch was consumed": `decal_role` returns `Some` for every
     // translucent material, or bails.
-    anyhow::ensure!(
+    eros::ensure!(
         mask.len() == 4 && composite.len() == 4 && erase.len() == 4,
         "expected 4 mask / 4 composite / 4 erase eye-brow decals covering all 12 \
          translucent batches, got {} / {} / {} (total {}); `playerInit` asserts \
@@ -279,7 +279,7 @@ fn group_batches(manifest: &Manifest) -> anyhow::Result<DrawGroups> {
         .iter()
         .map(|batch: &BatchIndex| material_of(&manifest.batches[batch.raw()]).name.as_str())
         .collect();
-    anyhow::ensure!(
+    eros::ensure!(
         face_hair_names.len() == 2
             && face_hair_names.contains(&FACE_MATERIAL)
             && face_hair_names.contains(&HAIR_MATERIAL),
@@ -493,7 +493,7 @@ fn catalog_path() -> PathBuf {
     mltrs::manifest_path!["assets", "link", "animations", "converted", "catalog.json"]
 }
 
-fn load_manifest(dir: &Path) -> anyhow::Result<Manifest> {
+fn load_manifest(dir: &Path) -> eros::Result<Manifest> {
     let path = dir.join("link.manifest.json");
     let bytes = std::fs::read(&path).with_context(|| {
         format!(
@@ -503,17 +503,19 @@ fn load_manifest(dir: &Path) -> anyhow::Result<Manifest> {
         )
     })?;
 
-    Ok(serde_json::from_slice(&bytes)?)
+    let manifest =
+        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+    Ok(manifest)
 }
 
 /// Read a whole binary file. It must hold exactly `count` records of `stride`
 /// bytes.
-fn read_records(path: &Path, count: u32, stride: usize, what: &str) -> anyhow::Result<Vec<u8>> {
+#[context("Read {what} from {}", path.display())]
+fn read_records(path: &Path, count: u32, stride: usize, what: &str) -> eros::Result<Vec<u8>> {
     let bytes = std::fs::read(path)?;
-    anyhow::ensure!(
+    eros::ensure!(
         bytes.len() == count as usize * stride,
-        "{}: expected {count} {what} × {stride} bytes, got {} bytes",
-        path.display(),
+        "expected {count} {what} × {stride} bytes, got {} bytes",
         bytes.len()
     );
 
@@ -527,7 +529,7 @@ struct ModelVertex {
     uv0: Vec2,
 }
 
-fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<ModelVertex>> {
+fn load_vertices(path: &Path, expected_count: u32) -> eros::Result<Vec<ModelVertex>> {
     let bytes = read_records(path, expected_count, VERTEX_STRIDE, "vertices")?;
     let read_f32 =
         |chunk: &[u8], i: usize| f32::from_le_bytes(chunk[i * 4..i * 4 + 4].try_into().unwrap());
@@ -545,7 +547,7 @@ fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<ModelVe
     Ok(vertices)
 }
 
-fn load_indices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<u32>> {
+fn load_indices(path: &Path, expected_count: u32) -> eros::Result<Vec<u32>> {
     let bytes = read_records(path, expected_count, 4, "u32 indices")?;
     let indices = bytes
         .as_chunks::<4>()
@@ -563,15 +565,15 @@ fn validate_manifest(
     manifest: &Manifest,
     vertices: &[ModelVertex],
     indices: &[u32],
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
+) -> eros::Result<()> {
+    eros::ensure!(
         indices.len().is_multiple_of(3),
         "index count not a triangle list"
     );
     // The debug window's isolation slider indexes the batch list.
-    anyhow::ensure!(!manifest.batches.is_empty(), "manifest has no batches");
+    eros::ensure!(!manifest.batches.is_empty(), "manifest has no batches");
     let max_index = indices.iter().copied().max().unwrap_or(0);
-    anyhow::ensure!(
+    eros::ensure!(
         (max_index as usize) < vertices.len(),
         "index {max_index} out of range for {} vertices",
         vertices.len()
@@ -579,12 +581,12 @@ fn validate_manifest(
 
     let mut next_first_index = 0;
     for (i, batch) in manifest.batches.iter().enumerate() {
-        anyhow::ensure!(
+        eros::ensure!(
             batch.first_index == next_first_index,
             "batch {i} starts at {} but the previous batch ended at {next_first_index}",
             batch.first_index
         );
-        anyhow::ensure!(
+        eros::ensure!(
             MaterialSlot::from_manifest(batch.material).raw() < manifest.materials.len(),
             "batch {i} references material {} of {}",
             batch.material,
@@ -592,7 +594,7 @@ fn validate_manifest(
         );
         next_first_index += batch.index_count;
     }
-    anyhow::ensure!(
+    eros::ensure!(
         next_first_index == manifest.buffers.index_count,
         "batches cover {next_first_index} of {} indices",
         manifest.buffers.index_count
@@ -601,7 +603,7 @@ fn validate_manifest(
     // The shader binds 2 texmap slots. A model that uses a third must fail
     // here rather than lose its texture silently.
     for material in &manifest.materials {
-        anyhow::ensure!(
+        eros::ensure!(
             material.texmaps.iter().skip(2).all(Option::is_none),
             "material {:?} uses a texmap slot >= 2; the shader binds only slots 0 and 1",
             material.name
@@ -611,7 +613,7 @@ fn validate_manifest(
     Ok(())
 }
 
-fn texture_options(entry: &TextureEntry) -> anyhow::Result<TextureOptions> {
+fn texture_options(entry: &TextureEntry) -> eros::Result<TextureOptions> {
     let wrap = |mode: mm::WrapMode| match mode {
         mm::WrapMode::Clamp => TextureWrap::ClampToEdge,
         mm::WrapMode::Repeat => TextureWrap::Repeat,
@@ -622,7 +624,7 @@ fn texture_options(entry: &TextureEntry) -> anyhow::Result<TextureOptions> {
     let filter = match entry.filter {
         mm::FilterMode::Linear => TextureFilter::Linear,
         mm::FilterMode::Nearest => TextureFilter::Nearest,
-        other => anyhow::bail!("unmapped GX texture filter {other}"),
+        other => eros::bail!("unmapped GX texture filter {other}"),
     };
 
     Ok(TextureOptions {
@@ -646,7 +648,7 @@ fn load_textures(
     renderer: &mut Renderer,
     dir: &Path,
     manifest: &Manifest,
-) -> anyhow::Result<Vec<Option<TextureHandle>>> {
+) -> eros::Result<Vec<Option<TextureHandle>>> {
     let mut referenced = vec![false; manifest.textures.len()];
     for material in &manifest.materials {
         for texmap in material.texmaps.iter().flatten() {
@@ -698,7 +700,7 @@ fn resolve_texmap(
         .bindless_handle()
 }
 
-fn raster_state(material: &MaterialEntry, role: Option<DecalRole>) -> anyhow::Result<RasterState> {
+fn raster_state(material: &MaterialEntry, role: Option<DecalRole>) -> eros::Result<RasterState> {
     let cull = match CULL_OVERRIDE {
         Some(cull) => cull,
         None => match material.cull {
@@ -706,7 +708,7 @@ fn raster_state(material: &MaterialEntry, role: Option<DecalRole>) -> anyhow::Re
             mm::CullMode::None => CullMode::None,
             mm::CullMode::Front => CullMode::Front,
             // cl.bdl does not use All.
-            mm::CullMode::All => anyhow::bail!("unmapped GX cull mode {}", material.cull),
+            mm::CullMode::All => eros::bail!("unmapped GX cull mode {}", material.cull),
         },
     };
 
@@ -717,7 +719,7 @@ fn raster_state(material: &MaterialEntry, role: Option<DecalRole>) -> anyhow::Re
             mm::CompareType::LessEqual => DepthCompare::LessEqual,
             mm::CompareType::Less => DepthCompare::Less,
             mm::CompareType::Always => DepthCompare::Always,
-            other => anyhow::bail!(
+            other => eros::bail!(
                 "unmapped GX depth func {other} on material {:?}",
                 material.name
             ),
@@ -752,7 +754,7 @@ fn raster_state(material: &MaterialEntry, role: Option<DecalRole>) -> anyhow::Re
     })
 }
 
-fn blend_mode(material: &MaterialEntry) -> anyhow::Result<BlendMode> {
+fn blend_mode(material: &MaterialEntry) -> eros::Result<BlendMode> {
     let Some(blend) = &material.blend else {
         return Ok(BlendMode::Opaque);
     };
@@ -774,7 +776,7 @@ fn blend_mode(material: &MaterialEntry) -> anyhow::Result<BlendMode> {
         }
     }
 
-    anyhow::bail!(
+    eros::bail!(
         "unmapped blend mode {} (src {}, dst {}) on material {:?}",
         blend.mode,
         blend.src,
@@ -818,7 +820,7 @@ fn build_materials(
     params_buffer: &UniformBufferHandle<ToonLinkParams>,
     textures: &[Option<TextureHandle>],
     dummy: &TextureHandle,
-) -> anyhow::Result<MaterialTable> {
+) -> eros::Result<MaterialTable> {
     let mut pipelines = Vec::new();
     let mut raster_states: Vec<RasterState> = Vec::new();
     let mut pipeline_of_slot = Vec::with_capacity(manifest.materials.len());
@@ -836,7 +838,10 @@ fn build_materials(
                     .with_shared_mesh(mesh)
                     .with_raster_state(raster)
                     .indirect();
-                pipelines.push(renderer.create_pipeline(pipeline_config)?);
+                let pipeline = renderer
+                    .create_pipeline(pipeline_config)
+                    .with_context(|| format!("create pipeline for material {:?}", material.name))?;
+                pipelines.push(pipeline);
                 raster_states.push(raster);
                 pipelines.len() - 1
             }
@@ -852,7 +857,7 @@ fn build_materials(
         });
     }
 
-    anyhow::ensure!(
+    eros::ensure!(
         pipelines.len() == EXPECTED_RASTER_STATES,
         "expected {EXPECTED_RASTER_STATES} distinct raster states across {} materials, got {}: {:#?}",
         manifest.materials.len(),
@@ -895,7 +900,7 @@ fn build_draw_list(
     materials: &MaterialTable,
     renderer: &Renderer,
     materials_buffer: &SingletonBufferHandle<Material>,
-) -> anyhow::Result<DrawList> {
+) -> eros::Result<DrawList> {
     let mut commands = Vec::with_capacity(draw_order.len());
     let mut individual_draws = Vec::with_capacity(draw_order.len());
     let mut runs: Vec<Run> = Vec::new();
@@ -905,7 +910,7 @@ fn build_draw_list(
         let slot = MaterialSlot::from_manifest(batch.material);
         // singleton_addr_at asserts the same bound, but a panic there names no
         // batch; a bad manifest must fail as a setup error with batch context.
-        anyhow::ensure!(
+        eros::ensure!(
             slot.raw() < materials.base.len(),
             "batch {} references material {} of {}",
             index.raw(),
@@ -1059,7 +1064,7 @@ impl Game for ToonLink {
         self.edit_state.fps.set(format!("{fps:.0}"));
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -1117,7 +1122,7 @@ impl Game for ToonLink {
         let draw_order = groups.draw_order();
         // A dropped batch has no other symptom than a missing decal. See
         // `DrawGroups::draw_order`.
-        anyhow::ensure!(
+        eros::ensure!(
             draw_order.len() == manifest.batches.len(),
             "draw order covers {} of {} batches",
             draw_order.len(),
@@ -1273,7 +1278,7 @@ impl AnimationHost {
             },
             Err(error) => {
                 let message =
-                    format!("animation unavailable, rendering the static bind pose: {error:#}");
+                    format!("animation unavailable, rendering the static bind pose:\n{error:#?}");
                 eprintln!("toon_link: {message}");
                 Self {
                     player: None,
@@ -1674,9 +1679,10 @@ impl Game for ToonLinkHost {
             .pull_selected(&self.classic.edit_state, self.modern.edit_state());
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
-        let classic = ToonLink::setup(renderer, ShaderAtlas::init())?;
-        let modern = ToonLinkModern::setup(renderer, shaders)?;
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self> {
+        let classic =
+            ToonLink::setup(renderer, ShaderAtlas::init()).context("Set up GameCube mode")?;
+        let modern = ToonLinkModern::setup(renderer, shaders).context("Set up Modern mode")?;
         let manifest = load_manifest(&converted_dir())?;
         let mut animation = AnimationHost::new(&manifest.skeleton, &catalog_path());
         // A mode that rejected its skin ignores every palette; playing a clip

@@ -16,5 +16,6 @@ pub mod addr;
 pub mod backend;
 pub mod bindless;
 pub mod commands;
+pub mod error;
 mod runtime;
 pub use runtime::*;

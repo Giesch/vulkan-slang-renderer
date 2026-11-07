@@ -106,7 +106,8 @@ fn execute(
             (SimParamsData { delta_time: 0.016 }, points()),
             ((LoopCount(2), TexParamsData { dt: 0.016 }), Some(points())),
         ),
-    )
+    )?;
+    Ok(())
 }
 
 fn main() {}

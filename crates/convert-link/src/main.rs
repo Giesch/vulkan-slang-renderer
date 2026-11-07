@@ -17,7 +17,7 @@ mod tev_ir;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use eros::Context;
 
 const USAGE: &str =
     "usage: convert_link <raw-dir> <out-dir> [--info | --dump-mat3 | --dump-geometry] [--obj]";
@@ -26,7 +26,7 @@ const USAGE: &str =
 /// runtime-injected toon ramps and the casual-clothes body texture.
 const STANDALONE_BTIS: [&str; 3] = ["toon.bti", "toonex.bti", "linktexbci4.bti"];
 
-fn main() -> Result<()> {
+fn main() -> eros::Result<()> {
     let mut info = false;
     let mut dump_mat3 = false;
     let mut dump_geometry = false;
@@ -87,21 +87,20 @@ fn main() -> Result<()> {
     // `examples/toon_link/scripts/link_converted.sha256` staying unchanged is
     // the proof. It runs *after* the dump modes return, so
     // `--dump-mat3` remains usable for diagnosing whatever it rejected.
-    let tev_descs = tev_ir::describe_all(&model.mat3).with_context(|| "TEV subset gate")?;
+    let tev_descs = tev_ir::describe_all(&model.mat3).context("TEV subset gate")?;
 
     let tex_dir = out_dir.join("tex");
-    bmd::tex1::emit(&model.tex1, &tex_dir)
-        .with_context(|| format!("emitting textures to {}", tex_dir.display()))?;
+    bmd::tex1::emit(&model.tex1, &tex_dir)?;
     emit_standalone_btis(&raw_dir, &tex_dir)?;
     let report_path = out_dir.join("mat3_dump.txt");
     std::fs::write(&report_path, bmd::mat3_dump::human_report(&model.mat3))
         .with_context(|| format!("writing {}", report_path.display()))?;
 
-    let baked = pose::bake(&model).with_context(|| "baking geometry")?;
+    let baked = pose::bake(&model).context("baking geometry")?;
     let converted = output::build(&model, &baked);
-    output::write_files(&converted, &baked, &out_dir).with_context(|| "writing manifest")?;
+    output::write_files(&converted, &baked, &out_dir)?;
     if obj {
-        output::write_obj(&model, &baked, &converted, &out_dir).with_context(|| "writing OBJ")?;
+        output::write_obj(&model, &baked, &converted, &out_dir)?;
     }
 
     let tris = converted.indices.len() / 3;
@@ -128,7 +127,7 @@ fn main() -> Result<()> {
 
 /// Decodes the P0-extracted standalone .bti files to `tex/raw_<stem>.png`.
 /// Their originals stay in raw-dir for the pixel gate; no .bti re-emit.
-fn emit_standalone_btis(raw_dir: &Path, tex_dir: &Path) -> Result<()> {
+fn emit_standalone_btis(raw_dir: &Path, tex_dir: &Path) -> eros::Result<()> {
     for file in STANDALONE_BTIS {
         let path = raw_dir.join(file);
         let data = std::fs::read(&path).with_context(|| {

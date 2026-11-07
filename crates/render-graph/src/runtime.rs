@@ -48,13 +48,21 @@ mod lower;
 #[cfg(test)]
 mod test_desc;
 mod validate;
+pub(crate) use validate::{GraphError, validation_message};
 
 pub use desc::GraphFormat;
 
 use std::marker::PhantomData;
 
+use eros::{Context, IntoUnion, ReshapeUnion};
+
 use crate::backend::{BackendTypes, BindingLookup, FrameBackend, FrameLookup, PreparationBackend};
 use crate::commands::{DrawCallConfig, PendingDrawCommand, PickingDrawConfig, PushConstantBytes};
+use crate::error::{
+    BufferDropped, BufferLivenessErrors, ExecuteErrors, FrameValueCountMismatch,
+    GraphValidationFailed, NewErrors, PlanErrors, PrepareErrors, TextureExtentsExceedDevice,
+    UniformBufferDropped, UploadExceedsCapacity,
+};
 use desc::{SizeClass, TexDecl, TexUsage};
 use expand::TexRunState;
 use lower::{LowerCtx, LowerDrawCall, PushInput, UniformInput};
@@ -718,7 +726,7 @@ pub trait GraphNode {
     fn lower(&self, cx: &mut LowerCtx);
 
     /// Plans this node's commands and data writes for the current frame.
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()>;
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors>;
 }
 
 /// A compute dispatch writing one uniform params buffer per frame.
@@ -808,7 +816,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for ComputeNode<S,
         )
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
         let resolver = cx.resolver();
         let value = S::assemble(frame_data, &self.bindings, &resolver);
         let push = self.push.payload(&resolver);
@@ -1097,7 +1105,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush, I: crate::backend::IndexedIn
     fn lower(&self, cx: &mut LowerCtx) {
         self.draw.lower(cx);
     }
-    fn plan(&self, data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan(&self, data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
         self.draw.plan(data, cx)
     }
 }
@@ -1146,7 +1154,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for DrawNode<S, P>
         )
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
         let pipeline_index = self.pipeline_index;
         let value = S::assemble(frame_data, &self.bindings, &cx.resolver());
         cx.stage_uniform(self.uniform, &value);
@@ -1219,7 +1227,7 @@ impl<C: PickingCursor> GraphNode for PickingNode<C> {
         cx.picking(self.pipeline_index)
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
         cx.picking = Some(PickingDrawConfig {
             pipeline_index: self.pipeline_index,
             position: frame_data.position(),
@@ -1249,8 +1257,8 @@ impl<T: GPUWrite> GraphNode for UploadNode<T> {
         )
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
-        cx.staged.stage_storage(self.slot, frame_data)?;
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
+        cx.staged.stage_storage(self.slot, frame_data).union()?;
 
         Ok(())
     }
@@ -1275,7 +1283,7 @@ impl<B: GraphNode> GraphNode for RepeatNode<B> {
         cx.end_repeat();
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
         for _ in 0..frame_data.0.0 {
             self.body.plan(&frame_data.1, cx)?;
         }
@@ -1303,7 +1311,7 @@ impl<B: GraphNode> GraphNode for OptionalNode<B> {
         cx.end_optional();
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
         match frame_data {
             Some(inner_frame) => self.inner.plan(inner_frame, cx),
             None => Ok(()),
@@ -1351,13 +1359,14 @@ impl<N: GraphNode> GraphNode for Vec<N> {
         }
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            frame_data.len() == self.len(),
-            "render graph: {} nodes received {} frame values",
-            self.len(),
-            frame_data.len(),
-        );
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
+        if frame_data.len() != self.len() {
+            return Err(FrameValueCountMismatch {
+                nodes: self.len(),
+                values: frame_data.len(),
+            })
+            .union();
+        }
         for (node, frame) in self.iter().zip(frame_data) {
             node.plan(frame, cx)?;
         }
@@ -1375,7 +1384,7 @@ impl<N: GraphNode, const K: usize> GraphNode for [N; K] {
         }
     }
 
-    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
         for (node, frame) in self.iter().zip(frame_data) {
             node.plan(frame, cx)?;
         }
@@ -1394,7 +1403,7 @@ macro_rules! impl_graph_node_for_tuple {
                 $(self.$f.lower(cx);)+
             }
 
-            fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+            fn plan(&self, frame_data: &Self::Frame, cx: &mut PlanCtx<'_>) -> eros::Result<(), PlanErrors> {
                 $(self.$f.plan(&frame_data.$f, cx)?;)+
 
                 Ok(())
@@ -1525,14 +1534,18 @@ impl StagedWrites {
         start..start + len
     }
 
-    fn stage_storage<T>(&mut self, slot: CpuUpdatedSlot<T>, data: &[T]) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            data.len() <= slot.len as usize,
-            "render graph: upload to storage buffer {} has {} elements; capacity is {}",
-            slot.index,
-            data.len(),
-            slot.len,
-        );
+    fn stage_storage<T>(
+        &mut self,
+        slot: CpuUpdatedSlot<T>,
+        data: &[T],
+    ) -> Result<(), UploadExceedsCapacity> {
+        if data.len() > slot.len as usize {
+            return Err(UploadExceedsCapacity {
+                buffer: slot.index,
+                len: data.len(),
+                capacity: slot.len,
+            });
+        }
         let byte_range = self.stage(data);
         self.targets.push(StagedTarget::Storage {
             buffer_index: slot.index,
@@ -1607,7 +1620,7 @@ pub struct RenderGraph<N: GraphNode> {
 
 impl<N: GraphNode> RenderGraph<N> {
     /// Validate and create the graph.
-    pub fn new(resources: ResourcePlanner, nodes: N) -> anyhow::Result<Self> {
+    pub fn new(resources: ResourcePlanner, nodes: N) -> eros::Result<Self, NewErrors> {
         let mut lower = LowerCtx::new(resources.decls);
         nodes.lower(&mut lower);
         let lowered = lower.finish();
@@ -1621,7 +1634,7 @@ impl<N: GraphNode> RenderGraph<N> {
             }
         };
         if !errors.is_empty() {
-            anyhow::bail!(validate::validation_message(&errors));
+            return Err(GraphValidationFailed { problems: errors }).union();
         }
 
         let buffer_slots = lowered
@@ -1661,14 +1674,14 @@ impl<N: GraphNode> RenderGraph<N> {
     pub fn prepare<B: PreparationBackend>(
         self,
         renderer: &mut B,
-    ) -> anyhow::Result<PreparedRenderGraph<N, B>>
+    ) -> eros::Result<PreparedRenderGraph<N, B>, PrepareErrors<B::PrepareError>>
     where
         N: CompatibleWith<B>,
     {
         let max = renderer.max_image_dimension_2d();
-        let extent_errors = validate::extent_limit_errors(&self.texture_decls, max);
-        if !extent_errors.is_empty() {
-            anyhow::bail!(validate::validation_message(&extent_errors));
+        let textures = validate::extent_limit_errors(&self.texture_decls, max);
+        if !textures.is_empty() {
+            return Err(TextureExtentsExceedDevice { max, textures }).union();
         }
 
         let mut phys = vec![];
@@ -1676,11 +1689,19 @@ impl<N: GraphNode> RenderGraph<N> {
         for (i, decl) in self.texture_decls.iter().enumerate() {
             let phys_count = self.tex_phys[i];
             let mut images = vec![];
-            for _ in 0..phys_count {
+            for image_index in 0..phys_count {
                 let SizeClass::Fixed(width, height) = decl.size else {
                     unreachable!()
                 };
-                let (image, resource) = renderer.prepare_image(width, height, decl.format)?;
+                let (image, resource) = renderer
+                    .prepare_image(width, height, decl.format)
+                    .union()
+                    .with_context(|| {
+                        format!(
+                            "Prepare render graph texture {} image {image_index} ({width}x{height} {:?})",
+                            decl.name, decl.format
+                        )
+                    })?;
                 images.push(PhysImage {
                     storage: image.storage,
                     sampled: image.sampled,
@@ -1718,12 +1739,11 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
     // instead of references to owned ones.
     // TODO An alternative would be to use reference counted handles
     // that keep resources alive while a graph referencing them is alive.
-    fn validate_buffers(&self, lookup: &dyn FrameLookup) -> anyhow::Result<()> {
+    fn validate_buffers(&self, lookup: &dyn FrameLookup) -> eros::Result<(), BufferLivenessErrors> {
         for index in &self.uniform_slots {
-            anyhow::ensure!(
-                lookup.uniform_live(*index),
-                "render graph: uniform buffer slot {index} was dropped"
-            );
+            if !lookup.uniform_live(*index) {
+                return Err(UniformBufferDropped { slot: *index }).union();
+            }
         }
 
         for slot in &self.buffer_slots {
@@ -1731,13 +1751,14 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
                 desc::BufferKind::Singleton => lookup.singleton_live(slot.index),
                 _ => lookup.storage_live(slot.index),
             };
-            anyhow::ensure!(
-                live,
-                "render graph: {} ({:?}, slot {}) was dropped",
-                slot.name,
-                slot.kind,
-                slot.index,
-            );
+            if !live {
+                return Err(BufferDropped {
+                    name: slot.name.clone(),
+                    kind: slot.kind.name(),
+                    slot: slot.index,
+                })
+                .union();
+            }
         }
 
         Ok(())
@@ -1747,11 +1768,11 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
         &mut self,
         frame: F,
         params: &N::Frame,
-    ) -> Result<(), F::Error>
+    ) -> eros::Result<(), ExecuteErrors<F::Error>>
     where
         N: CompatibleWith<B>,
     {
-        self.validate_buffers(frame.lookup())?;
+        self.validate_buffers(frame.lookup()).widen()?;
         let mut cx = PlanCtx {
             tex: self.tex.clone(),
             phys: &self.phys,
@@ -1761,7 +1782,7 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
             staged: StagedWrites::default(),
             picking: None,
         };
-        self.nodes.plan(params, &mut cx)?;
+        self.nodes.plan(params, &mut cx).widen()?;
         let PlanCtx {
             tex,
             dispatches,
@@ -1771,16 +1792,18 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
             ..
         } = cx;
 
-        frame.submit(
-            crate::commands::CommandBatch {
-                dispatches,
-                draws,
-                staged,
-                picking,
-            },
-            // only cycle textures if the frame submission succeeded
-            || self.tex = tex,
-        )
+        frame
+            .submit(
+                crate::commands::CommandBatch {
+                    dispatches,
+                    draws,
+                    staged,
+                    picking,
+                },
+                // only cycle textures if the frame submission succeeded
+                || self.tex = tex,
+            )
+            .union()
     }
 }
 

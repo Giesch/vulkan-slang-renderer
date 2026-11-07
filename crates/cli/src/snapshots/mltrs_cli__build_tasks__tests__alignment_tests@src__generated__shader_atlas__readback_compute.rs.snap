@@ -15,7 +15,7 @@ use facet::Facet;
 use serde::Serialize;
 
 #[allow(unused_imports)]
-use crate::renderer::gpu_read::GPURead;
+use crate::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 use crate::renderer::render_graph::GPUWrite;
 use crate::renderer::*;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
@@ -121,21 +121,27 @@ pub struct Resources<'a> {
 impl GPURead for ReadbackTag {
     const GPU_SIZE: usize = 4;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
         let tag = <u32 as GPURead>::read_gpu(bytes)?;
 
-        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid ReadbackTag tag: {tag}"))
+        eros::IntoUnion::union(Self::try_from(tag).map_err(|tag| InvalidGpuEnumTag {
+            type_name: "ReadbackTag",
+            tag: i128::from(tag),
+        }))
     }
 }
 
 impl GPURead for ReadbackOutput {
     const GPU_SIZE: usize = 160;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for ReadbackOutput"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "ReadbackOutput",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             marker: GPURead::read_gpu(&bytes[0..4])?,
@@ -153,11 +159,14 @@ impl GPURead for ReadbackOutput {
 impl GPURead for ReadbackInner {
     const GPU_SIZE: usize = 16;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for ReadbackInner"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "ReadbackInner",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             xy: GPURead::read_gpu(&bytes[0..8])?,

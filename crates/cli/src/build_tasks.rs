@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use askama::Template;
+use eros::{Context, IntoUnion, ReshapeUnion, context};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 
 use mltrs_slang_reflection::json::*;
@@ -11,9 +11,64 @@ use mltrs_slang_reflection::{
     prepare_reflected_compute_shader_with_optimization, prepare_reflected_shader_with_optimization,
 };
 
+use crate::error::{PathIoError, ShaderReflectionFailed};
+use crate::util::relative_path;
 pub use mltrs_slang_reflection::OptimizationLevel;
 
-use crate::util::relative_path;
+/// A params or push struct field whose `BindlessHandle<..>` type has no
+/// render-graph binding.
+#[derive(Debug, thiserror::Error)]
+#[error("field '{field_name}': unsupported graph resource type '{type_name}'")]
+pub struct UnsupportedGraphResourceType {
+    pub field_name: String,
+    pub type_name: String,
+}
+
+/// A generated render-graph split type (`<Params>Input` / `Bindings` / `Data`)
+/// would shadow another type in the same module.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "render-graph split of '{params_type}': generated type '{generated_name}' collides with another type"
+)]
+pub struct GraphSplitNameCollision {
+    pub params_type: String,
+    pub generated_name: String,
+}
+
+/// A params or push struct field holds resource fields through a nested struct
+/// or array, which the render-graph split cannot bind.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "render-graph split of '{params_type}': field '{field_name}' nests resource fields through \
+     '{field_type}'; flatten them into the parameter block"
+)]
+pub struct NestedGraphResource {
+    pub params_type: String,
+    pub field_name: String,
+    pub field_type: String,
+}
+
+/// Failures generating the render-graph split of a params or push struct.
+pub type GraphSplitErrors = (
+    UnsupportedGraphResourceType,
+    GraphSplitNameCollision,
+    NestedGraphResource,
+    askama::Error,
+);
+
+/// Failures of [`write_precompiled_shaders`]: compiling and reflecting a
+/// shader or the shared modules ([`ShaderReflectionFailed`], which wraps the
+/// slang-reflection error), writing reflection JSON, filesystem access, and
+/// [`GraphSplitErrors`].
+pub type WriteShadersErrors = (
+    ShaderReflectionFailed,
+    serde_json::Error,
+    PathIoError,
+    UnsupportedGraphResourceType,
+    GraphSplitNameCollision,
+    NestedGraphResource,
+    askama::Error,
+);
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -48,8 +103,9 @@ const COMPUTE_SHADER_FILE_SUFFIX: &str = ".compute.slang";
 /// this order reaches the generated `shader_atlas.rs` (module list, `ShaderAtlas`
 /// fields, `init()` body). Sorting keeps generated output a pure function of the
 /// source tree so a snapshot diff always means a real change.
-fn collect_slang_file_names(dir: &Path, suffix: &str) -> anyhow::Result<Vec<String>> {
-    let mut file_names: Vec<String> = std::fs::read_dir(dir)?
+fn collect_slang_file_names(dir: &Path, suffix: &str) -> Result<Vec<String>, PathIoError> {
+    let mut file_names: Vec<String> = std::fs::read_dir(dir)
+        .map_err(PathIoError::at("read shader source directory", dir))?
         .filter_map(|entry_res| entry_res.ok())
         .map(|dir_entry| dir_entry.path())
         .filter_map(|path| {
@@ -63,13 +119,19 @@ fn collect_slang_file_names(dir: &Path, suffix: &str) -> anyhow::Result<Vec<Stri
     Ok(file_names)
 }
 
-pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
+// eager: `config` is owned, so the lazy form cannot borrow it after the body
+#[eros::eager_context(
+    "Compile shaders in {} into {}",
+    config.shaders_source_dir.display(),
+    config.compiled_shaders_dir.display()
+)]
+pub fn write_precompiled_shaders(config: Config) -> eros::Result<(), WriteShadersErrors> {
     let slang_file_names =
-        collect_slang_file_names(&config.shaders_source_dir, SHADER_FILE_SUFFIX)?;
+        collect_slang_file_names(&config.shaders_source_dir, SHADER_FILE_SUFFIX).union()?;
     let compute_slang_file_names =
-        collect_slang_file_names(&config.shaders_source_dir, COMPUTE_SHADER_FILE_SUFFIX)?;
+        collect_slang_file_names(&config.shaders_source_dir, COMPUTE_SHADER_FILE_SUFFIX).union()?;
 
-    let type_to_module = reflect_slang_module_types(&config.shaders_source_dir);
+    let type_to_module = reflect_slang_module_types(&config.shaders_source_dir).widen()?;
 
     let search_path = config.shaders_source_dir.to_str().unwrap();
 
@@ -86,11 +148,12 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             slang_file_name,
             search_path,
             config.optimization,
-        )?;
+        )
+        .classify(ShaderReflectionFailed::of(slang_file_name))?;
 
         let source_file_name = &reflection_json.source_file_name;
 
-        let reflection_json_str = serde_json::to_string_pretty(&reflection_json)?;
+        let reflection_json_str = serde_json::to_string_pretty(&reflection_json).union()?;
         compiled_files.push((
             source_file_name.replace(SHADER_FILE_SUFFIX, ".json"),
             reflection_json_str.into_bytes(),
@@ -120,11 +183,12 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             slang_file_name,
             search_path,
             config.optimization,
-        )?;
+        )
+        .classify(ShaderReflectionFailed::of(slang_file_name))?;
 
         let source_file_name = &reflection_json.source_file_name;
 
-        let reflection_json_str = serde_json::to_string_pretty(&reflection_json)?;
+        let reflection_json_str = serde_json::to_string_pretty(&reflection_json).union()?;
         compiled_files.push((
             source_file_name.replace(COMPUTE_SHADER_FILE_SUFFIX, ".comp.json"),
             reflection_json_str.into_bytes(),
@@ -142,12 +206,26 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         }
     }
 
-    if config.compiled_shaders_dir.exists() {
-        std::fs::remove_dir_all(&config.compiled_shaders_dir)?;
+    let compiled_dir = &config.compiled_shaders_dir;
+    if compiled_dir.exists() {
+        std::fs::remove_dir_all(compiled_dir)
+            .map_err(PathIoError::at(
+                "clear compiled shader directory",
+                compiled_dir,
+            ))
+            .union()?;
     }
-    std::fs::create_dir_all(&config.compiled_shaders_dir)?;
+    std::fs::create_dir_all(compiled_dir)
+        .map_err(PathIoError::at(
+            "create compiled shader directory",
+            compiled_dir,
+        ))
+        .union()?;
     for (file_name, bytes) in compiled_files {
-        std::fs::write(config.compiled_shaders_dir.join(file_name), bytes)?;
+        let path = compiled_dir.join(file_name);
+        std::fs::write(&path, bytes)
+            .map_err(PathIoError::at("write compiled shader file", &path))
+            .union()?;
     }
 
     if config.generate_rust_source {
@@ -207,7 +285,8 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
                         &resource_bearing_types(&defs.struct_defs),
                         &mut visible_names,
                     )
-                    .with_context(|| format!("{module_name}.slang (used by {source})"))?;
+                    .with_context(|| format!("{module_name}.slang (used by {source})"))
+                    .widen()?;
                     splits.extend(split);
                 }
             }
@@ -231,12 +310,14 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
         }
 
         for data in &graphics_data {
-            let file = render_graphics_shader_file(data, &shared_modules, &config.import_root)?;
+            let file =
+                render_graphics_shader_file(data, &shared_modules, &config.import_root).widen()?;
             generated_source_files.push(file);
         }
 
         for data in &compute_data {
-            let file = render_compute_shader_file(data, &shared_modules, &config.import_root)?;
+            let file =
+                render_compute_shader_file(data, &shared_modules, &config.import_root).widen()?;
             generated_source_files.push(file);
         }
 
@@ -253,11 +334,16 @@ pub fn write_precompiled_shaders(config: Config) -> anyhow::Result<()> {
             .rust_source_dir
             .join(relative_path(["generated", "shader_atlas"]));
         if shader_atlas_dir.exists() {
-            std::fs::remove_dir_all(&shader_atlas_dir)?;
+            std::fs::remove_dir_all(&shader_atlas_dir)
+                .map_err(PathIoError::at(
+                    "clear generated Rust directory",
+                    &shader_atlas_dir,
+                ))
+                .union()?;
         }
 
         for source_file in &generated_source_files {
-            write_generated_file(&config, source_file)?;
+            write_generated_file(&config, source_file).union()?;
         }
     }
 
@@ -481,11 +567,12 @@ fn collect_graphics_shader_data(
 }
 
 /// Render a graphics shader file, filtering out shared types and adding imports
+#[context("Render Rust bindings for {}", data.source_file_name)]
 fn render_graphics_shader_file(
     data: &GraphicsShaderData,
     shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
     import_root: &str,
-) -> anyhow::Result<GeneratedFile> {
+) -> eros::Result<GeneratedFile, GraphSplitErrors> {
     let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
     // Filter out shared types — they're in their own module files
@@ -501,8 +588,7 @@ fn render_graphics_shader_file(
         &data.params_type_names.iter().cloned().collect(),
         &resource_bearing_types(&data.defs.struct_defs),
         &mut graph_type_names(&data.defs),
-    )
-    .with_context(|| data.source_file_name.clone())?;
+    )?;
 
     let content = ShaderAtlasEntryModule {
         import_root: import_root.to_string(),
@@ -764,11 +850,12 @@ fn collect_compute_shader_data(
 }
 
 /// Render a compute shader file, filtering out shared types and adding imports
+#[context("Render Rust bindings for {}", data.source_file_name)]
 fn render_compute_shader_file(
     data: &ComputeShaderData,
     shared_modules: &BTreeMap<String, GeneratedTypeDefs>,
     import_root: &str,
-) -> anyhow::Result<GeneratedFile> {
+) -> eros::Result<GeneratedFile, GraphSplitErrors> {
     let shared_module_imports = shared_imports_for_shader(&data.defs, shared_modules);
 
     let local = local_type_defs(&data.defs);
@@ -783,8 +870,7 @@ fn render_compute_shader_file(
         &data.params_type_names.iter().cloned().collect(),
         &resource_bearing_types(&data.defs.struct_defs),
         &mut graph_type_names(&data.defs),
-    )
-    .with_context(|| data.source_file_name.clone())?;
+    )?;
 
     let content = ShaderComputeEntryModule {
         import_root: import_root.to_string(),
@@ -1510,7 +1596,7 @@ enum GraphBindingKind<'a> {
 
 fn classify_graph_field(
     field: &GeneratedStructFieldDefinition,
-) -> anyhow::Result<GraphFieldClass<'_>> {
+) -> Result<GraphFieldClass<'_>, UnsupportedGraphResourceType> {
     let name = &field.field_name;
     if field.synthetic_padding {
         return Ok(GraphFieldClass::Padding);
@@ -1520,7 +1606,10 @@ fn classify_graph_field(
         "BindlessHandle<Sampler2D>" => GraphBindingKind::SampledTex,
         "BindlessHandle<RwTexture2D>" => GraphBindingKind::StorageTex,
         other if other.starts_with("BindlessHandle<") => {
-            anyhow::bail!("field '{name}': unsupported graph resource type '{other}'");
+            return Err(UnsupportedGraphResourceType {
+                field_name: name.clone(),
+                type_name: other.to_string(),
+            });
         }
 
         other => {
@@ -1587,7 +1676,7 @@ fn graph_split_def(
     def: &GeneratedStructDefinition,
     resource_bearing: &BTreeSet<String>,
     names: &mut BTreeSet<String>,
-) -> anyhow::Result<GraphSplitDef> {
+) -> eros::Result<GraphSplitDef, GraphSplitErrors> {
     let params_type = &def.type_name;
 
     let mut data_fields: Vec<&GeneratedStructFieldDefinition> = vec![];
@@ -1595,7 +1684,7 @@ fn graph_split_def(
     let mut assemble_fields = vec![];
 
     for field in &def.fields {
-        let class = classify_graph_field(field)?;
+        let class = classify_graph_field(field).union()?;
         assemble_fields.push((field, class));
         match class {
             GraphFieldClass::Padding => {}
@@ -1619,21 +1708,25 @@ fn graph_split_def(
         }
 
         let name = format!("{params_type}{suffix}");
-        anyhow::ensure!(
-            names.insert(name.clone()),
-            "render-graph split of '{params_type}': generated type '{name}' collides with another type",
-        );
+        if !names.insert(name.clone()) {
+            return Err(GraphSplitNameCollision {
+                params_type: params_type.clone(),
+                generated_name: name,
+            })
+            .union();
+        }
     }
 
     for field in &data_fields {
-        anyhow::ensure!(
-            !resource_bearing.contains(graph_field_element_type(&field.type_name))
-                && !is_graph_resource_type(graph_field_element_type(&field.type_name)),
-            "render-graph split of '{params_type}': field '{}' nests resource \
-            fields through '{}'; flatten them into the parameter block",
-            field.field_name,
-            field.type_name,
-        );
+        let element_type = graph_field_element_type(&field.type_name);
+        if resource_bearing.contains(element_type) || is_graph_resource_type(element_type) {
+            return Err(NestedGraphResource {
+                params_type: params_type.clone(),
+                field_name: field.field_name.clone(),
+                field_type: field.type_name.clone(),
+            })
+            .union();
+        }
     }
 
     let source = GraphSplitTemplate {
@@ -1642,7 +1735,8 @@ fn graph_split_def(
         binding_fields,
         assemble_fields,
     }
-    .render()?;
+    .render()
+    .union()?;
 
     Ok(GraphSplitDef { source })
 }
@@ -1653,7 +1747,7 @@ fn graph_split_defs(
     params_types: &BTreeSet<String>,
     resource_bearing: &BTreeSet<String>,
     names: &mut BTreeSet<String>,
-) -> anyhow::Result<Vec<GraphSplitDef>> {
+) -> eros::Result<Vec<GraphSplitDef>, GraphSplitErrors> {
     let mut splits = vec![];
     for def in struct_defs
         .iter()
@@ -1717,11 +1811,14 @@ struct GeneratedFile {
     content: String,
 }
 
-fn write_generated_file(config: &Config, source_file: &GeneratedFile) -> anyhow::Result<()> {
+fn write_generated_file(config: &Config, source_file: &GeneratedFile) -> Result<(), PathIoError> {
     let absolute_path = config.rust_source_dir.join(&source_file.relative_path);
 
-    std::fs::create_dir_all(absolute_path.parent().unwrap())?;
-    std::fs::write(&absolute_path, &source_file.content)?;
+    let parent = absolute_path.parent().unwrap();
+    std::fs::create_dir_all(parent)
+        .map_err(PathIoError::at("create generated Rust directory", parent))?;
+    std::fs::write(&absolute_path, &source_file.content)
+        .map_err(PathIoError::at("write generated Rust file", &absolute_path))?;
 
     Ok(())
 }
@@ -1988,15 +2085,21 @@ impl Alignment {
 /// Reflects all `.slang` files in the source directory that are NOT shader files
 /// (i.e., shared/utility modules), extracting `struct` declarations via the Slang reflection API.
 /// Returns a map of `type_name → module_name`.
-fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, String> {
+fn reflect_slang_module_types(
+    shaders_source_dir: &Path,
+) -> eros::Result<HashMap<String, String>, (PathIoError, ShaderReflectionFailed)> {
     // (slang load name, rust module name); these differ for modules in a
     // subdirectory, whose types all collapse into one rust module named
     // after the directory (eg. util/math.slang → "util/math" / "util").
     let mut modules: Vec<(String, String)> = Vec::new();
     let mut subdirs = Vec::new();
 
-    for entry in std::fs::read_dir(shaders_source_dir).unwrap() {
-        let entry = entry.unwrap();
+    let read_source_dir = PathIoError::at("read shader source directory", shaders_source_dir);
+    let entries = std::fs::read_dir(shaders_source_dir)
+        .and_then(Iterator::collect::<std::io::Result<Vec<_>>>)
+        .map_err(read_source_dir)
+        .union()?;
+    for entry in entries {
         let path = entry.path();
         let file_name = path.file_name().unwrap().to_str().unwrap();
 
@@ -2021,8 +2124,15 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
     // to util/) is reflected like any other; its types collapse into the
     // same rust module as the subdirectory's.
     for subdir in &subdirs {
-        for entry in std::fs::read_dir(shaders_source_dir.join(subdir)).unwrap() {
-            let entry = entry.unwrap();
+        let subdir_path = shaders_source_dir.join(subdir);
+        let entries = std::fs::read_dir(&subdir_path)
+            .and_then(Iterator::collect::<std::io::Result<Vec<_>>>)
+            .map_err(PathIoError::at(
+                "read shader module directory",
+                &subdir_path,
+            ))
+            .union()?;
+        for entry in entries {
             let path = entry.path();
             let file_name = path.file_name().unwrap().to_str().unwrap();
 
@@ -2043,7 +2153,7 @@ fn reflect_slang_module_types(shaders_source_dir: &Path) -> HashMap<String, Stri
         .map(|(load, rust)| (load.as_str(), rust.as_str()))
         .collect();
     mltrs_slang_reflection::reflect_shared_module_types(&module_refs, search_path)
-        .unwrap_or_else(|e| panic!("failed to reflect shared modules: {e}"))
+        .classify(ShaderReflectionFailed::of("shared slang modules"))
 }
 
 /// Only types with a supported, wholly data-only representation get a decoder.
@@ -2381,7 +2491,7 @@ mod tests {
     fn graph_test_split(
         defs: &[GeneratedStructDefinition],
         params: &[&str],
-    ) -> anyhow::Result<Vec<GraphSplitDef>> {
+    ) -> eros::Result<Vec<GraphSplitDef>, GraphSplitErrors> {
         graph_split_defs(
             defs,
             &params.iter().map(|name| (*name).into()).collect(),
@@ -2540,7 +2650,8 @@ mod tests {
             },
         };
         let result = render_compute_shader_file(&data, &BTreeMap::new(), "crate");
-        let error = format!("{:#}", result.err().unwrap());
+        // the source file is context, which only the Debug format prints
+        let error = format!("{:#?}", result.err().unwrap());
         assert!(
             error.contains("unknown.compute.slang") && error.contains("FutureMarker"),
             "{error}"
@@ -2701,8 +2812,20 @@ mod tests {
         // A shader that cannot compile aborts before anything is deleted.
         let broken = source_dir.join("broken.shader.slang");
         std::fs::write(&broken, "this is not valid slang").unwrap();
-        write_precompiled_shaders(config.clone())
+        let error = write_precompiled_shaders(config.clone())
             .expect_err("a shader that cannot compile must fail the run");
+        let debug = format!("{error:#?}");
+        assert!(debug.contains("Compile shaders in"), "{debug}");
+        let Ok(failed) = error.narrow::<ShaderReflectionFailed, _>() else {
+            panic!("a slang failure must classify as ShaderReflectionFailed: {debug}");
+        };
+        assert_eq!(failed.shader, "broken.shader.slang");
+        assert!(
+            failed
+                .downcast_ref::<mltrs_slang_reflection::SlangError>()
+                .is_some(),
+            "{failed:?}"
+        );
         assert_eq!(
             contents(&compiled_dir),
             baseline,

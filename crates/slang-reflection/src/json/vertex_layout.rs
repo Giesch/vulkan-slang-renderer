@@ -13,9 +13,44 @@
 //! the layout. Runtime pipeline creation reads the offsets from the generated
 //! Rust struct.
 
+use eros::{IntoUnion, context};
+
 use super::{
     EntryPoint, EntryPointParameter, ScalarType, StructField, VectorElementType, VectorStructField,
 };
+
+/// The vertex entry point takes more than one struct parameter; a pipeline
+/// has one vertex buffer layout.
+#[derive(Debug, thiserror::Error)]
+#[error("vertex entry point '{entry_point_name}' has more than one struct parameter")]
+pub struct MultipleVertexStructParameters {
+    pub entry_point_name: String,
+}
+
+/// A vertex input field that is neither a scalar nor a vector.
+#[derive(Debug, thiserror::Error)]
+#[error("vertex field '{field_name}' is not a scalar or vector")]
+pub struct NonVectorVertexField {
+    pub field_name: String,
+}
+
+/// A scalar or vector vertex input field with no supported vertex format.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "vertex field '{field_name}' has unsupported element type {scalar_type:?} x {element_count}"
+)]
+pub struct UnsupportedVertexFormat {
+    pub field_name: String,
+    pub scalar_type: ScalarType,
+    pub element_count: usize,
+}
+
+/// Failures computing a [`VertexLayout`].
+pub type VertexLayoutErrors = (
+    MultipleVertexStructParameters,
+    NonVectorVertexField,
+    UnsupportedVertexFormat,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VertexFormat {
@@ -68,17 +103,21 @@ const STRUCT_ALIGNMENT: u32 = 16;
 
 /// The layout of the entry point's struct parameter, or `None` when the entry
 /// point takes no struct (a vertex-count shader).
-pub fn vertex_layout(entry_point: &EntryPoint) -> anyhow::Result<Option<VertexLayout>> {
+#[context("Compute vertex layout of entry point '{}'", entry_point.entry_point_name)]
+pub fn vertex_layout(
+    entry_point: &EntryPoint,
+) -> eros::Result<Option<VertexLayout>, VertexLayoutErrors> {
     let mut layout = None;
     for parameter in &entry_point.parameters {
         let EntryPointParameter::Struct(parameter) = parameter else {
             continue;
         };
-        anyhow::ensure!(
-            layout.is_none(),
-            "vertex entry point '{}' has more than one struct parameter",
-            entry_point.entry_point_name
-        );
+        if layout.is_some() {
+            return Err(MultipleVertexStructParameters {
+                entry_point_name: entry_point.entry_point_name.clone(),
+            })
+            .union();
+        }
 
         let mut attributes = vec![];
         let mut cursor = 0u32;
@@ -107,7 +146,9 @@ pub fn vertex_layout(entry_point: &EntryPoint) -> anyhow::Result<Option<VertexLa
     Ok(layout)
 }
 
-fn attribute_format(field: &StructField) -> anyhow::Result<Option<(String, VertexFormat)>> {
+fn attribute_format(
+    field: &StructField,
+) -> eros::Result<Option<(String, VertexFormat)>, VertexLayoutErrors> {
     let (name, scalar, count) = match field {
         StructField::Scalar(scalar) => (&scalar.field_name, scalar.scalar_type, 1),
         StructField::Vector(VectorStructField::Bound(vector)) => {
@@ -121,10 +162,12 @@ fn attribute_format(field: &StructField) -> anyhow::Result<Option<(String, Verte
         StructField::Vector(VectorStructField::Semantic(_)) | StructField::Resource(_) => {
             return Ok(None);
         }
-        other => anyhow::bail!(
-            "vertex field '{}' is not a scalar or vector",
-            other.field_name()
-        ),
+        other => {
+            return Err(NonVectorVertexField {
+                field_name: other.field_name().to_string(),
+            })
+            .union();
+        }
     };
 
     let format = match (scalar, count) {
@@ -136,8 +179,13 @@ fn attribute_format(field: &StructField) -> anyhow::Result<Option<(String, Verte
         (ScalarType::Int32, 4) => VertexFormat::R32G32B32A32Sint,
         (ScalarType::Uint32, 1) => VertexFormat::R32Uint,
         (ScalarType::Uint32, 4) => VertexFormat::R32G32B32A32Uint,
-        (scalar, count) => {
-            anyhow::bail!("vertex field '{name}' has unsupported element type {scalar:?} x {count}")
+        (scalar_type, element_count) => {
+            return Err(UnsupportedVertexFormat {
+                field_name: name.clone(),
+                scalar_type,
+                element_count,
+            })
+            .union();
         }
     };
 
@@ -388,6 +436,14 @@ mod tests {
             error.to_string().contains("more than one struct parameter"),
             "{error}"
         );
+        assert!(
+            format!("{error:#?}").contains("Compute vertex layout of entry point 'vertexMain'"),
+            "{error:#?}"
+        );
+        let error = error
+            .narrow::<MultipleVertexStructParameters, _>()
+            .expect("a MultipleVertexStructParameters error");
+        assert_eq!(error.entry_point_name, "vertexMain");
     }
 
     #[test]
@@ -399,5 +455,10 @@ mod tests {
             error.to_string().contains("unsupported element type"),
             "{error}"
         );
+        let error = error
+            .narrow::<UnsupportedVertexFormat, _>()
+            .expect("an UnsupportedVertexFormat error");
+        assert_eq!(error.field_name, "offsets");
+        assert_eq!(error.element_count, 2);
     }
 }

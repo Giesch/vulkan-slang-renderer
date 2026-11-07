@@ -4,13 +4,13 @@ use generated::shader_atlas::readback_compute::{
     ReadbackOutput, ReadbackPush, ReadbackTag, Resources, Shader,
 };
 use mltrs_renderer::env_config::EnvConfig;
-use mltrs_renderer::renderer::{MaxMSAASamples, Renderer, debug};
+use mltrs_renderer::renderer::{InvalidGpuEnumTag, MaxMSAASamples, Renderer, debug};
 
-fn main() -> anyhow::Result<()> {
-    anyhow::ensure!(cfg!(debug_assertions), "validation requires a debug build");
+fn main() -> eros::Result<()> {
+    eros::ensure!(cfg!(debug_assertions), "validation requires a debug build");
     pretty_env_logger::init();
-    let sdl = sdl3::init().map_err(anyhow::Error::msg)?;
-    let video = sdl.video().map_err(anyhow::Error::msg)?;
+    let sdl = sdl3::init()?;
+    let video = sdl.video()?;
     let window = video
         .window("GPU readback diagnostic", 64, 64)
         .vulkan()
@@ -90,13 +90,15 @@ fn main() -> anyhow::Result<()> {
             reserved: 0,
         })
         .expect_err("GPU enum discriminant 99 must be rejected");
-    let message = format!("{error:#}");
-    anyhow::ensure!(
-        message.contains("ReadbackTag") && message.contains("99"),
-        "unexpected decode error: {message}"
+    let tag = error
+        .downcast_inner_ref::<InvalidGpuEnumTag>()
+        .unwrap_or_else(|| panic!("unexpected decode error: {error:#?}"));
+    eros::ensure!(
+        tag.type_name == "ReadbackTag" && tag.tag == 99,
+        "unexpected enum tag error: {tag}"
     );
     drop(renderer);
-    anyhow::ensure!(
+    eros::ensure!(
         debug::validation_message_count() == 0,
         "Vulkan validation reported {} messages",
         debug::validation_message_count()

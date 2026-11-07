@@ -34,7 +34,7 @@ use crate::generated::shader_atlas::wc_project_velocity_compute;
 use crate::generated::shader_atlas::wc_update_velocity_compute;
 use mltrs::manifest_path;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     Watercolor::run()
 }
 
@@ -329,7 +329,7 @@ impl Game for Watercolor {
         Some(1.0)
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self> {
         // Logical simulation textures; the graph derives which ones need two
         // physical images and rotates them itself
         let mut res = ResourcePlanner::new();
@@ -878,7 +878,8 @@ impl Game for Watercolor {
                     pigment11: Pigment::InterferenceLilac.km(),
                 },
             ),
-        )
+        )?;
+        Ok(())
     }
 }
 

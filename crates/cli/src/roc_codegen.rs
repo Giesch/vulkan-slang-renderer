@@ -8,14 +8,224 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result, bail, ensure};
+use std::num::TryFromIntError;
+
 use askama::Template;
+use eros::{Context, IntoUnion, ReshapeUnion};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 pub use mltrs_slang_reflection::OptimizationLevel;
 use mltrs_slang_reflection::json::*;
 use mltrs_slang_reflection::{
     prepare_reflected_compute_shader_with_optimization, prepare_reflected_shader_with_optimization,
 };
+
+use crate::error::{PathIoError, ShaderReflectionFailed};
+
+/// The configured source and output directories cannot be used together.
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidProjectLayout {
+    #[error("output {} contains project root", output.display())]
+    OutputContainsProjectRoot { output: PathBuf },
+    #[error("output {} overlaps source {}", output.display(), source_dir.display())]
+    OutputOverlapsSource {
+        output: PathBuf,
+        source_dir: PathBuf,
+    },
+    #[error("output {} is not a directory", output.display())]
+    OutputNotADirectory { output: PathBuf },
+    #[error("Roc and compiled output directories overlap")]
+    OutputsOverlap { roc: PathBuf, compiled: PathBuf },
+    #[error("shader source {name} is not a file")]
+    SourceNotAFile { name: String },
+}
+
+/// A shader source path or file name is not UTF-8, which slang requires.
+#[derive(Debug, thiserror::Error)]
+#[error("{what} is not UTF-8: {}", path.display())]
+pub struct NonUtf8Path {
+    pub what: &'static str,
+    pub path: PathBuf,
+}
+
+/// Two inputs map to the same generated name (compared case-insensitively).
+#[derive(Debug, thiserror::Error)]
+pub enum NameCollision {
+    #[error("generated name collision: {original:?} and {previous:?} both use {generated}")]
+    Generated {
+        original: String,
+        previous: String,
+        generated: String,
+    },
+    #[error("SPIR-V filename collision: {filename}")]
+    SpirvFilename { filename: String },
+}
+
+/// A reflected name cannot become a Roc identifier.
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidRocIdentifier {
+    #[error("invalid Roc identifier {original:?}")]
+    Invalid { original: String },
+    #[error("reserved Roc identifier {original:?}")]
+    Reserved { original: String },
+}
+
+/// The compiled output directory cannot be named by a relative Roc import path
+/// from the Roc output directory.
+#[derive(Debug, thiserror::Error)]
+pub enum UnrepresentableImportPath {
+    #[error("no relative Roc import path between output directories")]
+    NoCommonAncestor { from: PathBuf, to: PathBuf },
+    #[error("unrepresentable Roc import path")]
+    NonNormalComponent { to: PathBuf },
+    #[error("non-UTF-8 Roc import path")]
+    NonUtf8 { to: PathBuf },
+    #[error("unrepresentable Roc import path component {component:?}")]
+    ForbiddenCharacter { component: String },
+}
+
+/// Two reflected struct types with different shapes map to one Roc type value.
+#[derive(Debug, thiserror::Error)]
+#[error("incompatible reflected struct types {type_name:?} and {previous:?} both use {generated}")]
+pub struct IncompatibleStructTypes {
+    pub type_name: String,
+    pub previous: String,
+    pub generated: String,
+}
+
+/// A logical type name collides with a support/builtin type or with a
+/// different logical definition.
+#[derive(Debug, thiserror::Error)]
+pub enum LogicalTypeCollision {
+    #[error("logical type {original:?} collides with support/builtin type")]
+    Builtin { original: String },
+    #[error("incompatible or colliding logical definitions for {original:?} and {previous:?}")]
+    Incompatible { original: String, previous: String },
+}
+
+/// A reflected field has no logical Roc representation.
+#[derive(Debug, thiserror::Error)]
+pub enum UnsupportedLogicalType {
+    #[error("unsupported logical matrix (requires 4x4 F32/I32/U32)")]
+    Matrix {
+        rows: u32,
+        columns: u32,
+        scalar: ScalarType,
+    },
+    #[error("unsupported logical fixed array element")]
+    ArrayElement { stride: usize, scalar: ScalarType },
+    #[error("unsupported logical vector width {count}")]
+    VectorWidth { count: usize },
+    #[error("empty logical enum {type_name}")]
+    EmptyEnum { type_name: String },
+    #[error("enum value outside {tag_type}: {type_name}.{case} = {value}")]
+    EnumValueOutOfRange {
+        type_name: String,
+        case: String,
+        value: i64,
+        tag_type: &'static str,
+    },
+}
+
+/// Failures lowering reflection JSON to Roc values.
+pub type LowerErrors = (
+    InvalidRocIdentifier,
+    IncompatibleStructTypes,
+    TryFromIntError,
+);
+
+/// Failures deriving logical Roc types from reflection.
+pub type LogicalErrors = (
+    InvalidRocIdentifier,
+    NameCollision,
+    LogicalTypeCollision,
+    UnsupportedLogicalType,
+);
+
+/// A Roc-specific naming, typing or lowering failure: one variant per kind.
+///
+/// [`write_precompiled_roc_shaders`] classifies [`LowerErrors`] and
+/// [`LogicalErrors`] into this, along with its own name and import-path checks.
+/// Each variant's message is the wrapped error's.
+#[derive(Debug, thiserror::Error)]
+pub enum RocCodegenError {
+    #[error(transparent)]
+    InvalidIdentifier(#[from] InvalidRocIdentifier),
+    #[error(transparent)]
+    NameCollision(#[from] NameCollision),
+    #[error(transparent)]
+    IncompatibleStructTypes(#[from] IncompatibleStructTypes),
+    #[error(transparent)]
+    LogicalTypeCollision(#[from] LogicalTypeCollision),
+    #[error(transparent)]
+    UnsupportedLogicalType(#[from] UnsupportedLogicalType),
+    #[error(transparent)]
+    UnrepresentableImportPath(#[from] UnrepresentableImportPath),
+    /// a `usize` reflection value does not fit the Roc `U64` it lowers to
+    #[error(transparent)]
+    IntConversion(#[from] TryFromIntError),
+}
+
+/// Every [`RocCodegenError`] payload type, which
+/// [`RocCodegenError::classify`] checks in this order.
+type RocCodegenMembers = (
+    InvalidRocIdentifier,
+    NameCollision,
+    IncompatibleStructTypes,
+    LogicalTypeCollision,
+    UnsupportedLogicalType,
+    UnrepresentableImportPath,
+    TryFromIntError,
+);
+
+// Compile-time check that [`RocCodegenError::classify`] covers the inner sets:
+// adding a member to `LowerErrors` or `LogicalErrors` without a variant (and a
+// `RocCodegenMembers` entry) fails to widen here instead of reaching the
+// `unreachable!` at runtime.
+const _: () = {
+    #[allow(dead_code)]
+    fn inner_sets_are_classified(
+        lower: eros::ErrorUnion<LowerErrors>,
+        logical: eros::ErrorUnion<LogicalErrors>,
+    ) -> [eros::ErrorUnion<RocCodegenMembers>; 2] {
+        [lower.widen(), logical.widen()]
+    }
+};
+
+impl RocCodegenError {
+    /// The `classify` callback for a set whose members are all in
+    /// [`RocCodegenMembers`], such as [`LowerErrors`] and [`LogicalErrors`].
+    fn classify(inner: eros::InnerError) -> Self {
+        macro_rules! classify_as {
+            ($inner:ident: $($variant:ident($ty:ty)),* $(,)?) => {
+                $(let $inner = match $inner.downcast::<$ty>() {
+                    Ok(error) => return Self::$variant(error),
+                    Err(other) => other,
+                };)*
+            };
+        }
+        classify_as!(inner:
+            InvalidIdentifier(InvalidRocIdentifier),
+            NameCollision(NameCollision),
+            IncompatibleStructTypes(IncompatibleStructTypes),
+            LogicalTypeCollision(LogicalTypeCollision),
+            UnsupportedLogicalType(UnsupportedLogicalType),
+            UnrepresentableImportPath(UnrepresentableImportPath),
+            IntConversion(TryFromIntError),
+        );
+        unreachable!("not a Roc codegen error: {}", inner.as_error())
+    }
+}
+
+/// Failures of [`write_precompiled_roc_shaders`]: compiling and reflecting a
+/// shader ([`ShaderReflectionFailed`], which wraps the slang-reflection error),
+/// filesystem access, the project layout, and Roc code generation.
+pub type WriteRocShadersErrors = (
+    ShaderReflectionFailed,
+    PathIoError,
+    InvalidProjectLayout,
+    NonUtf8Path,
+    RocCodegenError,
+);
 
 #[derive(Debug, Clone)]
 pub struct RocConfig {
@@ -27,48 +237,68 @@ pub struct RocConfig {
 }
 
 /// Generate Roc and SPIR-V
-pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
-    let root = normalize(&config.project_root)?;
-    let source = normalize(&config.shaders_source_dir)?;
-    let roc = normalize(&config.roc_source_dir)?;
-    let compiled = normalize(&config.compiled_shaders_dir)?;
+// eager: `config` is owned, so the lazy form cannot borrow it after the body
+#[eros::eager_context(
+    "Generate Roc shader bindings from {} into {}",
+    config.shaders_source_dir.display(),
+    config.roc_source_dir.display()
+)]
+pub fn write_precompiled_roc_shaders(config: RocConfig) -> eros::Result<(), WriteRocShadersErrors> {
+    let root = normalize(&config.project_root).union()?;
+    let source = normalize(&config.shaders_source_dir).union()?;
+    let roc = normalize(&config.roc_source_dir).union()?;
+    let compiled = normalize(&config.compiled_shaders_dir).union()?;
     for output in [&roc, &compiled] {
-        ensure!(
-            !root.starts_with(output),
-            "output {} contains project root",
-            output.display()
-        );
-        ensure!(
-            !overlap(output, &source),
-            "output {} overlaps source {}",
-            output.display(),
-            source.display()
-        );
-        ensure!(
-            !output.exists() || output.is_dir(),
-            "output {} is not a directory",
-            output.display()
-        );
+        let invalid = if root.starts_with(output) {
+            Some(InvalidProjectLayout::OutputContainsProjectRoot {
+                output: output.clone(),
+            })
+        } else if overlap(output, &source) {
+            Some(InvalidProjectLayout::OutputOverlapsSource {
+                output: output.clone(),
+                source_dir: source.clone(),
+            })
+        } else if output.exists() && !output.is_dir() {
+            Some(InvalidProjectLayout::OutputNotADirectory {
+                output: output.clone(),
+            })
+        } else {
+            None
+        };
+        if let Some(invalid) = invalid {
+            return Err(invalid).union();
+        }
     }
 
-    ensure!(
-        !overlap(&roc, &compiled),
-        "Roc and compiled output directories overlap"
-    );
+    if overlap(&roc, &compiled) {
+        return Err(InvalidProjectLayout::OutputsOverlap { roc, compiled }).union();
+    }
 
-    let search = source.to_str().context("shader source path is not UTF-8")?;
+    let Some(search) = source.to_str() else {
+        return Err(NonUtf8Path {
+            what: "shader source path",
+            path: source,
+        })
+        .union();
+    };
     let mut inputs = Vec::new();
-    for entry in
-        fs::read_dir(&source).with_context(|| format!("read shader source {}", source.display()))?
-    {
-        let entry = entry?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("non-UTF-8 shader source filename"))?;
+    let entries = fs::read_dir(&source)
+        .and_then(Iterator::collect::<std::io::Result<Vec<_>>>)
+        .map_err(PathIoError::at("read shader source", &source))
+        .union()?;
+    for entry in entries {
+        let Ok(name) = entry.file_name().into_string() else {
+            return Err(NonUtf8Path {
+                what: "shader source filename",
+                path: entry.path(),
+            })
+            .union();
+        };
         let is_shader_source = name.ends_with(".shader.slang") || name.ends_with(".compute.slang");
         if is_shader_source {
-            ensure!(entry.path().is_file(), "shader source {name} is not a file");
+            if !entry.path().is_file() {
+                return Err(InvalidProjectLayout::SourceNotAFile { name }).union();
+            }
             inputs.push(name);
         }
     }
@@ -76,7 +306,10 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
 
     let mut modules = Names::default();
     for name in ["ShaderAtlas", "ShaderTypes", "ShaderReflection"] {
-        modules.insert(name, name)?;
+        modules
+            .insert(name, name)
+            .map_err(RocCodegenError::from)
+            .union()?;
     }
 
     let mut logical = Logical::default();
@@ -85,7 +318,10 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
     let mut atlas = Vec::new();
 
     let mut atlas_names = Names::default();
-    atlas_names.insert("shader_names", "atlas support value")?;
+    atlas_names
+        .insert("shader_names", "atlas support value")
+        .map_err(RocCodegenError::from)
+        .union()?;
 
     for input in inputs {
         let compute = input.ends_with(".compute.slang");
@@ -96,10 +332,20 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
             ".shader.slang"
         };
         let stem = input.strip_suffix(suffix).expect("discovered suffix");
-        let module = identifier(stem, true)?;
-        modules.insert(&module, &input)?;
-        let value = identifier(stem, false)?;
-        atlas_names.insert(&value, &input)?;
+        let module = identifier(stem, true)
+            .map_err(RocCodegenError::from)
+            .union()?;
+        modules
+            .insert(&module, &input)
+            .map_err(RocCodegenError::from)
+            .union()?;
+        let value = identifier(stem, false)
+            .map_err(RocCodegenError::from)
+            .union()?;
+        atlas_names
+            .insert(&value, &input)
+            .map_err(RocCodegenError::from)
+            .union()?;
         let mut types = StructTypes::default();
         let mut stages = Vec::new();
         let (reflection_kind, reflection) = if compute {
@@ -107,8 +353,12 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
                 &input,
                 search,
                 config.optimization,
-            )?;
-            logical.compute(&shader.reflection_json)?;
+            )
+            .classify(ShaderReflectionFailed::of(&input))?;
+            logical
+                .compute(&shader.reflection_json)
+                .with_context(|| format!("Derive logical Roc types for {input}"))
+                .classify(RocCodegenError::classify)?;
             stages.push((
                 "compute",
                 shader.compute_shader.shader_bytecode.to_vec(),
@@ -116,12 +366,21 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
             ));
             (
                 "ComputeReflection",
-                shader.reflection_json.lower(&mut types)?.render(),
+                shader
+                    .reflection_json
+                    .lower(&mut types)
+                    .with_context(|| format!("Lower reflection of {input} to Roc"))
+                    .classify(RocCodegenError::classify)?
+                    .render(),
             )
         } else {
             let shader =
-                prepare_reflected_shader_with_optimization(&input, search, config.optimization)?;
-            logical.graphics(&shader.reflection_json)?;
+                prepare_reflected_shader_with_optimization(&input, search, config.optimization)
+                    .classify(ShaderReflectionFailed::of(&input))?;
+            logical
+                .graphics(&shader.reflection_json)
+                .with_context(|| format!("Derive logical Roc types for {input}"))
+                .classify(RocCodegenError::classify)?;
             stages.push((
                 "vertex",
                 shader.vertex_shader.shader_bytecode.to_vec(),
@@ -134,20 +393,30 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
             ));
             (
                 "GraphicsReflection",
-                shader.reflection_json.lower(&mut types)?.render(),
+                shader
+                    .reflection_json
+                    .lower(&mut types)
+                    .with_context(|| format!("Lower reflection of {input} to Roc"))
+                    .classify(RocCodegenError::classify)?
+                    .render(),
             )
         };
         let mut stage_imports = Vec::new();
         let mut stage_names = Vec::new();
         for (stage, bytes, extension) in stages {
             let filename = format!("{stem}.{extension}.spv");
-            ensure!(
-                !binaries
-                    .keys()
-                    .any(|existing: &String| existing.eq_ignore_ascii_case(&filename)),
-                "SPIR-V filename collision: {filename}"
-            );
-            let path = import_path(&roc, &compiled.join(&filename))?;
+            if binaries
+                .keys()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(&filename))
+            {
+                return Err(RocCodegenError::from(NameCollision::SpirvFilename {
+                    filename,
+                }))
+                .union();
+            }
+            let path = import_path(&roc, &compiled.join(&filename))
+                .map_err(RocCodegenError::from)
+                .union()?;
             stage_imports.push(StageImport { stage, path });
             stage_names.push(stage);
             binaries.insert(filename, bytes);
@@ -174,14 +443,14 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> Result<()> {
         atlas.render().expect("static template"),
     );
     // No source-dependent errors may occur after this boundary.
-    publish(&compiled, binaries)?;
+    publish(&compiled, binaries).union()?;
 
     let files = roc_files
         .into_iter()
         .map(|(name, text)| (name, canonical_roc_indentation(&text).into_bytes()))
         .collect();
 
-    publish(&roc, files)
+    publish(&roc, files).union()
 }
 
 fn canonical_roc_indentation(text: &str) -> String {
@@ -195,14 +464,14 @@ fn canonical_roc_indentation(text: &str) -> String {
     output
 }
 
-fn publish(dir: &Path, files: BTreeMap<String, Vec<u8>>) -> Result<()> {
+fn publish(dir: &Path, files: BTreeMap<String, Vec<u8>>) -> Result<(), PathIoError> {
     if dir.exists() {
-        fs::remove_dir_all(dir)
-            .with_context(|| format!("clear managed output {}", dir.display()))?;
+        fs::remove_dir_all(dir).map_err(PathIoError::at("clear managed output", dir))?;
     }
-    fs::create_dir_all(dir)?;
+    fs::create_dir_all(dir).map_err(PathIoError::at("create managed output", dir))?;
     for (name, bytes) in files {
-        fs::write(dir.join(name), bytes)?;
+        let path = dir.join(name);
+        fs::write(&path, bytes).map_err(PathIoError::at("write managed output", &path))?;
     }
 
     Ok(())
@@ -214,11 +483,13 @@ fn overlap(first: &Path, second: &Path) -> bool {
 
 /// Resolve existing symlinks before processing `..`, including paths with a
 /// not-yet-created suffix. Fail closed for dangling symlinks and inaccessible paths.
-fn normalize(path: &Path) -> Result<PathBuf> {
+fn normalize(path: &Path) -> Result<PathBuf, PathIoError> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()?.join(path)
+        std::env::current_dir()
+            .map_err(PathIoError::at("resolve the working directory for", path))?
+            .join(path)
     };
     let mut result = PathBuf::new();
     for component in absolute.components() {
@@ -233,11 +504,11 @@ fn normalize(path: &Path) -> Result<PathBuf> {
                 match fs::symlink_metadata(&result) {
                     Ok(_) => {
                         result = fs::canonicalize(&result)
-                            .with_context(|| format!("resolve {}", result.display()))?
+                            .map_err(PathIoError::at("resolve", &result))?
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => {
-                        return Err(error).with_context(|| format!("inspect {}", result.display()));
+                        return Err(PathIoError::at("inspect", &result)(error));
                     }
                 }
             }
@@ -247,34 +518,40 @@ fn normalize(path: &Path) -> Result<PathBuf> {
     Ok(result)
 }
 
-fn import_path(from: &Path, to: &Path) -> Result<String> {
-    let from = from.components().collect::<Vec<_>>();
-    let to = to.components().collect::<Vec<_>>();
+fn import_path(from_path: &Path, to_path: &Path) -> Result<String, UnrepresentableImportPath> {
+    let from = from_path.components().collect::<Vec<_>>();
+    let to = to_path.components().collect::<Vec<_>>();
     let common = from
         .iter()
         .zip(&to)
         .take_while(|(from_component, to_component)| from_component == to_component)
         .count();
-    ensure!(
-        common > 0,
-        "no relative Roc import path between output directories"
-    );
+    if common == 0 {
+        return Err(UnrepresentableImportPath::NoCommonAncestor {
+            from: from_path.to_path_buf(),
+            to: to_path.to_path_buf(),
+        });
+    }
     let mut parts = vec!["..".to_string(); from.len() - common];
     for part in &to[common..] {
-        ensure!(
-            matches!(part, Component::Normal(_)),
-            "unrepresentable Roc import path"
-        );
-        let part = part
-            .as_os_str()
-            .to_str()
-            .context("non-UTF-8 Roc import path")?;
-        ensure!(
-            !part.chars().any(|character| {
-                character.is_control() || matches!(character, '"' | '\\' | '$')
-            }),
-            "unrepresentable Roc import path component {part:?}"
-        );
+        if !matches!(part, Component::Normal(_)) {
+            return Err(UnrepresentableImportPath::NonNormalComponent {
+                to: to_path.to_path_buf(),
+            });
+        }
+        let Some(part) = part.as_os_str().to_str() else {
+            return Err(UnrepresentableImportPath::NonUtf8 {
+                to: to_path.to_path_buf(),
+            });
+        };
+        if part
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '"' | '\\' | '$'))
+        {
+            return Err(UnrepresentableImportPath::ForbiddenCharacter {
+                component: part.to_string(),
+            });
+        }
         parts.push(part.to_string());
     }
 
@@ -285,74 +562,84 @@ fn import_path(from: &Path, to: &Path) -> Result<String> {
 struct Names(BTreeMap<String, String>);
 
 impl Names {
-    fn insert(&mut self, generated: &str, original: &str) -> Result<()> {
+    fn insert(&mut self, generated: &str, original: &str) -> Result<(), NameCollision> {
         if let Some(previous) = self
             .0
             .insert(generated.to_ascii_lowercase(), original.into())
         {
-            bail!("generated name collision: {original:?} and {previous:?} both use {generated}");
+            return Err(NameCollision::Generated {
+                original: original.into(),
+                previous,
+                generated: generated.into(),
+            });
         }
 
         Ok(())
     }
 }
 
-fn identifier(original: &str, upper: bool) -> Result<String> {
+fn identifier(original: &str, upper: bool) -> Result<String, InvalidRocIdentifier> {
     let is_valid = !original.is_empty()
         && original
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
         && original.as_bytes()[0].is_ascii_alphabetic();
-    ensure!(is_valid, "invalid Roc identifier {original:?}");
+    if !is_valid {
+        return Err(InvalidRocIdentifier::Invalid {
+            original: original.into(),
+        });
+    }
     let name = if upper {
         original.to_upper_camel_case()
     } else {
         original.to_snake_case()
     };
-    ensure!(
-        ![
-            "and",
-            "app",
-            "as",
-            "break",
-            "crash",
-            "dbg",
-            "else",
-            "expect",
-            "exposes",
-            "exposing",
-            "for",
-            "generates",
-            "has",
-            "hosted",
-            "if",
-            "implements",
-            "import",
-            "imports",
-            "in",
-            "interface",
-            "match",
-            "module",
-            "or",
-            "package",
-            "packages",
-            "platform",
-            "provides",
-            "requires",
-            "return",
-            "targets",
-            "var",
-            "where",
-            "while",
-            "with",
-            // Conservatively reserve words used by older/newer surface syntax too.
-            "alias",
-            "not",
-            "type",
-        ]
-        .contains(&name.as_str()),
-        "reserved Roc identifier {original:?}"
-    );
+    let is_reserved = [
+        "and",
+        "app",
+        "as",
+        "break",
+        "crash",
+        "dbg",
+        "else",
+        "expect",
+        "exposes",
+        "exposing",
+        "for",
+        "generates",
+        "has",
+        "hosted",
+        "if",
+        "implements",
+        "import",
+        "imports",
+        "in",
+        "interface",
+        "match",
+        "module",
+        "or",
+        "package",
+        "packages",
+        "platform",
+        "provides",
+        "requires",
+        "return",
+        "targets",
+        "var",
+        "where",
+        "while",
+        "with",
+        // Conservatively reserve words used by older/newer surface syntax too.
+        "alias",
+        "not",
+        "type",
+    ]
+    .contains(&name.as_str());
+    if is_reserved {
+        return Err(InvalidRocIdentifier::Reserved {
+            original: original.into(),
+        });
+    }
 
     Ok(name)
 }
@@ -509,15 +796,24 @@ struct StructTypeDefinition {
 }
 
 impl StructTypes {
-    fn reference(&mut self, type_name: &str, fields: &[StructField]) -> Result<RocExpr> {
-        let name = identifier(&format!("{type_name}_type"), false)?;
+    fn reference(
+        &mut self,
+        type_name: &str,
+        fields: &[StructField],
+    ) -> eros::Result<RocExpr, LowerErrors> {
+        let name = identifier(&format!("{type_name}_type"), false).union()?;
         let fields = fields.lower(self)?;
         match self.definitions.get(&name) {
-            Some(previous) => ensure!(
-                previous.type_name == type_name && previous.fields == fields,
-                "incompatible reflected struct types {type_name:?} and {:?} both use {name}",
-                previous.type_name
-            ),
+            Some(previous) => {
+                if previous.type_name != type_name || previous.fields != fields {
+                    return Err(IncompatibleStructTypes {
+                        type_name: type_name.into(),
+                        previous: previous.type_name.clone(),
+                        generated: name,
+                    })
+                    .union();
+                }
+            }
             None => {
                 let definition = StructTypeDefinition {
                     type_name: type_name.into(),
@@ -595,49 +891,45 @@ impl ShaderAtlas {
 
 // Direct exhaustive schema mapping: no JSON intermediate and no numeric floats.
 trait Lower {
-    fn lower(&self, types: &mut StructTypes) -> Result<RocExpr>;
+    fn lower(&self, types: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors>;
 }
 
 impl Lower for String {
-    fn lower(&self, _: &mut StructTypes) -> Result<RocExpr> {
+    fn lower(&self, _: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
         Ok(RocExpr::Literal(quoted(self)))
     }
 }
 
 impl Lower for usize {
-    fn lower(&self, _: &mut StructTypes) -> Result<RocExpr> {
-        Ok(RocExpr::Literal(
-            u64::try_from(*self)
-                .context("usize metadata exceeds U64")?
-                .to_string(),
-        ))
+    fn lower(&self, _: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
+        Ok(RocExpr::Literal(u64::try_from(*self).union()?.to_string()))
     }
 }
 
 impl Lower for u32 {
-    fn lower(&self, _: &mut StructTypes) -> Result<RocExpr> {
+    fn lower(&self, _: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
         Ok(RocExpr::Literal(self.to_string()))
     }
 }
 
 impl Lower for i64 {
-    fn lower(&self, _: &mut StructTypes) -> Result<RocExpr> {
+    fn lower(&self, _: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
         Ok(RocExpr::Literal(self.to_string()))
     }
 }
 
 impl<T: Lower> Lower for [T] {
-    fn lower(&self, types: &mut StructTypes) -> Result<RocExpr> {
+    fn lower(&self, types: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
         Ok(RocExpr::List(
             self.iter()
                 .map(|element| element.lower(types))
-                .collect::<Result<_>>()?,
+                .collect::<eros::Result<_, LowerErrors>>()?,
         ))
     }
 }
 
 impl<T: Lower> Lower for Option<T> {
-    fn lower(&self, types: &mut StructTypes) -> Result<RocExpr> {
+    fn lower(&self, types: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
         Ok(match self {
             Some(value) => RocExpr::Apply {
                 head: "Some".into(),
@@ -649,7 +941,7 @@ impl<T: Lower> Lower for Option<T> {
 }
 
 impl Lower for [u32; 3] {
-    fn lower(&self, _: &mut StructTypes) -> Result<RocExpr> {
+    fn lower(&self, _: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
         Ok(RocExpr::Record(
             ["x", "y", "z"]
                 .iter()
@@ -663,7 +955,7 @@ impl Lower for [u32; 3] {
 macro_rules! record {
     ($ty:ty, $($field:ident),+ $(,)?) => {
         impl Lower for $ty {
-            fn lower(&self, types: &mut StructTypes) -> Result<RocExpr> {
+            fn lower(&self, types: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
                 Ok(RocExpr::Record(vec![$((stringify!($field).into(), self.$field.lower(types)?)),+]))
             }
         }
@@ -673,7 +965,7 @@ macro_rules! record {
 macro_rules! tags {
     ($ty:ty, $($variant:ident),+ $(,)?) => {
         impl Lower for $ty {
-            fn lower(&self, _: &mut StructTypes) -> Result<RocExpr> {
+            fn lower(&self, _: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
                 Ok(RocExpr::Literal(match self { $(Self::$variant => stringify!($variant)),+ }.into()))
             }
         }
@@ -683,7 +975,7 @@ macro_rules! tags {
 macro_rules! variants {
     ($ty:ty, $($variant:ident),+ $(,)?) => {
         impl Lower for $ty {
-            fn lower(&self, types: &mut StructTypes) -> Result<RocExpr> {
+            fn lower(&self, types: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
                 Ok(match self {
                     $(Self::$variant(value) => RocExpr::Apply {
                         head: stringify!($variant).into(),
@@ -698,7 +990,7 @@ macro_rules! variants {
 macro_rules! struct_type {
     ($ty:ty) => {
         impl Lower for $ty {
-            fn lower(&self, types: &mut StructTypes) -> Result<RocExpr> {
+            fn lower(&self, types: &mut StructTypes) -> eros::Result<RocExpr, LowerErrors> {
                 types.reference(&self.type_name, &self.fields)
             }
         }
@@ -870,20 +1162,20 @@ struct Logical {
 }
 
 impl Logical {
-    fn graphics(&mut self, shader: &ReflectionJson) -> Result<()> {
+    fn graphics(&mut self, shader: &ReflectionJson) -> eros::Result<(), LogicalErrors> {
         self.globals(&shader.global_parameters)?;
         self.entry(&shader.vertex_entry_point)?;
 
         self.entry(&shader.fragment_entry_point)
     }
 
-    fn compute(&mut self, shader: &ComputeReflectionJson) -> Result<()> {
+    fn compute(&mut self, shader: &ComputeReflectionJson) -> eros::Result<(), LogicalErrors> {
         self.globals(&shader.global_parameters)?;
 
         self.entry(&shader.compute_entry_point)
     }
 
-    fn globals(&mut self, globals: &[GlobalParameter]) -> Result<()> {
+    fn globals(&mut self, globals: &[GlobalParameter]) -> eros::Result<(), LogicalErrors> {
         let mut names = Names::default();
         for global in globals {
             let (parameter_name, element) = match global {
@@ -894,15 +1186,17 @@ impl Logical {
                     (&parameter.parameter_name, &parameter.element_type)
                 }
             };
-            names.insert(&identifier(parameter_name, false)?, parameter_name)?;
+            names
+                .insert(&identifier(parameter_name, false).union()?, parameter_name)
+                .union()?;
             self.structure(&element.type_name, &element.fields)?;
         }
 
         Ok(())
     }
 
-    fn entry(&mut self, entry: &EntryPoint) -> Result<()> {
-        identifier(&entry.entry_point_name, false)?;
+    fn entry(&mut self, entry: &EntryPoint) -> eros::Result<(), LogicalErrors> {
+        identifier(&entry.entry_point_name, false).union()?;
         let mut names = Names::default();
         for parameter in &entry.parameters {
             let name = match parameter {
@@ -917,14 +1211,20 @@ impl Logical {
                     &semantic.parameter_name
                 }
             };
-            names.insert(&identifier(name, false)?, name)?;
+            names
+                .insert(&identifier(name, false).union()?, name)
+                .union()?;
         }
 
         Ok(())
     }
 
-    fn define(&mut self, original: &str, definition: String) -> Result<String> {
-        let name = identifier(original, true)?;
+    fn define(
+        &mut self,
+        original: &str,
+        definition: String,
+    ) -> eros::Result<String, LogicalErrors> {
+        let name = identifier(original, true).union()?;
         let reserved = [
             "PointerAddress",
             "DescriptorHandle",
@@ -944,15 +1244,20 @@ impl Logical {
         .iter()
         .any(|reserved| reserved.eq_ignore_ascii_case(&name))
             || is_builtin_alias(&name);
-        ensure!(
-            !reserved,
-            "logical type {original:?} collides with support/builtin type"
-        );
+        if reserved {
+            return Err(LogicalTypeCollision::Builtin {
+                original: original.into(),
+            })
+            .union();
+        }
         if let Some((previous, body)) = self.definitions.get(&name.to_ascii_lowercase()) {
-            ensure!(
-                previous == original && body == &definition,
-                "incompatible or colliding logical definitions for {original:?} and {previous:?}"
-            );
+            if previous != original || body != &definition {
+                return Err(LogicalTypeCollision::Incompatible {
+                    original: original.into(),
+                    previous: previous.clone(),
+                })
+                .union();
+            }
         } else {
             self.definitions
                 .insert(name.to_ascii_lowercase(), (original.into(), definition));
@@ -961,13 +1266,17 @@ impl Logical {
         Ok(name)
     }
 
-    fn structure(&mut self, name: &str, fields: &[StructField]) -> Result<String> {
+    fn structure(
+        &mut self,
+        name: &str,
+        fields: &[StructField],
+    ) -> eros::Result<String, LogicalErrors> {
         let mut names = Names::default();
         let mut members = Vec::new();
         for field in fields {
             let original = field.field_name();
-            let member = identifier(original, false)?;
-            names.insert(&member, original)?;
+            let member = identifier(original, false).union()?;
+            names.insert(&member, original).union()?;
             let ty = self
                 .field(field)
                 .with_context(|| format!("logical {name}.{original}"))?;
@@ -978,14 +1287,14 @@ impl Logical {
         }
 
         let definition = LogicalStructTemplate {
-            name: identifier(name, true)?,
+            name: identifier(name, true).union()?,
             members,
         };
 
         self.define(name, fragment(&definition))
     }
 
-    fn field(&mut self, field: &StructField) -> Result<String> {
+    fn field(&mut self, field: &StructField) -> eros::Result<String, LogicalErrors> {
         Ok(match field {
             StructField::Scalar(scalar_field) => scalar(scalar_field.scalar_type).into(),
             StructField::Vector(vector_field) => {
@@ -996,7 +1305,7 @@ impl Logical {
                     }
                 };
 
-                self.vector(count, vector_scalar(element))?
+                self.vector(count, vector_scalar(element)).union()?
             }
             StructField::Struct(struct_field) => self.structure(
                 &struct_field.struct_type.type_name,
@@ -1007,10 +1316,14 @@ impl Logical {
                 let is_supported_matrix = matrix_field.row_count == 4
                     && matrix_field.column_count == 4
                     && !matches!(scalar, ScalarType::Uint64);
-                ensure!(
-                    is_supported_matrix,
-                    "unsupported logical matrix (requires 4x4 F32/I32/U32)"
-                );
+                if !is_supported_matrix {
+                    return Err(UnsupportedLogicalType::Matrix {
+                        rows: matrix_field.row_count,
+                        columns: matrix_field.column_count,
+                        scalar,
+                    })
+                    .union();
+                }
                 self.matrix(scalar)?
             }
             StructField::Resource(resource_field) => {
@@ -1031,38 +1344,47 @@ impl Logical {
             StructField::Array(array_field) => {
                 let is_supported_element = array_field.element_stride == 16
                     && !matches!(array_field.element_scalar_type, ScalarType::Uint64);
-                ensure!(
-                    is_supported_element,
-                    "unsupported logical fixed array element"
-                );
+                if !is_supported_element {
+                    return Err(UnsupportedLogicalType::ArrayElement {
+                        stride: array_field.element_stride,
+                        scalar: array_field.element_scalar_type,
+                    })
+                    .union();
+                }
 
                 fragment(&RocApplyTemplate {
                     head: "List".into(),
-                    argument: self.vector(4, array_field.element_scalar_type)?,
+                    argument: self.vector(4, array_field.element_scalar_type).union()?,
                     hugging: true,
                 })
             }
             StructField::Enum(enum_field) => {
                 let enum_type = &enum_field.enum_type;
-                let name = identifier(&enum_type.type_name, true)?;
+                let name = identifier(&enum_type.type_name, true).union()?;
                 let mut names = Names::default();
                 let mut cases = Vec::new();
-                ensure!(
-                    !enum_type.cases.is_empty(),
-                    "empty logical enum {}",
-                    enum_type.type_name
-                );
+                if enum_type.cases.is_empty() {
+                    return Err(UnsupportedLogicalType::EmptyEnum {
+                        type_name: enum_type.type_name.clone(),
+                    })
+                    .union();
+                }
 
                 for case in &enum_type.cases {
-                    let tag = identifier(&case.name, true)?;
-                    names.insert(&tag, &case.name)?;
-                    match enum_type.tag_type {
-                        EnumTagType::Uint32 => {
-                            u32::try_from(case.value).context("enum value outside U32")?;
-                        }
-                        EnumTagType::Int32 => {
-                            i32::try_from(case.value).context("enum value outside I32")?;
-                        }
+                    let tag = identifier(&case.name, true).union()?;
+                    names.insert(&tag, &case.name).union()?;
+                    let (in_range, tag_type) = match enum_type.tag_type {
+                        EnumTagType::Uint32 => (u32::try_from(case.value).is_ok(), "U32"),
+                        EnumTagType::Int32 => (i32::try_from(case.value).is_ok(), "I32"),
+                    };
+                    if !in_range {
+                        return Err(UnsupportedLogicalType::EnumValueOutOfRange {
+                            type_name: enum_type.type_name.clone(),
+                            case: case.name.clone(),
+                            value: case.value,
+                            tag_type,
+                        })
+                        .union();
                     }
                     cases.push(EnumArm {
                         tag,
@@ -1072,7 +1394,7 @@ impl Logical {
 
                 let definition = LogicalEnumTemplate {
                     name,
-                    value_name: identifier(&enum_type.type_name, false)?,
+                    value_name: identifier(&enum_type.type_name, false).union()?,
                     numeric: match enum_type.tag_type {
                         EnumTagType::Uint32 => "U32",
                         EnumTagType::Int32 => "I32",
@@ -1183,16 +1505,15 @@ fn is_builtin_alias(name: &str) -> bool {
 }
 
 impl Logical {
-    fn vector(&self, count: usize, element: ScalarType) -> Result<String> {
-        ensure!(
-            (1..=4).contains(&count),
-            "unsupported logical vector width {count}"
-        );
+    fn vector(&self, count: usize, element: ScalarType) -> Result<String, UnsupportedLogicalType> {
+        if !(1..=4).contains(&count) {
+            return Err(UnsupportedLogicalType::VectorWidth { count });
+        }
 
         Ok(format!("ShaderReflection.{}", vector_name(count, element)))
     }
 
-    fn matrix(&self, element: ScalarType) -> Result<String> {
+    fn matrix(&self, element: ScalarType) -> eros::Result<String, LogicalErrors> {
         Ok(format!("ShaderReflection.{}", matrix_name(element)))
     }
 }
@@ -1377,16 +1698,55 @@ mod tests {
             let roc_before = tree_contents(&config.roc_source_dir);
             let compiled_before = tree_contents(&config.compiled_shaders_dir);
             let error = write_precompiled_roc_shaders(config.clone()).unwrap_err();
-            if case == "keyword" {
-                assert!(
-                    error.to_string().contains("reserved Roc identifier"),
-                    "{error:#}"
-                );
-            }
             assert_eq!(tree_contents(&config.roc_source_dir), roc_before);
             assert_eq!(tree_contents(&config.compiled_shaders_dir), compiled_before);
             if case != "import_path" {
                 assert_eq!((roc_before, compiled_before), before);
+            }
+            let debug = format!("{error:#?}");
+            assert!(debug.contains("Generate Roc shader bindings"), "{debug}");
+            if case == "keyword" {
+                assert!(
+                    error.to_string().contains("reserved Roc identifier"),
+                    "{debug}"
+                );
+            }
+            if case == "compile" {
+                let Ok(failed) = error.narrow::<ShaderReflectionFailed, _>() else {
+                    panic!("a slang failure must classify as ShaderReflectionFailed: {debug}");
+                };
+                assert_eq!(failed.shader, "broken.shader.slang");
+                assert!(
+                    failed
+                        .downcast_ref::<mltrs_slang_reflection::SlangError>()
+                        .is_some(),
+                    "{failed:?}"
+                );
+                let source = std::error::Error::source(&failed).unwrap();
+                assert!(source.is::<mltrs_slang_reflection::SlangError>());
+                continue;
+            }
+            let Ok(roc_error) = error.narrow::<RocCodegenError, _>() else {
+                panic!("{case} must classify as RocCodegenError: {debug}");
+            };
+            match (case, &roc_error) {
+                (
+                    "keyword",
+                    RocCodegenError::InvalidIdentifier(InvalidRocIdentifier::Reserved { original }),
+                ) if original == "package" => {}
+                (
+                    "mapping",
+                    RocCodegenError::LogicalTypeCollision(LogicalTypeCollision::Incompatible {
+                        ..
+                    }),
+                ) => {}
+                (
+                    "import_path",
+                    RocCodegenError::UnrepresentableImportPath(
+                        UnrepresentableImportPath::ForbiddenCharacter { .. },
+                    ),
+                ) => {}
+                _ => panic!("{case}: unexpected {roc_error:?}"),
             }
         }
     }

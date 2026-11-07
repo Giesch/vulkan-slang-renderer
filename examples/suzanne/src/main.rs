@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+use eros::Context;
+
 mod generated;
 
 use glam::camera::rh::{proj::directx, view::look_at_mat4};
@@ -16,7 +18,7 @@ use mltrs::renderer::{
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::suzanne::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     Suzanne::run()
 }
 
@@ -33,10 +35,11 @@ pub struct Suzanne {
 }
 
 impl Suzanne {
-    fn load_vertices() -> anyhow::Result<(Vec<Vertex>, Vec<u32>)> {
+    fn load_vertices() -> eros::Result<(Vec<Vertex>, Vec<u32>)> {
         let file_path = manifest_path!["models", "suzanne", "suzanne.obj"];
 
-        let (mut models, _materials) = tobj::load_obj(file_path, &tobj::GPU_LOAD_OPTIONS)?;
+        let (mut models, _materials) = tobj::load_obj(&file_path, &tobj::GPU_LOAD_OPTIONS)
+            .with_context(|| format!("Load OBJ model {}", file_path.display()))?;
 
         debug_assert!(models.len() == 1);
         let model = models.remove(0);
@@ -84,7 +87,7 @@ impl Game for Suzanne {
         "Suzanne"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -140,7 +143,9 @@ impl Game for Suzanne {
         let time = elapsed.as_secs_f32();
         let params = SuzanneParamsData { mvp, time };
 
-        self.graph.execute(renderer, &params)
+        self.graph.execute(renderer, &params)?;
+
+        Ok(())
     }
 }
 

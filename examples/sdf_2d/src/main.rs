@@ -1,4 +1,7 @@
+use std::path::Path;
 use std::time::Instant;
+
+use eros::{Context, context};
 
 mod generated;
 
@@ -25,7 +28,7 @@ struct BeatsData {
     // beats_intervals: Vec<f64>,
 }
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     SDF2D::run()
 }
 
@@ -50,20 +53,28 @@ struct SDF2D {
 
 /// Opens the default output device and starts the track. Fails when there is no
 /// audio device at all, which [`SDF2D::setup`] treats as non-fatal.
-fn start_audio() -> anyhow::Result<(MixerDeviceSink, rodio::Player)> {
+fn start_audio() -> eros::Result<(MixerDeviceSink, rodio::Player)> {
     let config = EnvConfig::from_env();
     if config.headless_sweep {
-        anyhow::bail!("headless sweep");
+        eros::bail!("headless sweep");
     }
 
-    let mut device_sink = rodio::DeviceSinkBuilder::open_default_sink()?;
+    let mut device_sink =
+        rodio::DeviceSinkBuilder::open_default_sink().context("Open default audio output")?;
     device_sink.log_on_drop(false);
     let mixer = device_sink.mixer();
     let audio_path = manifest_path!["audio", "alias_abandon.flac"];
-    let file = std::fs::File::open(&audio_path)?;
-    let sink = rodio::play(mixer, BufReader::new(file))?;
+    let file = std::fs::File::open(&audio_path)
+        .with_context(|| format!("Open audio track {}", audio_path.display()))?;
+    let sink = rodio::play(mixer, BufReader::new(file))
+        .with_context(|| format!("Play audio track {}", audio_path.display()))?;
     sink.set_volume(0.5);
     Ok((device_sink, sink))
+}
+
+#[context("Load beat map {}", path.display())]
+fn load_beats(path: &Path) -> eros::Result<BeatsData> {
+    Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
 }
 
 impl Game for SDF2D {
@@ -74,16 +85,13 @@ impl Game for SDF2D {
         "SDF 2D"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
         let start_time = Instant::now();
 
-        let beats: BeatsData = serde_json::from_str(&std::fs::read_to_string(manifest_path![
-            "audio",
-            "alias_abandon.beats.json"
-        ])?)?;
+        let beats = load_beats(&manifest_path!["audio", "alias_abandon.beats.json"])?;
 
         let params_buffer = renderer.create_uniform_buffer::<SDF2DParams>()?;
         let resources = Resources {
@@ -108,7 +116,7 @@ impl Game for SDF2D {
         let audio = match start_audio() {
             Ok(audio) => Some(audio),
             Err(err) => {
-                eprintln!("sdf_2d: no audio ({err}); rendering silently");
+                eprintln!("sdf_2d: no audio; rendering silently: {err:#?}");
                 None
             }
         };
@@ -149,6 +157,8 @@ impl Game for SDF2D {
             beat_proximity,
         };
 
-        self.graph.execute(renderer, &params)
+        self.graph.execute(renderer, &params)?;
+
+        Ok(())
     }
 }

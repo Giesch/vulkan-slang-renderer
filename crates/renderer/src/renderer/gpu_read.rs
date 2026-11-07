@@ -7,6 +7,42 @@
 //! reconstruction is required. Packed matrix/vector codecs do not infer padding;
 //! generated field layouts must match their declared byte sizes.
 
+use eros::IntoUnion as _;
+
+/// A readback buffer's byte length did not match the decoded type's GPU size.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid GPU readback byte length for {type_name}: expected {expected}, got {actual}")]
+pub struct GpuByteLengthMismatch {
+    pub type_name: &'static str,
+    pub expected: usize,
+    pub actual: usize,
+}
+
+/// A GPU enum discriminant did not name any variant.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid {type_name} tag: {tag}")]
+pub struct InvalidGpuEnumTag {
+    pub type_name: &'static str,
+    pub tag: i128,
+}
+
+pub type GpuReadErrors = (GpuByteLengthMismatch, InvalidGpuEnumTag);
+
+/// A readback's element count and stride do not describe a readable range of its buffer.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidReadbackRange {
+    #[error("empty GPU readback ({count} elements of stride {stride})")]
+    Empty { count: usize, stride: usize },
+    #[error("GPU readback stride {gpu} differs from allocation stride {rust}")]
+    StrideMismatch { gpu: usize, rust: usize },
+    #[error("GPU readback byte size overflow ({count} elements of stride {stride})")]
+    Overflow { count: usize, stride: usize },
+    #[error("GPU readback of {len} bytes exceeds slice size limit")]
+    ExceedsSliceLimit { len: usize },
+    #[error("GPU readback of {len} bytes exceeds buffer capacity {capacity}")]
+    ExceedsCapacity { len: usize, capacity: u64 },
+}
+
 /// Decode one shader value without interpreting arbitrary bytes as a Rust value.
 ///
 /// `GPU_SIZE` is the storage array stride, including shader padding. Implementors
@@ -14,7 +50,21 @@
 /// Rust values. Generated implementations support pure data, not GPU addresses.
 pub trait GPURead: Sized {
     const GPU_SIZE: usize;
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self>;
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors>;
+}
+
+/// The length check every decoder starts with.
+fn check_len<T: GPURead>(bytes: &[u8]) -> eros::Result<(), GpuReadErrors> {
+    if bytes.len() == T::GPU_SIZE {
+        Ok(())
+    } else {
+        Err(GpuByteLengthMismatch {
+            type_name: std::any::type_name::<T>(),
+            expected: T::GPU_SIZE,
+            actual: bytes.len(),
+        })
+        .union()
+    }
 }
 
 macro_rules! scalar {
@@ -22,10 +72,15 @@ macro_rules! scalar {
         impl GPURead for $ty {
             const GPU_SIZE: usize = size_of::<Self>();
 
-            fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-                anyhow::ensure!(bytes.len() == Self::GPU_SIZE, "incorrect GPU scalar byte length");
+            fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+                check_len::<Self>(bytes)?;
+                let array = bytes.try_into().map_err(|_| GpuByteLengthMismatch {
+                    type_name: std::any::type_name::<Self>(),
+                    expected: Self::GPU_SIZE,
+                    actual: bytes.len(),
+                });
 
-                Ok(Self::from_le_bytes(bytes.try_into()?))
+                Ok(Self::from_le_bytes(array.union()?))
             }
         }
     )* };
@@ -39,11 +94,8 @@ impl<T: GPURead, const N: usize> GPURead for [T; N] {
         None => panic!("GPU array size overflow"),
     };
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "incorrect GPU array byte length"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        check_len::<Self>(bytes)?;
         const { assert!(T::GPU_SIZE != 0, "zero GPU element stride") };
 
         // `as_chunks` needs a const generic argument,
@@ -51,11 +103,17 @@ impl<T: GPURead, const N: usize> GPURead for [T; N] {
         let values = bytes
             .chunks_exact(T::GPU_SIZE)
             .map(T::read_gpu)
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .collect::<eros::Result<Vec<_>, GpuReadErrors>>()?;
 
+        // unreachable after the length check, but reported rather than panicking
         values
             .try_into()
-            .map_err(|_| anyhow::anyhow!("incorrect GPU array element count"))
+            .map_err(|values: Vec<T>| GpuByteLengthMismatch {
+                type_name: std::any::type_name::<Self>(),
+                expected: Self::GPU_SIZE,
+                actual: values.len() * T::GPU_SIZE,
+            })
+            .union()
     }
 }
 
@@ -64,11 +122,8 @@ macro_rules! vector {
         impl GPURead for $ty {
             const GPU_SIZE: usize = $stride;
 
-            fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-                anyhow::ensure!(
-                    bytes.len() == Self::GPU_SIZE,
-                    "incorrect GPU vector byte length"
-                );
+            fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+                check_len::<Self>(bytes)?;
                 let values = <[$scalar; $n]>::read_gpu(&bytes[..size_of::<$scalar>() * $n])?;
 
                 Ok(Self::from_array(values))
@@ -89,7 +144,7 @@ macro_rules! matrix {
         impl GPURead for $ty {
             const GPU_SIZE: usize = $n * 4;
 
-            fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+            fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
                 Ok(Self::from_cols_array(&<[f32; $n]>::read_gpu(bytes)?))
             }
         }
@@ -103,23 +158,25 @@ pub(super) fn readback_byte_len(
     stride: usize,
     rust_stride: usize,
     capacity: u64,
-) -> anyhow::Result<usize> {
-    anyhow::ensure!(count != 0 && stride != 0, "empty GPU readback");
-    anyhow::ensure!(
-        stride == rust_stride,
-        "GPU readback stride differs from allocation stride"
-    );
+) -> Result<usize, InvalidReadbackRange> {
+    if count == 0 || stride == 0 {
+        return Err(InvalidReadbackRange::Empty { count, stride });
+    }
+    if stride != rust_stride {
+        return Err(InvalidReadbackRange::StrideMismatch {
+            gpu: stride,
+            rust: rust_stride,
+        });
+    }
     let len = count
         .checked_mul(stride)
-        .ok_or_else(|| anyhow::anyhow!("GPU readback byte size overflow"))?;
-    anyhow::ensure!(
-        len <= isize::MAX as usize,
-        "GPU readback exceeds slice size limit"
-    );
-    anyhow::ensure!(
-        u64::try_from(len)? <= capacity,
-        "GPU readback exceeds buffer capacity"
-    );
+        .ok_or(InvalidReadbackRange::Overflow { count, stride })?;
+    if len > isize::MAX as usize {
+        return Err(InvalidReadbackRange::ExceedsSliceLimit { len });
+    }
+    if u64::try_from(len).map_or(true, |len| len > capacity) {
+        return Err(InvalidReadbackRange::ExceedsCapacity { len, capacity });
+    }
 
     Ok(len)
 }
@@ -141,6 +198,35 @@ mod tests {
         assert_eq!(glam::Vec4::read_gpu(&[0; 16]).unwrap(), glam::Vec4::ZERO);
         assert_eq!(glam::Mat4::read_gpu(&[0; 64]).unwrap(), glam::Mat4::ZERO);
         assert_eq!(<[u32; 0]>::read_gpu(&[]).unwrap(), [0_u32; 0]);
+    }
+
+    #[test]
+    fn length_mismatch_is_typed_and_names_the_type() {
+        let error = <[u32; 2]>::read_gpu(&[0; 7]).unwrap_err();
+        let mismatch = error
+            .downcast_inner_ref::<GpuByteLengthMismatch>()
+            .expect("a byte length mismatch");
+        assert_eq!(mismatch.type_name, "[u32; 2]");
+        assert_eq!((mismatch.expected, mismatch.actual), (8, 7));
+
+        // a vector's stride is checked, not only its component bytes
+        let error = glam::Vec4::read_gpu(&[0; 12]).unwrap_err();
+        assert!(error.is_inner::<GpuByteLengthMismatch>());
+    }
+
+    #[test]
+    fn readback_range_errors_are_typed() {
+        assert_eq!(
+            readback_byte_len(3, 4, 4, 8),
+            Err(InvalidReadbackRange::ExceedsCapacity {
+                len: 12,
+                capacity: 8
+            })
+        );
+        assert_eq!(
+            readback_byte_len(1, 4, 8, 8),
+            Err(InvalidReadbackRange::StrideMismatch { gpu: 4, rust: 8 })
+        );
     }
 
     #[test]

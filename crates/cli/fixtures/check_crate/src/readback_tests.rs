@@ -1,6 +1,6 @@
 use crate::generated::readback_compute::{ReadbackOutput, ReadbackTag};
 use crate::generated::{std140_vec3_padding, std430_vec3_padding};
-use crate::renderer::gpu_read::GPURead;
+use crate::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, InvalidGpuEnumTag};
 
 /// `float3 a; float b; float3 c; float d;` with a distinct value in every
 /// 4-byte slot, so a decoder that reads a neighbouring slot gets a wrong value.
@@ -89,8 +89,23 @@ fn reflected_readback_rejects_wrong_lengths_and_unknown_tags() {
     bytes.push(0);
     assert!(ReadbackOutput::read_gpu(&bytes).is_err());
     bytes.pop();
+    let Ok(mismatch) = ReadbackOutput::read_gpu(&bytes[..12])
+        .unwrap_err()
+        .narrow::<GpuByteLengthMismatch, _>()
+    else {
+        panic!("a short readback must report a byte length mismatch");
+    };
+    assert_eq!(mismatch.type_name, "ReadbackOutput");
+    assert_eq!((mismatch.expected, mismatch.actual), (160, 12));
+
     bytes[48..52].copy_from_slice(&999u32.to_le_bytes());
-    let error = ReadbackOutput::read_gpu(&bytes).unwrap_err().to_string();
-    assert!(error.contains("ReadbackTag"), "{error}");
-    assert!(error.contains("999"), "{error}");
+    let error = ReadbackOutput::read_gpu(&bytes).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("ReadbackTag"), "{message}");
+    assert!(message.contains("999"), "{message}");
+    let Ok(invalid_tag) = error.narrow::<InvalidGpuEnumTag, _>() else {
+        panic!("an unknown discriminant must report an invalid enum tag");
+    };
+    assert_eq!(invalid_tag.type_name, "ReadbackTag");
+    assert_eq!(invalid_tag.tag, 999);
 }

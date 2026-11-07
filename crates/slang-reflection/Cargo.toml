@@ -8,7 +8,8 @@ publish = false
 workspace = true
 
 [dependencies]
-anyhow.workspace = true
+eros.workspace = true
+thiserror.workspace = true
 serde.workspace = true
 shader-slang.workspace = true
 

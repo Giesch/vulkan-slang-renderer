@@ -10,7 +10,7 @@
 //!
 //! Plan: llm_notes/link_rendering/phase_08.md Step 3.
 
-use anyhow::{Context, Result, bail, ensure};
+use eros::{Result, bail, context, ensure};
 use glam::{UVec4, Vec4};
 
 use crate::generated::shader_atlas::tev::TevParams;
@@ -41,11 +41,8 @@ const GX_NULL_ID: u32 = 0xFF;
 /// material, because the game writes it per frame from `dKy_tevstr_c`), so they
 /// live in `GXLights` on the frame's param block instead. Same for the
 /// `dKy_tevstr_c` register override, which is `GXTevColorOverride`.
+#[context("Pack TEV for material {:?}", material.name)]
 pub fn pack(material: &mm::MaterialEntry) -> Result<TevParams> {
-    pack_inner(material).with_context(|| format!("packing TEV for material {:?}", material.name))
-}
-
-fn pack_inner(material: &mm::MaterialEntry) -> Result<TevParams> {
     let n_stages = material.num_tev_stages as usize;
     let n_texgens = material.num_tex_gens as usize;
 
@@ -135,7 +132,7 @@ fn pack_inner(material: &mm::MaterialEntry) -> Result<TevParams> {
     for (i, konst) in params.konst.iter_mut().enumerate() {
         // No shift on the konst path: loadTevKColor is GXTevKColorID(reg), plain.
         let c = flat(material.tev.konst_colors.get(i))
-            .with_context(|| format!("konst color slot {i} is absent"))?;
+            .ok_or_else(|| eros::error!("konst color slot {i} is absent"))?;
         *konst = rgba8(c);
     }
     for i in 0..3 {
@@ -147,7 +144,7 @@ fn pack_inner(material: &mm::MaterialEntry) -> Result<TevParams> {
         // lerp(white, white, ramp) and the toon band disappears with no other
         // symptom, which is why the ear test below pins it.
         let c = flat(material.tev.reg_colors.get(i))
-            .with_context(|| format!("TEV register color slot {i} is absent"))?;
+            .ok_or_else(|| eros::error!("TEV register color slot {i} is absent"))?;
         // S10 registers legitimately hold values outside [0, 255], so these are
         // scaled, not clamped.
         params.reg[i + 1] = Vec4::new(
@@ -163,10 +160,12 @@ fn pack_inner(material: &mm::MaterialEntry) -> Result<TevParams> {
     // One RGBA register per channel *pair*, matching GXSetChanMatColor's
     // GX_COLOR0A0: the color channel takes .rgb and the alpha channel takes .a.
     params.chan_mat_color = rgba8(
-        flat(material.material_colors.first()).context("channel pair 0 has no material color")?,
+        flat(material.material_colors.first())
+            .ok_or_else(|| eros::error!("channel pair 0 has no material color"))?,
     );
     params.chan_amb_color = rgba8(
-        flat(material.ambient_colors.first()).context("channel pair 0 has no ambient color")?,
+        flat(material.ambient_colors.first())
+            .ok_or_else(|| eros::error!("channel pair 0 has no ambient color"))?,
     );
     ensure!(
         material.light_colors.iter().all(Option::is_none),
@@ -239,12 +238,12 @@ fn pack_stage(
         .tev
         .kcsels
         .get(i)
-        .with_context(|| format!("stage {i} has no konst color select"))?;
+        .ok_or_else(|| eros::error!("stage {i} has no konst color select"))?;
     let kasel = *material
         .tev
         .kasels
         .get(i)
-        .with_context(|| format!("stage {i} has no konst alpha select"))?;
+        .ok_or_else(|| eros::error!("stage {i} has no konst alpha select"))?;
     gx::<KonstColorSel>(kcsel, "kcsel")?;
     gx::<KonstAlphaSel>(kasel, "kasel")?;
     params.stage_dest[i] = UVec4::new(
@@ -259,7 +258,7 @@ fn pack_stage(
         .orders
         .get(i)
         .and_then(Option::as_ref)
-        .with_context(|| format!("stage {i} has no TEV order"))?;
+        .ok_or_else(|| eros::error!("stage {i} has no TEV order"))?;
     let tex_coord = gx::<TexCoordId>(order.tex_coord, "tex_coord")?;
     let tex_map = gx::<TexMapId>(order.tex_map, "tex_map")?;
     let channel = gx::<ColorChannelId>(order.channel, "channel")?;
@@ -335,7 +334,9 @@ fn pack_texgen(material: &mm::MaterialEntry, i: usize, params: &mut TevParams) -
         .tex_matrices
         .iter()
         .find(|tm| tm.slot == slot)
-        .with_context(|| format!("texcoord {i} selects {matrix}, whose slot {slot} is absent"))?;
+        .ok_or_else(|| {
+            eros::error!("texcoord {i} selects {matrix}, whose slot {slot} is absent")
+        })?;
     let rows = texmtx_rows(tm);
     params.texgen_mtx[2 * i] = rows[0];
     params.texgen_mtx[2 * i + 1] = rows[1];
@@ -605,13 +606,14 @@ mod tests {
     fn compacted_length_mismatch_is_an_error() {
         let mut m = fixture();
         m.num_tev_stages = 2; // but `stages` still has one entry
-        let err = pack(&m).unwrap_err().to_string();
+        // The root names the failure; `#[context]` on `pack` names the material.
+        let root = format!("{:#}", pack(&m).unwrap_err());
+        assert!(root.contains("compacted stages"), "{root}");
+        let report = format!("{:#?}", pack(&m).unwrap_err());
         assert!(
-            err.contains("packing TEV for material \"fixture\""),
-            "{err}"
+            report.contains("Pack TEV for material \"fixture\""),
+            "{report}"
         );
-        let chain = format!("{:#}", pack(&m).unwrap_err());
-        assert!(chain.contains("compacted stages"), "{chain}");
     }
 
     #[test]

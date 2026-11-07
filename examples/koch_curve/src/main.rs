@@ -17,7 +17,7 @@ use mltrs::renderer::{
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::koch_curve::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     KochCurve::run()
 }
 
@@ -57,7 +57,7 @@ impl Game for KochCurve {
         Some(("Koch Curve 3D", &mut self.edit_state))
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -148,6 +148,7 @@ impl Game for KochCurve {
                 sphere_blend: self.edit_state.sphere_blend.value,
                 rotation_speed: self.edit_state.rotation_speed.value,
             },
-        )
+        )?;
+        Ok(())
     }
 }

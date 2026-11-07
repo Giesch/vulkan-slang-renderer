@@ -18,7 +18,8 @@ fn wrong(
     graph: &mut RenderGraph<(ComputeNode<SimParams>,)>,
     frame: mltrs_renderer::renderer::FrameRenderer<'_>,
 ) -> Result<(), mltrs_renderer::renderer::DrawError> {
-    graph.execute(frame, &(SimParamsData { delta_time: 0.016 },))
+    graph.execute(frame, &(SimParamsData { delta_time: 0.016 },))?;
+    Ok(())
 }
 
 #[allow(unused_variables)]

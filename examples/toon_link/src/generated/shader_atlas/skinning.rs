@@ -5,7 +5,7 @@
 use serde::Serialize;
 
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_read::GPURead;
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 #[allow(unused_imports)]
 use mltrs::renderer::render_graph::GPUWrite;
 
@@ -40,11 +40,14 @@ const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
 impl GPURead for VertexSkinning {
     const GPU_SIZE: usize = 32;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for VertexSkinning"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "VertexSkinning",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             joints: GPURead::read_gpu(&bytes[0..16])?,
@@ -56,11 +59,14 @@ impl GPURead for VertexSkinning {
 impl GPURead for SkinJoint {
     const GPU_SIZE: usize = 64;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for SkinJoint"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "SkinJoint",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             transform: GPURead::read_gpu(&bytes[0..64])?,

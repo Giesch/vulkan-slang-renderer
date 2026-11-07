@@ -14,7 +14,7 @@ use crate::generated::shader_atlas::gpu_picking::*;
 use crate::generated::shader_atlas::gpu_picking_id;
 use crate::generated::shader_atlas::mltrs::Projection;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     GpuPicking::run()
 }
 
@@ -39,7 +39,7 @@ impl Game for GpuPicking {
         "GPU Picking"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self> {
         // Visual shader pipeline
         let params_buffer = renderer.create_uniform_buffer::<GpuPickingParams>()?;
         let cubes_buffer = renderer.create_cpu_updated_buffer::<Cube>(MAX_CUBES)?;

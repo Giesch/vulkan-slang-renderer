@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 mltrs-renderer = { path = "../.." }
 mltrs-render-graph = { path = "../../../render-graph" }
-anyhow = "1"
+eros = "0.9.0-rc.0"
 
 ash = "0.38"
 glam = { version = "0.33", features = ["serde"] }

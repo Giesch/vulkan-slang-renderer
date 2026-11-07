@@ -1,7 +1,7 @@
 //! CPU-only BCK sampling. Preparation validates once; evaluation never publishes state.
 use std::rc::Rc;
 
-use anyhow::{Context, Result, ensure};
+use eros::{Context, Result, context, ensure};
 use glam::{Mat4, Vec3};
 use gx::animation_manifest::{BckClip, TrackF32, TrackI16};
 use gx::model_manifest::Skeleton;
@@ -118,12 +118,8 @@ impl PreparedClip {
 
     /// Samples raw frame time and clamps to track endpoints. Playback handles loop wrapping.
     /// All failures include the requested frame; the caller retains its last pose.
+    #[context("pose.frame[{}]", frame)]
     pub fn evaluate(&self, frame: f32) -> Result<Pose> {
-        self.evaluate_inner(frame)
-            .with_context(|| format!("pose.frame[{frame}]"))
-    }
-
-    fn evaluate_inner(&self, frame: f32) -> Result<Pose> {
         ensure!(frame.is_finite(), "frame: nonfinite");
 
         let mut model_space: Vec<Mat4> = Vec::with_capacity(self.joints.len());
@@ -706,7 +702,7 @@ mod tests {
                 .prepare_clip(Rc::new(data))
                 .unwrap()
                 .evaluate(0.0)
-                .unwrap_or_else(|error| panic!("scale {value}: {error:#}"));
+                .unwrap_or_else(|error| panic!("scale {value}: {error:#?}"));
             let actual = pose.model_space[1].transform_point3(Vec3::X);
             assert!(
                 (actual - Vec3::X).abs().max_element() <= TOLERANCE,
@@ -775,7 +771,7 @@ mod tests {
 
         assert!(candidate.evaluate(0.0).is_ok());
         let error = candidate.evaluate(5.0).unwrap_err();
-        assert!(format!("{error:#}").contains("Hermite"), "{error:#}");
+        assert!(format!("{error:#}").contains("Hermite"), "{error:#?}");
         assert!(candidate.evaluate(10.0).is_ok());
     }
 
@@ -798,7 +794,7 @@ mod tests {
         let candidate = prepared.prepare_clip(Rc::new(data)).unwrap();
         let error = candidate.evaluate(0.0).unwrap_err();
 
-        assert!(format!("{error:#}").contains("hierarchy"), "{error:#}");
+        assert!(format!("{error:#?}").contains("hierarchy"), "{error:#?}");
     }
 
     #[test]

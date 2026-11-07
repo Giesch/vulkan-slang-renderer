@@ -14,7 +14,7 @@ pub use super::mltrs::MVPMatrices;
 pub use super::skinning::{SkinJoint, VertexSkinning};
 pub use super::tev::{GXAlphaCompare, GXLights, GXTevColorOverride, TevParams};
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_read::GPURead;
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -164,10 +164,13 @@ pub struct Resources<'a> {
 impl GPURead for DebugMode {
     const GPU_SIZE: usize = 4;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
         let tag = <u32 as GPURead>::read_gpu(bytes)?;
 
-        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid DebugMode tag: {tag}"))
+        eros::IntoUnion::union(Self::try_from(tag).map_err(|tag| InvalidGpuEnumTag {
+            type_name: "DebugMode",
+            tag: i128::from(tag),
+        }))
     }
 }
 

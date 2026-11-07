@@ -4,6 +4,7 @@ use mltrs_render_graph::backend::{
     BackendTypes, BindingLookup, BufferAddressKind, IndexedIndirectArgs,
 };
 
+use super::error::{DrawError, GraphImageError, IndirectRejected, UploadRejected};
 use super::pipeline::PipelineIndex;
 use super::{DrawIndexedIndirectCommand, MAX_FRAMES_IN_FLIGHT, Renderer};
 
@@ -25,6 +26,8 @@ impl BindingLookup for Renderer {
 }
 
 impl mltrs_render_graph::backend::PreparationBackend for Renderer {
+    type PrepareError = GraphImageError;
+
     fn max_image_dimension_2d(&self) -> u32 {
         self.physical_device_properties
             .limits
@@ -36,11 +39,20 @@ impl mltrs_render_graph::backend::PreparationBackend for Renderer {
         width: u32,
         height: u32,
         format: mltrs_render_graph::backend::GraphFormat,
-    ) -> anyhow::Result<(mltrs_render_graph::backend::PhysicalImage, Self::Resource)> {
+    ) -> Result<(mltrs_render_graph::backend::PhysicalImage, Self::Resource), Self::PrepareError>
+    {
         use super::ToVk;
-        let storage = self.create_storage_texture(width, height, format.to_vk())?;
-        self.clear_storage_texture(&storage)?;
-        let sampled = self.storage_texture_as_sampled(&storage)?;
+        use eros::ReshapeUnion as _;
+        let storage = self
+            .create_storage_texture(width, height, format.to_vk())
+            .map_err(eros::ErrorUnion::adapter)?;
+        self.clear_storage_texture(&storage)
+            .widen()
+            .map_err(eros::ErrorUnion::adapter)?;
+        let sampled = self
+            .storage_texture_as_sampled(&storage)
+            .widen()
+            .map_err(eros::ErrorUnion::adapter)?;
         let image = mltrs_render_graph::backend::PhysicalImage {
             storage: storage.bindless_handle(),
             sampled: sampled.bindless_handle(),
@@ -86,7 +98,7 @@ impl mltrs_render_graph::backend::FrameLookup for Renderer {
 
 impl mltrs_render_graph::backend::FrameBackend for super::FrameRenderer<'_> {
     type Backend = Renderer;
-    type Error = super::DrawError;
+    type Error = DrawError;
     fn lookup(&self) -> &dyn mltrs_render_graph::backend::FrameLookup {
         self.renderer
     }
@@ -141,11 +153,7 @@ impl mltrs_render_graph::backend::FrameBackend for super::FrameRenderer<'_> {
                         .renderer
                         .storage_buffers
                         .live_buffer(request.buffer(), self.renderer.flight_slot)
-                        .ok_or_else(|| {
-                            super::DrawError::DrawError(anyhow::anyhow!(
-                                "indirect buffer is no longer live"
-                            ))
-                        })?;
+                        .ok_or(IndirectRejected::BufferNotLive)?;
                     validate_indirect_layout(
                         request.element_size(),
                         request.alignment(),
@@ -157,8 +165,7 @@ impl mltrs_render_graph::backend::FrameBackend for super::FrameRenderer<'_> {
                             .physical_device_properties
                             .limits
                             .max_draw_indirect_count,
-                    )
-                    .map_err(super::DrawError::DrawError)?;
+                    )?;
                     super::DrawCallConfig::IndexedIndirect {
                         buffer,
                         offset: request.offset(),
@@ -221,7 +228,7 @@ type ValidatedWrite<'a> = (
 fn validate_uploads(
     batch: &mltrs_render_graph::commands::CommandBatch,
     mut lookup: impl FnMut(bool, usize) -> Option<UploadTarget>,
-) -> Result<Vec<ValidatedWrite<'_>>, super::DrawError> {
+) -> Result<Vec<ValidatedWrite<'_>>, UploadRejected> {
     let mut writes = Vec::new();
     let mut result = Ok(());
     batch.visit_writes(|uniform, index, src| {
@@ -230,37 +237,38 @@ fn validate_uploads(
         }
 
         result = (|| {
-            let target = lookup(uniform, index)
-                .ok_or_else(|| anyhow::anyhow!("upload buffer {index} is no longer live"))?;
+            let target = lookup(uniform, index).ok_or(UploadRejected::NotLive { index })?;
             let expected = if uniform {
                 UploadKind::Uniform
             } else {
                 UploadKind::Storage
             };
-            anyhow::ensure!(
-                target.kind == expected,
-                "upload buffer {index} has incompatible access kind"
-            );
-            anyhow::ensure!(
-                !target.mapped_mem.is_null(),
-                "upload buffer {index} is not mapped"
-            );
-            let bytes = u64::try_from(src.len())?;
-            anyhow::ensure!(
-                if uniform {
-                    bytes == target.byte_size
-                } else {
-                    bytes <= target.byte_size
-                },
-                "upload buffer {index} payload size {bytes} does not match logical capacity {}",
-                target.byte_size
-            );
+            if target.kind != expected {
+                return Err(UploadRejected::IncompatibleKind { index });
+            }
+            if target.mapped_mem.is_null() {
+                return Err(UploadRejected::Unmapped { index });
+            }
+            // a length that does not fit u64 can never fit the capacity
+            let bytes = u64::try_from(src.len()).unwrap_or(u64::MAX);
+            let fits = if uniform {
+                bytes == target.byte_size
+            } else {
+                bytes <= target.byte_size
+            };
+            if !fits {
+                return Err(UploadRejected::SizeMismatch {
+                    index,
+                    bytes: src.len(),
+                    capacity: target.byte_size,
+                });
+            }
             writes.push((src, target.mapped_mem.cast()));
 
             Ok(())
         })();
     });
-    result.map_err(super::DrawError::DrawError)?;
+    result?;
 
     Ok(writes)
 }
@@ -273,32 +281,33 @@ fn validate_indirect_layout(
     count: u32,
     byte_size: u64,
     max_count: u32,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        size == size_of::<DrawIndexedIndirectCommand>()
-            && alignment == align_of::<DrawIndexedIndirectCommand>()
-            && stride == size,
-        "indirect record layout does not match the backend"
-    );
-    anyhow::ensure!(
-        offset.is_multiple_of(alignment as u64)
-            && offset.is_multiple_of(4)
-            && stride.is_multiple_of(4),
-        "indirect offset or stride is misaligned"
-    );
+) -> Result<(), IndirectRejected> {
+    if !(size == size_of::<DrawIndexedIndirectCommand>()
+        && alignment == align_of::<DrawIndexedIndirectCommand>()
+        && stride == size)
+    {
+        return Err(IndirectRejected::LayoutMismatch);
+    }
+    if !(offset.is_multiple_of(alignment as u64)
+        && offset.is_multiple_of(4)
+        && stride.is_multiple_of(4))
+    {
+        return Err(IndirectRejected::Misaligned);
+    }
     // multiDrawIndirect is required and enabled during device creation.
-    anyhow::ensure!(
-        count > 0 && count <= max_count,
-        "indirect draw count exceeds device restrictions"
-    );
+    if !(count > 0 && count <= max_count) {
+        return Err(IndirectRejected::DrawCountOutOfRange {
+            count,
+            max: max_count,
+        });
+    }
     let end = u64::from(count - 1)
         .checked_mul(stride as u64)
         .and_then(|bytes| bytes.checked_add(size as u64))
         .and_then(|bytes| offset.checked_add(bytes));
-    anyhow::ensure!(
-        end.is_some_and(|end| end <= byte_size),
-        "indirect draw exceeds buffer allocation"
-    );
+    if !end.is_some_and(|end| end <= byte_size) {
+        return Err(IndirectRejected::ExceedsAllocation);
+    }
     Ok(())
 }
 

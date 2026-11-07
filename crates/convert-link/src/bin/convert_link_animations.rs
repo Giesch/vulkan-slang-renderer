@@ -16,7 +16,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use anyhow::{Context, Result, bail};
+use eros::{Context, bail, context};
 use gx::animation_manifest::{AnimationClip, AnimationFormat, ClipIdentity};
 
 use convert_link::animation::{self, output};
@@ -30,7 +30,7 @@ fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(2),
         Err(err) => {
-            eprintln!("convert_link_animations: error: {err:#}");
+            eprintln!("convert_link_animations: error: {err:#?}");
             ExitCode::FAILURE
         }
     }
@@ -57,7 +57,7 @@ struct Inventory {
     entries: Vec<InventoryEntry>,
 }
 
-fn run(args: &[String]) -> Result<bool> {
+fn run(args: &[String]) -> eros::Result<bool> {
     let mut positional: Vec<String> = Vec::new();
     let mut dump_canonical = false;
     for arg in &args[1..] {
@@ -114,8 +114,7 @@ fn run(args: &[String]) -> Result<bool> {
         return Ok(true);
     }
 
-    write_outputs(&clips, out_dir)
-        .with_context(|| format!("writing converted animations to {}", out_dir.display()))?;
+    write_outputs(&clips, out_dir)?;
     println!(
         "convert_link_animations: OK: {} clips (catalog + documents) in {}",
         clips.len(),
@@ -126,7 +125,8 @@ fn run(args: &[String]) -> Result<bool> {
 
 /// Read inventory.json, hash-check every entry, reject missing/extra files,
 /// and parse every clip. The whole raw tree must validate before any output.
-fn load_and_verify(raw_dir: &Path) -> Result<Vec<AnimationClip>> {
+#[context("loading raw animation tree {}", raw_dir.display())]
+fn load_and_verify(raw_dir: &Path) -> eros::Result<Vec<AnimationClip>> {
     let inventory_path = raw_dir.join("inventory.json");
     let inventory_text = fs::read_to_string(&inventory_path)
         .with_context(|| format!("reading {} (extract first)", inventory_path.display()))?;
@@ -208,14 +208,14 @@ fn load_and_verify(raw_dir: &Path) -> Result<Vec<AnimationClip>> {
             resource_id: entry.resource_id,
             sha256: sha,
         };
-        let clip =
-            animation::parse_clip(entry.format, &data, identity).with_context(|| rel.clone())?;
+        // parse_clip's error context names `archive/member` already.
+        let clip = animation::parse_clip(entry.format, &data, identity)?;
         clips.push(clip);
     }
     Ok(clips)
 }
 
-fn collect_files(root: &Path, dir: &Path, out: &mut BTreeSet<PathBuf>) -> Result<()> {
+fn collect_files(root: &Path, dir: &Path, out: &mut BTreeSet<PathBuf>) -> eros::Result<()> {
     for entry in fs::read_dir(dir).with_context(|| format!("listing {}", dir.display()))? {
         let entry = entry?;
         let path = entry.path();
@@ -236,7 +236,8 @@ fn collect_files(root: &Path, dir: &Path, out: &mut BTreeSet<PathBuf>) -> Result
 /// swap it in. The previous output is moved aside first and restored if the
 /// swap fails, so a failure never destroys the last valid tree and never
 /// publishes partial output.
-fn write_outputs(clips: &[AnimationClip], out_dir: &Path) -> Result<()> {
+#[context("writing converted animations to {}", out_dir.display())]
+fn write_outputs(clips: &[AnimationClip], out_dir: &Path) -> eros::Result<()> {
     let parent = out_dir.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let staging = parent.join(format!(".staging-converted-{}", std::process::id()));
@@ -247,7 +248,7 @@ fn write_outputs(clips: &[AnimationClip], out_dir: &Path) -> Result<()> {
     if backup.exists() {
         fs::remove_dir_all(&backup)?;
     }
-    let result = (|| -> Result<()> {
+    let result = (|| -> eros::Result<()> {
         fs::create_dir_all(&staging)?;
         let catalog = output::build_catalog(clips);
         fs::write(
@@ -285,9 +286,11 @@ fn write_outputs(clips: &[AnimationClip], out_dir: &Path) -> Result<()> {
                             format!("restoring previous output into {}", out_dir.display())
                         })?;
                     }
-                    Err(err).with_context(|| {
-                        format!("publishing new output into {}", out_dir.display())
-                    })
+                    Err(err)
+                        .with_context(|| {
+                            format!("publishing new output into {}", out_dir.display())
+                        })
+                        .map_err(Into::into)
                 }
             }
         }

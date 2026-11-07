@@ -26,6 +26,8 @@ impl BackendTypes for OtherBackend {
     type Resource = ();
 }
 impl PreparationBackend for OtherBackend {
+    type PrepareError = std::convert::Infallible;
+
     fn max_image_dimension_2d(&self) -> u32 {
         4096
     }
@@ -34,7 +36,7 @@ impl PreparationBackend for OtherBackend {
         _: u32,
         _: u32,
         _: GraphFormat,
-    ) -> anyhow::Result<(PhysicalImage, ())> {
+    ) -> Result<(PhysicalImage, ()), Self::PrepareError> {
         unreachable!()
     }
 }

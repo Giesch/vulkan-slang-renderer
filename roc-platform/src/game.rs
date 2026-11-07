@@ -39,7 +39,7 @@ impl Game for BasicTriangle {
             .unwrap_or(FALLBACK_WINDOW_TITLE)
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
