@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::ffi::CString;
 
+use eros::{IntoUnion, ReshapeUnion, context};
 use shader_slang as slang;
 
+pub mod error;
 pub mod json;
 mod reflection;
 
+pub use error::*;
 use json::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -47,6 +50,16 @@ impl ShaderStage {
     }
 }
 
+impl std::fmt::Display for ShaderStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Vertex => "vertex",
+            Self::Fragment => "fragment",
+            Self::Compute => "compute",
+        })
+    }
+}
+
 /// whether to use column-major or row-major matricies with slang
 /// https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/a1-01-matrix-layout.html
 const MATRIX_LAYOUT: MatrixLayout = MatrixLayout::RowMajor;
@@ -72,18 +85,16 @@ enum MatrixLayout {
 /// The `NonUniform` decoration requires the
 /// `shaderSampledImageArrayNonUniformIndexing` and
 /// `shaderStorageImageArrayNonUniformIndexing` device features.
-fn load_bindless_options_module(session: &slang::Session) -> anyhow::Result<slang::Module> {
+fn load_bindless_options_module(session: &slang::Session) -> Result<slang::Module, SlangError> {
     let slang_src = include_str!("bindless_options.slang");
-    let module = session.load_module_from_source_string(
-        "bindless_options",
-        "bindless_options.slang",
-        slang_src,
-    )?;
-
-    Ok(module)
+    session
+        .load_module_from_source_string("bindless_options", "bindless_options.slang", slang_src)
+        .slang(SlangOperation::LoadModule {
+            module_name: "bindless_options".to_string(),
+        })
 }
 
-fn load_cpu_constants_module(session: &slang::Session) -> anyhow::Result<slang::Module> {
+fn load_cpu_constants_module(session: &slang::Session) -> Result<slang::Module, SlangError> {
     let column_major = MATRIX_LAYOUT == MatrixLayout::ColumnMajor;
     let slang_src = format!(
         r#"
@@ -96,13 +107,11 @@ fn load_cpu_constants_module(session: &slang::Session) -> anyhow::Result<slang::
         "#,
     );
 
-    let module = session.load_module_from_source_string(
-        "cpu_constants",
-        "cpu_constants.slang",
-        &slang_src,
-    )?;
-
-    Ok(module)
+    session
+        .load_module_from_source_string("cpu_constants", "cpu_constants.slang", &slang_src)
+        .slang(SlangOperation::LoadModule {
+            module_name: "cpu_constants".to_string(),
+        })
 }
 
 pub struct ReflectedShader {
@@ -119,7 +128,7 @@ pub struct ReflectedComputeShader {
 pub fn prepare_reflected_shader(
     source_file_name: &str,
     search_path: &str,
-) -> anyhow::Result<ReflectedShader> {
+) -> eros::Result<ReflectedShader, PrepareShaderErrors> {
     prepare_reflected_shader_with_optimization(
         source_file_name,
         search_path,
@@ -127,11 +136,14 @@ pub fn prepare_reflected_shader(
     )
 }
 
+#[context(
+    "Compile and reflect shader {source_file_name} (search path {search_path}, optimization {optimization:?})"
+)]
 pub fn prepare_reflected_shader_with_optimization(
     source_file_name: &str,
     search_path: &str,
     optimization: OptimizationLevel,
-) -> anyhow::Result<ReflectedShader> {
+) -> eros::Result<ReflectedShader, PrepareShaderErrors> {
     let global_session = slang::GlobalSession::new().unwrap();
     let search_path = CString::new(search_path).unwrap();
 
@@ -158,9 +170,14 @@ pub fn prepare_reflected_shader_with_optimization(
 
     let session = global_session.create_session(&session_desc).unwrap();
 
-    let shader_module = session.load_module(source_file_name)?;
-    let cpu_constants_module = load_cpu_constants_module(&session)?;
-    let bindless_options_module = load_bindless_options_module(&session)?;
+    let shader_module = session
+        .load_module(source_file_name)
+        .slang(SlangOperation::LoadModule {
+            module_name: source_file_name.to_string(),
+        })
+        .union()?;
+    let cpu_constants_module = load_cpu_constants_module(&session).union()?;
+    let bindless_options_module = load_bindless_options_module(&session).union()?;
 
     // the examples have 1 vert and 1 frag shader
     debug_assert!(shader_module.entry_points().len() == 2);
@@ -176,7 +193,8 @@ pub fn prepare_reflected_shader_with_optimization(
             &cpu_constants_module,
             &bindless_options_module,
             source_file_name,
-        )?;
+        )
+        .widen()?;
 
         if compiled_shader.stage == ShaderStage::Vertex {
             vertex_shader = Some(compiled_shader)
@@ -188,17 +206,27 @@ pub fn prepare_reflected_shader_with_optimization(
     }
 
     let Some(vertex_shader) = vertex_shader else {
-        anyhow::bail!("no vertex entry point in {source_file_name}");
+        return Err(MissingEntryPoint {
+            stage: ShaderStage::Vertex,
+            source_file_name: source_file_name.to_string(),
+        })
+        .union();
     };
     let Some(fragment_shader) = fragment_shader else {
-        anyhow::bail!("no fragment entry point in {source_file_name}");
+        return Err(MissingEntryPoint {
+            stage: ShaderStage::Fragment,
+            source_file_name: source_file_name.to_string(),
+        })
+        .union();
     };
 
-    let program = session.create_composite_component_type(&components)?;
-    let linked_program = program.link()?;
-    let program_layout = linked_program.layout(0)?;
+    let linked_program = link_program(&session, &components).union()?;
+    let program_layout = linked_program
+        .layout(0)
+        .slang(SlangOperation::Layout)
+        .union()?;
 
-    let reflection_json = reflection::reflection_json(source_file_name, program_layout)?;
+    let reflection_json = reflection::reflection_json(source_file_name, program_layout).widen()?;
 
     let reflected_shader = ReflectedShader {
         vertex_shader,
@@ -213,14 +241,14 @@ pub fn prepare_reflected_shader_with_optimization(
 pub fn dev_compile_slang_shaders(
     source_file_name: &str,
     search_path: &std::path::Path,
-) -> anyhow::Result<ReflectedShader> {
+) -> eros::Result<ReflectedShader, PrepareShaderErrors> {
     prepare_reflected_shader(source_file_name, search_path.to_str().unwrap())
 }
 
 pub fn prepare_reflected_compute_shader(
     source_file_name: &str,
     search_path: &str,
-) -> anyhow::Result<ReflectedComputeShader> {
+) -> eros::Result<ReflectedComputeShader, PrepareShaderErrors> {
     prepare_reflected_compute_shader_with_optimization(
         source_file_name,
         search_path,
@@ -228,11 +256,14 @@ pub fn prepare_reflected_compute_shader(
     )
 }
 
+#[context(
+    "Compile and reflect compute shader {source_file_name} (search path {search_path}, optimization {optimization:?})"
+)]
 pub fn prepare_reflected_compute_shader_with_optimization(
     source_file_name: &str,
     search_path: &str,
     optimization: OptimizationLevel,
-) -> anyhow::Result<ReflectedComputeShader> {
+) -> eros::Result<ReflectedComputeShader, PrepareShaderErrors> {
     let global_session = slang::GlobalSession::new().unwrap();
     let search_path = CString::new(search_path).unwrap();
 
@@ -259,9 +290,14 @@ pub fn prepare_reflected_compute_shader_with_optimization(
 
     let session = global_session.create_session(&session_desc).unwrap();
 
-    let shader_module = session.load_module(source_file_name)?;
-    let cpu_constants_module = load_cpu_constants_module(&session)?;
-    let bindless_options_module = load_bindless_options_module(&session)?;
+    let shader_module = session
+        .load_module(source_file_name)
+        .slang(SlangOperation::LoadModule {
+            module_name: source_file_name.to_string(),
+        })
+        .union()?;
+    let cpu_constants_module = load_cpu_constants_module(&session).union()?;
+    let bindless_options_module = load_bindless_options_module(&session).union()?;
 
     // compute shaders have exactly 1 entry point
     debug_assert!(shader_module.entry_points().len() == 1);
@@ -276,13 +312,16 @@ pub fn prepare_reflected_compute_shader_with_optimization(
             &cpu_constants_module,
             &bindless_options_module,
             source_file_name,
-        )?;
+        )
+        .widen()?;
 
         if compiled_shader.stage != ShaderStage::Compute {
-            anyhow::bail!(
-                "expected a compute entry point in {source_file_name}, got {:?}",
-                compiled_shader.stage
-            );
+            return Err(UnexpectedEntryPointStage {
+                expected: ShaderStage::Compute,
+                found: format!("{:?}", compiled_shader.stage),
+                source_file_name: source_file_name.to_string(),
+            })
+            .union();
         }
         compute_shader = Some(compiled_shader);
 
@@ -290,14 +329,21 @@ pub fn prepare_reflected_compute_shader_with_optimization(
     }
 
     let Some(compute_shader) = compute_shader else {
-        anyhow::bail!("no compute entry point in {source_file_name}");
+        return Err(MissingEntryPoint {
+            stage: ShaderStage::Compute,
+            source_file_name: source_file_name.to_string(),
+        })
+        .union();
     };
 
-    let program = session.create_composite_component_type(&components)?;
-    let linked_program = program.link()?;
-    let program_layout = linked_program.layout(0)?;
+    let linked_program = link_program(&session, &components).union()?;
+    let program_layout = linked_program
+        .layout(0)
+        .slang(SlangOperation::Layout)
+        .union()?;
 
-    let reflection_json = reflection::compute_reflection_json(source_file_name, program_layout)?;
+    let reflection_json =
+        reflection::compute_reflection_json(source_file_name, program_layout).widen()?;
 
     Ok(ReflectedComputeShader {
         compute_shader,
@@ -309,15 +355,16 @@ pub fn prepare_reflected_compute_shader_with_optimization(
 pub fn dev_compile_slang_compute_shaders(
     source_file_name: &str,
     search_path: &std::path::Path,
-) -> anyhow::Result<ReflectedComputeShader> {
+) -> eros::Result<ReflectedComputeShader, PrepareShaderErrors> {
     prepare_reflected_compute_shader(source_file_name, search_path.to_str().unwrap())
 }
 
+#[context("Reflect shared module types (search path {search_path})")]
 pub fn reflect_shared_module_types(
     // slang load name to rust module name
     modules: &[(&str, &str)],
     search_path: &str,
-) -> anyhow::Result<HashMap<String, String>> {
+) -> eros::Result<HashMap<String, String>, (SlangError,)> {
     let global_session = slang::GlobalSession::new().unwrap();
     let search_path = CString::new(search_path).unwrap();
 
@@ -342,12 +389,17 @@ pub fn reflect_shared_module_types(
 
     let session = global_session.create_session(&session_desc).unwrap();
 
-    let _cpu_constants_module = load_cpu_constants_module(&session)?;
+    let _cpu_constants_module = load_cpu_constants_module(&session).union()?;
 
     let mut type_to_module: HashMap<String, String> = HashMap::new();
 
     for &(load_name, rust_module_name) in modules {
-        let module = session.load_module(load_name)?;
+        let module = session
+            .load_module(load_name)
+            .slang(SlangOperation::LoadModule {
+                module_name: load_name.to_string(),
+            })
+            .union()?;
         let module_decl = module.module_reflection();
 
         collect_struct_and_enum_declarations(module_decl, rust_module_name, &mut type_to_module);
@@ -394,6 +446,19 @@ impl std::fmt::Debug for CompiledShader {
     }
 }
 
+/// Composes `components` into one program and links it.
+fn link_program(
+    session: &slang::Session,
+    components: &[slang::ComponentType],
+) -> Result<slang::ComponentType, SlangError> {
+    let program = session
+        .create_composite_component_type(components)
+        .slang(SlangOperation::CreateCompositeComponentType)?;
+
+    program.link().slang(SlangOperation::Link)
+}
+
+#[context("Compile entry point of {source_file_name}")]
 fn compile_shader(
     entry_point: &slang::EntryPoint,
     session: &slang::Session,
@@ -401,33 +466,43 @@ fn compile_shader(
     cpu_constants_module: &slang::Module,
     bindless_options_module: &slang::Module,
     source_file_name: &str,
-) -> anyhow::Result<CompiledShader> {
-    let program = session.create_composite_component_type(&[
-        shader_module.clone().into(),
-        entry_point.clone().into(),
-        cpu_constants_module.clone().into(),
-        bindless_options_module.clone().into(),
-    ])?;
+) -> eros::Result<CompiledShader, CompileShaderErrors> {
+    let linked_program = link_program(
+        session,
+        &[
+            shader_module.clone().into(),
+            entry_point.clone().into(),
+            cpu_constants_module.clone().into(),
+            bindless_options_module.clone().into(),
+        ],
+    )
+    .union()?;
 
-    let linked_program = program.link()?;
-
-    let program_layout = linked_program.layout(0)?;
+    let program_layout = linked_program
+        .layout(0)
+        .slang(SlangOperation::Layout)
+        .union()?;
 
     let mut refl_entry_points = program_layout.entry_points();
     assert!(refl_entry_points.len() == 1);
     let reflection_entry_point = refl_entry_points.next().unwrap();
 
     let slang_stage = reflection_entry_point.stage();
-    let entry_point_name = CString::new(reflection_entry_point.name().unwrap())?;
+    let entry_point_name = CString::new(reflection_entry_point.name().unwrap()).union()?;
 
-    let stage = ShaderStage::from_slang(slang_stage).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unsupported shader stage {slang_stage:?} for entry point {entry_point_name:?} \
-             in {source_file_name}; only vertex, fragment and compute are supported"
-        )
-    })?;
+    let Some(stage) = ShaderStage::from_slang(slang_stage) else {
+        return Err(UnsupportedShaderStage {
+            stage: format!("{slang_stage:?}"),
+            entry_point_name: entry_point_name.to_string_lossy().into_owned(),
+            source_file_name: source_file_name.to_string(),
+        })
+        .union();
+    };
 
-    let shader_bytecode: slang::Blob = linked_program.entry_point_code(0, 0)?;
+    let shader_bytecode: slang::Blob = linked_program
+        .entry_point_code(0, 0)
+        .slang(SlangOperation::EntryPointCode)
+        .union()?;
     let shader_bytecode = shader_bytecode.as_slice().to_vec();
 
     Ok(CompiledShader {
@@ -665,5 +740,40 @@ mod bindless_preset_tests {
              `StorageImageArrayNonUniformIndexing` capability, which the \
              renderer enables as `shaderStorageImageArrayNonUniformIndexing`"
         );
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    /// A module slang cannot find surfaces as a typed `SlangError` naming the
+    /// module, with the calling function's context attached.
+    #[test]
+    fn a_missing_module_is_a_typed_slang_error() {
+        let search_path = std::env::temp_dir();
+        let Err(error) = prepare_reflected_shader(
+            "mltrs_no_such_module.shader.slang",
+            search_path.to_str().unwrap(),
+        ) else {
+            panic!("a missing module must fail to load");
+        };
+
+        let report = format!("{error:#?}");
+        assert!(
+            report.contains("Compile and reflect shader mltrs_no_such_module.shader.slang"),
+            "{report}"
+        );
+
+        let error = error
+            .narrow::<SlangError, _>()
+            .expect("a missing module must be a SlangError");
+        assert_eq!(
+            error.operation,
+            SlangOperation::LoadModule {
+                module_name: "mltrs_no_such_module.shader.slang".to_string()
+            }
+        );
+        assert!(!error.diagnostics.is_empty());
     }
 }

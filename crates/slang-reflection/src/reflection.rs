@@ -1,5 +1,6 @@
 use shader_slang as slang;
 
+use crate::error::ReflectionErrors;
 use crate::json::*;
 
 mod parameters;
@@ -20,8 +21,8 @@ fn declares_bindless_handle(global_parameters: &[GlobalParameter]) -> bool {
 pub fn reflection_json(
     source_file_name: &str,
     program_layout: &slang::reflection::Shader,
-) -> anyhow::Result<ReflectionJson> {
-    let parameters = reflect_entry_points(program_layout)?;
+) -> eros::Result<ReflectionJson, ReflectionErrors> {
+    let parameters = reflect_entry_points(source_file_name, program_layout)?;
 
     let has_bindless_handle = declares_bindless_handle(&parameters.global_parameters);
     let pipeline_layout = reflect_pipeline_layout(program_layout, has_bindless_handle);
@@ -40,8 +41,8 @@ pub fn reflection_json(
 pub fn compute_reflection_json(
     source_file_name: &str,
     program_layout: &slang::reflection::Shader,
-) -> anyhow::Result<ComputeReflectionJson> {
-    let result = reflect_compute_entry_point(program_layout)?;
+) -> eros::Result<ComputeReflectionJson, ReflectionErrors> {
+    let result = reflect_compute_entry_point(source_file_name, program_layout)?;
     let has_bindless_handle = declares_bindless_handle(&result.global_parameters);
     let pipeline_layout = reflect_pipeline_layout(program_layout, has_bindless_handle);
 
