@@ -1197,6 +1197,7 @@ dependencies = [
  "mltrs-slang-reflection",
  "rspirv",
  "serde_json",
+ "thiserror 2.0.17",
  "uuid",
 ]
 

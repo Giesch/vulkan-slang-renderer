@@ -68,7 +68,7 @@ struct InitArgs {
     force: bool,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> eros::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -77,7 +77,9 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn init(args: InitArgs) -> anyhow::Result<()> {
+// eager: `args` is owned, so the lazy form cannot borrow it after the body
+#[eros::eager_context("Seed engine slang modules into {}", args.dir.display())]
+fn init(args: InitArgs) -> eros::Result<()> {
     std::fs::create_dir_all(&args.dir)?;
 
     for (file_name, content) in VENDORED_MODULES {
@@ -89,7 +91,7 @@ fn init(args: InitArgs) -> anyhow::Result<()> {
                 continue;
             }
 
-            anyhow::bail!(
+            eros::bail!(
                 "refusing to overwrite modified {}; re-run with --force",
                 path.display()
             );
@@ -106,7 +108,7 @@ fn init(args: InitArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn compile(args: CompileArgs) -> anyhow::Result<()> {
+fn compile(args: CompileArgs) -> eros::Result<()> {
     let crate_dir = &args.crate_dir;
     let language = match args.language {
         Some(language) => language,
@@ -116,12 +118,12 @@ fn compile(args: CompileArgs) -> anyhow::Result<()> {
             match (roc_marker, rust_marker) {
                 (true, false) => Language::Roc,
                 (false, true) => Language::Rust,
-                (true, true) => anyhow::bail!(
+                (true, true) => eros::bail!(
                     "both main.roc and Cargo.toml exist directly in {}; select one with \
                      --language rust|roc",
                     crate_dir.display()
                 ),
-                (false, false) => anyhow::bail!(
+                (false, false) => eros::bail!(
                     "neither main.roc nor Cargo.toml exists directly in {}; select one with \
                      --language rust|roc",
                     crate_dir.display()
@@ -140,7 +142,7 @@ fn compile(args: CompileArgs) -> anyhow::Result<()> {
     match language {
         Language::Rust => {
             if args.roc_dir.is_some() {
-                anyhow::bail!("--roc-dir is only valid with --language roc");
+                eros::bail!("--roc-dir is only valid with --language roc");
             }
 
             let config = build_tasks::Config {
@@ -152,16 +154,16 @@ fn compile(args: CompileArgs) -> anyhow::Result<()> {
                 optimization: build_tasks::OptimizationLevel::High,
             };
 
-            build_tasks::write_precompiled_shaders(config)
+            Ok(build_tasks::write_precompiled_shaders(config)?)
         }
 
         Language::Roc => {
             if args.rust_dir.is_some() {
-                anyhow::bail!("--rust-dir is only valid with --language rust");
+                eros::bail!("--rust-dir is only valid with --language rust");
             }
 
             if args.import_root.is_some() {
-                anyhow::bail!("--import-root is only valid with --language rust");
+                eros::bail!("--import-root is only valid with --language rust");
             }
 
             let config = mltrs_cli::roc_codegen::RocConfig {
@@ -172,7 +174,9 @@ fn compile(args: CompileArgs) -> anyhow::Result<()> {
                 optimization: build_tasks::OptimizationLevel::High,
             };
 
-            mltrs_cli::roc_codegen::write_precompiled_roc_shaders(config)
+            Ok(mltrs_cli::roc_codegen::write_precompiled_roc_shaders(
+                config,
+            )?)
         }
     }
 }
