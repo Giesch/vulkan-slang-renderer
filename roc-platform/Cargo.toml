@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 mltrs = { path = "../crates/mltrs" }
 
-eros = "0.8.1"
+eros = "0.9.0-rc.0"
 ash = { version = "0.38.0", features = ["linked"] }
 facet = { version = "0.42", features = ["reflect"] }
 glam = { version = "0.33.2", features = ["serde"] }

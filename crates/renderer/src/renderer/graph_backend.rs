@@ -45,13 +45,13 @@ impl mltrs_render_graph::backend::PreparationBackend for Renderer {
         use eros::ReshapeUnion as _;
         let storage = self
             .create_storage_texture(width, height, format.to_vk())
-            .map_err(eros::ErrorUnion::into_std_error)?;
+            .map_err(eros::ErrorUnion::adapter)?;
         self.clear_storage_texture(&storage)
             .widen()
-            .map_err(eros::ErrorUnion::into_std_error)?;
+            .map_err(eros::ErrorUnion::adapter)?;
         let sampled = self
             .storage_texture_as_sampled(&storage)
-            .map_err(eros::ErrorUnion::into_std_error)?;
+            .map_err(eros::ErrorUnion::adapter)?;
         let image = mltrs_render_graph::backend::PhysicalImage {
             storage: storage.bindless_handle(),
             sampled: sampled.bindless_handle(),
