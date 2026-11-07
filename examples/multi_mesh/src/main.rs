@@ -28,16 +28,16 @@ use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 
 use mltrs::game::Game;
 use mltrs::renderer::{
-    BlendMode, CullMode, DrawError, DrawNode, FrameRenderer, MeshHandle, PreparedRenderGraph,
-    RasterState, RenderGraph, Renderer, ResourcePlanner, RgbaPixels, SamplerOptions,
-    TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
-    UniformBufferHandle, draw_index_range,
+    BlendMode, CullMode, DrawNode, FrameRenderer, MeshHandle, PreparedRenderGraph, RasterState,
+    RenderGraph, Renderer, ResourcePlanner, RgbaPixels, SamplerOptions, TextureColorSpace,
+    TextureFilter, TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle,
+    draw_index_range,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::multi_mesh::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     MultiMesh::run()
 }
 
@@ -352,7 +352,7 @@ impl Game for MultiMesh {
         "Multi Mesh"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -422,12 +422,13 @@ impl Game for MultiMesh {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let elapsed = (Instant::now() - self.start_time).as_secs_f32();
         let aspect_ratio = renderer.aspect_ratio();
 
         let frame = frame_inputs(&self.specs, elapsed, aspect_ratio);
-        self.graph.execute(renderer, &frame)
+        self.graph.execute(renderer, &frame)?;
+        Ok(())
     }
 }
 
@@ -477,7 +478,7 @@ fn frame_inputs(specs: &[PipelineSpec], elapsed: f32, aspect_ratio: f32) -> Mult
 // --- textures ---
 
 /// All test images are procedural, so the example needs no asset files.
-fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>> {
+fn create_textures(renderer: &mut Renderer) -> eros::Result<Vec<TextureHandle>> {
     // reproduces the un-textured look of the original scene exactly
     let white = solid_image(255, 255, 255);
     // 2x2 checkerboard of 4x4 texel cells: big enough features that Nearest
@@ -551,8 +552,8 @@ fn create_textures(renderer: &mut Renderer) -> anyhow::Result<Vec<TextureHandle>
 
 const TEXTURE_SIZE: u32 = 8;
 
-fn pixels(bytes: &[u8]) -> anyhow::Result<RgbaPixels<'_>> {
-    RgbaPixels::new(TEXTURE_SIZE, TEXTURE_SIZE, bytes)
+fn pixels(bytes: &[u8]) -> eros::Result<RgbaPixels<'_>> {
+    Ok(RgbaPixels::new(TEXTURE_SIZE, TEXTURE_SIZE, bytes)?)
 }
 
 fn solid_image(r: u8, g: u8, b: u8) -> Vec<u8> {

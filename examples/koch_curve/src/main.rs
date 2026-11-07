@@ -10,14 +10,14 @@ use mltrs::game::{Game, Input, MouseButton};
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
     ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_vertex_count,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::koch_curve::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     KochCurve::run()
 }
 
@@ -57,7 +57,7 @@ impl Game for KochCurve {
         Some(("Koch Curve 3D", &mut self.edit_state))
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -129,7 +129,7 @@ impl Game for KochCurve {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let time = (Instant::now() - self.start_time).as_secs_f32();
 
         let resolution = renderer.window_resolution();
@@ -148,6 +148,7 @@ impl Game for KochCurve {
                 sphere_blend: self.edit_state.sphere_blend.value,
                 rotation_speed: self.edit_state.rotation_speed.value,
             },
-        )
+        )?;
+        Ok(())
     }
 }

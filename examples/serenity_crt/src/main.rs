@@ -6,7 +6,7 @@ use facet::Facet;
 use mltrs::editor::Slider;
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
     ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_vertex_count,
 };
 
@@ -15,7 +15,7 @@ use crate::generated::shader_atlas::serenity_crt::*;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     SerenityCRT::run()
 }
 
@@ -61,7 +61,7 @@ impl Game for SerenityCRT {
         Some(("Serenity CRT", &mut self.edit_state))
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -115,7 +115,7 @@ impl Game for SerenityCRT {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let elapsed = (Instant::now() - self.start_time).as_secs_f32();
         let resolution = renderer.window_resolution();
 
@@ -138,6 +138,7 @@ impl Game for SerenityCRT {
                 curvature: self.edit_state.curvature.value,
                 flicker_strength: self.edit_state.flicker_strength.value,
             },
-        )
+        )?;
+        Ok(())
     }
 }

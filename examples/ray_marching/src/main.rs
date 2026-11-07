@@ -8,7 +8,7 @@ use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use mltrs::game::*;
 use mltrs::renderer::{
-    CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawVertexCountNode, FrameRenderer,
+    CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawVertexCountNode, FrameRenderer,
     PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, SingletonBufferHandle,
     SingletonSlot, UniformBufferHandle, UploadNode, draw_vertex_count, upload,
 };
@@ -16,7 +16,7 @@ use mltrs::renderer::{
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::ray_marching::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     RayMarching::run()
 }
 
@@ -55,7 +55,7 @@ impl Game for RayMarching {
         "Ray Marching"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -174,7 +174,7 @@ impl Game for RayMarching {
         self.boxes[0].transform = cube_moon_transform;
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let camera = self.camera_controller.camera(renderer.aspect_ratio());
         let resolution = renderer.window_resolution();
 
@@ -186,7 +186,9 @@ impl Game for RayMarching {
             resolution,
         );
 
-        self.graph.execute(renderer, &frame)
+        self.graph.execute(renderer, &frame)?;
+
+        Ok(())
     }
 }
 
