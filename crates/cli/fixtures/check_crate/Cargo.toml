@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eros = "0.8.1"
+eros = "0.9.0-rc.0"
 ash = "0.38"
 # generated enums derive Facet; mirrors the root Cargo.toml's pinning
 facet = { version = "0.42", features = ["reflect"] }

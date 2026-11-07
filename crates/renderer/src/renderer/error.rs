@@ -121,7 +121,7 @@ pub struct BindlessHeapSetGap {
 pub struct ShaderSourceCompileFailed {
     pub shader: String,
     #[source]
-    pub source: eros::StdError<mltrs_slang_reflection::PrepareShaderErrors>,
+    pub source: eros::ErrorUnionAdapter<mltrs_slang_reflection::PrepareShaderErrors>,
 }
 
 /// Errors from building a pipeline layout from a shader atlas entry.
@@ -239,18 +239,18 @@ pub enum DrawError {
     #[error(transparent)]
     Indirect(#[from] IndirectRejected),
     #[error("failed to draw frame")]
-    Frame(#[source] eros::StdError),
+    Frame(#[source] eros::ErrorUnionAdapter),
 }
 
 impl From<eros::ErrorUnion> for DrawError {
     fn from(error: eros::ErrorUnion) -> Self {
-        Self::Frame(error.into_std_error())
+        Self::Frame(error.adapter())
     }
 }
 
 /// The renderer's [`PreparationBackend::PrepareError`](mltrs_render_graph::backend::PreparationBackend::PrepareError):
 /// allocating one graph texture failed.
-pub type GraphImageError = eros::StdError<HeapResourceErrors>;
+pub type GraphImageError = eros::ErrorUnionAdapter<HeapResourceErrors>;
 
 /// What [`PreparedRenderGraph::execute`](mltrs_render_graph::PreparedRenderGraph::execute)
 /// returns for a [`FrameRenderer`](super::FrameRenderer): the graph's own

@@ -5606,7 +5606,7 @@ impl ShaderPipelineLayout {
         } = shaders::dev_compile_slang_shaders(shader.source_file_name(), shaders_source_dir)
             .map_err(|error| ShaderSourceCompileFailed {
                 shader: shader.source_file_name().to_owned(),
-                source: error.into_std_error(),
+                source: error.adapter(),
             })
             .union()?;
 
@@ -5711,7 +5711,7 @@ impl ComputeShaderPipelineLayout {
         )
         .map_err(|error| ShaderSourceCompileFailed {
             shader: shader.source_file_name().to_owned(),
-            source: error.into_std_error(),
+            source: error.adapter(),
         })
         .union()?;
 

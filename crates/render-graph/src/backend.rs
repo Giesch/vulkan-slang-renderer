@@ -20,7 +20,7 @@ pub trait PreparationBackend: BackendTypes {
     /// The backend's own failure (allocation, clear, alias), which the graph
     /// cannot name. It becomes the last member of
     /// [`PrepareErrors`](crate::error::PrepareErrors). A backend that only has
-    /// an opaque failure can use [`eros::StdError`] (an adapted `AnyError` union).
+    /// an opaque failure can use [`eros::ErrorUnionAdapter`] (an adapted `AnyError` union).
     type PrepareError: eros::SendSyncError;
     fn max_image_dimension_2d(&self) -> u32;
     fn prepare_image(
@@ -87,7 +87,7 @@ pub trait FrameBackend: Sized {
     /// The backend's own wait/validation/submission/presentation failure,
     /// which the graph cannot name. It becomes the last member of
     /// [`ExecuteErrors`](crate::error::ExecuteErrors). A backend that only has
-    /// an opaque failure can use [`eros::StdError`] (an adapted `AnyError` union).
+    /// an opaque failure can use [`eros::ErrorUnionAdapter`] (an adapted `AnyError` union).
     type Error: eros::SendSyncError;
     fn lookup(&self) -> &dyn FrameLookup;
     fn submit(
