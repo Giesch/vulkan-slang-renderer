@@ -11,16 +11,9 @@ use mltrs_slang_reflection::{
     prepare_reflected_compute_shader_with_optimization, prepare_reflected_shader_with_optimization,
 };
 
-pub use mltrs_slang_reflection::OptimizationLevel;
-use mltrs_slang_reflection::{
-    FieldOutsideUniformLayout, InvalidPushConstantBlock, MissingEntryPoint, SlangError,
-    StructuredBufferField, UnexpectedEntryPointStage, UnexpectedVectorBinding,
-    UnsupportedArrayElement, UnsupportedDescriptorHandle, UnsupportedEntryPointParameter,
-    UnsupportedEnum, UnsupportedGlobalParameter, UnsupportedPointer, UnsupportedShaderStage,
-};
-
-use crate::error::PathIoError;
+use crate::error::{PathIoError, ShaderReflectionFailed};
 use crate::util::relative_path;
+pub use mltrs_slang_reflection::OptimizationLevel;
 
 /// A params or push struct field whose `BindlessHandle<..>` type has no
 /// render-graph binding.
@@ -63,25 +56,12 @@ pub type GraphSplitErrors = (
     askama::Error,
 );
 
-/// Failures of [`write_precompiled_shaders`]: the slang
-/// [`PrepareShaderErrors`](mltrs_slang_reflection::PrepareShaderErrors),
-/// writing reflection JSON, filesystem access, and [`GraphSplitErrors`].
+/// Failures of [`write_precompiled_shaders`]: compiling and reflecting a
+/// shader or the shared modules ([`ShaderReflectionFailed`], which wraps the
+/// slang-reflection error), writing reflection JSON, filesystem access, and
+/// [`GraphSplitErrors`].
 pub type WriteShadersErrors = (
-    SlangError,
-    std::ffi::NulError,
-    UnsupportedShaderStage,
-    MissingEntryPoint,
-    UnexpectedEntryPointStage,
-    UnsupportedEntryPointParameter,
-    UnsupportedGlobalParameter,
-    InvalidPushConstantBlock,
-    FieldOutsideUniformLayout,
-    UnexpectedVectorBinding,
-    StructuredBufferField,
-    UnsupportedArrayElement,
-    UnsupportedPointer,
-    UnsupportedDescriptorHandle,
-    UnsupportedEnum,
+    ShaderReflectionFailed,
     serde_json::Error,
     PathIoError,
     UnsupportedGraphResourceType,
@@ -169,7 +149,7 @@ pub fn write_precompiled_shaders(config: Config) -> eros::Result<(), WriteShader
             search_path,
             config.optimization,
         )
-        .widen()?;
+        .classify(ShaderReflectionFailed::of(slang_file_name))?;
 
         let source_file_name = &reflection_json.source_file_name;
 
@@ -204,7 +184,7 @@ pub fn write_precompiled_shaders(config: Config) -> eros::Result<(), WriteShader
             search_path,
             config.optimization,
         )
-        .widen()?;
+        .classify(ShaderReflectionFailed::of(slang_file_name))?;
 
         let source_file_name = &reflection_json.source_file_name;
 
@@ -2107,7 +2087,7 @@ impl Alignment {
 /// Returns a map of `type_name → module_name`.
 fn reflect_slang_module_types(
     shaders_source_dir: &Path,
-) -> eros::Result<HashMap<String, String>, (PathIoError, SlangError)> {
+) -> eros::Result<HashMap<String, String>, (PathIoError, ShaderReflectionFailed)> {
     // (slang load name, rust module name); these differ for modules in a
     // subdirectory, whose types all collapse into one rust module named
     // after the directory (eg. util/math.slang → "util/math" / "util").
@@ -2172,7 +2152,8 @@ fn reflect_slang_module_types(
         .iter()
         .map(|(load, rust)| (load.as_str(), rust.as_str()))
         .collect();
-    mltrs_slang_reflection::reflect_shared_module_types(&module_refs, search_path).widen()
+    mltrs_slang_reflection::reflect_shared_module_types(&module_refs, search_path)
+        .classify(ShaderReflectionFailed::of("shared slang modules"))
 }
 
 /// Only types with a supported, wholly data-only representation get a decoder.
@@ -2831,8 +2812,20 @@ mod tests {
         // A shader that cannot compile aborts before anything is deleted.
         let broken = source_dir.join("broken.shader.slang");
         std::fs::write(&broken, "this is not valid slang").unwrap();
-        write_precompiled_shaders(config.clone())
+        let error = write_precompiled_shaders(config.clone())
             .expect_err("a shader that cannot compile must fail the run");
+        let debug = format!("{error:#?}");
+        assert!(debug.contains("Compile shaders in"), "{debug}");
+        let Ok(failed) = error.narrow::<ShaderReflectionFailed, _>() else {
+            panic!("a slang failure must classify as ShaderReflectionFailed: {debug}");
+        };
+        assert_eq!(failed.shader, "broken.shader.slang");
+        assert!(
+            failed
+                .downcast_ref::<mltrs_slang_reflection::SlangError>()
+                .is_some(),
+            "{failed:?}"
+        );
         assert_eq!(
             contents(&compiled_dir),
             baseline,

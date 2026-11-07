@@ -16,16 +16,10 @@ use heck::{ToSnakeCase, ToUpperCamelCase};
 pub use mltrs_slang_reflection::OptimizationLevel;
 use mltrs_slang_reflection::json::*;
 use mltrs_slang_reflection::{
-    FieldOutsideUniformLayout, InvalidPushConstantBlock, MissingEntryPoint, SlangError,
-    StructuredBufferField, UnexpectedEntryPointStage, UnexpectedVectorBinding,
-    UnsupportedArrayElement, UnsupportedDescriptorHandle, UnsupportedEntryPointParameter,
-    UnsupportedEnum, UnsupportedGlobalParameter, UnsupportedPointer, UnsupportedShaderStage,
-};
-use mltrs_slang_reflection::{
     prepare_reflected_compute_shader_with_optimization, prepare_reflected_shader_with_optimization,
 };
 
-use crate::error::PathIoError;
+use crate::error::{PathIoError, ShaderReflectionFailed};
 
 /// The configured source and output directories cannot be used together.
 #[derive(Debug, thiserror::Error)]
@@ -147,35 +141,90 @@ pub type LogicalErrors = (
     UnsupportedLogicalType,
 );
 
-/// Failures of [`write_precompiled_roc_shaders`]: the slang
-/// [`PrepareShaderErrors`](mltrs_slang_reflection::PrepareShaderErrors) plus the
-/// Roc-specific path, naming and lowering checks.
+/// A Roc-specific naming, typing or lowering failure: one variant per kind.
+///
+/// [`write_precompiled_roc_shaders`] classifies [`LowerErrors`] and
+/// [`LogicalErrors`] into this, along with its own name and import-path checks.
+/// Each variant's message is the wrapped error's.
+#[derive(Debug, thiserror::Error)]
+pub enum RocCodegenError {
+    #[error(transparent)]
+    InvalidIdentifier(#[from] InvalidRocIdentifier),
+    #[error(transparent)]
+    NameCollision(#[from] NameCollision),
+    #[error(transparent)]
+    IncompatibleStructTypes(#[from] IncompatibleStructTypes),
+    #[error(transparent)]
+    LogicalTypeCollision(#[from] LogicalTypeCollision),
+    #[error(transparent)]
+    UnsupportedLogicalType(#[from] UnsupportedLogicalType),
+    #[error(transparent)]
+    UnrepresentableImportPath(#[from] UnrepresentableImportPath),
+    /// a `usize` reflection value does not fit the Roc `U64` it lowers to
+    #[error(transparent)]
+    IntConversion(#[from] TryFromIntError),
+}
+
+/// Every [`RocCodegenError`] payload type, which
+/// [`RocCodegenError::classify`] checks in this order.
+type RocCodegenMembers = (
+    InvalidRocIdentifier,
+    NameCollision,
+    IncompatibleStructTypes,
+    LogicalTypeCollision,
+    UnsupportedLogicalType,
+    UnrepresentableImportPath,
+    TryFromIntError,
+);
+
+// Compile-time check that [`RocCodegenError::classify`] covers the inner sets:
+// adding a member to `LowerErrors` or `LogicalErrors` without a variant (and a
+// `RocCodegenMembers` entry) fails to widen here instead of reaching the
+// `unreachable!` at runtime.
+const _: () = {
+    #[allow(dead_code)]
+    fn inner_sets_are_classified(
+        lower: eros::ErrorUnion<LowerErrors>,
+        logical: eros::ErrorUnion<LogicalErrors>,
+    ) -> [eros::ErrorUnion<RocCodegenMembers>; 2] {
+        [lower.widen(), logical.widen()]
+    }
+};
+
+impl RocCodegenError {
+    /// The `classify` callback for a set whose members are all in
+    /// [`RocCodegenMembers`], such as [`LowerErrors`] and [`LogicalErrors`].
+    fn classify(inner: eros::InnerError) -> Self {
+        macro_rules! classify_as {
+            ($inner:ident: $($variant:ident($ty:ty)),* $(,)?) => {
+                $(let $inner = match $inner.downcast::<$ty>() {
+                    Ok(error) => return Self::$variant(error),
+                    Err(other) => other,
+                };)*
+            };
+        }
+        classify_as!(inner:
+            InvalidIdentifier(InvalidRocIdentifier),
+            NameCollision(NameCollision),
+            IncompatibleStructTypes(IncompatibleStructTypes),
+            LogicalTypeCollision(LogicalTypeCollision),
+            UnsupportedLogicalType(UnsupportedLogicalType),
+            UnrepresentableImportPath(UnrepresentableImportPath),
+            IntConversion(TryFromIntError),
+        );
+        unreachable!("not a Roc codegen error: {}", inner.as_error())
+    }
+}
+
+/// Failures of [`write_precompiled_roc_shaders`]: compiling and reflecting a
+/// shader ([`ShaderReflectionFailed`], which wraps the slang-reflection error),
+/// filesystem access, the project layout, and Roc code generation.
 pub type WriteRocShadersErrors = (
-    SlangError,
-    std::ffi::NulError,
-    UnsupportedShaderStage,
-    MissingEntryPoint,
-    UnexpectedEntryPointStage,
-    UnsupportedEntryPointParameter,
-    UnsupportedGlobalParameter,
-    InvalidPushConstantBlock,
-    FieldOutsideUniformLayout,
-    UnexpectedVectorBinding,
-    StructuredBufferField,
-    UnsupportedArrayElement,
-    UnsupportedPointer,
-    UnsupportedDescriptorHandle,
-    UnsupportedEnum,
+    ShaderReflectionFailed,
     PathIoError,
     InvalidProjectLayout,
     NonUtf8Path,
-    NameCollision,
-    InvalidRocIdentifier,
-    UnrepresentableImportPath,
-    IncompatibleStructTypes,
-    TryFromIntError,
-    LogicalTypeCollision,
-    UnsupportedLogicalType,
+    RocCodegenError,
 );
 
 #[derive(Debug, Clone)]
@@ -257,7 +306,10 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> eros::Result<(), Writ
 
     let mut modules = Names::default();
     for name in ["ShaderAtlas", "ShaderTypes", "ShaderReflection"] {
-        modules.insert(name, name).union()?;
+        modules
+            .insert(name, name)
+            .map_err(RocCodegenError::from)
+            .union()?;
     }
 
     let mut logical = Logical::default();
@@ -268,6 +320,7 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> eros::Result<(), Writ
     let mut atlas_names = Names::default();
     atlas_names
         .insert("shader_names", "atlas support value")
+        .map_err(RocCodegenError::from)
         .union()?;
 
     for input in inputs {
@@ -279,10 +332,20 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> eros::Result<(), Writ
             ".shader.slang"
         };
         let stem = input.strip_suffix(suffix).expect("discovered suffix");
-        let module = identifier(stem, true).union()?;
-        modules.insert(&module, &input).union()?;
-        let value = identifier(stem, false).union()?;
-        atlas_names.insert(&value, &input).union()?;
+        let module = identifier(stem, true)
+            .map_err(RocCodegenError::from)
+            .union()?;
+        modules
+            .insert(&module, &input)
+            .map_err(RocCodegenError::from)
+            .union()?;
+        let value = identifier(stem, false)
+            .map_err(RocCodegenError::from)
+            .union()?;
+        atlas_names
+            .insert(&value, &input)
+            .map_err(RocCodegenError::from)
+            .union()?;
         let mut types = StructTypes::default();
         let mut stages = Vec::new();
         let (reflection_kind, reflection) = if compute {
@@ -291,11 +354,11 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> eros::Result<(), Writ
                 search,
                 config.optimization,
             )
-            .widen()?;
+            .classify(ShaderReflectionFailed::of(&input))?;
             logical
                 .compute(&shader.reflection_json)
                 .with_context(|| format!("Derive logical Roc types for {input}"))
-                .widen()?;
+                .classify(RocCodegenError::classify)?;
             stages.push((
                 "compute",
                 shader.compute_shader.shader_bytecode.to_vec(),
@@ -307,17 +370,17 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> eros::Result<(), Writ
                     .reflection_json
                     .lower(&mut types)
                     .with_context(|| format!("Lower reflection of {input} to Roc"))
-                    .widen()?
+                    .classify(RocCodegenError::classify)?
                     .render(),
             )
         } else {
             let shader =
                 prepare_reflected_shader_with_optimization(&input, search, config.optimization)
-                    .widen()?;
+                    .classify(ShaderReflectionFailed::of(&input))?;
             logical
                 .graphics(&shader.reflection_json)
                 .with_context(|| format!("Derive logical Roc types for {input}"))
-                .widen()?;
+                .classify(RocCodegenError::classify)?;
             stages.push((
                 "vertex",
                 shader.vertex_shader.shader_bytecode.to_vec(),
@@ -334,7 +397,7 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> eros::Result<(), Writ
                     .reflection_json
                     .lower(&mut types)
                     .with_context(|| format!("Lower reflection of {input} to Roc"))
-                    .widen()?
+                    .classify(RocCodegenError::classify)?
                     .render(),
             )
         };
@@ -346,9 +409,14 @@ pub fn write_precompiled_roc_shaders(config: RocConfig) -> eros::Result<(), Writ
                 .keys()
                 .any(|existing: &String| existing.eq_ignore_ascii_case(&filename))
             {
-                return Err(NameCollision::SpirvFilename { filename }).union();
+                return Err(RocCodegenError::from(NameCollision::SpirvFilename {
+                    filename,
+                }))
+                .union();
             }
-            let path = import_path(&roc, &compiled.join(&filename)).union()?;
+            let path = import_path(&roc, &compiled.join(&filename))
+                .map_err(RocCodegenError::from)
+                .union()?;
             stage_imports.push(StageImport { stage, path });
             stage_names.push(stage);
             binaries.insert(filename, bytes);
@@ -1630,16 +1698,55 @@ mod tests {
             let roc_before = tree_contents(&config.roc_source_dir);
             let compiled_before = tree_contents(&config.compiled_shaders_dir);
             let error = write_precompiled_roc_shaders(config.clone()).unwrap_err();
-            if case == "keyword" {
-                assert!(
-                    error.to_string().contains("reserved Roc identifier"),
-                    "{error:#?}"
-                );
-            }
             assert_eq!(tree_contents(&config.roc_source_dir), roc_before);
             assert_eq!(tree_contents(&config.compiled_shaders_dir), compiled_before);
             if case != "import_path" {
                 assert_eq!((roc_before, compiled_before), before);
+            }
+            let debug = format!("{error:#?}");
+            assert!(debug.contains("Generate Roc shader bindings"), "{debug}");
+            if case == "keyword" {
+                assert!(
+                    error.to_string().contains("reserved Roc identifier"),
+                    "{debug}"
+                );
+            }
+            if case == "compile" {
+                let Ok(failed) = error.narrow::<ShaderReflectionFailed, _>() else {
+                    panic!("a slang failure must classify as ShaderReflectionFailed: {debug}");
+                };
+                assert_eq!(failed.shader, "broken.shader.slang");
+                assert!(
+                    failed
+                        .downcast_ref::<mltrs_slang_reflection::SlangError>()
+                        .is_some(),
+                    "{failed:?}"
+                );
+                let source = std::error::Error::source(&failed).unwrap();
+                assert!(source.is::<mltrs_slang_reflection::SlangError>());
+                continue;
+            }
+            let Ok(roc_error) = error.narrow::<RocCodegenError, _>() else {
+                panic!("{case} must classify as RocCodegenError: {debug}");
+            };
+            match (case, &roc_error) {
+                (
+                    "keyword",
+                    RocCodegenError::InvalidIdentifier(InvalidRocIdentifier::Reserved { original }),
+                ) if original == "package" => {}
+                (
+                    "mapping",
+                    RocCodegenError::LogicalTypeCollision(LogicalTypeCollision::Incompatible {
+                        ..
+                    }),
+                ) => {}
+                (
+                    "import_path",
+                    RocCodegenError::UnrepresentableImportPath(
+                        UnrepresentableImportPath::ForbiddenCharacter { .. },
+                    ),
+                ) => {}
+                _ => panic!("{case}: unexpected {roc_error:?}"),
             }
         }
     }
