@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use eros::Context;
 use sdl3::EventPump;
 use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::Keycode;
@@ -25,7 +26,7 @@ pub struct RunStats {
 }
 
 impl App {
-    pub fn init(renderer: Renderer, game: impl RuntimeGame + 'static) -> anyhow::Result<App> {
+    pub fn init(renderer: Renderer, game: impl RuntimeGame + 'static) -> eros::Result<App> {
         Ok(Self {
             renderer,
             game: Box::new(game),
@@ -34,7 +35,7 @@ impl App {
         })
     }
 
-    pub fn run_loop(mut self, mut event_pump: EventPump) -> anyhow::Result<RunStats> {
+    pub fn run_loop(mut self, mut event_pump: EventPump) -> eros::Result<RunStats> {
         let mut end_of_last_frame = Instant::now();
         let mut stats = RunStats::default();
 
@@ -55,7 +56,9 @@ impl App {
                 }
 
                 let frame_renderer = FrameRenderer::new(&mut self.renderer);
-                self.game.draw_frame(frame_renderer)?;
+                self.game
+                    .draw_frame(frame_renderer)
+                    .with_context(|| format!("Draw frame {}", stats.frames))?;
                 stats.frames += 1;
             }
 
@@ -69,13 +72,15 @@ impl App {
             end_of_last_frame = Instant::now();
         }
 
-        self.renderer.drain_gpu()?;
+        self.renderer
+            .drain_gpu()
+            .context("Drain GPU after the run loop")?;
 
         Ok(stats)
     }
 
     // https://wiki.libsdl.org/SDL3/SDL_EventType
-    pub fn handle_events(&mut self, event_pump: &mut EventPump) -> anyhow::Result<()> {
+    pub fn handle_events(&mut self, event_pump: &mut EventPump) -> eros::Result<()> {
         let egui_wants_pointer = self
             .renderer
             .egui()
