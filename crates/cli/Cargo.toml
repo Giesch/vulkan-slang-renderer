@@ -15,6 +15,7 @@ path = "src/main.rs"
 mltrs-slang-reflection.workspace = true
 
 anyhow.workspace = true
+eros.workspace = true
 askama.workspace = true
 clap.workspace = true
 glam.workspace = true

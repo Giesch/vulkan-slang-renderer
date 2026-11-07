@@ -24,6 +24,7 @@ fixtures = []
 gx.workspace = true
 
 anyhow.workspace = true
+eros.workspace = true
 glam.workspace = true
 image.workspace = true
 serde.workspace = true
