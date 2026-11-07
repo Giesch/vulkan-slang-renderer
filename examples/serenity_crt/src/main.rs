@@ -6,7 +6,7 @@ use facet::Facet;
 use mltrs::editor::Slider;
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
     ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_vertex_count,
 };
 
@@ -115,7 +115,7 @@ impl Game for SerenityCRT {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let elapsed = (Instant::now() - self.start_time).as_secs_f32();
         let resolution = renderer.window_resolution();
 

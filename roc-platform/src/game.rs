@@ -4,7 +4,9 @@ use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Vec3};
 
 use mltrs::game::Game;
-use mltrs::renderer::{DrawIndexed, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle};
+use mltrs::renderer::{
+    DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
+};
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::basic_triangle::*;
@@ -59,7 +61,7 @@ impl Game for BasicTriangle {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
         let mvp = make_basic_mvp_matrices(aspect_ratio);
 

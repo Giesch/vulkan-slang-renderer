@@ -10,7 +10,7 @@ use mltrs::game::{Game, Input, MouseButton};
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
     ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_vertex_count,
 };
 
@@ -129,7 +129,7 @@ impl Game for KochCurve {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let time = (Instant::now() - self.start_time).as_secs_f32();
 
         let resolution = renderer.window_resolution();

@@ -5,8 +5,8 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    CpuUpdatedBufferHandle, DrawVertexCount, FrameRenderer, PickingPipelineHandle, PipelineHandle,
-    Renderer, UniformBufferHandle,
+    CpuUpdatedBufferHandle, DrawError, DrawVertexCount, FrameRenderer, PickingPipelineHandle,
+    PipelineHandle, Renderer, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -95,7 +95,7 @@ impl Game for GpuPicking {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let picked_id = renderer.picked_object_id();
         let aspect_ratio = renderer.aspect_ratio();
 

@@ -138,6 +138,7 @@ pub type Ktx2TextureErrors = (
     UnsupportedKtx2Format,
     Ktx2ZstdFailed,
     Ktx2MipLevelSizeMismatch,
+    crate::renderer::ZeroTextureExtent,
     crate::renderer::InvalidMipLevels,
     crate::renderer::UnsupportedTextureFormat,
     crate::renderer::BindlessHeapFull,

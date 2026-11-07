@@ -14,8 +14,8 @@ use mltrs::game::*;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    CpuUpdatedBufferHandle, DrawVertexCount, FrameRenderer, PipelineHandle, RasterState, Renderer,
-    TextureFilter, TextureHandle, UniformBufferHandle,
+    CpuUpdatedBufferHandle, DrawError, DrawVertexCount, FrameRenderer, PipelineHandle, RasterState,
+    Renderer, TextureFilter, TextureHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -336,7 +336,7 @@ impl Game for SpaceInvaders {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let resolution = renderer.window_resolution();
         let width = resolution.x;
         let height = resolution.y;

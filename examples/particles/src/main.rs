@@ -6,8 +6,9 @@ use glam::{Vec2, Vec4};
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, DrawVertexCountNode, FrameRenderer, GpuUpdatedBufferHandle, GpuUpdatedSlot,
-    PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, UniformBufferHandle,
+    ComputeNode, DrawError, DrawVertexCountNode, FrameRenderer, GpuUpdatedBufferHandle,
+    GpuUpdatedSlot, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
+    UniformBufferHandle,
     render_graph::{dispatch, draw_vertex_count},
 };
 
@@ -116,7 +117,7 @@ impl Game for Particles {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let now = Instant::now();
         let delta_time = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;

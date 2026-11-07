@@ -9,7 +9,7 @@ use mltrs_renderer::renderer::render_graph::{
     ComputeNode, ComputePipelineKey, GpuUpdatedSlot, GraphNode, PreparedRenderGraph, dispatch,
 };
 use mltrs_renderer::renderer::{
-    GraphExecuteErrors, FrameRenderer, GpuUpdatedBufferHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, GpuUpdatedBufferHandle, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -87,7 +87,7 @@ fn frame_contract() {
 fn execute(
     prepared: &mut PreparedRenderGraph<Graph>,
     frame: FrameRenderer<'_>,
-) -> eros::Result<(), GraphExecuteErrors> {
+) -> Result<(), DrawError> {
     prepared.execute(
         frame,
         &(
@@ -104,7 +104,8 @@ fn execute(
             SimParamsData { delta_time: 0.016 },
             SimParamsData { delta_time: 0.016 },
         ),
-    )
+    )?;
+    Ok(())
 }
 
 fn main() {}

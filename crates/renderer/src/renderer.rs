@@ -644,7 +644,7 @@ impl Renderer {
         sampler_options: SamplerOptions,
     ) -> eros::Result<Texture, TextureErrors> {
         let (texture_image, texture_image_memory) =
-            self.upload_texture_levels(format, extent, levels)?;
+            self.upload_texture_levels(&source_file_name, format, extent, levels)?;
 
         let mip_levels = levels.len() as u32;
         let texture_image_view = create_image_view(
@@ -677,44 +677,17 @@ impl Renderer {
 
     /// Stages every mip level into one buffer, and copies them into a fresh
     /// image, which is left in `SHADER_READ_ONLY_OPTIMAL`.
+    ///
+    /// Every extent/format/level check runs first, before any Vulkan call.
     fn upload_texture_levels(
         &self,
+        texture: &str,
         format: vk::Format,
         extent: vk::Extent2D,
         levels: &[&[u8]],
     ) -> eros::Result<(vk::Image, vk_mem::Allocation), TextureErrors> {
-        if levels.is_empty() {
-            return Err(InvalidMipLevels::Empty).union();
-        }
+        let block = texture::validate_texture_levels(texture, format, extent, levels).widen()?;
         let mip_levels = levels.len() as u32;
-        let max_levels = extent.width.max(extent.height).ilog2() + 1;
-        if mip_levels > max_levels {
-            return Err(InvalidMipLevels::TooMany {
-                levels: levels.len(),
-                max: max_levels,
-                width: extent.width,
-                height: extent.height,
-            })
-            .union();
-        }
-
-        let block = format_block_info(format)
-            .ok_or(UnsupportedTextureFormat { format })
-            .union()?;
-
-        for (i, level) in levels.iter().enumerate() {
-            let expected = level_byte_len(block, mip_extent(extent, i));
-            let bytes = level.len();
-            if bytes != expected {
-                return Err(InvalidMipLevels::ByteLength {
-                    level: i,
-                    bytes,
-                    expected,
-                    format,
-                })
-                .union();
-            }
-        }
 
         // vkCmdCopyBufferToImage requires each region's bufferOffset to be
         // a multiple of the texel block size and of 4
@@ -870,7 +843,13 @@ impl Renderer {
         width: u32,
         height: u32,
         format: vk::Format,
-    ) -> eros::Result<StorageTextureHandle, HeapResourceErrors> {
+    ) -> eros::Result<StorageTextureHandle, StorageTextureErrors> {
+        texture::validate_texture_extent(
+            || format!("{format:?} storage texture"),
+            vk::Extent2D { width, height },
+        )
+        .union()?;
+
         let (image, image_memory) = create_vk_image(
             &self.allocator,
             ImageOptions {
@@ -6495,7 +6474,7 @@ impl<'f> FrameRenderer<'f> {
     }
 
     /// submit all queued draws as this frame's rendering
-    pub fn submit_draws(self, gpu_update: impl FnOnce(&mut Gpu)) -> eros::Result<()> {
+    pub fn submit_draws(self, gpu_update: impl FnOnce(&mut Gpu)) -> Result<(), DrawError> {
         self.draw_frame(None, gpu_update)
     }
 
@@ -6503,7 +6482,7 @@ impl<'f> FrameRenderer<'f> {
         mut self,
         pipeline_handle: &PipelineHandle<DrawIndexed>,
         gpu_update: impl FnOnce(&mut Gpu),
-    ) -> eros::Result<()> {
+    ) -> Result<(), DrawError> {
         self.queue_draw_indexed(pipeline_handle);
         self.submit_draws(gpu_update)
     }
@@ -6513,7 +6492,7 @@ impl<'f> FrameRenderer<'f> {
         pipeline_handle: &PipelineHandle<DrawVertexCount>,
         vertex_count: u32,
         gpu_update: impl FnOnce(&mut Gpu),
-    ) -> eros::Result<()> {
+    ) -> Result<(), DrawError> {
         self.queue_draw_vertex_count(pipeline_handle, vertex_count);
         self.submit_draws(gpu_update)
     }
@@ -6525,7 +6504,7 @@ impl<'f> FrameRenderer<'f> {
         picking_pipeline: &PickingPipelineHandle,
         mouse_position: [f32; 2],
         gpu_update: impl FnOnce(&mut Gpu),
-    ) -> eros::Result<()> {
+    ) -> Result<(), DrawError> {
         // picking is still single-draw: it hasn't been integrated with the multi-draw queue
         debug_assert!(
             self.pending_draws.is_empty(),
@@ -6555,7 +6534,7 @@ impl<'f> FrameRenderer<'f> {
         self,
         picking_config: Option<PickingDrawConfig>,
         gpu_update: impl FnOnce(&mut Gpu),
-    ) -> eros::Result<()> {
+    ) -> Result<(), DrawError> {
         self.draw_frame_with_submission(picking_config, gpu_update, || {})
     }
 
@@ -6564,14 +6543,16 @@ impl<'f> FrameRenderer<'f> {
         picking_config: Option<PickingDrawConfig>,
         gpu_update: impl FnOnce(&mut Gpu),
         on_submitted: impl FnOnce(),
-    ) -> eros::Result<()> {
-        self.renderer.draw_frame(
-            self.pending_draws,
-            picking_config,
-            self.pending_compute,
-            gpu_update,
-            on_submitted,
-        )
+    ) -> Result<(), DrawError> {
+        self.renderer
+            .draw_frame(
+                self.pending_draws,
+                picking_config,
+                self.pending_compute,
+                gpu_update,
+                on_submitted,
+            )
+            .map_err(DrawError::from)
     }
 }
 

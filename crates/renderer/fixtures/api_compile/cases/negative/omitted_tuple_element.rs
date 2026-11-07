@@ -13,7 +13,7 @@ use mltrs_renderer::renderer::render_graph::{
     dispatch, draw_indexed,
 };
 use mltrs_renderer::renderer::{
-    GraphExecuteErrors, FrameRenderer, GpuUpdatedBufferHandle, UniformBufferHandle,
+    DrawError, FrameRenderer, GpuUpdatedBufferHandle, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -56,8 +56,9 @@ fn graph(
 fn execute(
     prepared: &mut PreparedRenderGraph<Graph>,
     frame: FrameRenderer<'_>,
-) -> eros::Result<(), GraphExecuteErrors> {
-    prepared.execute(frame, &(SimParamsData { delta_time: 0.016 },))
+) -> Result<(), DrawError> {
+    prepared.execute(frame, &(SimParamsData { delta_time: 0.016 },))?;
+    Ok(())
 }
 
 fn main() {}

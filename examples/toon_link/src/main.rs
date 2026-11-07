@@ -50,10 +50,11 @@ use mltrs::shaders::atlas::ShaderAtlasRoot;
 // `mm::BlendMode` collide with the renderer's pipeline enums of the same name.
 use gx::model_manifest::{self as mm, Batch, Manifest, MaterialEntry, TextureEntry};
 use mltrs::renderer::{
-    BindlessHandle, BlendMode, CullMode, DepthCompare, DrawIndexedIndirect, FrameRenderer,
-    ImmutableBufferHandle, MeshHandle, PipelineHandle, PushBlock, RasterState, Renderer,
-    RgbaPixels, Sampler2D, SamplerOptions, SingletonBufferHandle, StencilMode, TextureColorSpace,
-    TextureFilter, TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle,
+    BindlessHandle, BlendMode, CullMode, DepthCompare, DrawError, DrawIndexedIndirect,
+    FrameRenderer, ImmutableBufferHandle, MeshHandle, PipelineHandle, PushBlock, RasterState,
+    Renderer, RgbaPixels, Sampler2D, SamplerOptions, SingletonBufferHandle, StencilMode,
+    TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
+    UniformBufferHandle,
 };
 
 use crate::animation_player::{
@@ -1168,7 +1169,7 @@ impl Game for ToonLink {
         Ok(game)
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         self.draw_posed(renderer, None)
     }
 }
@@ -1181,7 +1182,7 @@ impl ToonLink {
         &mut self,
         mut renderer: FrameRenderer,
         palette: Option<&[Mat4]>,
-    ) -> eros::Result<()> {
+    ) -> Result<(), DrawError> {
         let spin = self
             .host_spin
             .unwrap_or_else(|| self.start_time.elapsed().as_secs_f32() * MODEL_SPIN);
@@ -1718,7 +1719,7 @@ impl Game for ToonLinkHost {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let spin = self.start_time.elapsed().as_secs_f32() * MODEL_SPIN;
         // One pose per frame, shared by both modes.
         let joint_palette = self.animation.prepare_frame(&mut self.edit_state.animation);

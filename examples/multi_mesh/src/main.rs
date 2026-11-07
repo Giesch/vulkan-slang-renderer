@@ -28,10 +28,10 @@ use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 
 use mltrs::game::Game;
 use mltrs::renderer::{
-    BlendMode, CullMode, DrawNode, FrameRenderer, MeshHandle, PreparedRenderGraph, RasterState,
-    RenderGraph, Renderer, ResourcePlanner, RgbaPixels, SamplerOptions, TextureColorSpace,
-    TextureFilter, TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle,
-    draw_index_range,
+    BlendMode, CullMode, DrawError, DrawNode, FrameRenderer, MeshHandle, PreparedRenderGraph,
+    RasterState, RenderGraph, Renderer, ResourcePlanner, RgbaPixels, SamplerOptions,
+    TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
+    UniformBufferHandle, draw_index_range,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -422,7 +422,7 @@ impl Game for MultiMesh {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let elapsed = (Instant::now() - self.start_time).as_secs_f32();
         let aspect_ratio = renderer.aspect_ratio();
 
