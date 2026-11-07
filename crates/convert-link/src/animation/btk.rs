@@ -19,48 +19,67 @@
 //! The main table uses the same axis-major grouping as ANK1: target *t*
 //! occupies entries `3t`, `3t+1`, `3t+2` (texture axes s, t, q).
 
-use anyhow::{Context, Result, bail};
+use eros::{Context, IntoUnion, ReshapeUnion, context};
 
 use gx::animation_manifest::{BtkClip, BtkPostSet, BtkTarget};
 
+use super::error::{
+    AnimationParseErrors, InconsistentPostSet, InvalidCount, NameCountMismatch, NonFiniteValue,
+    ReadErrors,
+};
 use super::tracks::{AxisDescriptors, read_name_table};
 
-pub fn parse(data: &[u8], what: &str) -> Result<BtkClip> {
-    let header = super::j3d_single_chunk(data, what, "btk1", b"TTK1")
-        .with_context(|| format!("{what}: not a readable BTK"))?;
+/// Parse a whole BTK file; `_what` names the clip (`archive/member`) in the
+/// error context. (Underscored because `#[context]` is its only use, and the
+/// body the macro moves into an inner function would warn otherwise.)
+#[context("Parse BTK {}", _what)]
+pub fn parse(data: &[u8], _what: &str) -> eros::Result<BtkClip, AnimationParseErrors> {
+    let header = super::j3d_single_chunk(data, b"btk1", b"TTK1").widen()?;
     let chunk = super::chunk_slice(data, &header);
 
-    let track_count = super::u16_at(chunk, 0x0C, "TTK1 track count")? as usize;
+    let track_count = super::u16_at(chunk, 0x0C, "TTK1 track count").widen()? as usize;
     if !track_count.is_multiple_of(3) {
-        bail!(
-            "{what}: TTK1 track count {track_count} is not a multiple of 3 (one triplet per target)"
-        );
+        return Err(InvalidCount {
+            field: "TTK1 track count",
+            count: track_count,
+            rule: "is not a multiple of 3 (one triplet per target)",
+        })
+        .union();
     }
     let target_count = track_count / 3;
-    let main = TargetSet::read(chunk, target_count, 0x14, &format!("{what}: main set"))?;
-    let post_names_off = super::u32_at(chunk, 0x44, "TTK1 post names offset")? as usize;
-    let post_track_count = super::u16_at(chunk, 0x34, "TTK1 post track count")? as usize;
+    let main = TargetSet::read(chunk, target_count, 0x14, "main set")
+        .context("read TTK1 main set header")
+        .widen()?;
+    let post_names_off = super::u32_at(chunk, 0x44, "TTK1 post names offset").widen()? as usize;
+    let post_track_count = super::u16_at(chunk, 0x34, "TTK1 post track count").widen()? as usize;
     if !post_track_count.is_multiple_of(3) {
-        bail!("{what}: TTK1 post track count {post_track_count} is not a multiple of 3");
+        return Err(InvalidCount {
+            field: "TTK1 post track count",
+            count: post_track_count,
+            rule: "is not a multiple of 3",
+        })
+        .union();
     }
     let post_target_count = post_track_count / 3;
     let post = if post_names_off != 0 || post_target_count != 0 {
         if post_names_off == 0 || post_target_count == 0 {
-            bail!(
-                "{what}: inconsistent TTK1 post set (names offset {post_names_off:#x}, post track count {post_track_count})"
-            );
+            return Err(InconsistentPostSet {
+                names_offset: post_names_off,
+                track_count: post_track_count,
+            })
+            .union();
         }
-        let set = TargetSet::read(chunk, post_target_count, 0x3C, &format!("{what}: post set"))?;
-        let names = read_name_table(
-            chunk,
-            post_names_off,
-            &format!("{what}: TTK1 post material names"),
-        )?;
+        let set = TargetSet::read(chunk, post_target_count, 0x3C, "post set")
+            .context("read TTK1 post set header")
+            .widen()?;
+        let names = read_name_table(chunk, post_names_off, "TTK1 post material names").widen()?;
         if names.len() != post_target_count {
-            bail!(
-                "{what}: TTK1 post set has {post_target_count} rows but {} names",
-                names.len()
-            );
+            return Err(NameCountMismatch {
+                what: "TTK1 post set",
+                rows: post_target_count,
+                names: names.len(),
+            })
+            .union();
         }
         Some(BtkPostSet {
             targets: set.targets_with(names, chunk)?,
@@ -69,22 +88,20 @@ pub fn parse(data: &[u8], what: &str) -> Result<BtkClip> {
         None
     };
 
-    let names = read_name_table(
-        chunk,
-        main.names_off,
-        &format!("{what}: TTK1 material names"),
-    )?;
+    let names = read_name_table(chunk, main.names_off, "TTK1 material names").widen()?;
     if names.len() != target_count {
-        bail!(
-            "{what}: TTK1 has {target_count} rows but {} material names",
-            names.len()
-        );
+        return Err(NameCountMismatch {
+            what: "TTK1",
+            rows: target_count,
+            names: names.len(),
+        })
+        .union();
     }
     Ok(BtkClip {
-        duration_frames: super::u16_at(chunk, 0x0A, "TTK1 duration")?,
-        loop_attribute: super::u8_at(chunk, 0x08, "TTK1 loop attribute")?,
-        rotation_decimal_shift: super::u8_at(chunk, 0x09, "TTK1 decimal shift")?,
-        matrix_calc_type: super::u32_at(chunk, 0x5C, "TTK1 matrix calc type")?,
+        duration_frames: super::u16_at(chunk, 0x0A, "TTK1 duration").widen()?,
+        loop_attribute: super::u8_at(chunk, 0x08, "TTK1 loop attribute").widen()?,
+        rotation_decimal_shift: super::u8_at(chunk, 0x09, "TTK1 decimal shift").widen()?,
+        matrix_calc_type: super::u32_at(chunk, 0x5C, "TTK1 matrix calc type").widen()?,
         targets: main.targets_with(names, chunk)?,
         post,
     })
@@ -106,11 +123,19 @@ struct TargetSet {
     scale_count: usize,
     rot_count: usize,
     trans_count: usize,
-    what: String,
+    /// `"main set"` or `"post set"`.
+    what: &'static str,
 }
 
 impl TargetSet {
-    fn read(chunk: &[u8], target_count: usize, base: usize, what: &str) -> Result<Self> {
+    // No `#[context]` here: eros-macros 0.8.1 mis-expands it on associated
+    // functions without a receiver; callers attach the set name instead.
+    fn read(
+        chunk: &[u8],
+        target_count: usize,
+        base: usize,
+        what: &'static str,
+    ) -> eros::Result<Self, ReadErrors> {
         let word = |off: usize, name: &str| super::u32_at(chunk, off, name).map(|v| v as usize);
         let half = |off: usize, name: &str| super::u16_at(chunk, off, name).map(|v| v as usize);
         Ok(Self {
@@ -126,74 +151,73 @@ impl TargetSet {
             scale_count: half(base - 6, "scale pool count")?,
             rot_count: half(base - 4, "rotation pool count")?,
             trans_count: half(base - 2, "translation pool count")?,
-            what: what.to_string(),
+            what,
         })
     }
 
-    fn targets_with(self, names: Vec<String>, chunk: &[u8]) -> Result<Vec<BtkTarget>> {
+    #[context("decode TTK1 {} targets", self.what)]
+    fn targets_with(
+        &self,
+        names: Vec<String>,
+        chunk: &[u8],
+    ) -> eros::Result<Vec<BtkTarget>, AnimationParseErrors> {
         let n = self.target_count;
-        let table = super::pool(
-            chunk,
-            self.tables_off,
-            n * 3 * 0x12,
-            "key tables",
-            &self.what,
-        )?;
-        let remap = super::pool(chunk, self.remap_off, n * 2, "remap", &self.what)?;
-        let selectors = super::pool(chunk, self.selectors_off, n, "selectors", &self.what)?;
-        let centers = super::pool(chunk, self.centers_off, n * 12, "centers", &self.what)?;
-        let scale_pool = super::pool(
-            chunk,
-            self.scale_off,
-            self.scale_count * 4,
-            "scale pool",
-            &self.what,
-        )?;
-        let rot_pool = super::pool(
-            chunk,
-            self.rot_off,
-            self.rot_count * 2,
-            "rotation pool",
-            &self.what,
-        )?;
+        let table = super::pool(chunk, self.tables_off, n * 3 * 0x12, "key tables").widen()?;
+        let remap = super::pool(chunk, self.remap_off, n * 2, "remap").widen()?;
+        let selectors = super::pool(chunk, self.selectors_off, n, "selectors").widen()?;
+        let centers = super::pool(chunk, self.centers_off, n * 12, "centers").widen()?;
+        let scale_pool =
+            super::pool(chunk, self.scale_off, self.scale_count * 4, "scale pool").widen()?;
+        let rot_pool =
+            super::pool(chunk, self.rot_off, self.rot_count * 2, "rotation pool").widen()?;
         let trans_pool = super::pool(
             chunk,
             self.trans_off,
             self.trans_count * 4,
             "translation pool",
-            &self.what,
-        )?;
+        )
+        .widen()?;
 
         let mut targets = Vec::with_capacity(n);
         for (t, target_name) in names.iter().enumerate() {
-            let what_t = format!("{}: target {t}", self.what);
+            let what_t = format!("target {t}");
             let mut axes = Vec::with_capacity(3);
             for axis in 0..3 {
                 let what_track = format!("{what_t} axis {axis}");
                 let desc = AxisDescriptors::read(table, (t * 3 + axis) * 0x12)
-                    .with_context(|| what_track.clone())?;
-                for (d, pool_len, elem, kind) in [
-                    (desc.scale, self.scale_count, 4usize, "scale"),
-                    (desc.rotation, self.rot_count, 2, "rotation"),
-                    (desc.translation, self.trans_count, 4, "translation"),
+                    .with_context(|| what_track.clone())
+                    .widen()?;
+                for (d, pool_len, kind) in [
+                    (desc.scale, self.scale_count, "scale"),
+                    (desc.rotation, self.rot_count, "rotation"),
+                    (desc.translation, self.trans_count, "translation"),
                 ] {
-                    super::check_descriptor(d, pool_len, elem, &format!("{what_track} {kind}"))?;
+                    super::check_descriptor(d, pool_len, &format!("{what_track} {kind}"))
+                        .widen()?;
                 }
-                axes.push(desc.decode(scale_pool, rot_pool, trans_pool, &what_track)?);
+                axes.push(
+                    desc.decode(scale_pool, rot_pool, trans_pool, &what_track)
+                        .widen()?,
+                );
             }
             let axes = <[_; 3]>::try_from(axes).expect("three axes per target");
             let mut center = [0.0f32; 3];
             for (i, c) in center.iter_mut().enumerate() {
                 let off = t * 12 + i * 4;
-                *c = f32::from_bits(super::u32_at(centers, off, "center component")?);
+                *c = f32::from_bits(super::u32_at(centers, off, "center component").widen()?);
                 if !c.is_finite() {
-                    bail!("{what_t}: non-finite center component {i}");
+                    return Err(NonFiniteValue {
+                        what: what_t,
+                        field: format!("center component {i}"),
+                        value: *c,
+                    })
+                    .union();
                 }
             }
             targets.push(BtkTarget {
                 material: target_name.clone(),
-                material_remap: super::u16_at(remap, t * 2, "material remap")?,
-                texgen_selector: super::u8_at(selectors, t, "texgen selector")?,
+                material_remap: super::u16_at(remap, t * 2, "material remap").widen()?,
+                texgen_selector: super::u8_at(selectors, t, "texgen selector").widen()?,
                 center,
                 axes,
             });

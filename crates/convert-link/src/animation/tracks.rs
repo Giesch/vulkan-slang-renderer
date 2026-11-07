@@ -18,9 +18,14 @@
 //! multi-key time sequence must be strictly increasing; failures return
 //! contextual errors identifying the track and offset.
 
-use anyhow::{Context, Result, anyhow, bail};
+use eros::{Context, IntoUnion};
 
 use gx::animation_manifest::{KeyF32, KeyI16, TrackF32, TrackI16};
+
+use super::error::{
+    InvalidString, KeyDataOutOfPool, KeyTimesNotIncreasing, NonFiniteValue, ReadErrors,
+    StringDefect, StringErrors, TrackErrors,
+};
 
 /// A 6-byte key descriptor as stored in the table.
 #[derive(Debug, Clone, Copy)]
@@ -32,13 +37,11 @@ pub struct KeyDescriptor {
 
 impl KeyDescriptor {
     /// Read the descriptor at `offset` inside `table` (chunk-local slice).
-    pub fn read(table: &[u8], offset: usize) -> Result<Self> {
-        let bytes = table.get(offset..offset + 6).ok_or_else(|| {
-            anyhow!(
-                "key descriptor at {offset:#x} outside the {:#x}-byte table",
-                table.len()
-            )
-        })?;
+    pub fn read(table: &[u8], offset: usize) -> eros::Result<Self, ReadErrors> {
+        let bytes = offset
+            .checked_add(6)
+            .and_then(|end| table.get(offset..end))
+            .ok_or_else(|| super::out_of_bounds(table, offset, 6, "key descriptor"))?;
         Ok(Self {
             count: u16::from_be_bytes([bytes[0], bytes[1]]),
             index: u16::from_be_bytes([bytes[2], bytes[3]]),
@@ -52,53 +55,76 @@ impl KeyDescriptor {
     }
 }
 
-fn strictly_increasing_i16(times: impl Iterator<Item = i16>, what: &str) -> Result<()> {
-    let mut prev: Option<i16> = None;
-    for t in times {
+fn strictly_increasing(
+    times: impl Iterator<Item = f32>,
+    what: &str,
+) -> eros::Result<(), TrackErrors> {
+    let mut prev: Option<f32> = None;
+    for (k, t) in times.enumerate() {
+        if !t.is_finite() {
+            return Err(NonFiniteValue {
+                what: what.to_string(),
+                field: format!("key {k} time"),
+                value: t,
+            })
+            .union();
+        }
         if let Some(p) = prev
             && t <= p
         {
-            bail!("{what}: key time {t} does not strictly increase (previous {p})");
+            return Err(KeyTimesNotIncreasing {
+                what: what.to_string(),
+                time: t,
+                previous: p,
+            })
+            .union();
         }
         prev = Some(t);
     }
     Ok(())
 }
 
-fn strictly_increasing_f32(times: impl Iterator<Item = f32>, what: &str) -> Result<()> {
-    let mut prev: Option<f32> = None;
-    for t in times {
-        if !t.is_finite() {
-            bail!("{what}: non-finite key time {t}");
-        }
-        if let Some(p) = prev
-            && t <= p
-        {
-            bail!("{what}: key time {t} does not strictly increase (previous {p})");
-        }
-        prev = Some(t);
+/// The error for pool word `i` lying outside a `pool_words`-word pool.
+fn word_out_of_pool(what: &str, i: usize, pool_words: usize) -> KeyDataOutOfPool {
+    KeyDataOutOfPool {
+        what: what.to_string(),
+        start: i,
+        end: i + 1,
+        pool_words,
     }
-    Ok(())
+}
+
+fn non_finite(what: &str, field: String, value: f32) -> eros::Result<(), TrackErrors> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(NonFiniteValue {
+            what: what.to_string(),
+            field,
+            value,
+        })
+        .union()
+    }
 }
 
 /// Decode an f32 track (scale / translation) from `pool` (4-byte words).
-pub fn read_track_f32(desc: KeyDescriptor, pool: &[u8], what: &str) -> Result<TrackF32> {
-    let read_word = |i: usize| -> Result<f32> {
-        let b = pool.get(i * 4..i * 4 + 4).ok_or_else(|| {
-            anyhow!(
-                "{what}: pool word {i} outside the {word}-word pool",
-                word = pool.len() / 4
-            )
-        })?;
+pub fn read_track_f32(
+    desc: KeyDescriptor,
+    pool: &[u8],
+    what: &str,
+) -> eros::Result<TrackF32, TrackErrors> {
+    let read_word = |i: usize| -> eros::Result<f32, TrackErrors> {
+        let b = pool
+            .get(i * 4..i * 4 + 4)
+            .ok_or_else(|| word_out_of_pool(what, i, pool.len() / 4))
+            .union()?;
         Ok(f32::from_bits(u32::from_be_bytes([b[0], b[1], b[2], b[3]])))
     };
     match desc.count {
         0 => Ok(TrackF32::Default),
         1 => {
-            let value = read_word(desc.index as usize).map_err(|e| e.context(what.to_string()))?;
-            if !value.is_finite() {
-                bail!("{what}: non-finite constant value {value}");
-            }
+            let value = read_word(desc.index as usize).context("constant value")?;
+            non_finite(what, "constant value".to_string(), value)?;
             Ok(TrackF32::Constant { value })
         }
         count => {
@@ -106,15 +132,12 @@ pub fn read_track_f32(desc: KeyDescriptor, pool: &[u8], what: &str) -> Result<Tr
             let mut keys = Vec::with_capacity(count as usize);
             let mut words = desc.index as usize;
             for k in 0..count as usize {
-                let time =
-                    read_word(words).map_err(|e| e.context(format!("{what}: key {k} time")))?;
-                let value = read_word(words + 1)
-                    .map_err(|e| e.context(format!("{what}: key {k} value")))?;
-                let tangent_in = read_word(words + 2)
-                    .map_err(|e| e.context(format!("{what}: key {k} tangent-in")))?;
+                let time = read_word(words).with_context(|| format!("key {k} time"))?;
+                let value = read_word(words + 1).with_context(|| format!("key {k} value"))?;
+                let tangent_in =
+                    read_word(words + 2).with_context(|| format!("key {k} tangent-in"))?;
                 let tangent_out = if stride == 4 {
-                    read_word(words + 3)
-                        .map_err(|e| e.context(format!("{what}: key {k} tangent-out")))?
+                    read_word(words + 3).with_context(|| format!("key {k} tangent-out"))?
                 } else {
                     tangent_in
                 };
@@ -126,11 +149,17 @@ pub fn read_track_f32(desc: KeyDescriptor, pool: &[u8], what: &str) -> Result<Tr
                     tangent_out,
                 });
             }
-            strictly_increasing_f32(keys.iter().map(|k| k.time), what)?;
-            if keys.iter().any(|k| {
-                !k.value.is_finite() || !k.tangent_in.is_finite() || !k.tangent_out.is_finite()
-            }) {
-                bail!("{what}: non-finite key data");
+            strictly_increasing(keys.iter().map(|k| k.time), what)?;
+            for (k, key) in keys.iter().enumerate() {
+                for (word, value) in [
+                    ("value", key.value),
+                    ("tangent-in", key.tangent_in),
+                    ("tangent-out", key.tangent_out),
+                ] {
+                    if !value.is_finite() {
+                        non_finite(what, format!("key {k} {word}"), value)?;
+                    }
+                }
             }
             Ok(TrackF32::Keyed {
                 tangent_type: desc.tangent_type,
@@ -141,35 +170,34 @@ pub fn read_track_f32(desc: KeyDescriptor, pool: &[u8], what: &str) -> Result<Tr
 }
 
 /// Decode an i16 track (rotation) from `pool` (2-byte words).
-pub fn read_track_i16(desc: KeyDescriptor, pool: &[u8], what: &str) -> Result<TrackI16> {
-    let read_word = |i: usize| -> Result<i16> {
-        let b = pool.get(i * 2..i * 2 + 2).ok_or_else(|| {
-            anyhow!(
-                "{what}: pool word {i} outside the {word}-word pool",
-                word = pool.len() / 2
-            )
-        })?;
+pub fn read_track_i16(
+    desc: KeyDescriptor,
+    pool: &[u8],
+    what: &str,
+) -> eros::Result<TrackI16, TrackErrors> {
+    let read_word = |i: usize| -> eros::Result<i16, TrackErrors> {
+        let b = pool
+            .get(i * 2..i * 2 + 2)
+            .ok_or_else(|| word_out_of_pool(what, i, pool.len() / 2))
+            .union()?;
         Ok(i16::from_be_bytes([b[0], b[1]]))
     };
     match desc.count {
         0 => Ok(TrackI16::Default),
         1 => Ok(TrackI16::Constant {
-            value: read_word(desc.index as usize).map_err(|e| e.context(what.to_string()))?,
+            value: read_word(desc.index as usize).context("constant value")?,
         }),
         count => {
             let stride = desc.stride();
             let mut keys = Vec::with_capacity(count as usize);
             let mut words = desc.index as usize;
             for k in 0..count as usize {
-                let time =
-                    read_word(words).map_err(|e| e.context(format!("{what}: key {k} time")))?;
-                let value = read_word(words + 1)
-                    .map_err(|e| e.context(format!("{what}: key {k} value")))?;
-                let tangent_in = read_word(words + 2)
-                    .map_err(|e| e.context(format!("{what}: key {k} tangent-in")))?;
+                let time = read_word(words).with_context(|| format!("key {k} time"))?;
+                let value = read_word(words + 1).with_context(|| format!("key {k} value"))?;
+                let tangent_in =
+                    read_word(words + 2).with_context(|| format!("key {k} tangent-in"))?;
                 let tangent_out = if stride == 4 {
-                    read_word(words + 3)
-                        .map_err(|e| e.context(format!("{what}: key {k} tangent-out")))?
+                    read_word(words + 3).with_context(|| format!("key {k} tangent-out"))?
                 } else {
                     tangent_in
                 };
@@ -181,7 +209,7 @@ pub fn read_track_i16(desc: KeyDescriptor, pool: &[u8], what: &str) -> Result<Tr
                     tangent_out,
                 });
             }
-            strictly_increasing_i16(keys.iter().map(|k| k.time), what)?;
+            strictly_increasing(keys.iter().map(|k| f32::from(k.time)), what)?;
             Ok(TrackI16::Keyed {
                 tangent_type: desc.tangent_type,
                 keys,
@@ -198,7 +226,7 @@ pub struct AxisDescriptors {
 }
 
 impl AxisDescriptors {
-    pub fn read(table: &[u8], offset: usize) -> Result<Self> {
+    pub fn read(table: &[u8], offset: usize) -> eros::Result<Self, ReadErrors> {
         Ok(Self {
             scale: KeyDescriptor::read(table, offset).context("scale track")?,
             rotation: KeyDescriptor::read(table, offset + 6).context("rotation track")?,
@@ -212,7 +240,7 @@ impl AxisDescriptors {
         rot_pool: &[u8],
         trans_pool: &[u8],
         what: &str,
-    ) -> Result<gx::animation_manifest::AxisSrt> {
+    ) -> eros::Result<gx::animation_manifest::AxisSrt, TrackErrors> {
         use gx::animation_manifest::AxisSrt;
         Ok(AxisSrt {
             scale: read_track_f32(self.scale, scale_pool, &format!("{what} scale"))?,
@@ -227,34 +255,49 @@ impl AxisDescriptors {
 }
 
 /// Read a bounded NUL-terminated ASCII string at `offset` inside `data`.
-pub fn read_cstr(data: &[u8], offset: usize, what: &str) -> Result<String> {
+pub fn read_cstr(data: &[u8], offset: usize, what: &str) -> eros::Result<String, StringErrors> {
+    let invalid = |defect| InvalidString {
+        what: what.to_string(),
+        offset,
+        defect,
+    };
     let rest = data
         .get(offset..)
-        .ok_or_else(|| anyhow!("{what}: string offset {offset:#x} out of bounds"))?;
+        .ok_or_else(|| super::out_of_bounds(data, offset, 1, what))
+        .union()?;
     let len = rest
         .iter()
         .position(|&b| b == 0)
-        .ok_or_else(|| anyhow!("{what}: string at {offset:#x} is not NUL-terminated"))?;
+        .ok_or_else(|| invalid(StringDefect::NotNulTerminated))
+        .union()?;
     std::str::from_utf8(&rest[..len])
         .map(|s| s.to_owned())
-        .map_err(|_| anyhow!("{what}: string at {offset:#x} is not UTF-8/ASCII"))
+        .map_err(|_| invalid(StringDefect::NotUtf8))
+        .union()
 }
 
 /// Read a JSystem ResNTAB name table at `offset` inside `data`:
 /// `{u16 count, u16 pad, {u16 hash, u16 data-offset}[count], names…}` where
 /// each name's offset is relative to the table start.
-pub fn read_name_table(data: &[u8], offset: usize, what: &str) -> Result<Vec<String>> {
-    if data.len() < offset + 4 {
-        bail!("{what}: name table at {offset:#x} out of bounds");
-    }
-    let count = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
+pub fn read_name_table(
+    data: &[u8],
+    offset: usize,
+    what: &str,
+) -> eros::Result<Vec<String>, StringErrors> {
+    let header = offset
+        .checked_add(4)
+        .and_then(|end| data.get(offset..end))
+        .ok_or_else(|| super::out_of_bounds(data, offset, 4, what))
+        .union()?;
+    let count = u16::from_be_bytes([header[0], header[1]]) as usize;
     let mut names = Vec::with_capacity(count);
     for i in 0..count {
         let entry = offset + 4 + 4 * i;
-        if data.len() < entry + 4 {
-            bail!("{what}: name entry {i} at {entry:#x} out of bounds");
-        }
-        let name_off = u16::from_be_bytes([data[entry + 2], data[entry + 3]]) as usize;
+        let bytes = data
+            .get(entry..entry + 4)
+            .ok_or_else(|| super::out_of_bounds(data, entry, 4, &format!("{what} name entry {i}")))
+            .union()?;
+        let name_off = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
         names.push(read_cstr(
             data,
             offset + name_off,
