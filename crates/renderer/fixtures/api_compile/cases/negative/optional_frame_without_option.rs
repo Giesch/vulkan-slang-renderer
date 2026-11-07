@@ -12,7 +12,7 @@ use glam::Vec2;
 use mltrs_renderer::renderer::render_graph::{
     OptionalNode, PreparedRenderGraph, CpuUpdatedSlot, UploadNode, optional, upload,
 };
-use mltrs_renderer::renderer::{GraphExecuteErrors, FrameRenderer, CpuUpdatedBufferHandle};
+use mltrs_renderer::renderer::{DrawError, FrameRenderer, CpuUpdatedBufferHandle};
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
 
@@ -25,14 +25,15 @@ fn graph(points: &CpuUpdatedBufferHandle<Particle>) -> Graph {
 fn execute(
     prepared: &mut PreparedRenderGraph<Graph>,
     frame: FrameRenderer<'_>,
-) -> eros::Result<(), GraphExecuteErrors> {
+) -> Result<(), DrawError> {
     prepared.execute(
         frame,
         &vec![Particle {
             position: Vec2::ZERO,
             velocity: Vec2::ZERO,
         }],
-    )
+    )?;
+    Ok(())
 }
 
 fn main() {}

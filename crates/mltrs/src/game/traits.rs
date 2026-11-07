@@ -6,7 +6,7 @@ use sdl3::keyboard::Scancode as SDLScancode;
 
 use crate::app::App;
 use crate::env_config::{EnvConfig, exit_code};
-use crate::renderer::{self, FrameRenderer, Renderer};
+use crate::renderer::{self, DrawError, FrameRenderer, Renderer};
 use crate::shaders::atlas::ShaderAtlasRoot;
 
 const DEFAULT_FRAME_DELAY: Duration = Duration::from_millis(15); // about 60 fps
@@ -30,7 +30,12 @@ pub trait Game {
 
     fn update(&mut self) {}
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()>;
+    /// Draw one frame. A graph draw is `self.graph.execute(renderer, &params)?;
+    /// Ok(())`: `?` converts the graph's errors into [`DrawError`] (its own
+    /// per-frame errors land in [`DrawError::Graph`]). The direct-draw methods
+    /// (`renderer.submit_draws(..)`, `draw_indexed(..)`, …) already return
+    /// `Result<(), DrawError>` and can be the tail expression.
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
 
     fn window_title() -> &'static str {
         DEFAULT_WINDOW_TITLE
@@ -237,7 +242,7 @@ pub struct WindowDescription {
 pub trait RuntimeGame {
     fn update(&mut self);
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> eros::Result<()>;
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
 
     fn frame_delay(&self) -> Duration;
 
@@ -312,7 +317,7 @@ where
         self.update()
     }
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         self.draw(renderer)
     }
 
@@ -377,7 +382,7 @@ mod tests {
             unreachable!("CPU editor tests do not initialize a renderer")
         }
 
-        fn draw(&mut self, _renderer: FrameRenderer) -> eros::Result<()> {
+        fn draw(&mut self, _renderer: FrameRenderer) -> Result<(), DrawError> {
             unreachable!("CPU editor tests do not draw GPU frames")
         }
 
@@ -408,7 +413,7 @@ mod tests {
             unreachable!("CPU editor tests do not initialize a renderer")
         }
 
-        fn draw(&mut self, _renderer: FrameRenderer) -> eros::Result<()> {
+        fn draw(&mut self, _renderer: FrameRenderer) -> Result<(), DrawError> {
             unreachable!("CPU editor tests do not draw GPU frames")
         }
 

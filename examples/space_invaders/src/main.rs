@@ -336,7 +336,7 @@ impl Game for SpaceInvaders {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let resolution = renderer.window_resolution();
         let width = resolution.x;
         let height = resolution.y;

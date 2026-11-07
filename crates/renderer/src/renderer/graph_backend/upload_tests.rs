@@ -90,14 +90,14 @@ fn storage_case(target: Option<UploadTarget>, succeeds: bool) {
     )
     .unwrap();
     let mut graph = graph.prepare(&mut backend).unwrap();
-    let result = graph.execute(Frame(&backend), &(vec![1], vec![2, 3]));
+    // the conversion `Game::draw` uses: `graph.execute(..)?` into `DrawError`
+    let result = graph
+        .execute(Frame(&backend), &(vec![1], vec![2, 3]))
+        .map_err(crate::renderer::DrawError::from);
     assert_eq!(result.is_ok(), succeeds);
     if let Err(error) = &result {
         assert!(
-            matches!(
-                error.downcast_inner_ref::<crate::renderer::DrawError>(),
-                Some(crate::renderer::DrawError::Upload(_))
-            ),
+            matches!(error, crate::renderer::DrawError::Upload(_)),
             "expected an upload rejection, got {error:#?}"
         );
     }

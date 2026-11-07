@@ -8,7 +8,7 @@ use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use mltrs::game::*;
 use mltrs::renderer::{
-    CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawVertexCountNode, FrameRenderer,
+    CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawVertexCountNode, FrameRenderer,
     PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, SingletonBufferHandle,
     SingletonSlot, UniformBufferHandle, UploadNode, draw_vertex_count, upload,
 };
@@ -174,7 +174,7 @@ impl Game for RayMarching {
         self.boxes[0].transform = cube_moon_transform;
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let camera = self.camera_controller.camera(renderer.aspect_ratio());
         let resolution = renderer.window_resolution();
 

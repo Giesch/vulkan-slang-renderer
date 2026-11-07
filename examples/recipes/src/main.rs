@@ -5,9 +5,9 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawVertexCountNode, FrameRenderer,
-    PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, UniformBufferHandle, UploadNode,
-    dispatch, draw_vertex_count, upload,
+    ComputeNode, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawVertexCountNode,
+    FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
+    UniformBufferHandle, UploadNode, dispatch, draw_vertex_count, upload,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -101,7 +101,7 @@ impl Game for Recipes {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let resolution = renderer.render_resolution();
 
         self.graph.execute(renderer, &frame_inputs(resolution))?;

@@ -95,7 +95,7 @@ impl Game for GpuPicking {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let picked_id = renderer.picked_object_id();
         let aspect_ratio = renderer.aspect_ratio();
 

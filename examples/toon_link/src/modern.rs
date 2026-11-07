@@ -735,7 +735,7 @@ impl Game for ToonLinkModern {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         self.draw_posed(renderer, None)
     }
 }
@@ -748,7 +748,7 @@ impl ToonLinkModern {
         &mut self,
         mut renderer: FrameRenderer,
         palette: Option<&[Mat4]>,
-    ) -> eros::Result<()> {
+    ) -> Result<(), DrawError> {
         let spin = self
             .host_spin
             .unwrap_or_else(|| self.start_time.elapsed().as_secs_f32() * crate::MODEL_SPIN);

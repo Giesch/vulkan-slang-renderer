@@ -5,8 +5,8 @@ mod generated;
 
 use mltrs::game::Game;
 use mltrs::renderer::{
-    DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
-    UniformBufferHandle, draw_indexed,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, UniformBufferHandle, draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -61,7 +61,7 @@ impl Game for BasicTriangle {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
         let mvp = make_basic_mvp_matrices(aspect_ratio);
 

@@ -133,7 +133,7 @@ impl Game for SpriteBatch {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let (width, height) = Self::initial_window_size();
         let projection = Projection {
             matrix: directx::orthographic(0.0, width as f32, 0.0, height as f32, 0.0, -1.0),

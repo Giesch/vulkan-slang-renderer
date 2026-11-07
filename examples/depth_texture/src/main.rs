@@ -9,8 +9,8 @@ use mltrs::game::Game;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
-    TextureFilter, TextureHandle, UniformBufferHandle, draw_indexed,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -133,7 +133,7 @@ impl Game for DepthTextureGame {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let aspect_ratio = renderer.aspect_ratio();
         let elapsed = Instant::now() - self.start_time;
         let mvp = make_mvp_matrices(elapsed, aspect_ratio);

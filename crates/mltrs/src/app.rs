@@ -7,7 +7,7 @@ use sdl3::keyboard::Keycode;
 use sdl3::sys::timer::SDL_DelayPrecise;
 
 use crate::game::traits::RuntimeGame;
-use crate::renderer::{FrameRenderer, Renderer};
+use crate::renderer::{DrawError, FrameRenderer, Renderer};
 use crate::traits::{Input, Key, MouseButton};
 
 pub struct App {
@@ -56,8 +56,12 @@ impl App {
                 }
 
                 let frame_renderer = FrameRenderer::new(&mut self.renderer);
+                // `into_union` unwraps the Frame/Graph adapters, so the report
+                // shows their context lines; `?` on the DrawError itself would
+                // bury them inside one root error.
                 self.game
                     .draw_frame(frame_renderer)
+                    .map_err(DrawError::into_union)
                     .with_context(|| format!("Draw frame {}", stats.frames))?;
                 stats.frames += 1;
             }

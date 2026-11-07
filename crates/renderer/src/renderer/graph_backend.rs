@@ -51,6 +51,7 @@ impl mltrs_render_graph::backend::PreparationBackend for Renderer {
             .map_err(eros::ErrorUnion::adapter)?;
         let sampled = self
             .storage_texture_as_sampled(&storage)
+            .widen()
             .map_err(eros::ErrorUnion::adapter)?;
         let image = mltrs_render_graph::backend::PhysicalImage {
             storage: storage.bindless_handle(),
@@ -202,7 +203,6 @@ impl mltrs_render_graph::backend::FrameBackend for super::FrameRenderer<'_> {
             },
             on_submitted,
         )
-        .map_err(DrawError::from)
     }
 }
 

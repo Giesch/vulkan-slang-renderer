@@ -13,9 +13,9 @@ use glam::{Vec2, Vec3, Vec4};
 use mltrs::editor::{Label, Slider};
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, ComputeNodeWithPush, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawVertexCountNode,
-    FrameRenderer, GraphFormat, LoopCount, OptionalNode, PreparedRenderGraph, RenderGraph,
-    Renderer, RepeatNode, ResourcePlanner, StorageTextureHandle, TextureHandle,
+    ComputeNode, ComputeNodeWithPush, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError,
+    DrawVertexCountNode, FrameRenderer, GraphFormat, LoopCount, OptionalNode, PreparedRenderGraph,
+    RenderGraph, Renderer, RepeatNode, ResourcePlanner, StorageTextureHandle, TextureHandle,
     UniformBufferHandle, UploadNode, optional,
     render_graph::{dispatch, draw_vertex_count},
     repeat, upload,
@@ -759,7 +759,7 @@ impl Game for Watercolor {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
         let stroke_points = std::mem::take(&mut self.stroke_points);
         let point_count = stroke_points
             .len()

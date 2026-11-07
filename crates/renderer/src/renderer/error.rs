@@ -1,8 +1,9 @@
 //! Typed errors for the renderer operations a caller could react to.
 //!
 //! Setup and swapchain failures (`Renderer::init`, `recreate_swapchain`,
-//! `on_resize`, frame submission) are reported as `eros::Result<T>` (AnyError)
-//! with context, because crashing is the only sensible response to them.
+//! `on_resize`) are reported as `eros::Result<T>` (AnyError) with context,
+//! because crashing is the only sensible response to them. A frame submission
+//! failure is the same AnyError union, carried by [`DrawError::Frame`].
 //! Everything below is part of a typed set returned by a resource-creation,
 //! readback, or graph path. `ash::vk::Result` is a member of most sets as-is.
 
@@ -34,6 +35,20 @@ impl std::fmt::Display for BindlessHeapKind {
 pub struct BindlessHeapFull {
     pub kind: BindlessHeapKind,
     pub capacity: u32,
+}
+
+/// A texture was requested with a zero width or height.
+///
+/// Vulkan forbids zero-extent images, so every user-facing texture
+/// constructor rejects this before any Vulkan call or allocation.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("texture {texture} has a zero extent: {width}x{height}")]
+pub struct ZeroTextureExtent {
+    /// The texture's source file name, or a description for unnamed
+    /// textures (eg. `R32G32B32A32_SFLOAT storage texture`).
+    pub texture: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// RGBA8 pixel data did not describe a valid image.
@@ -146,14 +161,26 @@ pub type PipelineErrors = (
 
 /// Errors from the texture constructors that take pixel or mip data.
 pub type TextureErrors = (
+    ZeroTextureExtent,
     InvalidMipLevels,
     UnsupportedTextureFormat,
     BindlessHeapFull,
     vk::Result,
 );
 
+/// The checks a texture's extent, format and mip data must pass before any
+/// Vulkan call: a subset of [`TextureErrors`].
+pub type TextureDataErrors = (
+    ZeroTextureExtent,
+    InvalidMipLevels,
+    UnsupportedTextureFormat,
+);
+
 /// Errors from creating a texture that only needs a heap slot and Vulkan objects.
 pub type HeapResourceErrors = (BindlessHeapFull, vk::Result);
+
+/// Errors from [`Renderer::create_storage_texture`](super::Renderer::create_storage_texture).
+pub type StorageTextureErrors = (ZeroTextureExtent, BindlessHeapFull, vk::Result);
 
 /// Errors from `create_singleton_buffer`.
 pub type SingletonBufferErrors = (std::num::TryFromIntError, EmptySingletonBuffer, vk::Result);
@@ -225,13 +252,28 @@ pub enum IndirectRejected {
     ExceedsAllocation,
 }
 
-/// The renderer's [`FrameBackend::Error`](mltrs_render_graph::backend::FrameBackend::Error):
-/// why a prepared graph's frame was not drawn.
+/// The error type of `mltrs::Game::draw` and the renderer's
+/// [`FrameBackend::Error`](mltrs_render_graph::backend::FrameBackend::Error):
+/// why a frame was not drawn.
 ///
-/// `Upload` and `Indirect` are rejected before anything is written, queued,
-/// or submitted. `Frame` is a failure in frame submission itself (Vulkan,
-/// swapchain recreation, debug-build shader hot reload); its source is the
-/// AnyError union with its context and backtrace.
+/// - `Upload` and `Indirect` are rejected before anything is written, queued,
+///   or submitted.
+/// - `Frame` is a failure in frame submission itself (Vulkan, swapchain
+///   recreation, debug-build shader hot reload); it holds the AnyError union
+///   with its context and backtrace.
+/// - `Graph` is one of the render graph's own per-frame errors
+///   ([`GraphFrameErrors`]: a dropped buffer or a planning failure), still
+///   typed: narrow it with `.as_ref()` / `.union()` on the adapter.
+///
+/// A graph draw converts with `?`: `self.graph.execute(frame, &params)?`
+/// turns the graph's [`GraphExecuteErrors`] into a `DrawError` (see the
+/// `From` impl). The direct-draw methods (`FrameRenderer::submit_draws`,
+/// `draw_*`) return `Result<(), DrawError>` themselves.
+///
+/// `DrawError` implements `std::error::Error`, so `?` into an
+/// `eros::Result<T>` (AnyError) also compiles, but it wraps the whole enum as
+/// one root error and hides the `Frame`/`Graph` union's context lines inside
+/// it. Use [`DrawError::into_union`] where a `DrawError` becomes AnyError.
 #[derive(Debug, thiserror::Error)]
 pub enum DrawError {
     #[error(transparent)]
@@ -240,6 +282,28 @@ pub enum DrawError {
     Indirect(#[from] IndirectRejected),
     #[error("failed to draw frame")]
     Frame(#[source] eros::ErrorUnionAdapter),
+    #[error(transparent)]
+    Graph(eros::ErrorUnionAdapter<GraphFrameErrors>),
+}
+
+impl DrawError {
+    /// Converts to an AnyError union without hiding diagnostics: the `Frame`
+    /// and `Graph` adapters are unwrapped, so their context and backtrace
+    /// stay visible in `{:?}` / `{:#?}` and `downcast_inner_ref` sees the
+    /// original root. `Upload` and `Indirect` become new unions rooted at the
+    /// [`UploadRejected`] / [`IndirectRejected`] value.
+    ///
+    /// This is an inherent method rather than `From<DrawError> for
+    /// eros::ErrorUnion`, which would overlap eros's blanket
+    /// `impl<E: Error> From<E> for ErrorUnion`.
+    pub fn into_union(self) -> eros::ErrorUnion {
+        match self {
+            Self::Upload(error) => eros::ErrorUnion::new(error),
+            Self::Indirect(error) => eros::ErrorUnion::new(error),
+            Self::Frame(error) => error.union(),
+            Self::Graph(error) => error.union().erase(),
+        }
+    }
 }
 
 impl From<eros::ErrorUnion> for DrawError {
@@ -248,11 +312,116 @@ impl From<eros::ErrorUnion> for DrawError {
     }
 }
 
+/// Lets a graph draw use `?`: `PreparedRenderGraph::execute` returns
+/// [`GraphExecuteErrors`] (the graph's own errors plus this backend's
+/// `DrawError`).
+///
+/// A held `DrawError` is returned as is. Context attached to the execute
+/// union (by a caller's `.context(..)` before `?`) is moved onto the inner
+/// union of a `Frame` or `Graph` error; for `Upload` and `Indirect` it is
+/// dropped together with the backtrace captured inside `execute`, since those
+/// variants carry no diagnostics. Any other error becomes
+/// [`DrawError::Graph`] with every diagnostic kept.
+impl From<eros::ErrorUnion<GraphExecuteErrors>> for DrawError {
+    fn from(error: eros::ErrorUnion<GraphExecuteErrors>) -> Self {
+        match error.narrow::<(DrawError,), _>() {
+            Ok(drawn) => {
+                let contexts: Vec<String> = drawn.contexts().map(ToString::to_string).collect();
+                match drawn.into_single() {
+                    Self::Frame(inner) => Self::Frame(with_contexts(inner.union(), contexts)),
+                    Self::Graph(inner) => Self::Graph(with_contexts(inner.union(), contexts)),
+                    other => other,
+                }
+            }
+            Err(graph) => Self::Graph(graph.adapter()),
+        }
+    }
+}
+
+/// Re-attaches context lines (innermost first) to `union`, keeping its own.
+fn with_contexts<E: eros::TypeSet>(
+    union: eros::ErrorUnion<E>,
+    contexts: Vec<String>,
+) -> eros::ErrorUnionAdapter<E> {
+    contexts
+        .into_iter()
+        .fold(union, eros::ErrorUnion::context)
+        .adapter()
+}
+
+/// The render graph's own per-frame errors:
+/// [`ExecuteErrors`](mltrs_render_graph::error::ExecuteErrors) without the
+/// backend member. Held by [`DrawError::Graph`].
+pub type GraphFrameErrors = (
+    mltrs_render_graph::error::UniformBufferDropped,
+    mltrs_render_graph::error::BufferDropped,
+    mltrs_render_graph::error::FrameValueCountMismatch,
+    mltrs_render_graph::error::UploadExceedsCapacity,
+    mltrs_render_graph::error::UniformSizeMismatch,
+    mltrs_render_graph::error::IndexRangeOutOfBounds,
+);
+
 /// The renderer's [`PreparationBackend::PrepareError`](mltrs_render_graph::backend::PreparationBackend::PrepareError):
 /// allocating one graph texture failed.
-pub type GraphImageError = eros::ErrorUnionAdapter<HeapResourceErrors>;
+/// `ZeroTextureExtent` never occurs here: graph validation rejects zero
+/// extents first.
+pub type GraphImageError = eros::ErrorUnionAdapter<StorageTextureErrors>;
 
 /// What [`PreparedRenderGraph::execute`](mltrs_render_graph::PreparedRenderGraph::execute)
 /// returns for a [`FrameRenderer`](super::FrameRenderer): the graph's own
 /// per-frame errors plus the renderer's [`DrawError`].
 pub type GraphExecuteErrors = mltrs_render_graph::error::ExecuteErrors<DrawError>;
+
+#[cfg(test)]
+mod draw_error_tests {
+    use super::*;
+    use mltrs_render_graph::error::BufferDropped;
+
+    fn dropped() -> BufferDropped {
+        BufferDropped {
+            name: "particles".to_string(),
+            kind: "Storage",
+            slot: 3,
+        }
+    }
+
+    #[test]
+    fn graph_error_becomes_typed_graph_variant_with_context() {
+        let error: eros::ErrorUnion<GraphExecuteErrors> = eros::ErrorUnion::new(dropped());
+        let error = DrawError::from(error.context("Draw scene"));
+        let DrawError::Graph(adapter) = &error else {
+            panic!("expected DrawError::Graph, got {error:#?}");
+        };
+        assert_eq!(adapter.as_ref().downcast_inner_ref(), Some(&dropped()));
+
+        let union = error.into_union();
+        assert_eq!(union.downcast_inner_ref(), Some(&dropped()));
+        assert!(format!("{union:#?}").contains("Draw scene"), "{union:#?}");
+    }
+
+    #[test]
+    fn held_draw_error_is_returned_and_keeps_frame_context() {
+        let frame = DrawError::from(eros::error!("device lost").context("Submit frame"));
+        let error: eros::ErrorUnion<GraphExecuteErrors> = eros::ErrorUnion::new(frame);
+        let error = DrawError::from(error.context("Draw scene"));
+        assert!(matches!(error, DrawError::Frame(_)), "{error:#?}");
+
+        let report = format!("{:#?}", error.into_union());
+        for line in ["device lost", "Submit frame", "Draw scene"] {
+            assert!(report.contains(line), "missing {line:?} in {report}");
+        }
+    }
+
+    #[test]
+    fn held_upload_rejection_is_returned_as_is() {
+        let rejected = UploadRejected::NotLive { index: 1 };
+        let error: eros::ErrorUnion<GraphExecuteErrors> =
+            eros::ErrorUnion::new(DrawError::from(rejected.clone()));
+        let error = DrawError::from(error);
+        assert!(
+            matches!(&error, DrawError::Upload(inner) if *inner == rejected),
+            "{error:#?}"
+        );
+        assert_eq!(error.into_union().downcast_inner_ref(), Some(&rejected));
+    }
+}
