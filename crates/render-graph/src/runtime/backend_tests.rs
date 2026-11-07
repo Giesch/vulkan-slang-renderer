@@ -19,6 +19,19 @@ use std::{cell::RefCell, rc::Rc};
 
 type Events = Rc<RefCell<Vec<String>>>;
 
+/// The fake backend's own failure, standing in for a Vulkan/allocation error.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{0} failed")]
+struct FakeFailure(&'static str);
+
+fn fail_if(failed: bool, what: &'static str) -> Result<(), FakeFailure> {
+    if failed {
+        Err(FakeFailure(what))
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FailPoint {
     Wait,
@@ -67,6 +80,7 @@ impl BackendTypes for Fake {
 }
 
 impl PreparationBackend for Fake {
+    type PrepareError = FakeFailure;
     fn max_image_dimension_2d(&self) -> u32 {
         self.max
     }
@@ -75,12 +89,12 @@ impl PreparationBackend for Fake {
         width: u32,
         height: u32,
         format: GraphFormat,
-    ) -> anyhow::Result<(PhysicalImage, Self::Resource)> {
+    ) -> Result<(PhysicalImage, Self::Resource), FakeFailure> {
         let id = self.allocated;
         self.events
             .borrow_mut()
             .push(format!("allocate:{id}:{width}:{height}:{format:?}"));
-        anyhow::ensure!(self.fail_allocation != Some(id), "allocation failed");
+        fail_if(self.fail_allocation == Some(id), "allocation")?;
         self.allocated += 1;
         let resource = Rc::new(Resource {
             id,
@@ -136,7 +150,7 @@ struct Frame<'a>(&'a Fake);
 
 impl FrameBackend for Frame<'_> {
     type Backend = Fake;
-    type Error = anyhow::Error;
+    type Error = FakeFailure;
 
     fn lookup(&self) -> &dyn FrameLookup {
         self.0
@@ -146,10 +160,10 @@ impl FrameBackend for Frame<'_> {
         self,
         batch: crate::commands::CommandBatch,
         on_submitted: impl FnOnce(),
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), FakeFailure> {
         let event = |name: &str| self.0.events.borrow_mut().push(name.to_owned());
         event("wait");
-        anyhow::ensure!(self.0.fail != Some(FailPoint::Wait), "wait failed");
+        fail_if(self.0.fail == Some(FailPoint::Wait), "wait")?;
         batch.visit_writes(|uniform, index, bytes| {
             event(&format!("write:{uniform}:{index}:{}", bytes.len()))
         });
@@ -190,11 +204,11 @@ impl FrameBackend for Frame<'_> {
             ));
         }
         event("submit");
-        anyhow::ensure!(self.0.fail != Some(FailPoint::Submit), "submit failed");
+        fail_if(self.0.fail == Some(FailPoint::Submit), "submit")?;
         on_submitted();
         event("commit");
         event("present");
-        anyhow::ensure!(self.0.fail != Some(FailPoint::Present), "present failed");
+        fail_if(self.0.fail == Some(FailPoint::Present), "present")?;
 
         Ok(())
     }
@@ -257,7 +271,20 @@ fn graph(extent: u32) -> RenderGraph<ComputeNode<Params>> {
 #[test]
 fn backend_prepare_extent_before_allocation() {
     let mut backend = Fake::default();
-    assert!(graph(65).prepare(&mut backend).is_err());
+    let Err(error) = graph(65).prepare(&mut backend) else {
+        panic!("an oversized texture was prepared");
+    };
+    assert_eq!(
+        error.downcast_inner_ref::<crate::error::TextureExtentsExceedDevice>(),
+        Some(&crate::error::TextureExtentsExceedDevice {
+            max: 64,
+            textures: vec![crate::error::OversizedTexture {
+                texture: "history".into(),
+                width: 65,
+                height: 65,
+            }],
+        })
+    );
     assert!(backend.events.borrow().is_empty());
 }
 
@@ -311,7 +338,15 @@ fn backend_partial_prepare_failure() {
         fail_allocation: Some(1),
         ..Default::default()
     };
-    assert!(graph(8).prepare(&mut backend).is_err());
+    let Err(error) = graph(8).prepare(&mut backend) else {
+        panic!("a failed allocation was prepared");
+    };
+    assert_eq!(
+        error.downcast_inner_ref::<FakeFailure>(),
+        Some(&FakeFailure("allocation"))
+    );
+    let report = format!("{error:#?}");
+    assert!(report.contains("texture history image 1"), "{report}");
     assert_eq!(backend.registered.len(), 1);
     assert!(
         !backend
@@ -330,13 +365,12 @@ fn backend_dropped_buffer_rejected() {
     let mut prepared = graph(8).prepare(&mut backend).unwrap();
     backend.live = false;
     backend.events.borrow_mut().clear();
+    let error = prepared.execute(Frame(&backend), &()).unwrap_err();
     assert!(
-        prepared
-            .execute(Frame(&backend), &())
-            .unwrap_err()
-            .to_string()
-            .contains("dropped")
+        error.is_inner::<crate::error::UniformBufferDropped>(),
+        "{error}"
     );
+    assert!(error.to_string().contains("dropped"));
     assert!(backend.events.borrow().is_empty());
 }
 
@@ -350,13 +384,12 @@ fn backend_upload_capacity_rejected() {
     .unwrap()
     .prepare(&mut backend)
     .unwrap();
+    let error = prepared.execute(Frame(&backend), &vec![1, 2]).unwrap_err();
     assert!(
-        prepared
-            .execute(Frame(&backend), &vec![1, 2])
-            .unwrap_err()
-            .to_string()
-            .contains("capacity")
+        error.is_inner::<crate::error::UploadExceedsCapacity>(),
+        "{error}"
     );
+    assert!(error.to_string().contains("capacity"));
     assert!(backend.events.borrow().is_empty());
 }
 
@@ -369,7 +402,8 @@ fn backend_cursor_unchanged_on_submission_failure() {
         };
         let mut prepared = graph(8).prepare(&mut backend).unwrap();
         let before = prepared.tex[0].cursor;
-        assert!(prepared.execute(Frame(&backend), &()).is_err());
+        let error = prepared.execute(Frame(&backend), &()).unwrap_err();
+        assert!(error.is_inner::<FakeFailure>(), "{error}");
         assert_eq!(prepared.tex[0].cursor, before);
     }
 }
