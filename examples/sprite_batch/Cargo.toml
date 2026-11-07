@@ -10,7 +10,6 @@ workspace = true
 [dependencies]
 mltrs.workspace = true
 
-anyhow.workspace = true
 eros.workspace = true
 ash.workspace = true
 facet.workspace = true

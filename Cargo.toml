@@ -19,7 +19,6 @@ mltrs-render-graph = { path = "crates/render-graph" }
 mltrs-slang-reflection = { path = "crates/slang-reflection" }
 
 # external
-anyhow = "1.0.100"
 eros = "0.8.1"
 ash = { version = "0.38.0", features = ["linked"] }
 askama = "0.14.0"

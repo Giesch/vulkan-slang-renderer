@@ -10,7 +10,6 @@ workspace = true
 [dependencies]
 mltrs-renderer.workspace = true
 
-anyhow.workspace = true
 eros.workspace = true
 thiserror.workspace = true
 ash.workspace = true

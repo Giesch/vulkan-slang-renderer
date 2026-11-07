@@ -119,12 +119,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anyhow"
-version = "1.0.100"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
-
-[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -200,7 +194,6 @@ dependencies = [
 name = "basic_triangle"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -385,7 +378,6 @@ dependencies = [
 name = "convert-link"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "convert-link",
  "eros",
  "glam",
@@ -495,7 +487,6 @@ checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 name = "depth_texture"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -529,7 +520,6 @@ dependencies = [
 name = "dragon"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -849,7 +839,6 @@ dependencies = [
 name = "gpu_picking"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -1025,7 +1014,6 @@ dependencies = [
 name = "koch_curve"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -1167,7 +1155,6 @@ dependencies = [
 name = "mltrs"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "egui",
  "eros",
@@ -1188,7 +1175,6 @@ dependencies = [
 name = "mltrs-cli"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "askama",
  "clap",
  "eros",
@@ -1206,7 +1192,6 @@ dependencies = [
 name = "mltrs-render-graph"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "eros",
  "serde",
  "serde_json",
@@ -1217,7 +1202,6 @@ dependencies = [
 name = "mltrs-renderer"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "egui",
  "egui-ash-renderer",
@@ -1242,7 +1226,6 @@ dependencies = [
 name = "mltrs-slang-reflection"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "eros",
  "serde",
  "serde_json",
@@ -1264,7 +1247,6 @@ dependencies = [
 name = "multi_mesh"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -1548,7 +1530,6 @@ dependencies = [
 name = "particles"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -1651,7 +1632,6 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 name = "ray_marching"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -1665,7 +1645,6 @@ dependencies = [
 name = "recipes"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -1798,7 +1777,6 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "sdf_2d"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -1925,7 +1903,6 @@ dependencies = [
 name = "serenity_crt"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -1993,7 +1970,6 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 name = "space_invaders"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -2016,7 +1992,6 @@ dependencies = [
 name = "sprite_batch"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -2037,7 +2012,6 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 name = "suzanne"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -2221,7 +2195,6 @@ dependencies = [
 name = "toon_link"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "egui",
  "eros",
@@ -2297,7 +2270,6 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "viking_room"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
@@ -2429,7 +2401,6 @@ dependencies = [
 name = "watercolor"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "eros",
  "facet",
