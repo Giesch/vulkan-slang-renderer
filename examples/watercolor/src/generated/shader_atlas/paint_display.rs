@@ -11,7 +11,7 @@ use facet::Facet;
 use serde::Serialize;
 
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_read::GPURead;
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -152,21 +152,27 @@ pub struct Resources<'a> {
 impl GPURead for DebugView {
     const GPU_SIZE: usize = 4;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
         let tag = <u32 as GPURead>::read_gpu(bytes)?;
 
-        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid DebugView tag: {tag}"))
+        eros::IntoUnion::union(Self::try_from(tag).map_err(|tag| InvalidGpuEnumTag {
+            type_name: "DebugView",
+            tag: i128::from(tag),
+        }))
     }
 }
 
 impl GPURead for PigmentKM {
     const GPU_SIZE: usize = 32;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for PigmentKM"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "PigmentKM",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             absorption: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[0..12])?),

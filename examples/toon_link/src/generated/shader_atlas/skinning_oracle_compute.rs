@@ -10,7 +10,7 @@ use serde::Serialize;
 
 pub use super::skinning::{SkinJoint, VertexSkinning};
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_read::GPURead;
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
@@ -104,11 +104,14 @@ pub struct Resources<'a> {
 impl GPURead for OracleOutput {
     const GPU_SIZE: usize = 64;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for OracleOutput"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "OracleOutput",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             position: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[0..12])?),
@@ -127,11 +130,14 @@ impl GPURead for OracleOutput {
 impl GPURead for OracleCase {
     const GPU_SIZE: usize = 48;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for OracleCase"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "OracleCase",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             position: GPURead::read_gpu(&bytes[0..16])?,

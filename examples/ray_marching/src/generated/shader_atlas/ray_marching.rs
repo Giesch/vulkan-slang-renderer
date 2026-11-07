@@ -12,7 +12,7 @@ use serde::Serialize;
 pub use super::mltrs::Projection;
 pub use super::ray_march_camera::RayMarchCamera;
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_read::GPURead;
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -97,11 +97,14 @@ pub struct Resources<'a> {
 impl GPURead for BoxRect {
     const GPU_SIZE: usize = 96;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for BoxRect"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "BoxRect",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             transform: GPURead::read_gpu(&bytes[0..64])?,
@@ -116,11 +119,14 @@ impl GPURead for BoxRect {
 impl GPURead for Sphere {
     const GPU_SIZE: usize = 32;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for Sphere"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "Sphere",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             center: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[0..12])?),

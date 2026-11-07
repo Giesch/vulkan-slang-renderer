@@ -10,7 +10,7 @@ use serde::Serialize;
 
 pub use super::shared::Solution;
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_read::GPURead;
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};
