@@ -202,6 +202,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -386,6 +387,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "convert-link",
+ "eros",
  "glam",
  "gx",
  "image",
@@ -494,6 +496,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -527,6 +530,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -636,13 +640,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "eros"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "793a046ee72b724bb63d880d3e14598711e036a27d6a78a858bef8a52d495fc0"
+dependencies = [
+ "eros-macros",
+]
+
+[[package]]
+name = "eros-macros"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e0cd13457e91a0ca28420e594d5c77dd0fc1bf0de000acf225c374ad058477a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -826,6 +850,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1001,6 +1026,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1143,6 +1169,7 @@ dependencies = [
  "anyhow",
  "ash",
  "egui",
+ "eros",
  "facet",
  "glam",
  "ktx2",
@@ -1162,6 +1189,7 @@ dependencies = [
  "anyhow",
  "askama",
  "clap",
+ "eros",
  "glam",
  "heck",
  "insta",
@@ -1176,6 +1204,7 @@ name = "mltrs-render-graph"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "eros",
  "serde",
  "serde_json",
 ]
@@ -1188,6 +1217,7 @@ dependencies = [
  "ash",
  "egui",
  "egui-ash-renderer",
+ "eros",
  "facet",
  "facet-core",
  "glam",
@@ -1209,6 +1239,7 @@ name = "mltrs-slang-reflection"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "eros",
  "serde",
  "serde_json",
  "shader-slang",
@@ -1230,6 +1261,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1513,6 +1545,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1615,6 +1648,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1628,6 +1662,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1724,7 +1759,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1760,6 +1795,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "log",
@@ -1886,6 +1922,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1953,6 +1990,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1975,6 +2013,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -1995,6 +2034,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -2179,6 +2219,7 @@ dependencies = [
  "anyhow",
  "ash",
  "egui",
+ "eros",
  "facet",
  "glam",
  "gx",
@@ -2253,6 +2294,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "mltrs",
@@ -2384,6 +2426,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ash",
+ "eros",
  "facet",
  "glam",
  "image",
@@ -2408,7 +2451,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
