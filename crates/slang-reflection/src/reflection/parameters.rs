@@ -1,9 +1,26 @@
 //! reflection generating a json format based on slangc's, implemented originally here:
 //! https://github.com/shader-slang/slang/blob/master/source/slang/slang-reflection-json.cpp
 
+use eros::{IntoUnion, ReshapeUnion, context};
 use shader_slang as slang;
 
+use crate::ShaderStage;
+use crate::error::*;
 use crate::json::*;
+
+/// Failures reflecting the global parameters: the global's own shape, plus
+/// its element struct's fields.
+type GlobalParameterErrors = (
+    UnsupportedGlobalParameter,
+    InvalidPushConstantBlock,
+    FieldOutsideUniformLayout,
+    UnexpectedVectorBinding,
+    StructuredBufferField,
+    UnsupportedArrayElement,
+    UnsupportedPointer,
+    UnsupportedDescriptorHandle,
+    UnsupportedEnum,
+);
 
 pub struct Parameters {
     pub global_parameters: Vec<GlobalParameter>,
@@ -22,12 +39,13 @@ pub struct ComputeParameters {
 }
 
 pub fn reflect_entry_points(
+    source_file_name: &str,
     program_layout: &slang::reflection::Shader,
-) -> anyhow::Result<Parameters> {
+) -> eros::Result<Parameters, ReflectionErrors> {
     let mut vertex_entry_point: Option<EntryPoint> = None;
     let mut fragment_entry_point: Option<EntryPoint> = None;
 
-    let global_parameters = reflect_global_parameters(program_layout)?;
+    let global_parameters = reflect_global_parameters(program_layout).widen()?;
 
     for entry_point in program_layout.entry_points() {
         let entry_point_name = entry_point.name().unwrap().to_string();
@@ -36,14 +54,16 @@ pub fn reflect_entry_points(
         for param in entry_point.parameters() {
             let parameter_name = param.name().unwrap().to_string();
 
-            reject_non_varying_entry_point_parameter(param, &parameter_name, &entry_point_name)?;
+            reject_non_varying_entry_point_parameter(param, &parameter_name, &entry_point_name)
+                .union()?;
 
             let type_layout = param.type_layout().unwrap();
 
             let entry_point_param_json = match type_layout.kind() {
                 slang::TypeKind::Struct => {
                     let fields =
-                        reflect_struct_fields(type_layout, program_layout, &mut Vec::new())?;
+                        reflect_struct_fields(type_layout, program_layout, &mut Vec::new())
+                            .widen()?;
                     let type_name = type_layout.name().unwrap().to_string();
 
                     EntryPointParameter::Struct(StructEntryPointParameter {
@@ -107,11 +127,16 @@ pub fn reflect_entry_points(
         }
     }
 
-    let (vertex_entry_point, fragment_entry_point) =
-        match (vertex_entry_point, fragment_entry_point) {
-            (Some(v), Some(f)) => (v, f),
-            _ => anyhow::bail!("failed to load vertex and fragment entry points"),
-        };
+    let missing = |stage| MissingEntryPoint {
+        stage,
+        source_file_name: source_file_name.to_string(),
+    };
+    let Some(vertex_entry_point) = vertex_entry_point else {
+        return Err(missing(ShaderStage::Vertex)).union();
+    };
+    let Some(fragment_entry_point) = fragment_entry_point else {
+        return Err(missing(ShaderStage::Fragment)).union();
+    };
 
     let entry_points = VertFragEntryPoints {
         vertex_entry_point,
@@ -130,7 +155,7 @@ pub fn reflect_entry_points(
 /// globals, plus at most one `[[vk::push_constant]] ConstantBuffer<T>` block.
 fn reflect_global_parameters(
     program_layout: &slang::reflection::Shader,
-) -> anyhow::Result<Vec<GlobalParameter>> {
+) -> eros::Result<Vec<GlobalParameter>, GlobalParameterErrors> {
     let mut global_parameters: Vec<GlobalParameter> = vec![];
     let mut push_constant_block: Option<String> = None;
 
@@ -149,21 +174,19 @@ fn reflect_global_parameters(
         let is_push_constant = is_constant_buffer && annotated_as_push_constant;
 
         if type_layout.kind() != slang::TypeKind::ParameterBlock && !is_push_constant {
-            anyhow::bail!(
-                "non-ParameterBlock global: {parameter_name}; only ParameterBlock globals \
-                and [[vk::push_constant]] ConstantBuffer blocks are supported"
-            )
+            return Err(UnsupportedGlobalParameter { parameter_name }).union();
         }
 
         if is_push_constant {
             // add_push_constatant_range_for_constant_buffer hard-codes offset 0,
             // relying on slang emitting a single range; a second block would
             // silently overlap the first rather than sit after it.
-            if let Some(first) = &push_constant_block {
-                anyhow::bail!(
-                    "push constant block '{parameter_name}': '{first}' is already declared, \
-                    and only one push constant block per shader is supported"
-                )
+            if let Some(first) = push_constant_block {
+                return Err(InvalidPushConstantBlock::Duplicate {
+                    parameter_name,
+                    first,
+                })
+                .union();
             }
             push_constant_block = Some(parameter_name.clone());
         }
@@ -174,7 +197,8 @@ fn reflect_global_parameters(
             slang::TypeKind::Struct => {
                 let element_type_name = element_type_layout.name().unwrap().to_string();
                 let fields =
-                    reflect_struct_fields(element_type_layout, program_layout, &mut Vec::new())?;
+                    reflect_struct_fields(element_type_layout, program_layout, &mut Vec::new())
+                        .widen()?;
 
                 ParameterBlockElementType {
                     type_name: element_type_name,
@@ -186,7 +210,7 @@ fn reflect_global_parameters(
         };
 
         let global_parameter = if is_push_constant {
-            reject_descriptor_fields(&element_type.fields, &parameter_name)?;
+            reject_descriptor_fields(&element_type.fields, &parameter_name).union()?;
 
             GlobalParameter::PushConstant(PushConstantGlobalParameter {
                 parameter_name,
@@ -222,7 +246,7 @@ fn reject_non_varying_entry_point_parameter(
     param: &slang::reflection::VariableLayout,
     parameter_name: &str,
     entry_point_name: &str,
-) -> anyhow::Result<()> {
+) -> Result<(), UnsupportedEntryPointParameter> {
     // a uniform struct with a descriptor reports that descriptor's category
     // first, so the primary category alone is not enough to classify a parameter
     for category in param.categories() {
@@ -230,20 +254,19 @@ fn reject_non_varying_entry_point_parameter(
             slang::ParameterCategory::VaryingInput | slang::ParameterCategory::VaryingOutput => {}
 
             slang::ParameterCategory::Uniform | slang::ParameterCategory::PushConstantBuffer => {
-                anyhow::bail!(
-                    "entry point parameter '{parameter_name}' on '{entry_point_name}': a uniform \
-                    entry point parameter is promoted to an implicit push constant range that no \
-                    generated code writes; declare a [[vk::push_constant]] ConstantBuffer<T> \
-                    global instead"
-                )
+                return Err(UnsupportedEntryPointParameter::Uniform {
+                    parameter_name: parameter_name.to_string(),
+                    entry_point_name: entry_point_name.to_string(),
+                });
             }
 
-            other => anyhow::bail!(
-                "entry point parameter '{parameter_name}' on '{entry_point_name}': a parameter \
-                bound as {other:?} is a descriptor that nothing binds, and it takes a descriptor \
-                set of its own — which shifts the set index of every ParameterBlock after it; \
-                declare it in a ParameterBlock<T> global instead"
-            ),
+            other => {
+                return Err(UnsupportedEntryPointParameter::Descriptor {
+                    parameter_name: parameter_name.to_string(),
+                    entry_point_name: entry_point_name.to_string(),
+                    category: format!("{other:?}"),
+                });
+            }
         }
     }
 
@@ -252,15 +275,18 @@ fn reject_non_varying_entry_point_parameter(
 
 /// A descriptor-backed resource inside a push block is not allowed,
 /// and would fail silently without an explicit check like this
-fn reject_descriptor_fields(fields: &[StructField], block_name: &str) -> anyhow::Result<()> {
+fn reject_descriptor_fields(
+    fields: &[StructField],
+    block_name: &str,
+) -> Result<(), InvalidPushConstantBlock> {
     for field in fields {
         match field {
-            StructField::Resource(resource) => anyhow::bail!(
-                "push constant block '{block_name}': field '{}' is a texture or buffer \
-                descriptor, which cannot live in a push block; use a bindless handle \
-                (Sampler2D.Handle) or a BDA pointer (mltrs::Addr<T>) instead",
-                resource.field_name,
-            ),
+            StructField::Resource(resource) => {
+                return Err(InvalidPushConstantBlock::DescriptorField {
+                    block_name: block_name.to_string(),
+                    field_name: resource.field_name.clone(),
+                });
+            }
 
             StructField::Struct(nested) => {
                 reject_descriptor_fields(&nested.struct_type.fields, block_name)?
@@ -273,11 +299,15 @@ fn reject_descriptor_fields(fields: &[StructField], block_name: &str) -> anyhow:
     Ok(())
 }
 
+#[context(
+    "Reflect fields of struct {}",
+    struct_type_layout.name().unwrap_or("<unnamed>")
+)]
 fn reflect_struct_fields(
     struct_type_layout: &slang::reflection::TypeLayout,
     program_layout: &slang::reflection::Shader,
     pointee_stack: &mut Vec<String>,
-) -> anyhow::Result<Vec<StructField>> {
+) -> eros::Result<Vec<StructField>, StructFieldErrors> {
     let mut fields = vec![];
 
     for field in struct_type_layout.fields() {
@@ -295,13 +325,14 @@ fn reflect_struct_fields(
             && declared.kind() == slang::TypeKind::Enum
         {
             let Some(binding) = binding.filter(Binding::occupies_bytes) else {
-                anyhow::bail!(
-                    "enum field '{field_name}': enums are only supported in \
-                    uniform/pointee struct fields, not vertex inputs"
-                );
+                return Err(FieldOutsideUniformLayout {
+                    field_name,
+                    kind: UniformOnlyFieldKind::Enum,
+                })
+                .union();
             };
 
-            let enum_struct_field = reflect_enum_field(field_name, binding, declared)?;
+            let enum_struct_field = reflect_enum_field(field_name, binding, declared).union()?;
             fields.push(StructField::Enum(enum_struct_field));
             continue;
         }
@@ -312,7 +343,7 @@ fn reflect_struct_fields(
             let declared_name = declared_full_name(declared);
             if declared_name.starts_with("DescriptorHandle<") {
                 let descriptor_handle_struct_field =
-                    reflect_handle_field(field_name, binding, &declared_name)?;
+                    reflect_handle_field(field_name, binding, &declared_name).widen()?;
 
                 fields.push(StructField::DescriptorHandle(
                     descriptor_handle_struct_field,
@@ -364,10 +395,13 @@ fn reflect_struct_fields(
                         })
                     }
 
-                    (b, s) => {
-                        anyhow::bail!(
-                            "unexpected combination of vector binding and semantic {b:?}, {s:?}"
-                        )
+                    (binding, semantic) => {
+                        return Err(UnexpectedVectorBinding {
+                            field_name,
+                            binding,
+                            semantic,
+                        })
+                        .union();
                     }
                 };
 
@@ -420,11 +454,9 @@ fn reflect_struct_fields(
                             ResourceShape::Texture2D
                         }
                     }
-                    slang::BaseShape::StructuredBuffer => anyhow::bail!(
-                        "field '{field_name}': StructuredBuffer/RWStructuredBuffer descriptors \
-                        are unsupported; use a BDA pointer instead (e.g. mltrs::Addr<T> via \
-                        import mltrs, or LayoutPtr<T, Std430DataLayout>)"
-                    ),
+                    slang::BaseShape::StructuredBuffer => {
+                        return Err(StructuredBufferField { field_name }).union();
+                    }
                     s => todo!("unhandled slang base shape: {s:?}"),
                 };
 
@@ -491,11 +523,11 @@ fn reflect_struct_fields(
                     .map(str::trim)
                     .unwrap_or_default();
                 if layout_arg != "Std430DataLayout" {
-                    anyhow::bail!(
-                        "pointer field '{field_name}' ({ptr_type_name}): only Std430DataLayout \
-                        pointers are supported; declare it as mltrs::Addr<T> (import mltrs;) \
-                        or LayoutPtr<T, Std430DataLayout>"
-                    );
+                    return Err(UnsupportedPointer::NonStd430Layout {
+                        field_name,
+                        pointer_type: ptr_type_name,
+                    })
+                    .union();
                 }
 
                 // The Access generic argument prints as its enum case name
@@ -526,10 +558,11 @@ fn reflect_struct_fields(
                     .expect("failed to lay out pointer pointee type");
 
                 if pointee_layout.kind() != slang::TypeKind::Struct {
-                    anyhow::bail!(
-                        "pointer field '{field_name}': only struct pointees are supported, got {:?}",
-                        pointee_layout.kind()
-                    );
+                    return Err(UnsupportedPointer::NonStructPointee {
+                        field_name,
+                        pointee_kind: format!("{:?}", pointee_layout.kind()),
+                    })
+                    .union();
                 }
 
                 let pointee_type_name = pointee_layout.name().unwrap().to_string();
@@ -537,11 +570,12 @@ fn reflect_struct_fields(
                 // Pointee fields embed inline in the reflection JSON, so a
                 // pointer cycle cannot be represented.
                 if pointee_stack.contains(&pointee_type_name) {
-                    let chain = pointee_stack.join(" -> ");
-                    anyhow::bail!(
-                        "pointer field '{field_name}': pointee '{pointee_type_name}' already \
-                        appears on the pointee chain ({chain} -> {pointee_type_name})"
-                    );
+                    return Err(UnsupportedPointer::Cycle {
+                        field_name,
+                        pointee_type_name,
+                        chain: pointee_stack.clone(),
+                    })
+                    .union();
                 }
                 pointee_stack.push(pointee_type_name.clone());
                 let pointee_fields =
@@ -564,10 +598,11 @@ fn reflect_struct_fields(
 
             slang::TypeKind::Array => {
                 let Some(field_binding) = binding.filter(Binding::occupies_bytes) else {
-                    anyhow::bail!(
-                        "array field '{field_name}': arrays are only supported in \
-                        uniform/pointee struct fields"
-                    );
+                    return Err(FieldOutsideUniformLayout {
+                        field_name,
+                        kind: UniformOnlyFieldKind::Array,
+                    })
+                    .union();
                 };
 
                 let element_count = field_type_layout
@@ -590,7 +625,8 @@ fn reflect_struct_fields(
                     component_count,
                     element_scalar_type,
                     element_stride,
-                )?;
+                )
+                .union()?;
 
                 StructField::Array(ArrayStructField {
                     field_name,
@@ -631,27 +667,32 @@ fn reflect_handle_field(
     field_name: String,
     binding: Option<Binding>,
     declared_name: &str,
-) -> anyhow::Result<DescriptorHandleStructField> {
+) -> eros::Result<
+    DescriptorHandleStructField,
+    (UnsupportedDescriptorHandle, FieldOutsideUniformLayout),
+> {
     // Slang prints an array's declared name as the element's with `[N]`
     // appended, so the prefix alone matches `DescriptorHandle<...>[4]` too.
     // Splitting it off first matters: accepting would emit one 8-byte field for
     // a 32-byte slot, and the resulting failure is a compile error inside
     // *generated* code rather than a message naming the field.
     if !declared_name.ends_with('>') {
-        anyhow::bail!(
-            "field '{field_name}' ({declared_name}): arrays of texture handles are not \
-            supported. A handle is an 8-byte element, whose array stride is 16 under \
-            std140 but 8 under std430, so it cannot be laid out identically in a \
-            ParameterBlock and in a Std430DataLayout pointee; use named fields, or a \
-            BDA buffer of structs that each hold one handle"
-        );
+        return Err(UnsupportedDescriptorHandle::Array {
+            field_name,
+            declared_name: declared_name.to_string(),
+        })
+        .union();
     }
 
     let Some(inner) = declared_name
         .strip_prefix("DescriptorHandle<")
         .and_then(|s| s.strip_suffix('>'))
     else {
-        anyhow::bail!("field '{field_name}' ({declared_name}): unparseable handle type");
+        return Err(UnsupportedDescriptorHandle::Unparseable {
+            field_name,
+            declared_name: declared_name.to_string(),
+        })
+        .union();
     };
 
     let shape = if inner.starts_with("Sampler2D<") {
@@ -659,21 +700,22 @@ fn reflect_handle_field(
     } else if inner.starts_with("RWTexture2D<") {
         DescriptorHandleShape::RwTexture2D
     } else {
-        anyhow::bail!(
-            "field '{field_name}' ({declared_name}): only Sampler2D.Handle and \
-            RWTexture2D.Handle texture handles are supported; the bindless heap has \
-            a combined-image-sampler binding and a storage-image binding only"
-        );
+        return Err(UnsupportedDescriptorHandle::UnsupportedShape {
+            field_name,
+            declared_name: declared_name.to_string(),
+        })
+        .union();
     };
 
     // A handle in a vertex-input position reflects as VaryingInput, and there is
     // no vertex format for a descriptor index. Rejecting here rather than in the
     // Vector arm is also what keeps the guard above ungated on the binding.
     let Some(binding) = binding.filter(Binding::occupies_bytes) else {
-        anyhow::bail!(
-            "handle field '{field_name}': texture handles are only supported in \
-            uniform/pointee struct fields, not vertex inputs"
-        );
+        return Err(FieldOutsideUniformLayout {
+            field_name,
+            kind: UniformOnlyFieldKind::DescriptorHandle,
+        })
+        .union();
     };
 
     Ok(DescriptorHandleStructField {
@@ -693,7 +735,7 @@ fn validate_array_element(
     component_count: usize,
     scalar_type: Option<ScalarType>,
     reflected_stride: usize,
-) -> anyhow::Result<()> {
+) -> Result<(), UnsupportedArrayElement> {
     let supported_element = element_kind == slang::TypeKind::Vector
         && component_count == 4
         && matches!(
@@ -702,12 +744,13 @@ fn validate_array_element(
         );
 
     if !supported_element || reflected_stride != 16 {
-        anyhow::bail!(
-            "array field '{field_name}': only float4/int4/uint4 element arrays are \
-            supported (16-byte stride); got element kind {element_kind:?} with \
-            {component_count} components, scalar type {scalar_type:?}, stride \
-            {reflected_stride}; use a BDA buffer of flat structs, or named fields"
-        );
+        return Err(UnsupportedArrayElement {
+            field_name: field_name.to_string(),
+            element_kind: format!("{element_kind:?}"),
+            component_count,
+            scalar_type,
+            stride: reflected_stride,
+        });
     }
 
     Ok(())
@@ -721,7 +764,7 @@ fn reflect_enum_field(
     field_name: String,
     binding: Binding,
     enum_type: &slang::reflection::Type,
-) -> anyhow::Result<EnumStructField> {
+) -> Result<EnumStructField, UnsupportedEnum> {
     // slang synthesizes a name for an anonymous enum rather than reporting none,
     // and that name is neither meaningful to a caller nor a legal Rust type name
     // under clippy's non_camel_case_types
@@ -729,37 +772,38 @@ fn reflect_enum_field(
         .name()
         .filter(|n| !n.starts_with("SLANG_anonymous"))
     else {
-        anyhow::bail!(
-            "enum field '{field_name}' has an anonymous enum type; give the enum a \
-            name so the generated Rust enum has one too"
-        );
+        return Err(UnsupportedEnum::Anonymous { field_name });
     };
     let type_name = type_name.to_string();
 
     let Some(tag_type_layout) = enum_type.element_type() else {
-        anyhow::bail!("enum '{type_name}' (field '{field_name}') has no reflected tag type");
+        return Err(UnsupportedEnum::MissingTagType {
+            type_name,
+            field_name,
+        });
     };
     let tag_type = enum_tag_from_slang(tag_type_layout.scalar_type(), &type_name)?;
 
     let mut cases: Vec<EnumCase> = vec![];
     for case in enum_type.fields() {
         let Some(name) = case.name() else {
-            anyhow::bail!("enum '{type_name}' has a case with no name");
+            return Err(UnsupportedEnum::UnnamedCase { type_name });
         };
         let Some(raw_value) = case.default_value_int() else {
-            anyhow::bail!(
-                "enum '{type_name}' case '{name}' has no constant value; only \
-                compile-time constant cases can cross the reflection boundary"
-            );
+            return Err(UnsupportedEnum::NonConstantCase {
+                type_name,
+                case_name: name.to_string(),
+            });
         };
         let value = normalize_case_value(raw_value, tag_type, &type_name, name)?;
 
         if let Some(clash) = cases.iter().find(|c| c.value == value) {
-            anyhow::bail!(
-                "enum '{type_name}' cases '{}' and '{name}' share the value {value}; \
-                duplicate discriminants cannot be generated as a Rust enum",
-                clash.name,
-            );
+            return Err(UnsupportedEnum::DuplicateDiscriminant {
+                type_name,
+                first_case: clash.name.clone(),
+                second_case: name.to_string(),
+                value,
+            });
         }
 
         cases.push(EnumCase {
@@ -769,10 +813,7 @@ fn reflect_enum_field(
     }
 
     if cases.is_empty() {
-        anyhow::bail!(
-            "enum '{type_name}' has no cases; the generated Rust enum needs at \
-            least one case for Default and TryFrom"
-        );
+        return Err(UnsupportedEnum::Empty { type_name });
     }
 
     Ok(EnumStructField {
@@ -788,7 +829,10 @@ fn reflect_enum_field(
 
 /// NOTE deliberately not `scalar_from_slang`: widening that one would also start
 /// accepting plain `int` scalar fields that codegen does not support.
-fn enum_tag_from_slang(scalar: slang::ScalarType, type_name: &str) -> anyhow::Result<EnumTagType> {
+fn enum_tag_from_slang(
+    scalar: slang::ScalarType,
+    type_name: &str,
+) -> Result<EnumTagType, UnsupportedEnum> {
     match scalar {
         slang::ScalarType::Uint32 => Ok(EnumTagType::Uint32),
         slang::ScalarType::Int32 => Ok(EnumTagType::Int32),
@@ -798,17 +842,16 @@ fn enum_tag_from_slang(scalar: slang::ScalarType, type_name: &str) -> anyhow::Re
         // optional Vulkan feature bits, and requiring them would narrow the
         // supported hardware for a tag width no shader here needs.
         slang::ScalarType::Uint8 | slang::ScalarType::Uint16 | slang::ScalarType::Int16 => {
-            anyhow::bail!(
-                "enum '{type_name}' has a sub-32-bit tag type {scalar:?}; only uint \
-                and int tags are supported, because reading a narrower tag requires \
-                the 8/16-bit storage device features"
-            )
+            Err(UnsupportedEnum::NarrowTagType {
+                type_name: type_name.to_string(),
+                tag_type: format!("{scalar:?}"),
+            })
         }
 
-        other => anyhow::bail!(
-            "enum '{type_name}' has an unsupported tag type {other:?}; supported \
-            tags are uint and int (or none, which means int)"
-        ),
+        other => Err(UnsupportedEnum::UnsupportedTagType {
+            type_name: type_name.to_string(),
+            tag_type: format!("{other:?}"),
+        }),
     }
 }
 
@@ -820,7 +863,7 @@ fn normalize_case_value(
     tag_type: EnumTagType,
     type_name: &str,
     case_name: &str,
-) -> anyhow::Result<i64> {
+) -> Result<i64, UnsupportedEnum> {
     let normalized = match tag_type {
         EnumTagType::Int32 => i32::try_from(raw).map(i64::from).ok(),
         EnumTagType::Uint32 => u32::try_from(raw)
@@ -829,12 +872,11 @@ fn normalize_case_value(
             .or_else(|| i32::try_from(raw).map(|v| i64::from(v as u32)).ok()),
     };
 
-    normalized.ok_or_else(|| {
-        anyhow::anyhow!(
-            "enum '{type_name}' case '{case_name}' has value {raw}, which does not \
-            fit its {} tag",
-            tag_type.rust_type_name(),
-        )
+    normalized.ok_or_else(|| UnsupportedEnum::CaseOutOfRange {
+        type_name: type_name.to_string(),
+        case_name: case_name.to_string(),
+        value: raw,
+        tag_type,
     })
 }
 
@@ -851,12 +893,12 @@ fn scalar_from_slang(scalar: slang::ScalarType) -> ScalarType {
 // returns None for a param with a semantic,
 // where value will be provided by the driver
 pub fn reflect_compute_entry_point(
+    source_file_name: &str,
     program_layout: &slang::reflection::Shader,
-) -> anyhow::Result<ComputeParameters> {
-    let global_parameters = reflect_global_parameters(program_layout)?;
+) -> eros::Result<ComputeParameters, ReflectionErrors> {
+    let global_parameters = reflect_global_parameters(program_layout).widen()?;
 
-    let mut compute_entry_point: Option<EntryPoint> = None;
-    let mut workgroup_size: Option<[u32; 3]> = None;
+    let mut compute_entry_point: Option<(EntryPoint, [u32; 3])> = None;
 
     for entry_point in program_layout.entry_points() {
         let entry_point_name = entry_point.name().unwrap().to_string();
@@ -868,29 +910,41 @@ pub fn reflect_compute_entry_point(
         let params = vec![];
         for param in entry_point.parameters() {
             let parameter_name = param.name().unwrap().to_string();
-            reject_non_varying_entry_point_parameter(param, &parameter_name, &entry_point_name)?;
+            reject_non_varying_entry_point_parameter(param, &parameter_name, &entry_point_name)
+                .union()?;
         }
 
         match entry_point.stage() {
             slang::Stage::Compute => {
                 let tgs = entry_point.compute_thread_group_size();
-                workgroup_size = Some([tgs[0] as u32, tgs[1] as u32, tgs[2] as u32]);
+                let workgroup_size = [tgs[0] as u32, tgs[1] as u32, tgs[2] as u32];
 
-                compute_entry_point = Some(EntryPoint {
+                let entry_point = EntryPoint {
                     entry_point_name,
                     stage: EntryPointStage::Compute,
                     parameters: params,
-                });
+                };
+                compute_entry_point = Some((entry_point, workgroup_size));
             }
 
-            _ => anyhow::bail!("expected compute entry point"),
+            other => {
+                return Err(UnexpectedEntryPointStage {
+                    expected: ShaderStage::Compute,
+                    found: format!("{other:?}"),
+                    source_file_name: source_file_name.to_string(),
+                })
+                .union();
+            }
         }
     }
 
-    let compute_entry_point =
-        compute_entry_point.ok_or_else(|| anyhow::anyhow!("failed to find compute entry point"))?;
-    let workgroup_size =
-        workgroup_size.ok_or_else(|| anyhow::anyhow!("failed to find workgroup size"))?;
+    let Some((compute_entry_point, workgroup_size)) = compute_entry_point else {
+        return Err(MissingEntryPoint {
+            stage: ShaderStage::Compute,
+            source_file_name: source_file_name.to_string(),
+        })
+        .union();
+    };
 
     Ok(ComputeParameters {
         global_parameters,
