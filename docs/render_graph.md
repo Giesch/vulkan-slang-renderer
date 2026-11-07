@@ -25,7 +25,9 @@ against backend-owned liveness, mapping, upload access, and logical byte capacit
 Uniform payload sizes must match exactly; storage payloads must fit. Allocation
 padding is not writable payload capacity. Forged slot metadata cannot authorize
 uploads to immutable/GPU-updated storage or bypass these checks; rejection returns
-`DrawError` without applying any writes, submitting, or committing graph state.
+`DrawError::Upload` (or `DrawError::Indirect` for a rejected indirect request),
+as the backend member of `execute`'s typed `ExecuteErrors<DrawError>` set,
+without applying any writes, submitting, or committing graph state.
 The renderer applies writes after the flight-slot wait and preserves
 previously queued work. The submission callback commits texture cursors exactly
 once after successful queue submission, before presentation. A pre-submit error
