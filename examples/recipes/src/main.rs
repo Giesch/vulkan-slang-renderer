@@ -5,9 +5,9 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawVertexCountNode,
-    FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
-    UniformBufferHandle, UploadNode, dispatch, draw_vertex_count, upload,
+    ComputeNode, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawVertexCountNode, FrameRenderer,
+    PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, UniformBufferHandle, UploadNode,
+    dispatch, draw_vertex_count, upload,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -15,7 +15,7 @@ use crate::generated::shader_atlas::recipe_render;
 use crate::generated::shader_atlas::recipes_compute;
 use crate::generated::shader_atlas::shared;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     Recipes::run()
 }
 
@@ -42,7 +42,7 @@ impl Game for Recipes {
         "Advent of Code 2015 #15"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -101,10 +101,12 @@ impl Game for Recipes {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let resolution = renderer.render_resolution();
 
-        self.graph.execute(renderer, &frame_inputs(resolution))
+        self.graph.execute(renderer, &frame_inputs(resolution))?;
+
+        Ok(())
     }
 }
 

@@ -5,8 +5,8 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    CpuUpdatedBufferHandle, DrawError, DrawVertexCount, FrameRenderer, PickingPipelineHandle,
-    PipelineHandle, Renderer, UniformBufferHandle,
+    CpuUpdatedBufferHandle, DrawVertexCount, FrameRenderer, PickingPipelineHandle, PipelineHandle,
+    Renderer, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -14,7 +14,7 @@ use crate::generated::shader_atlas::gpu_picking::*;
 use crate::generated::shader_atlas::gpu_picking_id;
 use crate::generated::shader_atlas::mltrs::Projection;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     GpuPicking::run()
 }
 
@@ -39,7 +39,7 @@ impl Game for GpuPicking {
         "GPU Picking"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self> {
         // Visual shader pipeline
         let params_buffer = renderer.create_uniform_buffer::<GpuPickingParams>()?;
         let cubes_buffer = renderer.create_cpu_updated_buffer::<Cube>(MAX_CUBES)?;
@@ -95,7 +95,7 @@ impl Game for GpuPicking {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let picked_id = renderer.picked_object_id();
         let aspect_ratio = renderer.aspect_ratio();
 

@@ -9,14 +9,14 @@ use mltrs::game::Game;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
-    ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_indexed,
+    DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
+    TextureFilter, TextureHandle, UniformBufferHandle, draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::depth_texture::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     DepthTextureGame::run()
 }
 
@@ -93,7 +93,7 @@ impl Game for DepthTextureGame {
         "Depth Texture"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -133,13 +133,15 @@ impl Game for DepthTextureGame {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let aspect_ratio = renderer.aspect_ratio();
         let elapsed = Instant::now() - self.start_time;
         let mvp = make_mvp_matrices(elapsed, aspect_ratio);
         let params = DepthTextureParamsData { mvp };
 
-        self.graph.execute(renderer, &params)
+        self.graph.execute(renderer, &params)?;
+
+        Ok(())
     }
 }
 

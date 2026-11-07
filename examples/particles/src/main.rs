@@ -6,9 +6,8 @@ use glam::{Vec2, Vec4};
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, DrawError, DrawVertexCountNode, FrameRenderer, GpuUpdatedBufferHandle,
-    GpuUpdatedSlot, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
-    UniformBufferHandle,
+    ComputeNode, DrawVertexCountNode, FrameRenderer, GpuUpdatedBufferHandle, GpuUpdatedSlot,
+    PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, UniformBufferHandle,
     render_graph::{dispatch, draw_vertex_count},
 };
 
@@ -17,7 +16,7 @@ use crate::generated::shader_atlas::particle;
 use crate::generated::shader_atlas::particle_render;
 use crate::generated::shader_atlas::particles_compute;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     Particles::run()
 }
 
@@ -48,7 +47,7 @@ impl Game for Particles {
         (800, 800)
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -117,7 +116,7 @@ impl Game for Particles {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let now = Instant::now();
         let delta_time = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
@@ -130,7 +129,8 @@ impl Game for Particles {
                     particle_count: NUM_PARTICLES,
                 },
             ),
-        )
+        )?;
+        Ok(())
     }
 }
 

@@ -13,9 +13,9 @@ use glam::{Vec2, Vec3, Vec4};
 use mltrs::editor::{Label, Slider};
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, ComputeNodeWithPush, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError,
-    DrawVertexCountNode, FrameRenderer, GraphFormat, LoopCount, OptionalNode, PreparedRenderGraph,
-    RenderGraph, Renderer, RepeatNode, ResourcePlanner, StorageTextureHandle, TextureHandle,
+    ComputeNode, ComputeNodeWithPush, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawVertexCountNode,
+    FrameRenderer, GraphFormat, LoopCount, OptionalNode, PreparedRenderGraph, RenderGraph,
+    Renderer, RepeatNode, ResourcePlanner, StorageTextureHandle, TextureHandle,
     UniformBufferHandle, UploadNode, optional,
     render_graph::{dispatch, draw_vertex_count},
     repeat, upload,
@@ -34,7 +34,7 @@ use crate::generated::shader_atlas::wc_project_velocity_compute;
 use crate::generated::shader_atlas::wc_update_velocity_compute;
 use mltrs::manifest_path;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     Watercolor::run()
 }
 
@@ -329,7 +329,7 @@ impl Game for Watercolor {
         Some(1.0)
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self> {
         // Logical simulation textures; the graph derives which ones need two
         // physical images and rotates them itself
         let mut res = ResourcePlanner::new();
@@ -759,7 +759,7 @@ impl Game for Watercolor {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let stroke_points = std::mem::take(&mut self.stroke_points);
         let point_count = stroke_points
             .len()
@@ -878,7 +878,8 @@ impl Game for Watercolor {
                     pigment11: Pigment::InterferenceLilac.km(),
                 },
             ),
-        )
+        )?;
+        Ok(())
     }
 }
 

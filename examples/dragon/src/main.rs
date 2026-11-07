@@ -4,14 +4,14 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
     ResourcePlanner, UniformBufferHandle, draw_vertex_count,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::dragon::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     Dragon::run()
 }
 
@@ -33,7 +33,7 @@ impl Game for Dragon {
         "Dragon Curve"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -60,7 +60,7 @@ impl Game for Dragon {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let time = (Instant::now() - self.start_time).as_secs_f32();
         let resolution = renderer.window_resolution();
 
@@ -70,6 +70,8 @@ impl Game for Dragon {
             _padding_0: Default::default(),
         };
 
-        self.graph.execute(renderer, &dragon_params)
+        self.graph.execute(renderer, &dragon_params)?;
+
+        Ok(())
     }
 }

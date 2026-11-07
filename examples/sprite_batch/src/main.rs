@@ -22,14 +22,14 @@ use mltrs::game::{Game, MaxMSAASamples};
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, RasterState,
-    Renderer, TextureFilter, TextureHandle, UniformBufferHandle,
+    DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, RasterState, Renderer,
+    TextureFilter, TextureHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::sprite_batch::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     SpriteBatch::run()
 }
 
@@ -64,7 +64,7 @@ impl Game for SpriteBatch {
         Duration::from_nanos(10)
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -133,7 +133,7 @@ impl Game for SpriteBatch {
         }
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         let (width, height) = Self::initial_window_size();
         let projection = Projection {
             matrix: directx::orthographic(0.0, width as f32, 0.0, height as f32, 0.0, -1.0),
