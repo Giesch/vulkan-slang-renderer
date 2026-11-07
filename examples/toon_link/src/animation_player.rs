@@ -22,7 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use anyhow::{Context, Result};
+use eros::{Context, context};
 use gx::animation_manifest::{self as am, AnimationFormat, CatalogClip, ClipData, ClipIdentity};
 use gx::model_manifest::Skeleton;
 
@@ -158,7 +158,7 @@ impl AnimationPlayer {
     /// Fails only when the skeleton cannot produce a bind pose. A missing or
     /// malformed catalog is not fatal: the player stays in bind pose, records
     /// [`Self::catalog_error`], and logs the problem on stderr.
-    pub fn new(skeleton: &Skeleton, catalog_path: &Path) -> Result<Self> {
+    pub fn new(skeleton: &Skeleton, catalog_path: &Path) -> eros::Result<Self> {
         let prepared = Rc::new(PreparedSkeleton::new(skeleton)?);
         let bind = prepared.bind_pose()?;
         let pose = prepared.bind_pose()?;
@@ -170,8 +170,9 @@ impl AnimationPlayer {
             Ok(entries) => (entries, None),
             Err(error) => {
                 let message = format!(
-                    "BCK catalog {}: {error:#}; animation stays in bind pose. \
-                     Run `just toon_link tww-assets` to extract and convert Link's assets.",
+                    "BCK catalog {} unusable; animation stays in bind pose. \
+                     Run `just toon_link tww-assets` to extract and convert Link's assets.\n\
+                     {error:#?}",
                     catalog_path.display()
                 );
                 eprintln!("toon_link: {message}");
@@ -280,7 +281,7 @@ impl AnimationPlayer {
 
         let (clip, pose) = match self.load(row) {
             Ok(loaded) => loaded,
-            Err(error) => return self.fail(format!("{error:#}")),
+            Err(error) => return self.fail(format!("{error:#?}")),
         };
 
         self.preparations += 1;
@@ -314,19 +315,18 @@ impl AnimationPlayer {
     /// Reads, validates, prepares and evaluates frame 0 without touching state.
     /// This is the only place clip data is read or validated; every later
     /// frame evaluates the returned [`PreparedClip`].
-    fn load(&self, row: usize) -> Result<(PreparedClip, Pose)> {
+    #[context("Load BCK clip {}", catalog_label(&self.entries[row]))]
+    fn load(&self, row: usize) -> eros::Result<(PreparedClip, Pose)> {
         let entry = &self.entries[row];
-        let label = catalog_label(entry);
         let path = self.catalog_dir.join(&entry.file);
-        let json = fs::read_to_string(&path)
-            .with_context(|| format!("{label}: read {}", path.display()))?;
-        let document = am::read_clip(&json).with_context(|| label.clone())?;
+        let json = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        let document = am::read_clip(&json)?;
         validate_clip(entry, &document, &self.skeleton)?;
         let ClipData::Bck(clip) = document.data else {
             unreachable!("validate_clip checked the format")
         };
         let clip = self.prepared.prepare_clip(Rc::new(clip))?;
-        let pose = clip.evaluate(0.0).with_context(|| label)?;
+        let pose = clip.evaluate(0.0)?;
 
         Ok((clip, pose))
     }
@@ -531,8 +531,8 @@ impl AnimationPlayer {
                 self.frame = self.published_frame;
                 self.playback_state = PlaybackState::Paused;
                 self.diagnostic = Some(format!(
-                    "{label}: pose at frame {target} failed: {error:#}; \
-                     paused at retained frame {}",
+                    "{label}: pose at frame {target} failed; paused at retained frame {}\n\
+                     {error:#?}",
                     self.published_frame
                 ));
             }
@@ -685,8 +685,9 @@ impl AnimationPlayer {
     }
 }
 
-fn load_catalog(path: &Path) -> Result<Vec<CatalogClip>> {
-    let json = fs::read_to_string(path).context("read")?;
+#[context("Load BCK catalog {}", path.display())]
+fn load_catalog(path: &Path) -> eros::Result<Vec<CatalogClip>> {
+    let json = fs::read_to_string(path)?;
     let catalog = am::read_catalog(&json)?;
     validate_catalog(&catalog)?;
 
