@@ -14,7 +14,6 @@ path = "src/main.rs"
 [dependencies]
 mltrs-slang-reflection.workspace = true
 
-anyhow.workspace = true
 eros.workspace = true
 thiserror.workspace = true
 askama.workspace = true
