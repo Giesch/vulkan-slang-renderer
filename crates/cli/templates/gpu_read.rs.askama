@@ -2,10 +2,13 @@
 impl GPURead for {{ def.type_name }} {
     const GPU_SIZE: usize = {{ def.expected_size() }};
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
         let tag = <{{ def.tag_rust_type() }} as GPURead>::read_gpu(bytes)?;
 
-        Self::try_from(tag).map_err(|tag| anyhow::anyhow!("invalid {{ def.type_name }} tag: {tag}"))
+        eros::IntoUnion::union(Self::try_from(tag).map_err(|tag| InvalidGpuEnumTag {
+            type_name: "{{ def.type_name }}",
+            tag: i128::from(tag),
+        }))
     }
 }
 {% endfor %}
@@ -14,11 +17,14 @@ impl GPURead for {{ def.type_name }} {
 impl GPURead for {{ def.type_name }} {
     const GPU_SIZE: usize = {{ def.expected_size.unwrap() }};
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for {{ def.type_name }}"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "{{ def.type_name }}",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
 {%- for field in def.read_fields() %}
