@@ -8,6 +8,7 @@
 
 use ash::vk;
 
+use super::error::{BindlessHeapFull, BindlessHeapKind};
 use super::texture::Texture;
 
 /// Total slots available in the texture heap.
@@ -46,7 +47,7 @@ impl DescriptorHeap {
     /// The device-suitability gate has already rejected any device whose
     /// update-after-bind limits can't hold `MAX_BINDLESS_TEXTURES`; see
     /// [`renderer::undersized_limits`].
-    pub(super) fn new(device: &ash::Device) -> anyhow::Result<Self> {
+    pub(super) fn new(device: &ash::Device) -> Result<Self, vk::Result> {
         // one entry per binding, and `bindings` and `binding_flags` must stay
         // parallel: Vulkan requires bindingCount == pBindingFlags.len()
         let bindings = [
@@ -125,12 +126,13 @@ impl DescriptorHeap {
         &mut self,
         device: &ash::Device,
         texture: &Texture,
-    ) -> anyhow::Result<BindlessIndex> {
-        anyhow::ensure!(
-            self.next_texture_slot < MAX_BINDLESS_TEXTURES,
-            "bindless texture heap is full ({MAX_BINDLESS_TEXTURES} slots, \
-             and slots are never released)"
-        );
+    ) -> Result<BindlessIndex, BindlessHeapFull> {
+        if self.next_texture_slot >= MAX_BINDLESS_TEXTURES {
+            return Err(BindlessHeapFull {
+                kind: BindlessHeapKind::Texture,
+                capacity: MAX_BINDLESS_TEXTURES,
+            });
+        }
         let slot = self.next_texture_slot;
         self.next_texture_slot += 1;
 
@@ -155,12 +157,13 @@ impl DescriptorHeap {
         &mut self,
         device: &ash::Device,
         image_view: vk::ImageView,
-    ) -> anyhow::Result<BindlessIndex> {
-        anyhow::ensure!(
-            self.next_storage_image_slot < MAX_BINDLESS_TEXTURES,
-            "bindless storage image heap is full ({MAX_BINDLESS_TEXTURES} slots, \
-             and slots are never released)"
-        );
+    ) -> Result<BindlessIndex, BindlessHeapFull> {
+        if self.next_storage_image_slot >= MAX_BINDLESS_TEXTURES {
+            return Err(BindlessHeapFull {
+                kind: BindlessHeapKind::StorageImage,
+                capacity: MAX_BINDLESS_TEXTURES,
+            });
+        }
         let slot = self.next_storage_image_slot;
         self.next_storage_image_slot += 1;
 

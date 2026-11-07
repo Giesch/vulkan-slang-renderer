@@ -5,7 +5,7 @@ struct ExternalNode;
 impl GraphNode for ExternalNode {
     type Frame = ();
     fn lower(&self, _: &mut LowerCtx) {}
-    fn plan(&self, _: &(), _: &mut PlanCtx<'_>) -> anyhow::Result<()> {
+    fn plan(&self, _: &(), _: &mut PlanCtx<'_>) -> eros::Result<(), error::PlanErrors> {
         Ok(())
     }
 }

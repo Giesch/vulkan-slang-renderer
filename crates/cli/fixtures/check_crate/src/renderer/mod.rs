@@ -3,7 +3,6 @@
 
 pub mod addr;
 pub mod bindless;
-pub mod error;
 // Exercise production byte decoding without linking the graphics backend.
 #[path = "../../../../../renderer/src/renderer/gpu_read.rs"]
 pub mod gpu_read;

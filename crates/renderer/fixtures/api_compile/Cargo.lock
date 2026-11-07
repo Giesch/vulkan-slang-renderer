@@ -215,13 +215,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c4fbe202b6578d3d56428fa185cdf114a05e49da05f477b3c7f0fbb221f1862"
 
 [[package]]
+name = "eros"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "793a046ee72b724bb63d880d3e14598711e036a27d6a78a858bef8a52d495fc0"
+dependencies = [
+ "eros-macros",
+]
+
+[[package]]
+name = "eros-macros"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e0cd13457e91a0ca28420e594d5c77dd0fc1bf0de000acf225c374ad058477a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -487,7 +507,9 @@ name = "mltrs-render-graph"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "eros",
  "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -498,6 +520,7 @@ dependencies = [
  "ash",
  "egui",
  "egui-ash-renderer",
+ "eros",
  "facet",
  "facet-core",
  "glam",
@@ -518,8 +541,10 @@ name = "mltrs-slang-reflection"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "eros",
  "serde",
  "shader-slang",
+ "thiserror",
 ]
 
 [[package]]
@@ -633,8 +658,8 @@ dependencies = [
 name = "render-graph-api-checks"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
+ "eros",
  "glam",
  "mltrs-render-graph",
  "mltrs-renderer",
@@ -664,7 +689,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -963,7 +988,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -988,15 +1013,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
  "windows-targets 0.53.5",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.61.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
-dependencies = [
- "windows-link",
 ]
 
 [[package]]

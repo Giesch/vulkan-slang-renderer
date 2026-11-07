@@ -8,8 +8,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
-use anyhow::Context as _;
 use ash::vk;
+use eros::{Context as _, IntoUnion as _, ReshapeUnion as _, context};
 use glam::Vec2;
 use sdl3::sys::vulkan::SDL_Vulkan_DestroySurface;
 use sdl3::video::Window;
@@ -28,6 +28,8 @@ use crate::shaders::json::ReflectedDescriptorSetLayout;
 use log::*;
 
 pub mod debug;
+pub mod error;
+pub use error::*;
 mod platform;
 
 pub mod gpu_read;
@@ -255,7 +257,7 @@ fn create_resolve_images(
         [vk_mem::Allocation; MAX_FRAMES_IN_FLIGHT],
         [vk::ImageView; MAX_FRAMES_IN_FLIGHT],
     ),
-    anyhow::Error,
+    vk::Result,
 > {
     let image_options = ImageOptions {
         extent: render_extent,
@@ -267,7 +269,7 @@ fn create_resolve_images(
     };
 
     let results: [_; MAX_FRAMES_IN_FLIGHT] = (0..MAX_FRAMES_IN_FLIGHT)
-        .map(|_| -> anyhow::Result<_> {
+        .map(|_| -> Result<_, vk::Result> {
             let (image, memory) = create_vk_image(allocator, image_options)?;
             let view =
                 create_image_view(device, image, color_format, vk::ImageAspectFlags::COLOR, 1)?;
@@ -298,7 +300,7 @@ impl Renderer {
         max_msaa_samples: MaxMSAASamples,
         needs_stencil: bool,
         #[cfg(debug_assertions)] shaders_source_dir: &'static str,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> eros::Result<Self> {
         #[cfg(debug_assertions)]
         let shaders_source_dir = std::path::Path::new(shaders_source_dir);
         #[cfg(debug_assertions)]
@@ -357,17 +359,22 @@ impl Renderer {
             create_info = create_info.push_next(&mut debug_create_info);
         }
 
-        let instance = unsafe { entry.create_instance(&create_info, None)? };
+        let instance = unsafe { entry.create_instance(&create_info, None) }
+            .context("Create Vulkan instance")?;
         let (debug_loader, debug_ext) =
             debug::maybe_create_debug_messager_extension(&entry, &instance, &debug_create_info);
 
         let surface_ext = ash::khr::surface::Instance::new(&entry, &instance);
 
-        let surface = window.vulkan_create_surface(instance.handle())?;
+        let surface = window
+            .vulkan_create_surface(instance.handle())
+            .context("Create window surface")?;
 
         let (physical_device, queue_family_indices, physical_device_properties) =
-            choose_physical_device(&instance, &surface_ext, surface, env.prefer_integrated_gpu)?;
-        let device = create_logical_device(&instance, physical_device, &queue_family_indices)?;
+            choose_physical_device(&instance, &surface_ext, surface, env.prefer_integrated_gpu)
+                .context("Choose physical device")?;
+        let device = create_logical_device(&instance, physical_device, &queue_family_indices)
+            .context("Create logical device")?;
         let debug_utils_device = ash::ext::debug_utils::Device::new(&instance, &device);
 
         let allocator = {
@@ -376,10 +383,14 @@ impl Renderer {
             allocator_create_info.vulkan_api_version = VULKAN_API_VERSION;
             // matches the buffer_device_address feature enabled at device creation
             allocator_create_info.flags |= vk_mem::AllocatorCreateFlags::BUFFER_DEVICE_ADDRESS;
-            std::mem::ManuallyDrop::new(unsafe { vk_mem::Allocator::new(allocator_create_info)? })
+            std::mem::ManuallyDrop::new(
+                unsafe { vk_mem::Allocator::new(allocator_create_info) }
+                    .context("Create memory allocator")?,
+            )
         };
 
-        let descriptor_heap = DescriptorHeap::new(&device)?;
+        let descriptor_heap =
+            DescriptorHeap::new(&device).context("Create bindless descriptor heap")?;
 
         let msaa_samples =
             get_max_usable_sample_count(physical_device_properties, max_msaa_samples);
@@ -400,7 +411,8 @@ impl Renderer {
             surface,
             physical_device,
             &queue_family_indices,
-        )?;
+        )
+        .context("Create swapchain")?;
 
         let swapchain_images = unsafe { swapchain_device_ext.get_swapchain_images(swapchain)? };
         let swapchain_image_views =
@@ -411,12 +423,10 @@ impl Renderer {
         let depth_format = find_depth_format(&instance, physical_device, needs_stencil);
 
         let egui = if enable_egui {
-            Some(EguiIntegration::new(
-                &instance,
-                physical_device,
-                device.clone(),
-                image_format,
-            )?)
+            Some(
+                EguiIntegration::new(&instance, physical_device, device.clone(), image_format)
+                    .context("Create egui integration")?,
+            )
         } else {
             None
         };
@@ -547,7 +557,7 @@ impl Renderer {
         source_file_name: impl Into<String>,
         image: RgbaPixels<'_>,
         texture_filter: TextureFilter,
-    ) -> anyhow::Result<TextureHandle> {
+    ) -> eros::Result<TextureHandle, TextureErrors> {
         self.create_texture_with_options(
             source_file_name,
             image,
@@ -569,7 +579,7 @@ impl Renderer {
         source_file_name: impl Into<String>,
         image: RgbaPixels<'_>,
         options: TextureOptions,
-    ) -> anyhow::Result<TextureHandle> {
+    ) -> eros::Result<TextureHandle, TextureErrors> {
         let extent = vk::Extent2D::default()
             .width(image.width())
             .height(image.height());
@@ -595,21 +605,31 @@ impl Renderer {
         extent: vk::Extent2D,
         mip_data: &[&[u8]],
         sampler_options: SamplerOptions,
-    ) -> anyhow::Result<TextureHandle> {
-        let texture = self.create_texture_from_levels(
-            source_file_name.into(),
-            format,
-            extent,
-            mip_data,
-            sampler_options,
-        )?;
+    ) -> eros::Result<TextureHandle, TextureErrors> {
+        let source_file_name = source_file_name.into();
+        let texture = self
+            .create_texture_from_levels(
+                source_file_name.clone(),
+                format,
+                extent,
+                mip_data,
+                sampler_options,
+            )
+            .with_context(|| {
+                format!(
+                    "Create texture {source_file_name} ({format:?} {}x{}, {} mip levels)",
+                    extent.width,
+                    extent.height,
+                    mip_data.len()
+                )
+            })?;
 
-        let handle = self.register_texture(texture)?;
+        let handle = self.register_texture(texture).union()?;
 
         Ok(handle)
     }
 
-    fn register_texture(&mut self, texture: Texture) -> anyhow::Result<TextureHandle> {
+    fn register_texture(&mut self, texture: Texture) -> Result<TextureHandle, BindlessHeapFull> {
         let bindless_slot = match self.descriptor_heap.insert_texture(&self.device, &texture) {
             Ok(bindless_slot) => bindless_slot,
             Err(error) => {
@@ -630,7 +650,7 @@ impl Renderer {
         extent: vk::Extent2D,
         levels: &[&[u8]],
         sampler_options: SamplerOptions,
-    ) -> anyhow::Result<Texture> {
+    ) -> eros::Result<Texture, TextureErrors> {
         let (texture_image, texture_image_memory) =
             self.upload_texture_levels(format, extent, levels)?;
 
@@ -641,14 +661,16 @@ impl Renderer {
             format,
             vk::ImageAspectFlags::COLOR,
             mip_levels,
-        )?;
+        )
+        .union()?;
 
         let texture_sampler = create_texture_sampler(
             &self.device,
             self.physical_device_properties,
             sampler_options,
             mip_levels,
-        )?;
+        )
+        .union()?;
 
         Ok(Texture {
             source_file_name,
@@ -668,24 +690,38 @@ impl Renderer {
         format: vk::Format,
         extent: vk::Extent2D,
         levels: &[&[u8]],
-    ) -> anyhow::Result<(vk::Image, vk_mem::Allocation)> {
-        anyhow::ensure!(!levels.is_empty(), "expected at least one mip level");
+    ) -> eros::Result<(vk::Image, vk_mem::Allocation), TextureErrors> {
+        if levels.is_empty() {
+            return Err(InvalidMipLevels::Empty).union();
+        }
         let mip_levels = levels.len() as u32;
-        anyhow::ensure!(
-            mip_levels <= extent.width.max(extent.height).ilog2() + 1,
-            "too many mip levels for extent"
-        );
+        let max_levels = extent.width.max(extent.height).ilog2() + 1;
+        if mip_levels > max_levels {
+            return Err(InvalidMipLevels::TooMany {
+                levels: levels.len(),
+                max: max_levels,
+                width: extent.width,
+                height: extent.height,
+            })
+            .union();
+        }
 
         let block = format_block_info(format)
-            .ok_or_else(|| anyhow::anyhow!("unsupported texture format: {format:?}"))?;
+            .ok_or(UnsupportedTextureFormat { format })
+            .union()?;
 
         for (i, level) in levels.iter().enumerate() {
             let expected = level_byte_len(block, mip_extent(extent, i));
             let bytes = level.len();
-            anyhow::ensure!(
-                bytes == expected,
-                "mip level {i} has {bytes} bytes, expected {expected} for {format:?}",
-            );
+            if bytes != expected {
+                return Err(InvalidMipLevels::ByteLength {
+                    level: i,
+                    bytes,
+                    expected,
+                    format,
+                })
+                .union();
+            }
         }
 
         // vkCmdCopyBufferToImage requires each region's bufferOffset to be
@@ -704,10 +740,14 @@ impl Renderer {
             buffer_size,
             vk::BufferUsageFlags::TRANSFER_SRC,
             BufferMemory::Staging,
-        )?;
+        )
+        .union()?;
 
         unsafe {
-            let mapped_dst = self.allocator.map_memory(&mut staging_buffer_memory)?;
+            let mapped_dst = self
+                .allocator
+                .map_memory(&mut staging_buffer_memory)
+                .union()?;
             for (level, &offset) in levels.iter().zip(&level_offsets) {
                 std::ptr::copy_nonoverlapping(
                     level.as_ptr(),
@@ -727,7 +767,7 @@ impl Renderer {
             mip_levels,
             msaa_samples: vk::SampleCountFlags::TYPE_1,
         };
-        let (vk_image, image_memory) = create_vk_image(&self.allocator, image_options)?;
+        let (vk_image, image_memory) = create_vk_image(&self.allocator, image_options).union()?;
 
         transition_image_layout(
             &self.device,
@@ -738,7 +778,8 @@ impl Renderer {
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             mip_levels,
-        )?;
+        )
+        .union()?;
 
         let regions: Vec<vk::BufferImageCopy> = level_offsets
             .iter()
@@ -769,7 +810,8 @@ impl Renderer {
             staging_buffer,
             vk_image,
             &regions,
-        )?;
+        )
+        .union()?;
 
         transition_image_layout(
             &self.device,
@@ -780,7 +822,8 @@ impl Renderer {
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             mip_levels,
-        )?;
+        )
+        .union()?;
 
         unsafe {
             self.allocator
@@ -812,7 +855,7 @@ impl Renderer {
     fn register_storage_texture(
         &mut self,
         storage_texture: storage_texture::StorageTexture,
-    ) -> anyhow::Result<StorageTextureHandle> {
+    ) -> Result<StorageTextureHandle, BindlessHeapFull> {
         let bindless_slot = match self
             .descriptor_heap
             .insert_storage_image(&self.device, storage_texture.image_view)
@@ -829,12 +872,13 @@ impl Renderer {
         Ok(self.storage_textures.add(storage_texture, bindless_slot))
     }
 
+    #[context("Create {width}x{height} {format:?} storage texture")]
     pub fn create_storage_texture(
         &mut self,
         width: u32,
         height: u32,
         format: vk::Format,
-    ) -> anyhow::Result<StorageTextureHandle> {
+    ) -> eros::Result<StorageTextureHandle, HeapResourceErrors> {
         let (image, image_memory) = create_vk_image(
             &self.allocator,
             ImageOptions {
@@ -847,7 +891,8 @@ impl Renderer {
                 mip_levels: 1,
                 msaa_samples: vk::SampleCountFlags::TYPE_1,
             },
-        )?;
+        )
+        .union()?;
 
         transition_image_layout(
             &self.device,
@@ -858,10 +903,12 @@ impl Renderer {
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::GENERAL,
             1,
-        )?;
+        )
+        .union()?;
 
         let image_view =
-            create_image_view(&self.device, image, format, vk::ImageAspectFlags::COLOR, 1)?;
+            create_image_view(&self.device, image, format, vk::ImageAspectFlags::COLOR, 1)
+                .union()?;
 
         let storage_texture = storage_texture::StorageTexture {
             image,
@@ -872,7 +919,7 @@ impl Renderer {
             height,
         };
 
-        self.register_storage_texture(storage_texture)
+        self.register_storage_texture(storage_texture).union()
     }
 
     /// Create a sampled TextureHandle that aliases the same image as the given storage texture.
@@ -880,7 +927,7 @@ impl Renderer {
     pub fn storage_texture_as_sampled(
         &mut self,
         storage_texture_handle: &StorageTextureHandle,
-    ) -> anyhow::Result<TextureHandle> {
+    ) -> eros::Result<TextureHandle, HeapResourceErrors> {
         let st = self.storage_textures.get(storage_texture_handle);
 
         let image_view = create_image_view(
@@ -889,14 +936,16 @@ impl Renderer {
             st.format,
             vk::ImageAspectFlags::COLOR,
             1,
-        )?;
+        )
+        .union()?;
 
         let sampler = create_texture_sampler(
             &self.device,
             self.physical_device_properties,
             SamplerOptions::default(),
             1,
-        )?;
+        )
+        .union()?;
 
         let texture = texture::Texture {
             source_file_name: "storage_texture_sampled_alias".to_string(),
@@ -908,15 +957,18 @@ impl Renderer {
             image_layout: vk::ImageLayout::GENERAL,
         };
 
-        let handle = self.register_texture(texture)?;
+        let handle = self.register_texture(texture).union()?;
 
         Ok(handle)
     }
 
-    pub fn clear_storage_texture(&self, handle: &StorageTextureHandle) -> anyhow::Result<()> {
+    pub fn clear_storage_texture(
+        &self,
+        handle: &StorageTextureHandle,
+    ) -> eros::Result<(), (vk::Result,)> {
         let st = self.storage_textures.get(handle);
 
-        let command_buffer = begin_single_time_commands(&self.device, self.command_pool)?;
+        let command_buffer = begin_single_time_commands(&self.device, self.command_pool).union()?;
 
         let subresource_range = vk::ImageSubresourceRange::default()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -940,7 +992,8 @@ impl Renderer {
             self.command_pool,
             self.graphics_queue,
             command_buffer,
-        )?;
+        )
+        .union()?;
 
         Ok(())
     }
@@ -951,7 +1004,7 @@ impl Renderer {
         &self,
         handle: &StorageTextureHandle,
         data: &[T],
-    ) -> anyhow::Result<()> {
+    ) -> eros::Result<(), (vk::Result,)> {
         let st = self.storage_textures.get(handle);
         let buffer_size = std::mem::size_of_val(data) as u64;
 
@@ -960,11 +1013,12 @@ impl Renderer {
             buffer_size,
             vk::BufferUsageFlags::TRANSFER_SRC,
             BufferMemory::Staging,
-        )?;
+        )
+        .union()?;
 
-        unsafe { write_to_gpu_buffer(&self.allocator, &mut staging_buffer_memory, data)? };
+        unsafe { write_to_gpu_buffer(&self.allocator, &mut staging_buffer_memory, data).union()? };
 
-        let command_buffer = begin_single_time_commands(&self.device, self.command_pool)?;
+        let command_buffer = begin_single_time_commands(&self.device, self.command_pool).union()?;
 
         // Transition GENERAL -> TRANSFER_DST_OPTIMAL
         let subresource_range = vk::ImageSubresourceRange::default()
@@ -1036,7 +1090,8 @@ impl Renderer {
             self.command_pool,
             self.graphics_queue,
             command_buffer,
-        )?;
+        )
+        .union()?;
 
         unsafe {
             self.allocator
@@ -1046,7 +1101,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> anyhow::Result<UniformBufferHandle<T>> {
+    pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> eros::Result<UniformBufferHandle<T>> {
         self.create_uniform_buffer_sized(std::mem::size_of::<T>() as u64)
     }
 
@@ -1055,8 +1110,8 @@ impl Renderer {
     pub fn create_uniform_buffer_bytes(
         &mut self,
         byte_size: u64,
-    ) -> anyhow::Result<UniformBufferHandle<UniformBytes>> {
-        anyhow::ensure!(byte_size > 0, "a uniform buffer needs a nonzero size");
+    ) -> eros::Result<UniformBufferHandle<UniformBytes>> {
+        eros::ensure!(byte_size > 0, "a uniform buffer needs a nonzero size");
 
         self.create_uniform_buffer_sized(byte_size)
     }
@@ -1064,7 +1119,7 @@ impl Renderer {
     fn create_uniform_buffer_sized<T>(
         &mut self,
         buffer_size: u64,
-    ) -> anyhow::Result<UniformBufferHandle<T>> {
+    ) -> eros::Result<UniformBufferHandle<T>> {
         let mut buffers_per_frame: [Option<RawUniformBuffer>; MAX_FRAMES_IN_FLIGHT] =
             [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
@@ -1074,7 +1129,8 @@ impl Renderer {
                 buffer_size,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
                 BufferMemory::PersistentlyMapped,
-            )?;
+            )
+            .union()?;
 
             let mapped_mem = self.allocator.get_allocation_info(&allocation).mapped_data;
 
@@ -1107,19 +1163,21 @@ impl Renderer {
         }
     }
 
+    #[context("Create cpu-updated buffer of {len} {}", std::any::type_name::<T>())]
     pub fn create_cpu_updated_buffer<T: GPUWrite>(
         &mut self,
         len: u32,
-    ) -> anyhow::Result<CpuUpdatedBufferHandle<T>> {
-        let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
+    ) -> eros::Result<CpuUpdatedBufferHandle<T>, (vk::Result,)> {
+        let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len).union()?;
         Ok(self.storage_buffers.add(buffers_per_frame, len))
     }
 
+    #[context("Create immutable buffer of {len} {}", std::any::type_name::<T>())]
     pub fn create_immutable_buffer<T: GPUWrite>(
         &mut self,
         len: u32,
-    ) -> anyhow::Result<ImmutableBufferHandle<T>> {
-        let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
+    ) -> eros::Result<ImmutableBufferHandle<T>, (vk::Result,)> {
+        let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len).union()?;
         Ok(self.storage_buffers.add_immutable(buffers_per_frame, len))
     }
 
@@ -1127,33 +1185,34 @@ impl Renderer {
     pub fn create_indirect_buffer(
         &mut self,
         commands: &[DrawIndexedIndirectCommand],
-    ) -> anyhow::Result<ImmutableBufferHandle<DrawIndexedIndirectCommand>> {
-        let len = u32::try_from(commands.len())?;
-        let mut buffer = self.create_immutable_buffer(len)?;
+    ) -> eros::Result<ImmutableBufferHandle<DrawIndexedIndirectCommand>, IndirectBufferErrors> {
+        let len = u32::try_from(commands.len()).union()?;
+        let mut buffer = self.create_immutable_buffer(len).widen()?;
         self.write_immutable_all_frames(&mut buffer, commands);
 
         Ok(buffer)
     }
 
+    #[context("Create gpu-updated buffer of {len} {}", std::any::type_name::<T>())]
     pub fn create_gpu_updated_buffer<T: GPUWrite>(
         &mut self,
         len: u32,
-    ) -> anyhow::Result<GpuUpdatedBufferHandle<T>> {
-        let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
+    ) -> eros::Result<GpuUpdatedBufferHandle<T>, (vk::Result,)> {
+        let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len).union()?;
         Ok(self.storage_buffers.add_gpu_updated(buffers_per_frame, len))
     }
 
+    #[context("Create singleton buffer of {} {}", data.len(), std::any::type_name::<T>())]
     pub fn create_singleton_buffer<T: GPUWrite>(
         &mut self,
         data: &[T],
-    ) -> anyhow::Result<SingletonBufferHandle<T>> {
-        let len = u32::try_from(data.len())?;
-        anyhow::ensure!(
-            len > 0,
-            "a singleton buffer needs at least one element; vulkan cannot allocate an empty buffer"
-        );
+    ) -> eros::Result<SingletonBufferHandle<T>, SingletonBufferErrors> {
+        let len = u32::try_from(data.len()).union()?;
+        if len == 0 {
+            return Err(EmptySingletonBuffer).union();
+        }
 
-        let raw_storage_buffer = self.create_raw_storage_buffer::<T>(len)?;
+        let raw_storage_buffer = self.create_raw_storage_buffer::<T>(len).union()?;
         unsafe {
             std::ptr::copy_nonoverlapping(
                 data.as_ptr(),
@@ -1168,7 +1227,7 @@ impl Renderer {
     fn create_storage_buffers_per_frame<T: GPUWrite>(
         &mut self,
         len: u32,
-    ) -> anyhow::Result<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> {
+    ) -> Result<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT], vk::Result> {
         let mut buffers_per_frame: [Option<RawStorageBuffer>; MAX_FRAMES_IN_FLIGHT] =
             [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
@@ -1181,7 +1240,7 @@ impl Renderer {
     fn create_raw_storage_buffer<T: GPUWrite>(
         &mut self,
         len: u32,
-    ) -> anyhow::Result<RawStorageBuffer> {
+    ) -> Result<RawStorageBuffer, vk::Result> {
         let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
 
         let (buffer, allocation) = create_memory_buffer(
@@ -1322,7 +1381,7 @@ impl Renderer {
     pub fn create_pipeline<I, D: DrawCall, P>(
         &mut self,
         config: PipelineConfig<I, D, P>,
-    ) -> anyhow::Result<GraphicsPipelineHandle<I, D, P>> {
+    ) -> eros::Result<GraphicsPipelineHandle<I, D, P>> {
         let pipeline = self.init_pipeline(config)?;
         let handle = self.pipelines.add(pipeline);
 
@@ -1332,13 +1391,23 @@ impl Renderer {
     /// Create vertex and index buffers that can be shared by multiple
     /// pipelines via PipelineConfig::with_shared_mesh, each drawing the whole
     /// mesh or an index sub-range. Meshes live until renderer teardown.
+    #[context(
+        "Create mesh of {} {} vertices and {} indices",
+        vertices.len(),
+        std::any::type_name::<V>(),
+        indices.len()
+    )]
     pub fn create_mesh<V: VertexDescription + GPUWrite>(
         &mut self,
         vertices: &[V],
         indices: &[u32],
-    ) -> anyhow::Result<MeshHandle<V>> {
+    ) -> eros::Result<MeshHandle<V>, MeshErrors> {
         if vertices.is_empty() || indices.is_empty() {
-            anyhow::bail!("create_mesh requires non-empty vertex and index data");
+            return Err(EmptyMeshData {
+                vertices: vertices.len(),
+                indices: indices.len(),
+            })
+            .union();
         }
 
         let (vertex_buffer, vertex_buffer_memory) = create_vertex_buffer(
@@ -1347,7 +1416,8 @@ impl Renderer {
             self.command_pool,
             self.graphics_queue,
             vertices,
-        )?;
+        )
+        .union()?;
 
         let (index_buffer, index_buffer_memory) = create_index_buffer(
             &self.allocator,
@@ -1355,7 +1425,8 @@ impl Renderer {
             self.command_pool,
             self.graphics_queue,
             indices,
-        )?;
+        )
+        .union()?;
 
         let index = MeshIndex::from_raw(self.meshes.len());
         self.meshes.push(VertexAndIndexBuffers {
@@ -1375,16 +1446,15 @@ impl Renderer {
     pub fn create_picking_pipeline(
         &mut self,
         picking_config: PipelineConfig<NoVertex, DrawVertexCount, NoPush>,
-    ) -> anyhow::Result<PickingPipelineHandle> {
+    ) -> eros::Result<PickingPipelineHandle> {
         picking_config.validate_vertex_input()?;
 
         // Lazily initialize picking resources on first use
         if self.picking.is_none() {
-            self.picking = Some(PickingResources::init(
-                &self.allocator,
-                &self.device,
-                self.render_extent,
-            )?);
+            self.picking = Some(
+                PickingResources::init(&self.allocator, &self.device, self.render_extent)
+                    .union()?,
+            );
         }
 
         let picking_pipeline_layout = ShaderPipelineLayout::create_from_atlas(
@@ -1413,10 +1483,12 @@ impl Renderer {
             &picking_config.shader.vertex_binding_descriptions(),
             &picking_config.shader.vertex_attribute_descriptions(),
             &picking_raster_state,
-        )?;
+        )
+        .union()?;
 
         let layout_bindings = picking_config.shader.layout_bindings();
-        let descriptor_pool = create_descriptor_pool(&self.device, &picking_pipeline_layout)?;
+        let descriptor_pool =
+            create_descriptor_pool(&self.device, &picking_pipeline_layout).union()?;
 
         let uniform_buffers_in_layout_frame_order: Vec<&[RawUniformBuffer; MAX_FRAMES_IN_FLIGHT]> =
             picking_config
@@ -1438,7 +1510,8 @@ impl Renderer {
             &[],
             &[],
             layout_bindings,
-        )?;
+        )
+        .union()?;
 
         let renderer_pipeline = RendererPipeline {
             layout: picking_pipeline_layout,
@@ -1488,7 +1561,16 @@ impl Renderer {
     pub fn create_compute_pipeline<P>(
         &mut self,
         config: ComputePipelineConfig<P>,
-    ) -> anyhow::Result<PipelineHandle<Compute, P>> {
+    ) -> eros::Result<PipelineHandle<Compute, P>, PipelineLayoutErrors> {
+        let shader = config.shader.source_file_name().to_owned();
+        self.init_compute_pipeline(config)
+            .with_context(|| format!("Create compute pipeline for {shader}"))
+    }
+
+    fn init_compute_pipeline<P>(
+        &mut self,
+        config: ComputePipelineConfig<P>,
+    ) -> eros::Result<PipelineHandle<Compute, P>, PipelineLayoutErrors> {
         let pipeline_layout = ComputeShaderPipelineLayout::create_from_atlas(
             &self.device,
             self.descriptor_heap.layout(),
@@ -1502,7 +1584,8 @@ impl Renderer {
                 .code(&pipeline_layout.compute_shader.spv_bytes);
             unsafe {
                 self.device
-                    .create_shader_module(&shader_module_create_info, None)?
+                    .create_shader_module(&shader_module_create_info, None)
+                    .union()?
             }
         };
 
@@ -1522,7 +1605,8 @@ impl Renderer {
                 None,
             )
         }
-        .map_err(|(_pipelines, err)| err)?[0];
+        .map_err(|(_pipelines, err)| err)
+        .union()?[0];
 
         self.set_debug_name(
             pipeline,
@@ -1537,7 +1621,8 @@ impl Renderer {
         let descriptor_pool = create_descriptor_pool_from_layouts(
             &self.device,
             &pipeline_layout.descriptor_set_layouts,
-        )?;
+        )
+        .union()?;
 
         let textures = {
             let mut textures = vec![];
@@ -1574,7 +1659,8 @@ impl Renderer {
             &textures,
             &storage_images,
             layout_bindings,
-        )?;
+        )
+        .union()?;
 
         let compute_renderer_pipeline = ComputeRendererPipeline {
             layout: pipeline_layout,
@@ -1608,7 +1694,7 @@ impl Renderer {
     fn init_pipeline<I, D: DrawCall, P>(
         &mut self,
         config: PipelineConfig<I, D, P>,
-    ) -> anyhow::Result<RendererPipeline> {
+    ) -> eros::Result<RendererPipeline> {
         // checked up front so the bail happens before create_graphics_pipeline
         // below allocates a vk::Pipeline we would then have to leak
         config.validate_vertex_input()?;
@@ -1619,7 +1705,8 @@ impl Renderer {
             &*config.shader,
             #[cfg(debug_assertions)]
             self.shaders_source_dir,
-        )?;
+        )
+        .widen()?;
 
         let pipeline = create_graphics_pipeline(
             &self.device,
@@ -1630,7 +1717,8 @@ impl Renderer {
             &config.shader.vertex_binding_descriptions(),
             &config.shader.vertex_attribute_descriptions(),
             &config.raster_state,
-        )?;
+        )
+        .union()?;
 
         self.set_debug_name(
             pipeline,
@@ -1663,7 +1751,8 @@ impl Renderer {
                     self.command_pool,
                     self.graphics_queue,
                     indices,
-                )?;
+                )
+                .union()?;
 
                 let index_count = indices.len() as u32;
 
@@ -1685,7 +1774,7 @@ impl Renderer {
 
         let layout_bindings = config.shader.layout_bindings();
 
-        let descriptor_pool = create_descriptor_pool(&self.device, &pipeline_layout)?;
+        let descriptor_pool = create_descriptor_pool(&self.device, &pipeline_layout).union()?;
 
         let textures = {
             let mut textures = vec![];
@@ -1722,7 +1811,8 @@ impl Renderer {
             &textures,
             &storage_images,
             layout_bindings,
-        )?;
+        )
+        .union()?;
 
         Ok(RendererPipeline {
             layout: pipeline_layout,
@@ -1869,7 +1959,7 @@ impl Renderer {
         image_index: u32,
         picking_config: Option<&PickingDrawConfig>,
         pending_compute: &[PendingComputeCommand],
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<(), vk::Result> {
         let command_buffer = self.command_buffers[self.flight_slot];
 
         let begin_info = vk::CommandBufferBeginInfo::default();
@@ -2645,7 +2735,7 @@ impl Renderer {
         pending_compute: Vec<PendingComputeCommand>,
         gpu_update: impl FnOnce(&mut Gpu),
         on_submitted: impl FnOnce(),
-    ) -> Result<(), anyhow::Error> {
+    ) -> eros::Result<()> {
         // The slot the draws were queued against
         let queue_flight_slot = self.flight_slot;
 
@@ -2831,29 +2921,37 @@ impl Renderer {
     /// acquire a swapchain image or advance frame/flight counters. The shader
     /// must keep its writes within the output allocation. This is a diagnostic
     /// path, not an asynchronous frame-loop readback API.
+    #[context(
+        "GPU readback of {} {} with group count {group_count:?}",
+        output.len(),
+        std::any::type_name::<T>()
+    )]
     pub fn dispatch_readback<T: gpu_read::GPURead + GPUWrite, P: PushConstantBlock>(
         &mut self,
         pipeline: &PipelineHandle<Compute, PushBlock<P>>,
         output: &GpuUpdatedBufferHandle<T>,
         group_count: [u32; 3],
         prepare: impl FnOnce(&mut Gpu<'_>, Addr<T>) -> P,
-    ) -> anyhow::Result<Vec<T>> {
-        anyhow::ensure!(
-            group_count.into_iter().all(|count| count > 0),
-            "GPU readback dispatch group count is zero"
-        );
+    ) -> eros::Result<Vec<T>, ReadbackErrors> {
+        if group_count.contains(&0) {
+            return Err(InvalidDispatchGroupCount::Zero { group_count }).union();
+        }
 
         let limits = self
             .physical_device_properties
             .limits
             .max_compute_work_group_count;
-        anyhow::ensure!(
-            group_count
-                .into_iter()
-                .zip(limits)
-                .all(|(count, limit)| count <= limit),
-            "GPU readback dispatch group count exceeds device limits"
-        );
+        if group_count
+            .into_iter()
+            .zip(limits)
+            .any(|(count, limit)| count > limit)
+        {
+            return Err(InvalidDispatchGroupCount::ExceedsLimits {
+                group_count,
+                limits,
+            })
+            .union();
+        }
 
         let raw = self
             .storage_buffers
@@ -2863,15 +2961,15 @@ impl Renderer {
             T::GPU_SIZE,
             size_of::<T>(),
             raw.byte_size,
-        )?;
-        anyhow::ensure!(
-            !raw.mapped_mem.is_null(),
-            "GPU readback buffer is not mapped"
-        );
+        )
+        .union()?;
+        if raw.mapped_mem.is_null() {
+            return Err(ReadbackBufferUnmapped).union();
+        }
 
         let mapped = raw.mapped_mem.cast::<u8>();
         let address = Addr::from_raw(raw.device_address);
-        self.drain_gpu()?;
+        self.drain_gpu().widen()?;
 
         // SAFETY: the checked range is inside a coherent mapped allocation;
         // drain_gpu completed all previous accesses. Initialize even padding and
@@ -2899,12 +2997,15 @@ impl Renderer {
         let command_buffer = self.command_buffers[self.flight_slot];
         unsafe {
             self.device
-                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())?;
-            self.device.begin_command_buffer(
-                command_buffer,
-                &vk::CommandBufferBeginInfo::default()
-                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-            )?;
+                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
+                .union()?;
+            self.device
+                .begin_command_buffer(
+                    command_buffer,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )
+                .union()?;
         }
 
         self.record_compute_commands(command_buffer, &commands);
@@ -2918,16 +3019,17 @@ impl Renderer {
         );
 
         unsafe {
-            self.device.end_command_buffer(command_buffer)?;
+            self.device.end_command_buffer(command_buffer).union()?;
 
             let infos = [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
             let submits = [vk::SubmitInfo2::default().command_buffer_infos(&infos)];
             self.device
-                .queue_submit2(self.graphics_queue, &submits, vk::Fence::null())?;
+                .queue_submit2(self.graphics_queue, &submits, vk::Fence::null())
+                .union()?;
 
             // If waiting fails, do not read memory or free pending resources.
             // The renderer still owns this command buffer and output allocation.
-            self.device.device_wait_idle()?;
+            self.device.device_wait_idle().union()?;
         }
 
         // SAFETY: completion plus the shader-write -> host-read dependency makes
@@ -2937,16 +3039,20 @@ impl Renderer {
 
         // `as_chunks` needs a const generic argument,
         // and an associated const of a type parameter cannot be one on stable.
-        bytes.chunks_exact(T::GPU_SIZE).map(T::read_gpu).collect()
+        bytes
+            .chunks_exact(T::GPU_SIZE)
+            .map(T::read_gpu)
+            .collect::<eros::Result<Vec<T>, gpu_read::GpuReadErrors>>()
+            .widen()
     }
 
-    pub fn drain_gpu(&mut self) -> Result<(), anyhow::Error> {
-        unsafe { self.device.device_wait_idle()? };
-        Ok(())
+    pub fn drain_gpu(&mut self) -> eros::Result<(), (vk::Result,)> {
+        unsafe { self.device.device_wait_idle() }.union()
     }
 
     // to be called on window resize
-    pub fn recreate_swapchain(&mut self) -> Result<(), anyhow::Error> {
+    #[context("Recreate swapchain")]
+    pub fn recreate_swapchain(&mut self) -> eros::Result<()> {
         unsafe { self.device.device_wait_idle()? }
 
         // NOTE: the timeline semaphores are monotonic and must NOT be recreated here —
@@ -3056,7 +3162,7 @@ impl Renderer {
         &mut self,
         graphics_pipeline_indices: &[GraphicsPipelineIndex],
         compute_pipeline_indices: &[ComputePipelineIndex],
-    ) -> Result<(), anyhow::Error> {
+    ) -> eros::Result<()> {
         // drop old graphics reloaded pipelines for frames that are no longer needed
         let mut to_remove = vec![];
         for (i, (old_frame, old_pipeline, old_pipeline_layout, old_descriptor_set_layouts)) in
@@ -3111,7 +3217,7 @@ impl Renderer {
     fn try_shader_recompile(
         &mut self,
         pipeline_index: GraphicsPipelineIndex,
-    ) -> Result<(), anyhow::Error> {
+    ) -> eros::Result<()> {
         if !self
             .pipelines
             .get_by_index(pipeline_index)
@@ -3130,7 +3236,7 @@ impl Renderer {
         ) {
             Ok(shaders) => shaders,
             Err(e) => {
-                error!("failed to compile shaders: {e}");
+                error!("failed to compile shaders: {e:#?}");
                 return Ok(());
             }
         };
@@ -3176,7 +3282,7 @@ impl Renderer {
     fn try_compute_shader_recompile(
         &mut self,
         compute_pipeline_index: ComputePipelineIndex,
-    ) -> Result<(), anyhow::Error> {
+    ) -> eros::Result<()> {
         let compute_pipeline = self.compute_pipelines.get_by_index(compute_pipeline_index);
 
         let mut tmp_layout = match ComputeShaderPipelineLayout::create_from_atlas(
@@ -3188,7 +3294,7 @@ impl Renderer {
         ) {
             Ok(layout) => layout,
             Err(e) => {
-                error!("failed to compile compute shader: {e}");
+                error!("failed to compile compute shader: {e:#?}");
                 return Ok(());
             }
         };
@@ -3249,7 +3355,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn on_resize(&mut self) -> anyhow::Result<()> {
+    pub fn on_resize(&mut self) -> eros::Result<()> {
         self.recreate_swapchain()?;
 
         let (width, height) = (self.image_extent.width, self.image_extent.height);
@@ -3454,11 +3560,10 @@ pub struct RgbaPixels<'a> {
 }
 
 impl<'a> RgbaPixels<'a> {
-    pub fn new(width: u32, height: u32, bytes: &'a [u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            width > 0 && height > 0,
-            "expected a non-empty image, got {width}x{height}"
-        );
+    pub fn new(width: u32, height: u32, bytes: &'a [u8]) -> Result<Self, InvalidRgbaPixels> {
+        if width == 0 || height == 0 {
+            return Err(InvalidRgbaPixels::Empty { width, height });
+        }
 
         // u32 * u32 * 4 overflows u32 but not usize on the 64-bit targets this
         // builds for; checked anyway so a 32-bit build can't wrap into a
@@ -3466,13 +3571,16 @@ impl<'a> RgbaPixels<'a> {
         let expected = (width as usize)
             .checked_mul(height as usize)
             .and_then(|texels| texels.checked_mul(4))
-            .with_context(|| format!("image dimensions overflow: {width}x{height}"))?;
+            .ok_or(InvalidRgbaPixels::DimensionsOverflow { width, height })?;
 
-        anyhow::ensure!(
-            bytes.len() == expected,
-            "expected {expected} rgba bytes for {width}x{height}, got {}",
-            bytes.len(),
-        );
+        if bytes.len() != expected {
+            return Err(InvalidRgbaPixels::ByteLength {
+                width,
+                height,
+                expected,
+                actual: bytes.len(),
+            });
+        }
 
         Ok(Self {
             width,
@@ -3502,7 +3610,7 @@ fn get_required_layers() -> Vec<&'static std::ffi::CStr> {
     }
 }
 
-fn check_required_layers(entry: &ash::Entry) -> Result<(), anyhow::Error> {
+fn check_required_layers(entry: &ash::Entry) -> eros::Result<()> {
     let required_layers = get_required_layers();
     let available_layers = unsafe { entry.enumerate_instance_layer_properties()? };
 
@@ -3518,14 +3626,14 @@ fn check_required_layers(entry: &ash::Entry) -> Result<(), anyhow::Error> {
 
         if !found {
             let required_layer = required_layer.to_string_lossy();
-            anyhow::bail!("missing required layer: {required_layer}");
+            eros::bail!("missing required layer: {required_layer}");
         }
     }
 
     Ok(())
 }
 
-fn check_required_extensions(entry: &ash::Entry) -> Result<(), anyhow::Error> {
+fn check_required_extensions(entry: &ash::Entry) -> eros::Result<()> {
     let mut required_extensions = vec![ash::khr::surface::NAME, platform::OS_SURFACE_EXT];
 
     required_extensions.push(ash::ext::debug_utils::NAME);
@@ -3544,7 +3652,7 @@ fn check_required_extensions(entry: &ash::Entry) -> Result<(), anyhow::Error> {
 
         if !found {
             let required_layer = required_ext.to_string_lossy();
-            anyhow::bail!("missing required extension: {required_layer}");
+            eros::bail!("missing required extension: {required_layer}");
         }
     }
 
@@ -3572,7 +3680,7 @@ impl QueueFamilyIndices {
         surface_ext: &ash::khr::surface::Instance,
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
-    ) -> Result<Option<Self>, anyhow::Error> {
+    ) -> Result<Option<Self>, vk::Result> {
         let queue_families =
             unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
@@ -3625,7 +3733,7 @@ fn choose_physical_device(
     surface_ext: &ash::khr::surface::Instance,
     surface: vk::SurfaceKHR,
     prefer_integrated: Option<bool>,
-) -> anyhow::Result<(
+) -> eros::Result<(
     vk::PhysicalDevice,
     QueueFamilyIndices,
     vk::PhysicalDeviceProperties,
@@ -3796,7 +3904,7 @@ fn choose_physical_device(
     });
 
     let Some(chosen_device) = devices_with_indices_and_props.into_iter().next() else {
-        anyhow::bail!(
+        eros::bail!(
             "no suitable graphics device available \
              (requires Vulkan 1.3 with dynamicRendering, synchronization2, \
              timelineSemaphore and bufferDeviceAddress, the descriptor-indexing \
@@ -3922,7 +4030,7 @@ fn check_device_extension_support(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
     required_extensions: &[&'static CStr],
-) -> Result<bool, anyhow::Error> {
+) -> Result<bool, vk::Result> {
     let mut required_extensions: BTreeSet<Vec<u8>> = required_extensions
         .iter()
         .map(|&cstr| cstr.to_bytes().to_owned())
@@ -3972,7 +4080,7 @@ fn create_swapchain(
     surface: vk::SurfaceKHR,
     physical_device: vk::PhysicalDevice,
     queue_family_indices: &QueueFamilyIndices,
-) -> Result<CreatedSwapchain, anyhow::Error> {
+) -> Result<CreatedSwapchain, vk::Result> {
     let swapchain_support = SwapChainSupportDetails::query(surface_ext, surface, physical_device)?;
 
     let surface_format = choose_swap_surface_format(&swapchain_support);
@@ -4039,7 +4147,7 @@ fn create_logical_device(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
     indices: &QueueFamilyIndices,
-) -> Result<ash::Device, anyhow::Error> {
+) -> Result<ash::Device, vk::Result> {
     let unique_queue_families = BTreeSet::from([indices.graphics, indices.presentation]);
 
     let mut queue_create_infos = vec![];
@@ -4137,7 +4245,7 @@ impl SwapChainSupportDetails {
         surface_ext: &ash::khr::surface::Instance,
         surface: vk::SurfaceKHR,
         physical_device: vk::PhysicalDevice,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> Result<Self, vk::Result> {
         let capabilities = unsafe {
             surface_ext.get_physical_device_surface_capabilities(physical_device, surface)?
         };
@@ -4166,7 +4274,7 @@ fn create_swapchain_image_views(
     device: &ash::Device,
     image_format: vk::Format,
     swapchain_images: &[vk::Image],
-) -> Result<Vec<vk::ImageView>, anyhow::Error> {
+) -> Result<Vec<vk::ImageView>, vk::Result> {
     let mut swapchain_image_views = Vec::with_capacity(swapchain_images.len());
     for &image in swapchain_images {
         let image_view =
@@ -4179,7 +4287,7 @@ fn create_swapchain_image_views(
 
 /// usage: read_shader_spv("triangle.vert.spv");
 #[expect(unused)]
-fn read_shader_spv(shader_name: &str) -> Result<Vec<u32>, anyhow::Error> {
+fn read_shader_spv(shader_name: &str) -> Result<Vec<u32>, std::io::Error> {
     let shader_path: PathBuf = [
         env!("CARGO_MANIFEST_DIR"),
         "shaders",
@@ -4316,7 +4424,7 @@ fn create_graphics_pipeline(
     vertex_binding_descriptions: &[vk::VertexInputBindingDescription],
     vertex_attribute_descriptions: &[vk::VertexInputAttributeDescription],
     raster_state: &RasterState,
-) -> Result<vk::Pipeline, anyhow::Error> {
+) -> Result<vk::Pipeline, vk::Result> {
     let vert_shader_spv = &pipeline_layout.vertex_shader.spv_bytes;
     let frag_shader_spv = &pipeline_layout.fragment_shader.spv_bytes;
 
@@ -4424,7 +4532,7 @@ fn create_graphics_pipeline(
     let graphics_pipelines = unsafe {
         device
             .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-            .map_err(|e| anyhow::anyhow!("failed to create graphics pipelines: {e:?}"))?
+            .map_err(|(_pipelines, err)| err)?
     };
     let graphics_pipeline = graphics_pipelines[0];
 
@@ -4437,7 +4545,7 @@ fn create_graphics_pipeline(
 fn create_command_pool(
     device: &ash::Device,
     queue_family_indicies: &QueueFamilyIndices,
-) -> Result<vk::CommandPool, anyhow::Error> {
+) -> Result<vk::CommandPool, vk::Result> {
     let pool_info = vk::CommandPoolCreateInfo::default()
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
         .queue_family_index(queue_family_indicies.graphics);
@@ -4450,7 +4558,7 @@ fn create_command_pool(
 fn create_command_buffers(
     device: &ash::Device,
     command_pool: vk::CommandPool,
-) -> Result<[vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT], anyhow::Error> {
+) -> Result<[vk::CommandBuffer; MAX_FRAMES_IN_FLIGHT], vk::Result> {
     let alloc_info = vk::CommandBufferAllocateInfo::default()
         .command_pool(command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
@@ -4470,7 +4578,7 @@ fn create_sync_objects(
         Vec<vk::Semaphore>,
         vk::Semaphore,
     ),
-    anyhow::Error,
+    vk::Result,
 > {
     let mut image_available: [Option<vk::Semaphore>; MAX_FRAMES_IN_FLIGHT] =
         [const { None }; MAX_FRAMES_IN_FLIGHT];
@@ -4491,7 +4599,7 @@ fn create_sync_objects(
     Ok((image_available, render_finished, frame_timeline))
 }
 
-fn create_timeline_semaphore(device: &ash::Device) -> Result<vk::Semaphore, anyhow::Error> {
+fn create_timeline_semaphore(device: &ash::Device) -> Result<vk::Semaphore, vk::Result> {
     let mut type_info = vk::SemaphoreTypeCreateInfo::default()
         .semaphore_type(vk::SemaphoreType::TIMELINE)
         .initial_value(0);
@@ -4505,7 +4613,7 @@ fn create_vertex_buffer<V: GPUWrite>(
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
     vertices: &[V],
-) -> Result<(vk::Buffer, vk_mem::Allocation), anyhow::Error> {
+) -> Result<(vk::Buffer, vk_mem::Allocation), vk::Result> {
     let buffer_size = std::mem::size_of_val(vertices) as u64;
 
     let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
@@ -4546,7 +4654,7 @@ fn create_index_buffer(
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
     indices: &[u32],
-) -> Result<(vk::Buffer, vk_mem::Allocation), anyhow::Error> {
+) -> Result<(vk::Buffer, vk_mem::Allocation), vk::Result> {
     let buffer_size = std::mem::size_of_val(indices) as u64;
     let (staging_buffer, mut staging_buffer_memory) = create_memory_buffer(
         allocator,
@@ -4587,7 +4695,7 @@ fn copy_memory_buffer(
     dst_buffer: vk::Buffer,
     size: vk::DeviceSize,
     graphics_queue: vk::Queue,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), vk::Result> {
     // NOTE it would be better to have a second command pool for transfers,
     // that also uses 'create transient'
     let command_buffer = begin_single_time_commands(device, command_pool)?;
@@ -4652,7 +4760,7 @@ pub(super) fn create_memory_buffer(
     buffer_size: vk::DeviceSize,
     buffer_usage: vk::BufferUsageFlags,
     memory: BufferMemory,
-) -> Result<(vk::Buffer, vk_mem::Allocation), anyhow::Error> {
+) -> Result<(vk::Buffer, vk_mem::Allocation), vk::Result> {
     let buffer_create_info = vk::BufferCreateInfo::default()
         .size(buffer_size)
         .usage(buffer_usage)
@@ -4691,7 +4799,7 @@ fn descriptor_pool_sizes(
 fn create_descriptor_pool_from_layouts(
     device: &ash::Device,
     descriptor_set_layouts: &[(ash::vk::DescriptorSetLayout, DescriptorCounts)],
-) -> Result<vk::DescriptorPool, anyhow::Error> {
+) -> Result<vk::DescriptorPool, vk::Result> {
     let descriptor_sets_per_frame = descriptor_set_layouts.len() as u32;
     let sets_across_frames = descriptor_sets_per_frame * MAX_FRAMES_IN_FLIGHT as u32;
 
@@ -4711,7 +4819,7 @@ fn create_descriptor_pool_from_layouts(
 fn create_descriptor_pool(
     device: &ash::Device,
     pipeline_layout: &ShaderPipelineLayout,
-) -> Result<vk::DescriptorPool, anyhow::Error> {
+) -> Result<vk::DescriptorPool, vk::Result> {
     let descriptor_sets_per_frame = pipeline_layout.descriptor_set_layouts.len() as u32;
     let sets_across_frames = descriptor_sets_per_frame * MAX_FRAMES_IN_FLIGHT as u32;
 
@@ -4771,7 +4879,7 @@ fn create_descriptor_sets(
     textures: &[&Texture],
     storage_images: &[&storage_texture::StorageTexture],
     layout_bindings: Vec<Vec<LayoutDescription>>,
-) -> Result<Vec<vk::DescriptorSet>, anyhow::Error> {
+) -> Result<Vec<vk::DescriptorSet>, vk::Result> {
     // this vec and the resulting vec of descriptor sets are arranged like this:
     // [
     //     frame_0_set_0_binding_0,
@@ -4984,7 +5092,7 @@ pub(super) struct ImageOptions {
 pub(super) fn create_vk_image(
     allocator: &vk_mem::Allocator,
     options: ImageOptions,
-) -> Result<(vk::Image, vk_mem::Allocation), anyhow::Error> {
+) -> Result<(vk::Image, vk_mem::Allocation), vk::Result> {
     let image_create_info = vk::ImageCreateInfo::default()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(options.extent.into())
@@ -5010,7 +5118,7 @@ pub(super) fn create_vk_image(
 fn begin_single_time_commands(
     device: &ash::Device,
     command_pool: vk::CommandPool,
-) -> Result<vk::CommandBuffer, anyhow::Error> {
+) -> Result<vk::CommandBuffer, vk::Result> {
     let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
         .level(vk::CommandBufferLevel::PRIMARY)
         .command_pool(command_pool)
@@ -5031,7 +5139,7 @@ fn end_single_time_commands(
     command_pool: vk::CommandPool,
     graphics_queue: vk::Queue,
     command_buffer: vk::CommandBuffer,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), vk::Result> {
     let command_buffers = [command_buffer];
 
     unsafe { device.end_command_buffer(command_buffer)? };
@@ -5085,7 +5193,7 @@ fn transition_image_layout(
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
     mip_levels: u32,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), vk::Result> {
     let command_buffer = begin_single_time_commands(device, command_pool)?;
 
     let subresource_range = vk::ImageSubresourceRange::default()
@@ -5143,7 +5251,8 @@ fn transition_image_layout(
         }
 
         transition => {
-            anyhow::bail!("layout transition: {transition:?} not supported");
+            // every caller passes one of the transitions above
+            unreachable!("layout transition: {transition:?} not supported");
         }
     }
 
@@ -5162,7 +5271,7 @@ fn copy_buffer_to_image(
     buffer: vk::Buffer,
     image: vk::Image,
     regions: &[vk::BufferImageCopy],
-) -> Result<(), anyhow::Error> {
+) -> Result<(), vk::Result> {
     let command_buffer = begin_single_time_commands(device, command_pool)?;
 
     unsafe {
@@ -5186,7 +5295,7 @@ pub(super) fn create_image_view(
     format: vk::Format,
     aspect_mask: vk::ImageAspectFlags,
     mip_levels: u32,
-) -> Result<vk::ImageView, anyhow::Error> {
+) -> Result<vk::ImageView, vk::Result> {
     let components = vk::ComponentMapping::default()
         // NOTE these are the default
         .r(vk::ComponentSwizzle::IDENTITY)
@@ -5226,7 +5335,7 @@ fn create_texture_sampler(
     physical_device_properties: vk::PhysicalDeviceProperties,
     options: SamplerOptions,
     mip_levels: u32,
-) -> Result<vk::Sampler, anyhow::Error> {
+) -> Result<vk::Sampler, vk::Result> {
     let filter = match options.filter {
         TextureFilter::Linear => vk::Filter::LINEAR,
         TextureFilter::Nearest => vk::Filter::NEAREST,
@@ -5269,7 +5378,7 @@ fn create_depth_buffer_image(
     swapchain_extent: vk::Extent2D,
     msaa_samples: vk::SampleCountFlags,
     depth_format: vk::Format,
-) -> Result<(vk::Image, vk_mem::Allocation, vk::ImageView), anyhow::Error> {
+) -> Result<(vk::Image, vk_mem::Allocation, vk::ImageView), vk::Result> {
     let mip_levels = 1;
 
     let image_options = ImageOptions {
@@ -5405,7 +5514,7 @@ fn create_color_image(
     swapchain_extent: vk::Extent2D,
     color_format: vk::Format,
     msaa_samples: vk::SampleCountFlags,
-) -> Result<Option<MsaaColorImage>, anyhow::Error> {
+) -> Result<Option<MsaaColorImage>, vk::Result> {
     if msaa_samples == vk::SampleCountFlags::TYPE_1 {
         return Ok(None);
     }
@@ -5485,7 +5594,7 @@ impl ShaderPipelineLayout {
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ShaderAtlasEntry,
         shaders_source_dir: &std::path::Path,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> eros::Result<Self, PipelineLayoutErrors> {
         if !shader.hot_reload() {
             return Self::from_precompiled(device, bindless_heap_layout, shader);
         }
@@ -5494,7 +5603,12 @@ impl ShaderPipelineLayout {
             vertex_shader,
             fragment_shader,
             reflection_json,
-        } = shaders::dev_compile_slang_shaders(shader.source_file_name(), shaders_source_dir)?;
+        } = shaders::dev_compile_slang_shaders(shader.source_file_name(), shaders_source_dir)
+            .map_err(|error| ShaderSourceCompileFailed {
+                shader: shader.source_file_name().to_owned(),
+                source: error.into_std_error(),
+            })
+            .union()?;
 
         assert_shader_interface_unchanged(
             shader.reflection_json(),
@@ -5503,19 +5617,20 @@ impl ShaderPipelineLayout {
         );
 
         let vertex_shader = PrecompiledShader {
-            spv_bytes: vertex_shader.spv_bytes()?,
+            spv_bytes: vertex_shader.spv_bytes().union()?,
             entry_point_name: vertex_shader.entry_point_name,
         };
 
         let fragment_shader = PrecompiledShader {
-            spv_bytes: fragment_shader.spv_bytes()?,
+            spv_bytes: fragment_shader.spv_bytes().union()?,
             entry_point_name: fragment_shader.entry_point_name,
         };
 
         let (pipeline_layout, descriptor_set_layouts) = unsafe {
             reflection_json
                 .pipeline_layout
-                .vk_create(device, bindless_heap_layout)?
+                .vk_create(device, bindless_heap_layout)
+                .widen()?
         };
 
         Ok(ShaderPipelineLayout {
@@ -5535,7 +5650,7 @@ impl ShaderPipelineLayout {
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ShaderAtlasEntry,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> eros::Result<Self, PipelineLayoutErrors> {
         Self::from_precompiled(device, bindless_heap_layout, shader)
     }
 
@@ -5543,12 +5658,15 @@ impl ShaderPipelineLayout {
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ShaderAtlasEntry,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> eros::Result<Self, PipelineLayoutErrors> {
         let precompiled = shader.precompiled_shaders();
         let reflected_layout = shader.pipeline_layout();
 
-        let (pipeline_layout, descriptor_set_layouts) =
-            unsafe { reflected_layout.vk_create(device, bindless_heap_layout)? };
+        let (pipeline_layout, descriptor_set_layouts) = unsafe {
+            reflected_layout
+                .vk_create(device, bindless_heap_layout)
+                .widen()?
+        };
 
         Ok(ShaderPipelineLayout {
             vertex_shader: precompiled.vert,
@@ -5583,14 +5701,19 @@ impl ComputeShaderPipelineLayout {
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ComputeShaderAtlasEntry,
         shaders_source_dir: &std::path::Path,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> eros::Result<Self, PipelineLayoutErrors> {
         let shaders::ReflectedComputeShader {
             compute_shader,
             reflection_json,
         } = shaders::dev_compile_slang_compute_shaders(
             shader.source_file_name(),
             shaders_source_dir,
-        )?;
+        )
+        .map_err(|error| ShaderSourceCompileFailed {
+            shader: shader.source_file_name().to_owned(),
+            source: error.into_std_error(),
+        })
+        .union()?;
 
         assert_shader_interface_unchanged(
             shader.reflection_json(),
@@ -5599,14 +5722,15 @@ impl ComputeShaderPipelineLayout {
         );
 
         let compute_shader = PrecompiledShader {
-            spv_bytes: compute_shader.spv_bytes()?,
+            spv_bytes: compute_shader.spv_bytes().union()?,
             entry_point_name: compute_shader.entry_point_name,
         };
 
         let (pipeline_layout, descriptor_set_layouts) = unsafe {
             reflection_json
                 .pipeline_layout
-                .vk_create(device, bindless_heap_layout)?
+                .vk_create(device, bindless_heap_layout)
+                .widen()?
         };
 
         Ok(ComputeShaderPipelineLayout {
@@ -5625,12 +5749,15 @@ impl ComputeShaderPipelineLayout {
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ComputeShaderAtlasEntry,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> eros::Result<Self, PipelineLayoutErrors> {
         let precompiled = shader.precompiled_compute_shader();
         let reflected_layout = shader.pipeline_layout();
 
-        let (pipeline_layout, descriptor_set_layouts) =
-            unsafe { reflected_layout.vk_create(device, bindless_heap_layout)? };
+        let (pipeline_layout, descriptor_set_layouts) = unsafe {
+            reflected_layout
+                .vk_create(device, bindless_heap_layout)
+                .widen()?
+        };
 
         Ok(ComputeShaderPipelineLayout {
             compute_shader: precompiled,
@@ -5707,10 +5834,13 @@ trait VkCreate {
         &self,
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
-    ) -> anyhow::Result<(
-        vk::PipelineLayout,
-        Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
-    )>;
+    ) -> eros::Result<
+        (
+            vk::PipelineLayout,
+            Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
+        ),
+        (BindlessHeapSetGap, vk::Result),
+    >;
 }
 
 impl VkCreate for shaders::json::ReflectedPipelineLayout {
@@ -5718,25 +5848,30 @@ impl VkCreate for shaders::json::ReflectedPipelineLayout {
         &self,
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
-    ) -> anyhow::Result<(
-        vk::PipelineLayout,
-        Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
-    )> {
+    ) -> eros::Result<
+        (
+            vk::PipelineLayout,
+            Vec<(vk::DescriptorSetLayout, DescriptorCounts)>,
+        ),
+        (BindlessHeapSetGap, vk::Result),
+    > {
         if let Some(heap_set) = self.bindless_heap_set {
             // slang places the heap immediately after the reflected sets, so
             // appending is enough and no empty placeholder layouts are needed.
-            anyhow::ensure!(
-                heap_set as usize == self.descriptor_set_layouts.len(),
-                "bindless heap set index {heap_set} does not follow the {} reflected \
-                 descriptor set(s); appending it would leave a gap",
-                self.descriptor_set_layouts.len()
-            );
+            if heap_set as usize != self.descriptor_set_layouts.len() {
+                return Err(BindlessHeapSetGap {
+                    heap_set,
+                    reflected_sets: self.descriptor_set_layouts.len(),
+                })
+                .union();
+            }
         }
 
         let mut descriptor_set_layouts = Vec::with_capacity(self.descriptor_set_layouts.len());
         for reflected_set_layout in &self.descriptor_set_layouts {
             let counts = DescriptorCounts::from_descriptor_set_layout(reflected_set_layout);
-            let created_set_layout = create_descriptor_set_layout(device, reflected_set_layout)?;
+            let created_set_layout =
+                create_descriptor_set_layout(device, reflected_set_layout).union()?;
             descriptor_set_layouts.push((created_set_layout, counts));
         }
 
@@ -5755,8 +5890,11 @@ impl VkCreate for shaders::json::ReflectedPipelineLayout {
             .set_layouts(&set_layouts)
             .push_constant_ranges(&push_constant_ranges);
 
-        let pipeline_layout =
-            unsafe { device.create_pipeline_layout(&pipeline_layout_info, None)? };
+        let pipeline_layout = unsafe {
+            device
+                .create_pipeline_layout(&pipeline_layout_info, None)
+                .union()?
+        };
 
         Ok((pipeline_layout, descriptor_set_layouts))
     }
@@ -6058,12 +6196,6 @@ pub struct FrameRenderer<'f> {
     renderer: &'f mut Renderer,
     pending_draws: Vec<PendingDrawCommand>,
     pending_compute: Vec<PendingComputeCommand>,
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum DrawError {
-    #[error("error drawing frame: {0}")]
-    DrawError(#[from] anyhow::Error),
 }
 
 impl<'f> FrameRenderer<'f> {
@@ -6416,7 +6548,7 @@ impl<'f> FrameRenderer<'f> {
     }
 
     /// submit all queued draws as this frame's rendering
-    pub fn submit_draws(self, gpu_update: impl FnOnce(&mut Gpu)) -> Result<(), DrawError> {
+    pub fn submit_draws(self, gpu_update: impl FnOnce(&mut Gpu)) -> eros::Result<()> {
         self.draw_frame(None, gpu_update)
     }
 
@@ -6424,7 +6556,7 @@ impl<'f> FrameRenderer<'f> {
         mut self,
         pipeline_handle: &GraphicsPipelineHandle<I, DrawIndexed>,
         gpu_update: impl FnOnce(&mut Gpu),
-    ) -> Result<(), DrawError> {
+    ) -> eros::Result<()> {
         self.queue_draw_indexed(pipeline_handle);
         self.submit_draws(gpu_update)
     }
@@ -6434,7 +6566,7 @@ impl<'f> FrameRenderer<'f> {
         pipeline_handle: &GraphicsPipelineHandle<NoVertex, DrawVertexCount>,
         vertex_count: u32,
         gpu_update: impl FnOnce(&mut Gpu),
-    ) -> Result<(), DrawError> {
+    ) -> eros::Result<()> {
         self.queue_draw_vertex_count(pipeline_handle, vertex_count);
         self.submit_draws(gpu_update)
     }
@@ -6446,7 +6578,7 @@ impl<'f> FrameRenderer<'f> {
         picking_pipeline: &PickingPipelineHandle,
         mouse_position: [f32; 2],
         gpu_update: impl FnOnce(&mut Gpu),
-    ) -> Result<(), DrawError> {
+    ) -> eros::Result<()> {
         // picking is still single-draw: it hasn't been integrated with the multi-draw queue
         debug_assert!(
             self.pending_draws.is_empty(),
@@ -6476,7 +6608,7 @@ impl<'f> FrameRenderer<'f> {
         self,
         picking_config: Option<PickingDrawConfig>,
         gpu_update: impl FnOnce(&mut Gpu),
-    ) -> Result<(), DrawError> {
+    ) -> eros::Result<()> {
         self.draw_frame_with_submission(picking_config, gpu_update, || {})
     }
 
@@ -6485,16 +6617,14 @@ impl<'f> FrameRenderer<'f> {
         picking_config: Option<PickingDrawConfig>,
         gpu_update: impl FnOnce(&mut Gpu),
         on_submitted: impl FnOnce(),
-    ) -> Result<(), DrawError> {
-        self.renderer
-            .draw_frame(
-                self.pending_draws,
-                picking_config,
-                self.pending_compute,
-                gpu_update,
-                on_submitted,
-            )
-            .map_err(DrawError::DrawError)
+    ) -> eros::Result<()> {
+        self.renderer.draw_frame(
+            self.pending_draws,
+            picking_config,
+            self.pending_compute,
+            gpu_update,
+            on_submitted,
+        )
     }
 }
 
