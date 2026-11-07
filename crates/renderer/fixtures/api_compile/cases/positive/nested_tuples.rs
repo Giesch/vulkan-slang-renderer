@@ -15,7 +15,7 @@ use mltrs_renderer::renderer::render_graph::{
     dispatch, optional, repeat, upload,
 };
 use mltrs_renderer::renderer::{
-    DrawError, FrameRenderer, GpuUpdatedBufferHandle, CpuUpdatedBufferHandle, UniformBufferHandle,
+    GraphExecuteErrors, FrameRenderer, GpuUpdatedBufferHandle, CpuUpdatedBufferHandle, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -93,7 +93,7 @@ fn frame_contract() {
 fn execute(
     prepared: &mut PreparedRenderGraph<Graph>,
     frame: FrameRenderer<'_>,
-) -> Result<(), DrawError> {
+) -> eros::Result<(), GraphExecuteErrors> {
     let points = || {
         vec![Particle {
             position: Vec2::ZERO,

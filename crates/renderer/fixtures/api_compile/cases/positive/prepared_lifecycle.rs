@@ -13,7 +13,7 @@ use mltrs_renderer::renderer::render_graph::{
     RenderGraph, ResourcePlanner, dispatch, draw_vertex_count,
 };
 use mltrs_renderer::renderer::{
-    DrawError, FrameRenderer, GpuUpdatedBufferHandle, GpuUpdatedSlot, Renderer, UniformBufferHandle,
+    GraphExecuteErrors, FrameRenderer, GpuUpdatedBufferHandle, GpuUpdatedSlot, Renderer, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -70,7 +70,7 @@ fn preparation(graph: RenderGraph<Graph>, renderer: &mut Renderer) -> PreparedRe
 fn execute(
     prepared: &mut PreparedRenderGraph<Graph>,
     frame: FrameRenderer<'_>,
-) -> Result<(), DrawError> {
+) -> eros::Result<(), GraphExecuteErrors> {
     prepared.execute(
         frame,
         &(

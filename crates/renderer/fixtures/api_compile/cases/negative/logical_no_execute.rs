@@ -17,7 +17,7 @@ use render_graph_api_checks::generated::shader_atlas::sim_compute::{
 fn wrong(
     graph: &mut RenderGraph<(ComputeNode<SimParams>,)>,
     frame: mltrs_renderer::renderer::FrameRenderer<'_>,
-) -> Result<(), mltrs_renderer::renderer::DrawError> {
+) -> eros::Result<(), mltrs_renderer::renderer::GraphExecuteErrors> {
     graph.execute(frame, &(SimParamsData { delta_time: 0.016 },))
 }
 

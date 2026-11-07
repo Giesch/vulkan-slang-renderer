@@ -21,7 +21,7 @@ impl PickingResources {
         allocator: &vk_mem::Allocator,
         device: &ash::Device,
         render_extent: vk::Extent2D,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> Result<Self, vk::Result> {
         let (images, image_memories, image_views) =
             create_picking_images(allocator, device, render_extent)?;
         let (readback_buffers, readback_memories, readback_mapped) =
@@ -42,7 +42,7 @@ impl PickingResources {
         allocator: &vk_mem::Allocator,
         device: &ash::Device,
         render_extent: vk::Extent2D,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<(), vk::Result> {
         unsafe {
             for i in 0..MAX_FRAMES_IN_FLIGHT {
                 device.destroy_image_view(self.image_views[i], None);
@@ -81,7 +81,7 @@ fn create_picking_images(
         [vk_mem::Allocation; MAX_FRAMES_IN_FLIGHT],
         [vk::ImageView; MAX_FRAMES_IN_FLIGHT],
     ),
-    anyhow::Error,
+    vk::Result,
 > {
     let image_options = ImageOptions {
         extent: render_extent,
@@ -93,7 +93,7 @@ fn create_picking_images(
     };
 
     let results: [_; MAX_FRAMES_IN_FLIGHT] = (0..MAX_FRAMES_IN_FLIGHT)
-        .map(|_| -> anyhow::Result<_> {
+        .map(|_| -> Result<_, vk::Result> {
             let (image, memory) = create_vk_image(allocator, image_options)?;
             let view = create_image_view(
                 device,
@@ -123,10 +123,10 @@ fn create_picking_readback_buffers(
         [vk_mem::Allocation; MAX_FRAMES_IN_FLIGHT],
         [*mut u32; MAX_FRAMES_IN_FLIGHT],
     ),
-    anyhow::Error,
+    vk::Result,
 > {
     let results: [_; MAX_FRAMES_IN_FLIGHT] = (0..MAX_FRAMES_IN_FLIGHT)
-        .map(|_| -> anyhow::Result<_> {
+        .map(|_| -> Result<_, vk::Result> {
             let (buffer, memory) = create_memory_buffer(
                 allocator,
                 4, // sizeof(u32)

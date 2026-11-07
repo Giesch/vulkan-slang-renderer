@@ -10,7 +10,7 @@ use mltrs_renderer::renderer::render_graph::{
     GraphNode, OptionalNode, PreparedRenderGraph, RenderGraph, CpuUpdatedSlot, UploadNode, optional,
     upload,
 };
-use mltrs_renderer::renderer::{DrawError, FrameRenderer, CpuUpdatedBufferHandle};
+use mltrs_renderer::renderer::{GraphExecuteErrors, FrameRenderer, CpuUpdatedBufferHandle};
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
 
@@ -28,7 +28,7 @@ fn frame_contract() {
 fn execute(
     prepared: &mut PreparedRenderGraph<Graph>,
     frame: FrameRenderer<'_>,
-) -> Result<(), DrawError> {
+) -> eros::Result<(), GraphExecuteErrors> {
     prepared.execute(
         frame,
         &Some(vec![Particle {

@@ -25,7 +25,7 @@ pub(super) unsafe fn write_to_gpu_buffer<T: GPUWrite>(
     allocator: &vk_mem::Allocator,
     allocation: &mut vk_mem::Allocation,
     elements: &[T],
-) -> anyhow::Result<()> {
+) -> Result<(), ash::vk::Result> {
     unsafe {
         let mapped_dst = allocator.map_memory(allocation)? as *mut T;
         std::ptr::copy_nonoverlapping(elements.as_ptr(), mapped_dst, elements.len());

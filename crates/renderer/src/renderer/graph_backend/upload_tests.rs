@@ -11,6 +11,8 @@ impl BackendTypes for Backend {
     type Resource = ();
 }
 impl PreparationBackend for Backend {
+    type PrepareError = std::convert::Infallible;
+
     fn max_image_dimension_2d(&self) -> u32 {
         64
     }
@@ -19,7 +21,7 @@ impl PreparationBackend for Backend {
         _: u32,
         _: u32,
         _: GraphFormat,
-    ) -> anyhow::Result<(PhysicalImage, ())> {
+    ) -> Result<(PhysicalImage, ()), Self::PrepareError> {
         unreachable!("upload tests allocate no textures")
     }
 }
@@ -90,11 +92,16 @@ fn storage_case(target: Option<UploadTarget>, succeeds: bool) {
     let mut graph = graph.prepare(&mut backend).unwrap();
     let result = graph.execute(Frame(&backend), &(vec![1], vec![2, 3]));
     assert_eq!(result.is_ok(), succeeds);
+    if let Err(error) = &result {
+        assert!(
+            matches!(
+                error.downcast_inner_ref::<crate::renderer::DrawError>(),
+                Some(crate::renderer::DrawError::Upload(_))
+            ),
+            "expected an upload rejection, got {error:#?}"
+        );
+    }
     if !succeeds {
-        assert!(matches!(
-            result,
-            Err(crate::renderer::DrawError::DrawError(_))
-        ));
         assert!(
             backend.events.borrow().is_empty(),
             "no partial write, submit, or commit"

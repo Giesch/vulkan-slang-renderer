@@ -11,7 +11,7 @@ use mltrs_renderer::renderer::render_graph::{
     RepeatNode, dispatch, repeat,
 };
 use mltrs_renderer::renderer::{
-    DrawError, FrameRenderer, GpuUpdatedBufferHandle, UniformBufferHandle,
+    GraphExecuteErrors, FrameRenderer, GpuUpdatedBufferHandle, UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
@@ -46,7 +46,7 @@ fn frame_contract() {
 fn execute(
     prepared: &mut PreparedRenderGraph<Graph>,
     frame: FrameRenderer<'_>,
-) -> Result<(), DrawError> {
+) -> eros::Result<(), GraphExecuteErrors> {
     prepared.execute(frame, &(LoopCount(3), SimParamsData { delta_time: 0.016 }))
 }
 
