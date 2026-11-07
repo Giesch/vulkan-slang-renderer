@@ -1,11 +1,12 @@
 use std::time::Duration;
 
+use eros::Context;
 use facet::Facet;
 use sdl3::keyboard::Scancode as SDLScancode;
 
 use crate::app::App;
 use crate::env_config::{EnvConfig, exit_code};
-use crate::renderer::{self, DrawError, FrameRenderer, Renderer};
+use crate::renderer::{self, FrameRenderer, Renderer};
 use crate::shaders::atlas::ShaderAtlasRoot;
 
 const DEFAULT_FRAME_DELAY: Duration = Duration::from_millis(15); // about 60 fps
@@ -23,13 +24,13 @@ pub trait Game {
     /// The generated `ShaderAtlas`.
     type Atlas: ShaderAtlasRoot;
 
-    fn setup(renderer: &mut Renderer, shaders: Self::Atlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: Self::Atlas) -> eros::Result<Self>
     where
         Self: Sized;
 
     fn update(&mut self) {}
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()>;
 
     fn window_title() -> &'static str {
         DEFAULT_WINDOW_TITLE
@@ -90,7 +91,7 @@ pub trait Game {
         crate::renderer::facet_egui::render_facet_ui(ui, debug_state);
     }
 
-    fn run() -> anyhow::Result<()>
+    fn run() -> eros::Result<()>
     where
         Self: Sized + 'static,
     {
@@ -115,8 +116,8 @@ pub trait Game {
         #[cfg(target_os = "linux")]
         sdl3::hint::set("SDL_VIDEO_DRIVER", "wayland,x11");
 
-        let sdl = sdl3::init()?;
-        let video_subsystem = sdl.video()?;
+        let sdl = sdl3::init().context("Initialize SDL")?;
+        let video_subsystem = sdl.video().context("Initialize SDL video subsystem")?;
         let window_desc = Self::window_description();
         let window = video_subsystem
             .window(window_desc.title, window_desc.width, window_desc.height)
@@ -124,7 +125,13 @@ pub trait Game {
             .resizable()
             .hidden()
             .vulkan()
-            .build()?;
+            .build()
+            .with_context(|| {
+                format!(
+                    "Create {}x{} window '{}'",
+                    window_desc.width, window_desc.height, window_desc.title
+                )
+            })?;
         let mut startup_window = window.clone();
 
         let enable_egui = cfg!(debug_assertions);
@@ -143,14 +150,14 @@ pub trait Game {
             #[cfg(debug_assertions)]
             Self::Atlas::SHADERS_SOURCE_DIR,
         )?;
-        let game = Self::setup(&mut renderer, Self::Atlas::init())?;
+        let game = Self::setup(&mut renderer, Self::Atlas::init()).context("Set up game")?;
         let app = App::init(renderer, game)?;
 
         if !startup_window.show() {
             log::warn!("failed to show window: {}", sdl3::get_error());
         }
 
-        let event_pump = sdl.event_pump()?;
+        let event_pump = sdl.event_pump().context("Create SDL event pump")?;
         let result = app.run_loop(event_pump);
 
         // run_loop consumes the App, so the Renderer is already dropped here.
@@ -159,7 +166,7 @@ pub trait Game {
         let validation_messages = renderer::debug::validation_message_count();
         let stats = match (result, validation_messages) {
             (Ok(stats), 0) => stats,
-            (Ok(_), n) => anyhow::bail!(validation_failure_message(n, &env)),
+            (Ok(_), n) => eros::bail!("{}", validation_failure_message(n, &env)),
             (Err(err), 0) => return Err(err),
             (Err(err), n) => {
                 return Err(err.context(validation_failure_message(n, &env)));
@@ -230,7 +237,7 @@ pub struct WindowDescription {
 pub trait RuntimeGame {
     fn update(&mut self);
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError>;
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> eros::Result<()>;
 
     fn frame_delay(&self) -> Duration;
 
@@ -305,7 +312,7 @@ where
         self.update()
     }
 
-    fn draw_frame(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw_frame(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         self.draw(renderer)
     }
 
@@ -366,11 +373,11 @@ mod tests {
         type EditState = EditorState;
         type Atlas = EmptyAtlas;
 
-        fn setup(_renderer: &mut Renderer, _shaders: Self::Atlas) -> anyhow::Result<Self> {
+        fn setup(_renderer: &mut Renderer, _shaders: Self::Atlas) -> eros::Result<Self> {
             unreachable!("CPU editor tests do not initialize a renderer")
         }
 
-        fn draw(&mut self, _renderer: FrameRenderer) -> Result<(), DrawError> {
+        fn draw(&mut self, _renderer: FrameRenderer) -> eros::Result<()> {
             unreachable!("CPU editor tests do not draw GPU frames")
         }
 
@@ -397,11 +404,11 @@ mod tests {
         type EditState = EditorState;
         type Atlas = EmptyAtlas;
 
-        fn setup(_renderer: &mut Renderer, _shaders: Self::Atlas) -> anyhow::Result<Self> {
+        fn setup(_renderer: &mut Renderer, _shaders: Self::Atlas) -> eros::Result<Self> {
             unreachable!("CPU editor tests do not initialize a renderer")
         }
 
-        fn draw(&mut self, _renderer: FrameRenderer) -> Result<(), DrawError> {
+        fn draw(&mut self, _renderer: FrameRenderer) -> eros::Result<()> {
             unreachable!("CPU editor tests do not draw GPU frames")
         }
 
