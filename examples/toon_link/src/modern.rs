@@ -1,7 +1,7 @@
 //! Independent linear-light renderer. No TEV packing or classic raster policy.
 use std::time::Instant;
 
-use anyhow::Context;
+use eros::Context;
 use facet::Facet;
 use glam::{Mat4, Vec2, Vec3};
 use gx::model_manifest::{self as mm, Manifest, MaterialEntry};
@@ -9,9 +9,9 @@ use mltrs::editor::{Checkbox, RGBPicker, Slider};
 use mltrs::game::Game;
 use mltrs::renderer::render_graph::DrawIndexedIndirectCommand;
 use mltrs::renderer::{
-    BlendMode, CullMode, DepthCompare, DrawError, DrawIndexedIndirect, FrameRenderer,
-    ImmutableBufferHandle, PipelineHandle, PushBlock, RasterState, Renderer, RgbaPixels,
-    SingletonBufferHandle, StencilMode, TextureColorSpace, TextureHandle, UniformBufferHandle,
+    BlendMode, CullMode, DepthCompare, DrawIndexedIndirect, FrameRenderer, ImmutableBufferHandle,
+    PipelineHandle, PushBlock, RasterState, Renderer, RgbaPixels, SingletonBufferHandle,
+    StencilMode, TextureColorSpace, TextureHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -145,9 +145,9 @@ fn lighting_mix(material_name: &str, role: Role) -> f32 {
     }
 }
 
-fn role(material: &MaterialEntry) -> anyhow::Result<Role> {
+fn role(material: &MaterialEntry) -> eros::Result<Role> {
     let fail = || {
-        anyhow::anyhow!(
+        eros::error!(
             "Modern material {:?}: unsupported or ambiguous role/raster state",
             material.name
         )
@@ -211,19 +211,19 @@ fn required_texture(
     manifest: &Manifest,
     material: &MaterialEntry,
     slot: usize,
-) -> anyhow::Result<usize> {
+) -> eros::Result<usize> {
     let index = material
         .texmaps
         .get(slot)
         .copied()
         .flatten()
-        .with_context(|| {
-            format!(
+        .ok_or_else(|| {
+            eros::error!(
                 "Modern material {:?}: required texture slot {slot} is missing",
                 material.name
             )
         })? as usize;
-    anyhow::ensure!(
+    eros::ensure!(
         index < manifest.textures.len(),
         "Modern material {:?}: texture slot {slot} references resource {index}, but only {} exist",
         material.name,
@@ -232,9 +232,9 @@ fn required_texture(
     Ok(index)
 }
 
-fn pupil_offset(material: &MaterialEntry) -> anyhow::Result<Vec2> {
+fn pupil_offset(material: &MaterialEntry) -> eros::Result<Vec2> {
     let error = || {
-        anyhow::anyhow!(
+        eros::error!(
             "Modern material {:?}: unsupported required pupil UV transform",
             material.name
         )
@@ -303,7 +303,7 @@ struct Prepared {
     order: Vec<usize>,
 }
 
-fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
+fn prepare(manifest: &Manifest) -> eros::Result<Prepared> {
     let ramps: Vec<_> = manifest
         .textures
         .iter()
@@ -313,7 +313,7 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
         .collect();
 
     let [ramp] = ramps.as_slice() else {
-        anyhow::bail!(
+        eros::bail!(
             "Modern resource toonex: expected exactly one runtime substitution, found {}",
             ramps.len()
         );
@@ -323,28 +323,27 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
     for material in &manifest.materials {
         let role = role(material)?;
         for index in material.texmaps.iter().flatten() {
-            anyhow::ensure!(
+            eros::ensure!(
                 (*index as usize) < manifest.textures.len(),
                 "Modern material {:?}: invalid texture resource {index}",
                 material.name
             );
         }
-        anyhow::ensure!(
+        eros::ensure!(
             material.texmaps.iter().skip(2).all(Option::is_none),
             "Modern material {:?}: unsupported texture slot >= 2",
             material.name
         );
         let albedo = required_texture(manifest, material, 0)?;
-        anyhow::ensure!(
+        eros::ensure!(
             albedo != *ramp,
             "Modern material {:?}: toonex data cannot be an albedo",
             material.name
         );
-        let base = material
-            .texgens
-            .first()
-            .with_context(|| format!("Modern material {:?}: missing primary UV0", material.name))?;
-        anyhow::ensure!(
+        let base = material.texgens.first().ok_or_else(|| {
+            eros::error!("Modern material {:?}: missing primary UV0", material.name)
+        })?;
+        eros::ensure!(
             base.ty == 1 && base.src == 4 && base.matrix == 60,
             "Modern material {:?}: unsupported primary UV0 transform",
             material.name
@@ -352,7 +351,7 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
         let has_pupil = matches!(role, Role::Composite(1 | 2));
         let pupil = if has_pupil {
             let pupil = required_texture(manifest, material, 1)?;
-            anyhow::ensure!(
+            eros::ensure!(
                 pupil != *ramp && manifest.textures[pupil].name == "hitomi",
                 "Modern material {:?}: required pupil resource must be hitomi, found {:?}",
                 material.name,
@@ -363,12 +362,12 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
             None
         };
         match role {
-            Role::Opaque | Role::Bangs => anyhow::ensure!(
+            Role::Opaque | Role::Bangs => eros::ensure!(
                 required_texture(manifest, material, 1)? == *ramp,
                 "Modern material {:?}: required slot 1 must reference toonex",
                 material.name
             ),
-            Role::Mask(_) | Role::Erase | Role::Composite(3 | 4) => anyhow::ensure!(
+            Role::Mask(_) | Role::Erase | Role::Composite(3 | 4) => eros::ensure!(
                 material.texmaps.get(1).copied().flatten().is_none(),
                 "Modern material {:?}: unexpected secondary texture",
                 material.name
@@ -389,7 +388,7 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
 
     let mut order = Vec::new();
     for (index, batch) in manifest.batches.iter().enumerate() {
-        anyhow::ensure!(
+        eros::ensure!(
             (batch.material as usize) < materials.len(),
             "Modern batch {index}: invalid material {}",
             batch.material
@@ -406,12 +405,12 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
             .collect::<Vec<_>>()
     };
 
-    anyhow::ensure!(
+    eros::ensure!(
         batches_for(Role::Bangs).len() == 1,
         "Modern material ear(2): expected exactly one bangs batch"
     );
 
-    anyhow::ensure!(
+    eros::ensure!(
         manifest
             .batches
             .iter()
@@ -426,13 +425,13 @@ fn prepare(manifest: &Manifest) -> anyhow::Result<Prepared> {
     for reference in 1..=4 {
         let masks = batches_for(Role::Mask(reference));
         let composites = batches_for(Role::Composite(reference));
-        anyhow::ensure!(
+        eros::ensure!(
             masks.len() == 1 && composites.len() == 1,
             "Modern feature {reference}: expected one paired mask/composite batch"
         );
         let mask = &manifest.batches[masks[0]];
         let composite = &manifest.batches[composites[0]];
-        anyhow::ensure!(
+        eros::ensure!(
             mask.index_count == composite.index_count
                 && materials[mask.material as usize].albedo
                     == materials[composite.material as usize].albedo,
@@ -457,7 +456,7 @@ fn prepare_geometry(
     manifest: &Manifest,
     vertices: &[crate::ModelVertex],
     indices: &[u32],
-) -> anyhow::Result<Prepared> {
+) -> eros::Result<Prepared> {
     let prepared = prepare(manifest)?;
     crate::validate_manifest(manifest, vertices, indices)?;
 
@@ -480,7 +479,7 @@ fn prepare_geometry(
         for (&mask_index, &composite_index) in
             indices[range(mask)].iter().zip(&indices[range(composite)])
         {
-            anyhow::ensure!(
+            eros::ensure!(
                 feature_vertices_match(
                     &vertices[mask_index as usize],
                     &vertices[composite_index as usize]
@@ -496,7 +495,7 @@ fn prepare_geometry(
 fn modern_texture_options(
     entry: &mm::TextureEntry,
     data: bool,
-) -> anyhow::Result<mltrs::renderer::TextureOptions> {
+) -> eros::Result<mltrs::renderer::TextureOptions> {
     let mut options = crate::texture_options(entry)?;
     options.color_space = if data {
         TextureColorSpace::Unorm
@@ -559,7 +558,7 @@ impl Game for ToonLinkModern {
         Some(("Modern", &mut self.edit_state))
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self> {
         let dir = crate::converted_dir();
         let manifest = crate::load_manifest(&dir)?;
         let vertices = crate::load_vertices(
@@ -615,7 +614,7 @@ impl Game for ToonLinkModern {
         let params_buffer = renderer.create_uniform_buffer::<ModernParams>()?;
         let stencil = renderer
             .stencil_support()
-            .context("Modern requires host Game::needs_stencil() = true")?;
+            .ok_or_else(|| eros::error!("Modern requires host Game::needs_stencil() = true"))?;
 
         let mut pipelines = Vec::new();
         let mut gpu_materials = Vec::new();
@@ -625,7 +624,7 @@ impl Game for ToonLinkModern {
                 mm::CullMode::Front => CullMode::Front,
                 mm::CullMode::None => CullMode::None,
                 mm::CullMode::All => {
-                    anyhow::bail!("Modern material {:?}: unsupported Cull_All", material.name)
+                    eros::bail!("Modern material {:?}: unsupported Cull_All", material.name)
                 }
             };
 
@@ -731,7 +730,7 @@ impl Game for ToonLinkModern {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+    fn draw(&mut self, renderer: FrameRenderer) -> eros::Result<()> {
         self.draw_posed(renderer, None)
     }
 }
@@ -744,7 +743,7 @@ impl ToonLinkModern {
         &mut self,
         mut renderer: FrameRenderer,
         palette: Option<&[Mat4]>,
-    ) -> Result<(), DrawError> {
+    ) -> eros::Result<()> {
         let spin = self
             .host_spin
             .unwrap_or_else(|| self.start_time.elapsed().as_secs_f32() * crate::MODEL_SPIN);
@@ -1308,7 +1307,7 @@ mod tests {
             let error = prepare(&manifest)
                 .err()
                 .unwrap_or_else(|| panic!("accepted {name}"));
-            assert!(error.to_string().contains(expected), "{name}: {error:#}");
+            assert!(error.to_string().contains(expected), "{name}: {error:#?}");
         }
 
         for (material_index, expected) in [
@@ -1338,7 +1337,7 @@ mod tests {
                 let error = prepare(&manifest).err().unwrap_or_else(|| {
                     panic!("accepted material {material_index}, duplicate={duplicate}")
                 });
-                assert!(error.to_string().contains(expected), "{error:#}");
+                assert!(error.to_string().contains(expected), "{error:#?}");
             }
         }
     }
@@ -1445,7 +1444,7 @@ mod tests {
             let error = prepare_geometry(&manifest, &vertices, &indices)
                 .err()
                 .expect("accepted coverage drift");
-            assert!(error.to_string().contains("Modern feature 1"), "{error:#}");
+            assert!(error.to_string().contains("Modern feature 1"), "{error:#?}");
         }
     }
 
