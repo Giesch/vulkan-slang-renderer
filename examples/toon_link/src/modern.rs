@@ -10,8 +10,9 @@ use mltrs::game::Game;
 use mltrs::renderer::render_graph::DrawIndexedIndirectCommand;
 use mltrs::renderer::{
     BlendMode, CullMode, DepthCompare, DrawError, DrawIndexedIndirect, FrameRenderer,
-    ImmutableBufferHandle, PipelineHandle, PushBlock, RasterState, Renderer, RgbaPixels,
-    SingletonBufferHandle, StencilMode, TextureColorSpace, TextureHandle, UniformBufferHandle,
+    GraphicsPipelineHandle, ImmutableBufferHandle, PushBlock, RasterState, Renderer, RgbaPixels,
+    SingletonBufferHandle, StencilMode, TextureColorSpace, TextureHandle, TypedVertex,
+    UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -507,7 +508,11 @@ fn modern_texture_options(
     Ok(options)
 }
 
-type ModernPipeline = PipelineHandle<DrawIndexedIndirect, PushBlock<ModernMultiDraw>>;
+type ModernPipeline = GraphicsPipelineHandle<
+    TypedVertex<ModernVertex>,
+    DrawIndexedIndirect,
+    PushBlock<ModernMultiDraw>,
+>;
 
 pub struct ToonLinkModern {
     start_time: Instant,

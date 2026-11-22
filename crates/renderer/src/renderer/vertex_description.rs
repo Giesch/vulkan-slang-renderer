@@ -1,35 +1,51 @@
+use std::marker::PhantomData;
+
 use ash::vk;
 
 pub use super::gpu_write::NoVertex;
 
+/// The layout of a real vertex element type, as generated from a shader's
+/// vertex input. Uploading a `Vec<V>` of these requires the renderer's GPU
+/// write contract as well.
 pub trait VertexDescription: super::GPUWrite {
     fn binding_descriptions() -> Vec<vk::VertexInputBindingDescription>;
     fn attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription>;
 }
 
-/// The vertex type of a pipeline fed with already-packed vertex bytes. The
-/// shader entry supplies the binding and attribute descriptions, so this type
-/// has none of its own.
-pub struct VertexBytes;
+/// The vertex interface of an indexed pipeline whose vertex input is the
+/// generated vertex type `V`.
+///
+/// This is an interface marker, not a vertex type: it is never constructed,
+/// uploaded, or described. It lets a pipeline config and its returned graphics
+/// handle remember which vertex type the pipeline was built for.
+pub struct TypedVertex<V>(PhantomData<fn() -> V>);
 
-impl super::render_graph::GPUWrite for VertexBytes {}
-
-impl VertexDescription for VertexBytes {
-    fn binding_descriptions() -> Vec<vk::VertexInputBindingDescription> {
-        vec![]
-    }
-
-    fn attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription> {
-        vec![]
+// not derived so we don't require `V: Debug`
+impl<V> std::fmt::Debug for TypedVertex<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TypedVertex")
     }
 }
 
-impl VertexDescription for NoVertex {
-    fn binding_descriptions() -> Vec<vk::VertexInputBindingDescription> {
-        vec![]
-    }
+/// The vertex interface of an indexed pipeline fed with vertex bytes already
+/// packed to the shader entry's reflected vertex layout. There is no Rust
+/// vertex type; the shader entry is the only source of the layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeVertex;
 
-    fn attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription> {
-        vec![]
-    }
+mod sealed {
+    pub trait Sealed {}
 }
+
+/// The vertex interfaces that indexed draws accept: [`TypedVertex`] and
+/// [`RuntimeVertex`], but not [`NoVertex`]. Sealed, so the set of indexed
+/// interfaces is exactly the set of indexed pipeline constructors.
+pub trait IndexedVertexInterface: sealed::Sealed {}
+
+impl<V: VertexDescription> sealed::Sealed for TypedVertex<V> {}
+
+impl<V: VertexDescription> IndexedVertexInterface for TypedVertex<V> {}
+
+impl sealed::Sealed for RuntimeVertex {}
+
+impl IndexedVertexInterface for RuntimeVertex {}

@@ -6,7 +6,9 @@
 
 #![allow(dead_code)]
 
-use mltrs_renderer::renderer::pipeline::{Compute, DrawIndexed, NoPush, PipelineHandle};
+use mltrs_renderer::renderer::pipeline::{
+    Compute, DrawIndexed, GraphicsPipelineHandle, NoPush, PipelineHandle, RuntimeVertex,
+};
 use mltrs_renderer::renderer::render_graph::{
     ComputeNode, ComputePipelineKey, DrawIndexedKey, DrawNode, GpuUpdatedSlot, PreparedRenderGraph,
     RenderGraph, dispatch, draw_indexed,
@@ -29,7 +31,7 @@ fn graph(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
-    render_pipeline: &PipelineHandle<DrawIndexed, NoPush>,
+    render_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexed, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
 ) -> Graph {
     let sim_pipeline_key = ComputePipelineKey::from(sim_pipeline);

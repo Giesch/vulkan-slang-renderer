@@ -35,7 +35,10 @@ impl RawUniformBufferHandle {
 pub struct NoPush;
 pub struct PushBlock<P: self::gpu_write::PushConstantBlock>(PhantomData<P>);
 
-pub struct PipelineConfig<'a, V, D, P = NoPush>(PhantomData<(&'a (), V, D, P)>);
+/// `I` is the vertex interface: `TypedVertex<V>`, `RuntimeVertex`, or `NoVertex`.
+pub struct PipelineConfig<'a, I, D, P = NoPush>(PhantomData<(&'a (), fn() -> I, D, P)>);
+
+pub struct GraphicsPipelineHandle<I, D, P = NoPush>(PhantomData<(fn() -> I, D, P)>);
 
 pub trait DrawCall {}
 pub struct DrawIndexed;
@@ -64,11 +67,29 @@ pub struct ComputePipelineConfigBuilder<'a> {
 }
 
 impl<'a> PipelineConfigBuilder<'a> {
-    pub fn build_indexed<V, P>(self) -> IndexedPipelineConfig<'a, V, P> {
+    pub fn build_indexed<V: VertexDescription, P>(self) -> IndexedPipelineConfig<'a, V, P> {
         IndexedPipelineConfig(PhantomData)
     }
 
+    pub fn build_indexed_bytes<P>(
+        self,
+        _vertex_bytes: Vec<u8>,
+        _indices: Vec<u32>,
+    ) -> PipelineConfig<'a, RuntimeVertex, DrawIndexed, P> {
+        PipelineConfig(PhantomData)
+    }
+
     pub fn build_vertex_count<P>(self) -> PipelineConfig<'a, NoVertex, DrawVertexCount, P> {
+        PipelineConfig(PhantomData)
+    }
+}
+
+impl<'a, V: VertexDescription, P> IndexedPipelineConfig<'a, V, P> {
+    pub fn with_vertices(
+        self,
+        _vertices: Vec<V>,
+        _indices: Vec<u32>,
+    ) -> PipelineConfig<'a, TypedVertex<V>, DrawIndexed, P> {
         PipelineConfig(PhantomData)
     }
 }

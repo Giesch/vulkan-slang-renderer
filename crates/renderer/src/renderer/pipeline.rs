@@ -4,8 +4,10 @@ use ash::vk;
 
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, ShaderAtlasEntry};
 
-use super::gpu_write::PushConstantBlock;
-use super::vertex_description::{NoVertex, VertexBytes, VertexDescription};
+use super::gpu_write::{GPUWrite, PushConstantBlock};
+pub use super::vertex_description::{
+    IndexedVertexInterface, NoVertex, RuntimeVertex, TypedVertex, VertexDescription,
+};
 use super::{
     ComputeShaderPipelineLayout, RawUniformBufferHandle, ShaderPipelineLayout,
     StorageTextureHandle, TextureHandle,
@@ -127,6 +129,41 @@ impl<T, P> std::fmt::Debug for PipelineHandle<T, P> {
 impl<T: DrawCall, P> PipelineHandle<T, P> {
     pub(crate) fn index(&self) -> T::Index {
         T::Index::from_raw(self.index)
+    }
+}
+
+/// A graphics pipeline created by `Renderer::create_pipeline`.
+///
+/// `I` is the pipeline's vertex interface — [`TypedVertex<V>`],
+/// [`RuntimeVertex`], or [`NoVertex`] — fixed by the config constructor that
+/// produced it. `D` is the draw-call kind and `P` the push slot, as on
+/// [`PipelineHandle`]. Only the renderer mints these; the raw handle is
+/// private, so a handle cannot be built or relabeled with another interface.
+pub struct GraphicsPipelineHandle<I, D, P = NoPush> {
+    raw: PipelineHandle<D, P>,
+    _interface: PhantomData<fn() -> I>,
+}
+
+// not derived so we don't require `I: Debug` or `P: Debug`
+impl<I, D, P> std::fmt::Debug for GraphicsPipelineHandle<I, D, P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GraphicsPipelineHandle")
+            .field("index", &self.raw.index)
+            .finish()
+    }
+}
+
+impl<I, D: DrawCall, P> GraphicsPipelineHandle<I, D, P> {
+    pub(super) fn new(raw: PipelineHandle<D, P>) -> Self {
+        Self {
+            raw,
+            _interface: PhantomData,
+        }
+    }
+
+    /// the untyped-interface handle the renderer's storage and draw queue use
+    pub(super) fn raw(&self) -> &PipelineHandle<D, P> {
+        &self.raw
     }
 }
 
@@ -352,9 +389,17 @@ pub(super) struct VertexAndIndexBuffers {
     pub(super) index_count: u32,
 }
 
-pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall, P = NoPush> {
+/// A complete graphics pipeline config. `I` is the vertex interface
+/// ([`TypedVertex<V>`], [`RuntimeVertex`], or [`NoVertex`]) and is carried
+/// through to the [`GraphicsPipelineHandle`] that `Renderer::create_pipeline`
+/// returns. The vertex data itself is stored type-erased.
+pub struct PipelineConfig<'t, I, D: DrawCall, P = NoPush> {
     pub(super) shader: Box<dyn ShaderAtlasEntry>,
-    pub(super) vertex_config: VertexConfig<V>,
+    pub(super) vertex_config: VertexConfig,
+    /// the layout a typed interface claims, checked against the shader entry
+    /// before allocation; `None` for runtime and vertex-count interfaces
+    pub(super) typed_vertex_layout: Option<TypedVertexLayout>,
+    _interface: PhantomData<fn() -> I>,
     _draw_call: PhantomData<D>,
     _push: PhantomData<P>,
     pub(super) texture_handles: Vec<&'t TextureHandle>,
@@ -366,19 +411,164 @@ pub struct PipelineConfig<'t, V: VertexDescription, D: DrawCall, P = NoPush> {
 /// which type of draw call to use, and the necessary data for it. Every variant
 /// is a fully specified vertex source: an indexed shader's config cannot exist
 /// without one (see [`IndexedPipelineConfig`]), so there is no "unset" state.
-pub(super) enum VertexConfig<V> {
+pub(super) enum VertexConfig {
     // use a cmd_draw_indexed call, with prepared vertex and index buffers,
-    // and an associated Vertex type
-    VertexAndIndexBuffers(Vec<V>, Vec<u32>),
+    // uploaded from typed vertices owned by the upload object
+    VertexAndIndexBuffers(Box<dyn TypedVertexUpload>, Vec<u32>),
     // use a cmd_draw_indexed call, with vertex bytes already packed to the
-    // shader entry's vertex layout
-    VertexBytes(Vec<u8>, Vec<u32>),
+    // shader entry's vertex layout by the caller of
+    // PipelineConfigBuilder::build_indexed_bytes
+    PackedBytes(Vec<u8>, Vec<u32>),
     // use cmd_draw_indexed calls against a shared mesh created with
     // Renderer::create_mesh (the index is into Renderer::meshes)
     SharedMesh(MeshIndex),
     // use a basic cmd_draw call passing a vertex count, with no vertex or index buffers,
     // and so no Vertex type
     VertexCount,
+}
+
+/// Owned typed vertices awaiting upload, with their element type erased so
+/// the surrounding config needs no upload bound. The implementation keeps
+/// the original `Vec<V>` and copies it as `V`s, never as reinterpreted bytes.
+pub(super) trait TypedVertexUpload {
+    fn is_empty(&self) -> bool;
+
+    fn upload(
+        &self,
+        allocator: &vk_mem::Allocator,
+        device: &ash::Device,
+        command_pool: vk::CommandPool,
+        graphics_queue: vk::Queue,
+    ) -> anyhow::Result<(vk::Buffer, vk_mem::Allocation)>;
+}
+
+struct OwnedVertices<V>(Vec<V>);
+
+impl<V: GPUWrite> TypedVertexUpload for OwnedVertices<V> {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn upload(
+        &self,
+        allocator: &vk_mem::Allocator,
+        device: &ash::Device,
+        command_pool: vk::CommandPool,
+        graphics_queue: vk::Queue,
+    ) -> anyhow::Result<(vk::Buffer, vk_mem::Allocation)> {
+        super::create_vertex_buffer(allocator, device, command_pool, graphics_queue, &self.0)
+    }
+}
+
+/// The binding and attribute descriptions of a typed interface's vertex type,
+/// captured when the typed config is completed.
+pub(super) struct TypedVertexLayout {
+    type_name: &'static str,
+    bindings: Vec<vk::VertexInputBindingDescription>,
+    attributes: Vec<vk::VertexInputAttributeDescription>,
+}
+
+impl TypedVertexLayout {
+    fn of<V: VertexDescription>() -> Self {
+        Self {
+            type_name: std::any::type_name::<V>(),
+            bindings: V::binding_descriptions(),
+            attributes: V::attribute_descriptions(),
+        }
+    }
+}
+
+type BindingKey = (u32, u32, vk::VertexInputRate);
+type AttributeKey = (u32, u32, vk::Format, u32);
+
+fn binding_keys(bindings: &[vk::VertexInputBindingDescription]) -> Vec<BindingKey> {
+    let mut keys: Vec<_> = bindings
+        .iter()
+        .map(|b| (b.binding, b.stride, b.input_rate))
+        .collect();
+    keys.sort_by_key(|&(binding, stride, rate)| (binding, stride, rate.as_raw()));
+
+    keys
+}
+
+fn attribute_keys(attributes: &[vk::VertexInputAttributeDescription]) -> Vec<AttributeKey> {
+    let mut keys: Vec<_> = attributes
+        .iter()
+        .map(|a| (a.location, a.binding, a.format, a.offset))
+        .collect();
+    keys.sort_by_key(|&(location, binding, format, offset)| {
+        (location, binding, format.as_raw(), offset)
+    });
+
+    keys
+}
+
+impl<I, D: DrawCall, P> PipelineConfig<'_, I, D, P> {
+    /// Checks the vertex source against the shader entry's vertex layout.
+    /// Runs before any GPU allocation, so a rejected config leaks nothing.
+    pub(super) fn validate_vertex_input(&self) -> anyhow::Result<()> {
+        let shader_name = self.shader.source_file_name();
+        let shader_bindings = self.shader.vertex_binding_descriptions();
+
+        if let Some(layout) = &self.typed_vertex_layout {
+            let shader_attributes = self.shader.vertex_attribute_descriptions();
+            anyhow::ensure!(
+                binding_keys(&layout.bindings) == binding_keys(&shader_bindings),
+                "pipeline for {shader_name} was built for vertex type {} whose bindings \
+                 (binding, stride, input rate) {:?} differ from the shader's {:?}",
+                layout.type_name,
+                binding_keys(&layout.bindings),
+                binding_keys(&shader_bindings),
+            );
+            anyhow::ensure!(
+                attribute_keys(&layout.attributes) == attribute_keys(&shader_attributes),
+                "pipeline for {shader_name} was built for vertex type {} whose attributes \
+                 (location, binding, format, offset) {:?} differ from the shader's {:?}",
+                layout.type_name,
+                attribute_keys(&layout.attributes),
+                attribute_keys(&shader_attributes),
+            );
+        }
+
+        match &self.vertex_config {
+            VertexConfig::VertexAndIndexBuffers(vertices, indices) => {
+                anyhow::ensure!(
+                    !vertices.is_empty() && !indices.is_empty(),
+                    "pipeline for {shader_name} was given empty vertex data by `.with_vertices()`",
+                );
+            }
+            VertexConfig::PackedBytes(bytes, indices) => {
+                let stride = shader_bindings
+                    .first()
+                    .map(|binding| binding.stride as usize)
+                    .unwrap_or(0);
+                let whole_vertices =
+                    stride > 0 && !bytes.is_empty() && bytes.len().is_multiple_of(stride);
+                anyhow::ensure!(
+                    whole_vertices,
+                    "pipeline for {shader_name} was given {} vertex bytes, not a nonzero \
+                     multiple of the vertex stride {stride}",
+                    bytes.len(),
+                );
+                anyhow::ensure!(
+                    !indices.is_empty(),
+                    "pipeline for {shader_name} was given empty index data by \
+                     `.build_indexed_bytes()`",
+                );
+            }
+            VertexConfig::SharedMesh(_) => {}
+            VertexConfig::VertexCount => {
+                anyhow::ensure!(
+                    shader_bindings.is_empty(),
+                    "pipeline for {shader_name} draws with a vertex count, but its shader \
+                     declares vertex input bindings {:?}",
+                    binding_keys(&shader_bindings),
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// The config for an indexed shader that has not been given a vertex source
@@ -403,12 +593,21 @@ impl<'t, V: VertexDescription, P> IndexedPipelineConfig<'t, V, P> {
         self,
         vertices: Vec<V>,
         indices: Vec<u32>,
-    ) -> PipelineConfig<'t, V, DrawIndexed, P> {
-        self.into_config(VertexConfig::VertexAndIndexBuffers(vertices, indices))
+    ) -> PipelineConfig<'t, TypedVertex<V>, DrawIndexed, P>
+    where
+        V: 'static,
+    {
+        self.into_config(VertexConfig::VertexAndIndexBuffers(
+            Box::new(OwnedVertices(vertices)),
+            indices,
+        ))
     }
 
     /// Draw from a shared mesh instead of per-pipeline vertex/index buffers.
-    pub fn with_shared_mesh(self, mesh: &MeshHandle<V>) -> PipelineConfig<'t, V, DrawIndexed, P> {
+    pub fn with_shared_mesh(
+        self,
+        mesh: &MeshHandle<V>,
+    ) -> PipelineConfig<'t, TypedVertex<V>, DrawIndexed, P> {
         self.into_config(VertexConfig::SharedMesh(mesh.index))
     }
 
@@ -419,10 +618,15 @@ impl<'t, V: VertexDescription, P> IndexedPipelineConfig<'t, V, P> {
         self
     }
 
-    fn into_config(self, vertex_config: VertexConfig<V>) -> PipelineConfig<'t, V, DrawIndexed, P> {
+    fn into_config(
+        self,
+        vertex_config: VertexConfig,
+    ) -> PipelineConfig<'t, TypedVertex<V>, DrawIndexed, P> {
         PipelineConfig {
             shader: self.shader,
             vertex_config,
+            typed_vertex_layout: Some(TypedVertexLayout::of::<V>()),
+            _interface: PhantomData,
             _draw_call: PhantomData,
             _push: PhantomData,
             texture_handles: self.texture_handles,
@@ -433,26 +637,15 @@ impl<'t, V: VertexDescription, P> IndexedPipelineConfig<'t, V, P> {
     }
 }
 
-impl<'t, P> IndexedPipelineConfig<'t, VertexBytes, P> {
-    /// Draw from vertex bytes already packed to the shader entry's vertex
-    /// layout. The byte count must be a nonzero multiple of that layout's
-    /// stride.
-    pub fn with_vertex_bytes(
-        self,
-        vertex_bytes: Vec<u8>,
-        indices: Vec<u32>,
-    ) -> PipelineConfig<'t, VertexBytes, DrawIndexed, P> {
-        self.into_config(VertexConfig::VertexBytes(vertex_bytes, indices))
-    }
-}
-
-impl<'t, V: VertexDescription, P> PipelineConfig<'t, V, DrawIndexed, P> {
+impl<'t, I, P> PipelineConfig<'t, I, DrawIndexed, P> {
     /// Draw with cmd_draw_indexed_indirect instead of cmd_draw_indexed.
     /// An indirect pipeline's shader must read `SV_DrawIndex`.
-    pub fn indirect(self) -> PipelineConfig<'t, V, DrawIndexedIndirect, P> {
+    pub fn indirect(self) -> PipelineConfig<'t, I, DrawIndexedIndirect, P> {
         PipelineConfig {
             shader: self.shader,
             vertex_config: self.vertex_config,
+            typed_vertex_layout: self.typed_vertex_layout,
+            _interface: PhantomData,
             _draw_call: PhantomData,
             _push: PhantomData,
             texture_handles: self.texture_handles,
@@ -463,7 +656,7 @@ impl<'t, V: VertexDescription, P> PipelineConfig<'t, V, DrawIndexed, P> {
     }
 }
 
-impl<'t, V: VertexDescription, D: DrawCall, P> PipelineConfig<'t, V, D, P> {
+impl<'t, I, D: DrawCall, P> PipelineConfig<'t, I, D, P> {
     /// Bake this pipeline with explicit fixed-function raster state instead of
     /// [`RasterState::default()`] (which reproduces the renderer's original
     /// hardcoded pipeline).
@@ -474,8 +667,9 @@ impl<'t, V: VertexDescription, D: DrawCall, P> PipelineConfig<'t, V, D, P> {
 }
 
 /// The fields every graphics pipeline config shares. Which terminal method is
-/// called — [`Self::build_indexed`] or [`Self::build_vertex_count`] — decides
-/// both the vertex type and the draw-call kind, so the two cannot disagree.
+/// called — [`Self::build_indexed`], [`Self::build_indexed_bytes`], or
+/// [`Self::build_vertex_count`] — decides both the vertex interface and the
+/// draw-call kind, so the two cannot disagree.
 pub struct PipelineConfigBuilder<'t> {
     pub shader: Box<dyn ShaderAtlasEntry>,
     pub texture_handles: Vec<&'t TextureHandle>,
@@ -484,6 +678,9 @@ pub struct PipelineConfigBuilder<'t> {
 }
 
 impl<'t> PipelineConfigBuilder<'t> {
+    /// Terminal call for a shader whose vertex input is the vertex type `V`.
+    /// `V`'s layout is checked against the shader entry's when the pipeline
+    /// is created, before any GPU allocation.
     pub fn build_indexed<V: VertexDescription, P>(self) -> IndexedPipelineConfig<'t, V, P> {
         IndexedPipelineConfig {
             shader: self.shader,
@@ -500,9 +697,29 @@ impl<'t> PipelineConfigBuilder<'t> {
     /// vertex-type/draw-call pairing is a signature guarantee here rather than
     /// a codegen convention.
     pub fn build_vertex_count<P>(self) -> PipelineConfig<'t, NoVertex, DrawVertexCount, P> {
+        self.into_config(VertexConfig::VertexCount)
+    }
+
+    /// Terminal call for an indexed shader fed with vertex bytes already
+    /// packed to the shader entry's vertex layout, with no Rust vertex type.
+    /// The byte count must be a nonzero multiple of that layout's stride.
+    pub fn build_indexed_bytes<P>(
+        self,
+        vertex_bytes: Vec<u8>,
+        indices: Vec<u32>,
+    ) -> PipelineConfig<'t, RuntimeVertex, DrawIndexed, P> {
+        self.into_config(VertexConfig::PackedBytes(vertex_bytes, indices))
+    }
+
+    fn into_config<I, D: DrawCall, P>(
+        self,
+        vertex_config: VertexConfig,
+    ) -> PipelineConfig<'t, I, D, P> {
         PipelineConfig {
             shader: self.shader,
-            vertex_config: VertexConfig::VertexCount,
+            vertex_config,
+            typed_vertex_layout: None,
+            _interface: PhantomData,
             _draw_call: PhantomData,
             _push: PhantomData,
             texture_handles: self.texture_handles,
@@ -592,5 +809,280 @@ impl<'t> ComputePipelineConfigBuilder<'t> {
             storage_texture_handles: self.storage_texture_handles,
             _push: PhantomData,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! `validate_vertex_input` runs at the top of `Renderer::init_pipeline`
+    //! and `create_picking_pipeline`, before anything is allocated, so these
+    //! configs exercise the pre-allocation checks with no GPU.
+
+    use super::*;
+    use crate::renderer::render_graph::GPUWrite as GraphGPUWrite;
+    use crate::shaders::runtime::RuntimeShader;
+
+    /// reflection with one 32-byte vertex: float3 at 0, float3 at 12
+    const VERTEX_INPUT_REFLECTION: &str =
+        include_str!("../../../slang-reflection/src/fixtures/basic_triangle.json");
+    /// reflection whose vertex stage reads only `SV_VertexID`
+    const NO_VERTEX_INPUT_REFLECTION: &str =
+        include_str!("../../../slang-reflection/src/fixtures/koch_curve.json");
+
+    fn spv_module() -> Vec<u8> {
+        // magic number, version, generator, bound, schema
+        [0x0723_0203u32, 0x0001_0000, 0, 1, 0]
+            .iter()
+            .flat_map(|word| word.to_ne_bytes())
+            .collect()
+    }
+
+    fn builder(reflection: &str) -> PipelineConfigBuilder<'static> {
+        let module = spv_module();
+
+        PipelineConfigBuilder {
+            shader: Box::new(RuntimeShader::new(reflection, &module, &module).unwrap()),
+            texture_handles: vec![],
+            uniform_buffer_handles: vec![],
+            storage_texture_handles: vec![],
+        }
+    }
+
+    fn binding(stride: u32) -> Vec<vk::VertexInputBindingDescription> {
+        vec![
+            vk::VertexInputBindingDescription::default()
+                .binding(0)
+                .stride(stride)
+                .input_rate(vk::VertexInputRate::VERTEX),
+        ]
+    }
+
+    fn attribute(location: u32, offset: u32) -> vk::VertexInputAttributeDescription {
+        vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(location)
+            .offset(offset)
+            .format(vk::Format::R32G32B32_SFLOAT)
+    }
+
+    /// matches the reflected layout exactly
+    #[derive(Clone, Copy)]
+    struct MatchingVertex(#[expect(dead_code)] [f32; 8]);
+
+    impl GraphGPUWrite for MatchingVertex {}
+
+    impl VertexDescription for MatchingVertex {
+        fn binding_descriptions() -> Vec<vk::VertexInputBindingDescription> {
+            binding(32)
+        }
+
+        fn attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription> {
+            vec![attribute(0, 0), attribute(1, 12)]
+        }
+    }
+
+    /// matches the reflected layout, with its attributes listed in reverse order
+    #[derive(Clone, Copy)]
+    struct ReorderedVertex(#[expect(dead_code)] [f32; 8]);
+
+    impl GraphGPUWrite for ReorderedVertex {}
+
+    impl VertexDescription for ReorderedVertex {
+        fn binding_descriptions() -> Vec<vk::VertexInputBindingDescription> {
+            binding(32)
+        }
+
+        fn attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription> {
+            vec![attribute(1, 12), attribute(0, 0)]
+        }
+    }
+
+    /// same stride as the reflected layout, but the second attribute moved
+    #[derive(Clone, Copy)]
+    struct WrongOffsetVertex(#[expect(dead_code)] [f32; 8]);
+
+    impl GraphGPUWrite for WrongOffsetVertex {}
+
+    impl VertexDescription for WrongOffsetVertex {
+        fn binding_descriptions() -> Vec<vk::VertexInputBindingDescription> {
+            binding(32)
+        }
+
+        fn attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription> {
+            vec![attribute(0, 0), attribute(1, 16)]
+        }
+    }
+
+    /// same stride and offsets as the reflected layout, but the second
+    /// attribute is a float4 instead of a float3
+    #[derive(Clone, Copy)]
+    struct WrongFormatVertex(#[expect(dead_code)] [f32; 8]);
+
+    impl GraphGPUWrite for WrongFormatVertex {}
+
+    impl VertexDescription for WrongFormatVertex {
+        fn binding_descriptions() -> Vec<vk::VertexInputBindingDescription> {
+            binding(32)
+        }
+
+        fn attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription> {
+            vec![
+                attribute(0, 0),
+                attribute(1, 12).format(vk::Format::R32G32B32A32_SFLOAT),
+            ]
+        }
+    }
+
+    /// a different stride from the reflected layout
+    #[derive(Clone, Copy)]
+    struct WrongStrideVertex(#[expect(dead_code)] [f32; 6]);
+
+    impl GraphGPUWrite for WrongStrideVertex {}
+
+    impl VertexDescription for WrongStrideVertex {
+        fn binding_descriptions() -> Vec<vk::VertexInputBindingDescription> {
+            binding(24)
+        }
+
+        fn attribute_descriptions() -> Vec<vk::VertexInputAttributeDescription> {
+            vec![attribute(0, 0), attribute(1, 12)]
+        }
+    }
+
+    fn mesh<V>() -> MeshHandle<V>
+    where
+        V: VertexDescription,
+    {
+        MeshHandle {
+            index: MeshIndex::from_raw(0),
+            _phantom_data: PhantomData,
+        }
+    }
+
+    fn error_of<I, D: DrawCall, P>(config: &PipelineConfig<'_, I, D, P>) -> String {
+        match config.validate_vertex_input() {
+            Ok(()) => panic!("the config was accepted"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_typed_config_matching_the_shader_layout_is_accepted() {
+        let owned = builder(VERTEX_INPUT_REFLECTION)
+            .build_indexed::<MatchingVertex, NoPush>()
+            .with_vertices(vec![MatchingVertex([0.0; 8])], vec![0]);
+        owned.validate_vertex_input().unwrap();
+
+        let shared = builder(VERTEX_INPUT_REFLECTION)
+            .build_indexed::<MatchingVertex, NoPush>()
+            .with_shared_mesh(&mesh())
+            .indirect();
+        shared.validate_vertex_input().unwrap();
+    }
+
+    #[test]
+    fn a_typed_config_with_a_different_attribute_offset_is_rejected() {
+        let config = builder(VERTEX_INPUT_REFLECTION)
+            .build_indexed::<WrongOffsetVertex, NoPush>()
+            .with_shared_mesh(&mesh());
+        let err = error_of(&config);
+        assert!(err.contains("WrongOffsetVertex"), "{err}");
+        assert!(err.contains("attributes"), "{err}");
+    }
+
+    #[test]
+    fn indirect_keeps_the_layout_check_of_the_typed_config() {
+        let config = builder(VERTEX_INPUT_REFLECTION)
+            .build_indexed::<WrongOffsetVertex, NoPush>()
+            .with_shared_mesh(&mesh())
+            .indirect();
+        let err = error_of(&config);
+        assert!(err.contains("WrongOffsetVertex"), "{err}");
+        assert!(err.contains("attributes"), "{err}");
+    }
+
+    #[test]
+    fn a_typed_config_with_a_different_attribute_format_is_rejected() {
+        let config = builder(VERTEX_INPUT_REFLECTION)
+            .build_indexed::<WrongFormatVertex, NoPush>()
+            .with_vertices(vec![WrongFormatVertex([0.0; 8])], vec![0]);
+        let err = error_of(&config);
+        assert!(err.contains("WrongFormatVertex"), "{err}");
+        assert!(err.contains("attributes"), "{err}");
+    }
+
+    #[test]
+    fn a_typed_config_listing_matching_attributes_in_another_order_is_accepted() {
+        builder(VERTEX_INPUT_REFLECTION)
+            .build_indexed::<ReorderedVertex, NoPush>()
+            .with_vertices(vec![ReorderedVertex([0.0; 8])], vec![0])
+            .validate_vertex_input()
+            .unwrap();
+    }
+
+    #[test]
+    fn a_typed_config_with_a_different_stride_is_rejected() {
+        let config = builder(VERTEX_INPUT_REFLECTION)
+            .build_indexed::<WrongStrideVertex, NoPush>()
+            .with_vertices(vec![WrongStrideVertex([0.0; 6])], vec![0]);
+        let err = error_of(&config);
+        assert!(err.contains("WrongStrideVertex"), "{err}");
+        assert!(err.contains("bindings"), "{err}");
+    }
+
+    #[test]
+    fn a_typed_config_for_a_shader_without_vertex_input_is_rejected() {
+        let config = builder(NO_VERTEX_INPUT_REFLECTION)
+            .build_indexed::<MatchingVertex, NoPush>()
+            .with_shared_mesh(&mesh());
+        let err = error_of(&config);
+        assert!(err.contains("MatchingVertex"), "{err}");
+    }
+
+    #[test]
+    fn empty_typed_vertices_or_indices_are_rejected() {
+        let no_vertices = builder(VERTEX_INPUT_REFLECTION)
+            .build_indexed::<MatchingVertex, NoPush>()
+            .with_vertices(vec![], vec![0]);
+        assert!(error_of(&no_vertices).contains("empty vertex data"));
+
+        let no_indices = builder(VERTEX_INPUT_REFLECTION)
+            .build_indexed::<MatchingVertex, NoPush>()
+            .with_vertices(vec![MatchingVertex([0.0; 8])], vec![]);
+        assert!(error_of(&no_indices).contains("empty vertex data"));
+    }
+
+    #[test]
+    fn a_vertex_count_config_for_a_shader_with_vertex_input_is_rejected() {
+        let config = builder(VERTEX_INPUT_REFLECTION).build_vertex_count::<NoPush>();
+        let err = error_of(&config);
+        assert!(err.contains("vertex count"), "{err}");
+
+        builder(NO_VERTEX_INPUT_REFLECTION)
+            .build_vertex_count::<NoPush>()
+            .validate_vertex_input()
+            .unwrap();
+    }
+
+    #[test]
+    fn packed_bytes_must_be_a_nonzero_multiple_of_the_shader_stride() {
+        let whole =
+            builder(VERTEX_INPUT_REFLECTION).build_indexed_bytes::<NoPush>(vec![0; 64], vec![0]);
+        whole.validate_vertex_input().unwrap();
+
+        for len in [0, 31, 33] {
+            let config = builder(VERTEX_INPUT_REFLECTION)
+                .build_indexed_bytes::<NoPush>(vec![0; len], vec![0]);
+            let err = error_of(&config);
+            assert!(err.contains("vertex stride 32"), "{len}: {err}");
+        }
+
+        let no_stride =
+            builder(NO_VERTEX_INPUT_REFLECTION).build_indexed_bytes::<NoPush>(vec![0; 32], vec![0]);
+        assert!(error_of(&no_stride).contains("vertex stride 0"));
+
+        let no_indices =
+            builder(VERTEX_INPUT_REFLECTION).build_indexed_bytes::<NoPush>(vec![0; 32], vec![]);
+        assert!(error_of(&no_indices).contains("empty index data"));
     }
 }

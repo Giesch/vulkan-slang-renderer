@@ -51,10 +51,10 @@ use mltrs::shaders::atlas::ShaderAtlasRoot;
 use gx::model_manifest::{self as mm, Batch, Manifest, MaterialEntry, TextureEntry};
 use mltrs::renderer::{
     BindlessHandle, BlendMode, CullMode, DepthCompare, DrawError, DrawIndexedIndirect,
-    FrameRenderer, ImmutableBufferHandle, MeshHandle, PipelineHandle, PushBlock, RasterState,
-    Renderer, RgbaPixels, Sampler2D, SamplerOptions, SingletonBufferHandle, StencilMode,
-    TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
-    UniformBufferHandle,
+    FrameRenderer, GraphicsPipelineHandle, ImmutableBufferHandle, MeshHandle, PushBlock,
+    RasterState, Renderer, RgbaPixels, Sampler2D, SamplerOptions, SingletonBufferHandle,
+    StencilMode, TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
+    TypedVertex, UniformBufferHandle,
 };
 
 use crate::animation_player::{
@@ -799,7 +799,8 @@ const EXPECTED_RASTER_STATES: usize = 5;
 /// `Manifest::materials`. Push order defines a [`MaterialSlot`].
 struct MaterialTable {
     /// One pipeline per distinct [`RasterState`], in first-use order.
-    pipelines: Vec<PipelineHandle<DrawIndexedIndirect, PushBlock<MultiDraw>>>,
+    pipelines:
+        Vec<GraphicsPipelineHandle<TypedVertex<Vertex>, DrawIndexedIndirect, PushBlock<MultiDraw>>>,
     /// Maps a `MaterialSlot` to an index into [`Self::pipelines`]. Many slots
     /// share one pipeline.
     pipeline_of_slot: Vec<usize>,

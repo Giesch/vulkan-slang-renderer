@@ -36,6 +36,11 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 17. [Picking is a second rendering path rather than a pass, so every new capability must be re-implemented or refused](#17-picking-is-a-second-rendering-path-rather-than-a-pass-so-every-new-capability-must-be-re-implemented-or-refused) — recurring per-feature carve-outs; the cost lands on whoever adds the *next* feature
 18. [Reference-counted handles instead of copied buffer slot keys](#18-reference-counted-handles-instead-of-copied-buffer-slot-keys) — execute-time liveness checks delete
 19. [Borrow upload frame inputs instead of cloning into a Vec](#19-borrow-upload-frame-inputs-instead-of-cloning-into-a-vec) — unnecessary per-frame allocation and copy
+20. [Remove the placeholder VertexDescription implementation on VertexBytes](#20-remove-the-placeholder-vertexdescription-implementation-on-vertexbytes) — misleading layout contract and accidental typed-upload API
+21. [A vertex struct with no attribute fields becomes a zero-stride indexed input](#21-a-vertex-struct-with-no-attribute-fields-becomes-a-zero-stride-indexed-input) — three spellings of "no vertex input", one of them an invalid 0-byte upload
+22. [A scalar system-value field in a vertex struct panics reflection](#22-a-scalar-system-value-field-in-a-vertex-struct-panics-reflection) — valid shader input crashes the codegen instead of producing an error
+23. [Profile zeroed-holes packing vs. step-by-step `AssemblyProgram` splicing for split uniform/push blocks](#23-profile-zeroed-holes-packing-vs-step-by-step-assemblyprogram-splicing-for-split-uniformpush-blocks) — potential per-frame assembly simplification/speedup once measured
+24. [Runtime flag for dev-time bounds and resource validation in prebuilt hosts](#24-runtime-flag-for-dev-time-bounds-and-resource-validation-in-prebuilt-hosts) — Roc apps link against a precompiled release platform host, so `cfg!(debug_assertions)` checks never run
 
 ## 1. Vulkan objects leak when an init function fails partway
 
@@ -1463,3 +1468,202 @@ an intermediate vector. Borrowed inputs work through tuples, repeat nodes, and
 optional nodes. Update the example's test that currently requires a cloned
 snapshot to verify current-frame values and staging ownership instead, and
 verify that submitted upload bytes remain valid after the input borrow ends.
+
+## 20. Remove the placeholder VertexDescription implementation on VertexBytes
+
+**The problem.** In
+[vertex_description.rs](../crates/renderer/src/renderer/vertex_description.rs#L17),
+VertexBytes implements VertexDescription with empty binding and attribute
+descriptions solely to satisfy pipeline config bounds. It also implements
+GPUWrite despite being a zero-sized marker. The generic builder consequently
+exposes typed operations such as `with_vertices(Vec<VertexBytes>, ...)` that
+do not describe a meaningful vertex upload.
+
+**Why it's tolerable today.** Pipeline creation takes its actual layout from
+the shader entry. RuntimeShader supplies descriptions derived from reflection,
+and the intended packed-byte path checks the byte count against the shader's
+stride. The empty methods do not configure that pipeline. Their non-use is a
+convention, however, and the trait implementation advertises a false contract.
+
+**Fix.** Follow the revised option 2 in
+[Vertex input types and independent mesh binding](vertex_input_and_mesh_binding.md).
+Erase owned upload storage behind a private implementation while retaining a
+typed vertex-interface witness in public configs and graphics handles. Give
+runtime packed data its own construction path and remove VertexBytes. Put
+layout/upload bounds on actual vertex operations, not interface markers.
+Preserve the interface information needed for the near-term independent
+pipeline/mesh binding work; removing all vertex identity from the returned
+handle is not the chosen design.
+
+**Done means.** VertexBytes and its placeholder trait implementations are gone;
+packed data cannot access typed vertex/mesh methods; typed builders still check
+matching vertices and meshes; typed configs and returned handles retain their
+vertex interface. Generated Rust and the later Roc host use the revised API,
+with compile checks and rendering validation covering the affected paths.
+Independent draw-time mesh binding is Phase 2 of the linked plan and is tracked
+separately from completion of this immediate cleanup.
+
+**Status (Phase 1 implemented).** VertexBytes and the NoVertex
+VertexDescription/GPUWrite impls are deleted. Configs and returned
+`GraphicsPipelineHandle`s carry `TypedVertex<V>`, `RuntimeVertex`, or `NoVertex`;
+packed data goes through `PipelineConfigBuilder::build_indexed_bytes`, which
+has no typed methods. Typed vertices are owned by a private upload object that
+keeps `V: GPUWrite` on its impl. `create_pipeline` checks a typed interface's
+layout against the shader entry, and a vertex-count config against a shader
+without vertex input, before allocating. Compile cases in
+`crates/renderer/fixtures/api_compile` cover the typed, runtime, and relabeling
+restrictions. Still open: the Roc host branches above this one need the same
+builder and handle migration, and Phase 2 (independent mesh binding).
+
+## 21. A vertex struct with no attribute fields becomes a zero-stride indexed input
+
+**The problem.** The renderer has three representations of "this shader has no
+vertex input":
+
+- [vertex_layout.rs](../crates/slang-reflection/src/json/vertex_layout.rs#L71)
+  returns `None` when the vertex entry point takes no struct parameter.
+- The same function returns `Some(VertexLayout { stride: 0, attributes: [] })`
+  when the entry point takes a struct and every field is skipped. Skipped
+  fields are semantic vectors without a binding and resources
+  ([line 121](../crates/slang-reflection/src/json/vertex_layout.rs#L121)).
+  The stride is `align_to(0, 16)`, which is 0.
+- `PipelineConfig::validate_vertex_input` in
+  [pipeline.rs](../crates/renderer/src/renderer/pipeline.rs#L544) reads the
+  first binding's stride with `.unwrap_or(0)`. A shader without bindings and a
+  binding with stride 0 give the same value.
+
+The second representation gives a shader that reads no vertex data an indexed
+interface:
+
+- `RuntimeShader` emits one binding with stride 0 and no attributes.
+- Codegen sets `vertex_type_name` for any struct parameter
+  ([build_tasks.rs](../crates/cli/src/build_tasks.rs#L365)). It generates a
+  zero-field `#[repr(C, align(16))]` struct. Its `size_of` is 0, so its binding
+  stride is 0 and the generated size assertion passes.
+- `build_vertex_count` is not generated. A hand-built vertex-count config is
+  rejected because `shader_bindings` is not empty.
+- `build_indexed_bytes` is rejected with "vertex stride 0", the same message as
+  a shader without vertex input.
+- A typed config passes the layout check, because both sides have one stride-0
+  binding and no attributes. `with_vertices` with a nonempty `Vec` of the
+  zero-sized type passes the emptiness check. `create_vertex_buffer` then
+  creates a 0-byte buffer. Vulkan requires `VkBufferCreateInfo::size` to be
+  greater than 0.
+
+The shader itself is valid Slang. A pipeline with a stride-0 binding that no
+attribute reads is valid Vulkan. Only the classification is wrong.
+
+**Why it's tolerable today.** No example declares such a struct. Scalar
+system-value fields, the usual contents of such a struct, panic in reflection
+first (entry 22). The remaining inputs are a struct of only resources, a
+semantic vector without a binding, or an empty struct. No test confirms that
+Slang reflects any of these as a vertex struct parameter.
+
+**Fix.** Give "no vertex input" one representation, decided where the layout is
+computed:
+
+- Either `vertex_layout` returns `None` when no field becomes an attribute, and
+  codegen emits `build_vertex_count` and `NoVertex` for that shader,
+- or reflection rejects the struct with an error that names the entry point.
+
+Expose the layout from `ShaderAtlasEntry` as `Option<VertexLayout>` (or an enum
+with a no-input variant), not only as flattened Vulkan vectors.
+`RuntimeShader::vertex_stride` already returns `Option<u32>`. Remove the
+`.unwrap_or(0)` in `validate_vertex_input`, and give the no-input case its own
+error message.
+
+**Done means.** A stride of 0 never stands for "no vertex input". A vertex
+struct with no attribute fields produces either a vertex-count config or a
+reflection error. A reflection fixture covers that shader. The packed-bytes
+check reports a shader without vertex input separately from a stride mismatch.
+
+## 22. A scalar system-value field in a vertex struct panics reflection
+
+**The problem.** In
+[reflection/parameters.rs](../crates/slang-reflection/src/reflection/parameters.rs#L332),
+a scalar struct field is reflected with `binding: binding.unwrap()`. A
+system-value field, such as `uint id : SV_VertexID`, has no binding: the vector
+branch of the same match maps `(None, Some(semantic))` to
+`VectorStructField::Semantic`. `param_binding` returns `None` for
+`ParameterCategory::None`, and it reaches `todo!()` for categories it does not
+handle. A vertex input struct with a scalar system-value field therefore panics
+during `mltrs shaders compile`, instead of producing a skipped field or an error.
+Vertex-stage system values are scalars: `SV_VertexID`, `SV_InstanceID`, and
+the draw-index and base-vertex values. This analysis comes from reading the
+code. No test reproduces the panic.
+
+**Why it's tolerable today.** Examples pass system values as scalar entry point
+parameters, which reflect as `ScalarEntryPointParameter::Semantic`. No example
+puts a system value inside a vertex input struct.
+
+**Fix.** Add a semantic scalar struct field variant, parallel to
+`SemanticVectorStructField`, and skip it in `vertex_layout` the same way. If
+the field is unsupported, return an `anyhow` error that names the field and the
+semantic. Replace the `todo!()` in `param_binding` with an error for the same
+reason.
+
+**Done means.** A reflection fixture with a vertex struct that mixes bound
+attributes and a scalar system value compiles. The system value is absent from
+the vertex layout. A struct with only system values follows the rule chosen in
+entry 21. No reflection path panics on a valid shader input.
+
+## 23. Profile zeroed-holes packing vs. step-by-step `AssemblyProgram` splicing for split uniform/push blocks
+
+**The problem.** When a shader parameter block or push constant block is split
+into a per-frame `Data` half and a build-time `Bindings` half (for dynamic/Roc
+graph nodes via `AssemblyProgram` in
+`crates/render-graph/src/runtime/compile.rs`), the straightforward model packs
+`Data` contiguously and uses `AssemblyStep` (`FrameBytes` + `ResolveBuf` /
+`ResolveTex` / `External`) to copy data slices and resolved 8-byte handles/addresses
+into their final GPU offsets each frame. An alternative "zeroed-holes" layout
+would have the `Data` packer emit a buffer of the full GPU block size with
+data fields already placed at their final `dst_offset`s and zeroed 8-byte holes
+where bindings live, so the host only patches the 8-byte resolved handles in
+place without `FrameBytes` copy steps. However, zeroed-holes packing couples the
+`Data` wire format to binding holes and makes independent unit testing of `Data`
+packers harder.
+
+**Why it's tolerable today.** Uniform and push constant blocks are small (tens
+to hundreds of bytes) and copy counts per frame are tiny compared to command
+recording, so step-by-step `AssemblyProgram` splicing keeps `Data` and
+`Bindings` cleanly separated and easy to test without a proven bottleneck.
+
+**Fix.** Profile real workloads once the full-parity Roc render graph is running
+many-draw scenes. Only adopt zeroed-holes packing if `AssemblyProgram` `FrameBytes`
+scatter copies show up measurably in frame CPU time; otherwise close this entry
+with the benchmark numbers recorded.
+
+**Done means.** A benchmark or profile over a multi-draw Roc scene measures
+`AssemblyProgram` assembly overhead, and either confirms the current separation
+is fast enough (closing the item) or replaces `FrameBytes` scatter steps with
+direct-offset packing backed by layout tests.
+
+## 24. Runtime flag for dev-time bounds and resource validation in prebuilt hosts
+
+**The problem.** In Rust, dev-only checks—such as validating at index buffer
+creation time that every index in `indices` is `< vertex_count` for vertex
+pulling, or `debug_assert!` index-range checks—can be gated on
+`cfg!(debug_assertions)` so debug builds catch out-of-bounds BDA vertex reads
+while release builds pay zero scan cost. A Roc application, however, links
+against a prebuilt `roc-platform` host library (`libhost.a`, built in release
+mode) and cannot recompile the Rust host to toggle `debug_assertions`. Adjacent
+to [entry 5](#5-validation-and-fault-injection-cannot-run-in-release-builds),
+any check gated solely on `cfg!(debug_assertions)` in the Rust renderer is
+permanently off for Roc users unless also duplicated in Roc or controlled at
+runtime.
+
+**Why it's tolerable today.** Roc setup-time validation can check static index
+lists in Roc (`RenderGraphValidate.roc`), and `EnvConfig` already centralizes
+startup environment parsing (`crates/renderer/src/env_config.rs`).
+
+**Fix.** Add a runtime dev-validation setting in `EnvConfig` (potentially
+unified with entry 5's `VKR_VALIDATION` or a `VKR_DEV_CHECKS` flag, and/or
+exposed in `Game.Init` / host config) that defaults to `cfg!(debug_assertions)`
+in Rust binaries and can be enabled at runtime when running against the
+prebuilt Roc platform host. Alternatively or additionally, perform index-in-bounds
+checks in Roc validation when vertex and index counts are known in Roc.
+
+**Done means.** Running a Roc app with dev validation enabled catches an
+out-of-bounds vertex index at index-buffer / graph setup time without
+recompiling the platform host, and disabling it in release skips the $O(N)$
+index scan.

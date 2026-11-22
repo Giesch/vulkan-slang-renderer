@@ -6,7 +6,7 @@
 
 #![allow(dead_code)]
 
-use mltrs_renderer::renderer::pipeline::{DrawVertexCount, NoPush, PipelineHandle};
+use mltrs_renderer::renderer::pipeline::{DrawVertexCount, GraphicsPipelineHandle, NoPush, NoVertex};
 use mltrs_renderer::renderer::render_graph::{DrawVertexCountKey, draw_indexed};
 use mltrs_renderer::renderer::{GpuUpdatedBufferHandle, GpuUpdatedSlot, UniformBufferHandle};
 
@@ -16,7 +16,7 @@ use render_graph_api_checks::generated::shader_atlas::render::{
 };
 
 fn wrong(
-    render_pipeline: &PipelineHandle<DrawVertexCount, NoPush>,
+    render_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
 ) {

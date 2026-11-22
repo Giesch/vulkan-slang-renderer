@@ -577,8 +577,8 @@ mod tests {
         assert_eq!(p.stage_order[1], UVec4::new(0, 0, 255, 0));
 
         // slots past num_tev_stages stay null rather than aliasing stage 0
-        for i in 2..MAX_STAGES {
-            assert_eq!(p.stage_order[i], UVec4::new(255, 255, 255, 0), "slot {i}");
+        for (i, order) in p.stage_order.iter().enumerate().take(MAX_STAGES).skip(2) {
+            assert_eq!(*order, UVec4::new(255, 255, 255, 0), "slot {i}");
         }
     }
 

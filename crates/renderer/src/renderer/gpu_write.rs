@@ -1,5 +1,6 @@
-/// Marker type for shaders that don't use vertex input buffers.
-/// Used as the vertex type parameter for fullscreen quads, procedural geometry, etc.
+/// The vertex interface of a pipeline with no vertex input, drawn with a
+/// vertex count: fullscreen quads, procedural geometry, etc. Uninhabited; it
+/// is neither a vertex type nor GPU data.
 pub enum NoVertex {}
 
 /// A marker for types that get written to GPU memory.
@@ -13,8 +14,6 @@ pub(crate) trait GPUWrite {}
 ///
 /// This is the renderer module's version of `render_graph::PushConstantBlock`.
 pub(crate) trait PushConstantBlock: GPUWrite {}
-
-impl GPUWrite for NoVertex {}
 
 // One-way bridges from the graph's construction vocabulary to the renderer's.
 // The primitives and generated shader blocks implement the graph traits.

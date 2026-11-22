@@ -5,8 +5,8 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    CpuUpdatedBufferHandle, DrawError, DrawVertexCount, FrameRenderer, PickingPipelineHandle,
-    PipelineHandle, Renderer, UniformBufferHandle,
+    CpuUpdatedBufferHandle, DrawError, DrawVertexCount, FrameRenderer, GraphicsPipelineHandle,
+    NoVertex, PickingPipelineHandle, Renderer, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -24,7 +24,7 @@ struct GpuPicking {
     params_buffer: UniformBufferHandle<GpuPickingParams>,
     picking_params_buffer: UniformBufferHandle<gpu_picking_id::GpuPickingIdParams>,
     cubes_buffer: CpuUpdatedBufferHandle<Cube>,
-    pipeline: PipelineHandle<DrawVertexCount>,
+    pipeline: GraphicsPipelineHandle<NoVertex, DrawVertexCount>,
     picking_pipeline: PickingPipelineHandle,
     cubes: Vec<Cube>,
     mouse_x: f32,

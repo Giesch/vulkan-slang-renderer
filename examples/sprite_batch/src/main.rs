@@ -22,8 +22,8 @@ use mltrs::game::{Game, MaxMSAASamples};
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawVertexCount, FrameRenderer, ImmutableBufferHandle, PipelineHandle, RasterState,
-    Renderer, TextureFilter, TextureHandle, UniformBufferHandle,
+    DrawError, DrawVertexCount, FrameRenderer, GraphicsPipelineHandle, ImmutableBufferHandle,
+    NoVertex, RasterState, Renderer, TextureFilter, TextureHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -39,7 +39,7 @@ pub struct EditState {
 }
 
 pub struct SpriteBatch {
-    pipeline: PipelineHandle<DrawVertexCount>,
+    pipeline: GraphicsPipelineHandle<NoVertex, DrawVertexCount>,
     params_buffer: UniformBufferHandle<SpriteBatchParams>,
     sprites_buffer: ImmutableBufferHandle<Sprite>,
     sprites: Vec<Sprite>,

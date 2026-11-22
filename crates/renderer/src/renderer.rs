@@ -36,7 +36,6 @@ use gpu_write::write_to_gpu_buffer;
 pub(crate) use gpu_write::{GPUWrite, PushConstantBlock};
 
 pub mod vertex_description;
-use vertex_description::VertexDescription;
 
 pub mod texture;
 pub use texture::*;
@@ -1320,14 +1319,14 @@ impl Renderer {
         has_stencil_component(self.depth_format).then_some(StencilSupport(()))
     }
 
-    pub fn create_pipeline<V: VertexDescription, D: DrawCall, P>(
+    pub fn create_pipeline<I, D: DrawCall, P>(
         &mut self,
-        config: PipelineConfig<V, D, P>,
-    ) -> anyhow::Result<PipelineHandle<D, P>> {
+        config: PipelineConfig<I, D, P>,
+    ) -> anyhow::Result<GraphicsPipelineHandle<I, D, P>> {
         let pipeline = self.init_pipeline(config)?;
         let handle = self.pipelines.add(pipeline);
 
-        Ok(handle)
+        Ok(GraphicsPipelineHandle::new(handle))
     }
 
     /// Create vertex and index buffers that can be shared by multiple
@@ -1373,10 +1372,12 @@ impl Renderer {
         })
     }
 
-    pub fn create_picking_pipeline<V: VertexDescription>(
+    pub fn create_picking_pipeline(
         &mut self,
-        picking_config: PipelineConfig<V, DrawVertexCount, NoPush>,
+        picking_config: PipelineConfig<NoVertex, DrawVertexCount, NoPush>,
     ) -> anyhow::Result<PickingPipelineHandle> {
+        picking_config.validate_vertex_input()?;
+
         // Lazily initialize picking resources on first use
         if self.picking.is_none() {
             self.picking = Some(PickingResources::init(
@@ -1604,42 +1605,13 @@ impl Renderer {
         }
     }
 
-    fn init_pipeline<V: VertexDescription, D: DrawCall, P>(
+    fn init_pipeline<I, D: DrawCall, P>(
         &mut self,
-        config: PipelineConfig<V, D, P>,
+        config: PipelineConfig<I, D, P>,
     ) -> anyhow::Result<RendererPipeline> {
         // checked up front so the bail happens before create_graphics_pipeline
         // below allocates a vk::Pipeline we would then have to leak
-        if let VertexConfig::VertexAndIndexBuffers(vertices, indices) = &config.vertex_config
-            && (vertices.is_empty() || indices.is_empty())
-        {
-            anyhow::bail!(
-                "pipeline for {} was given empty vertex data by `.with_vertices()`",
-                config.shader.source_file_name()
-            );
-        }
-        if let VertexConfig::VertexBytes(bytes, indices) = &config.vertex_config {
-            let stride = config
-                .shader
-                .vertex_binding_descriptions()
-                .first()
-                .map(|binding| binding.stride as usize)
-                .unwrap_or(0);
-            let whole_vertices =
-                stride > 0 && !bytes.is_empty() && bytes.len().is_multiple_of(stride);
-            anyhow::ensure!(
-                whole_vertices,
-                "pipeline for {} was given {} vertex bytes, not a nonzero multiple of the \
-                 vertex stride {stride}",
-                config.shader.source_file_name(),
-                bytes.len(),
-            );
-            anyhow::ensure!(
-                !indices.is_empty(),
-                "pipeline for {} was given empty index data by `.with_vertex_bytes()`",
-                config.shader.source_file_name()
-            );
-        }
+        config.validate_vertex_input()?;
 
         let pipeline_layout = ShaderPipelineLayout::create_from_atlas(
             &self.device,
@@ -1667,16 +1639,15 @@ impl Renderer {
 
         let vertex_pipeline_config = match &config.vertex_config {
             VertexConfig::VertexAndIndexBuffers(_, indices)
-            | VertexConfig::VertexBytes(_, indices) => {
+            | VertexConfig::PackedBytes(_, indices) => {
                 let (vertex_buffer, vertex_buffer_memory) = match &config.vertex_config {
-                    VertexConfig::VertexAndIndexBuffers(vertices, _) => create_vertex_buffer(
+                    VertexConfig::VertexAndIndexBuffers(vertices, _) => vertices.upload(
                         &self.allocator,
                         &self.device,
                         self.command_pool,
                         self.graphics_queue,
-                        vertices,
                     )?,
-                    VertexConfig::VertexBytes(bytes, _) => create_vertex_buffer(
+                    VertexConfig::PackedBytes(bytes, _) => create_vertex_buffer(
                         &self.allocator,
                         &self.device,
                         self.command_pool,
@@ -6240,17 +6211,23 @@ impl<'f> FrameRenderer<'f> {
     }
 
     /// queue a draw of the pipeline's whole vertex/index source
-    pub fn queue_draw_indexed(&mut self, pipeline: &PipelineHandle<DrawIndexed, NoPush>) {
-        self.push_indexed_draw(pipeline, None);
+    pub fn queue_draw_indexed<I: IndexedVertexInterface>(
+        &mut self,
+        pipeline: &GraphicsPipelineHandle<I, DrawIndexed, NoPush>,
+    ) {
+        self.push_indexed_draw(pipeline.raw(), None);
     }
 
     /// [`Self::queue_draw_indexed`], with a per-draw push constant block
-    pub fn queue_draw_indexed_with_push_constants<P: PushConstantBlock>(
+    pub fn queue_draw_indexed_with_push_constants<
+        I: IndexedVertexInterface,
+        P: PushConstantBlock,
+    >(
         &mut self,
-        pipeline: &PipelineHandle<DrawIndexed, PushBlock<P>>,
+        pipeline: &GraphicsPipelineHandle<I, DrawIndexed, PushBlock<P>>,
         push: &P,
     ) {
-        self.push_indexed_draw(pipeline, Some(PushConstantBytes::from_value(push)));
+        self.push_indexed_draw(pipeline.raw(), Some(PushConstantBytes::from_value(push)));
     }
 
     fn push_indexed_draw<S>(
@@ -6267,25 +6244,28 @@ impl<'f> FrameRenderer<'f> {
     }
 
     /// queue a draw of an index sub-range of the pipeline's vertex/index source
-    pub fn queue_draw_index_range(
+    pub fn queue_draw_index_range<I: IndexedVertexInterface>(
         &mut self,
-        pipeline: &PipelineHandle<DrawIndexed>,
+        pipeline: &GraphicsPipelineHandle<I, DrawIndexed>,
         first_index: u32,
         index_count: u32,
     ) {
-        self.push_index_range_draw(pipeline, first_index, index_count, None);
+        self.push_index_range_draw(pipeline.raw(), first_index, index_count, None);
     }
 
     /// [`Self::queue_draw_index_range`], with a per-draw push constant block
-    pub fn queue_draw_index_range_with_push_constants<P: PushConstantBlock>(
+    pub fn queue_draw_index_range_with_push_constants<
+        I: IndexedVertexInterface,
+        P: PushConstantBlock,
+    >(
         &mut self,
-        pipeline: &PipelineHandle<DrawIndexed, PushBlock<P>>,
+        pipeline: &GraphicsPipelineHandle<I, DrawIndexed, PushBlock<P>>,
         first_index: u32,
         index_count: u32,
         push: &P,
     ) {
         self.push_index_range_draw(
-            pipeline,
+            pipeline.raw(),
             first_index,
             index_count,
             Some(PushConstantBytes::from_value(push)),
@@ -6326,28 +6306,31 @@ impl<'f> FrameRenderer<'f> {
     /// starting at element `first_command` of `args`
     ///
     /// The shader reads `SV_DrawIndex` to tell the sub-draws apart.
-    pub fn queue_draw_indexed_indirect(
+    pub fn queue_draw_indexed_indirect<I: IndexedVertexInterface>(
         &mut self,
-        pipeline: &PipelineHandle<DrawIndexedIndirect>,
+        pipeline: &GraphicsPipelineHandle<I, DrawIndexedIndirect>,
         args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
         first_command: u32,
         draw_count: u32,
     ) {
-        self.push_indexed_indirect_draw(pipeline, args, first_command, draw_count, None);
+        self.push_indexed_indirect_draw(pipeline.raw(), args, first_command, draw_count, None);
     }
 
     /// [`Self::queue_draw_indexed_indirect`], with a per-command push constant block,
     /// set for the whole multi-draw command
-    pub fn queue_draw_indexed_indirect_with_push_constants<P: PushConstantBlock>(
+    pub fn queue_draw_indexed_indirect_with_push_constants<
+        I: IndexedVertexInterface,
+        P: PushConstantBlock,
+    >(
         &mut self,
-        pipeline: &PipelineHandle<DrawIndexedIndirect, PushBlock<P>>,
+        pipeline: &GraphicsPipelineHandle<I, DrawIndexedIndirect, PushBlock<P>>,
         args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
         first_command: u32,
         draw_count: u32,
         push: &P,
     ) {
         self.push_indexed_indirect_draw(
-            pipeline,
+            pipeline.raw(),
             args,
             first_command,
             draw_count,
@@ -6399,21 +6382,21 @@ impl<'f> FrameRenderer<'f> {
     /// queue a vertex-count draw (no vertex/index buffers)
     pub fn queue_draw_vertex_count(
         &mut self,
-        pipeline: &PipelineHandle<DrawVertexCount>,
+        pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount>,
         vertex_count: u32,
     ) {
-        self.push_vertex_count_draw(pipeline, vertex_count, None);
+        self.push_vertex_count_draw(pipeline.raw(), vertex_count, None);
     }
 
     /// [`Self::queue_draw_vertex_count`], with a per-draw push constant block
     pub fn queue_draw_vertex_count_with_push_constants<P: PushConstantBlock>(
         &mut self,
-        pipeline: &PipelineHandle<DrawVertexCount, PushBlock<P>>,
+        pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, PushBlock<P>>,
         vertex_count: u32,
         push: &P,
     ) {
         self.push_vertex_count_draw(
-            pipeline,
+            pipeline.raw(),
             vertex_count,
             Some(PushConstantBytes::from_value(push)),
         );
@@ -6437,9 +6420,9 @@ impl<'f> FrameRenderer<'f> {
         self.draw_frame(None, gpu_update)
     }
 
-    pub fn draw_indexed(
+    pub fn draw_indexed<I: IndexedVertexInterface>(
         mut self,
-        pipeline_handle: &PipelineHandle<DrawIndexed>,
+        pipeline_handle: &GraphicsPipelineHandle<I, DrawIndexed>,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
         self.queue_draw_indexed(pipeline_handle);
@@ -6448,7 +6431,7 @@ impl<'f> FrameRenderer<'f> {
 
     pub fn draw_vertex_count(
         mut self,
-        pipeline_handle: &PipelineHandle<DrawVertexCount>,
+        pipeline_handle: &GraphicsPipelineHandle<NoVertex, DrawVertexCount>,
         vertex_count: u32,
         gpu_update: impl FnOnce(&mut Gpu),
     ) -> Result<(), DrawError> {
@@ -6458,7 +6441,7 @@ impl<'f> FrameRenderer<'f> {
 
     pub fn draw_vertex_count_with_picking(
         mut self,
-        main_pipeline: &PipelineHandle<DrawVertexCount>,
+        main_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount>,
         vertex_count: u32,
         picking_pipeline: &PickingPipelineHandle,
         mouse_position: [f32; 2],

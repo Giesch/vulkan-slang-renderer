@@ -11,8 +11,6 @@ pub(crate) trait GPUWrite {}
 
 pub(crate) trait PushConstantBlock: GPUWrite {}
 
-impl GPUWrite for NoVertex {}
-
 // one-way bridges, mirroring the real renderer
 impl<T: crate::renderer::render_graph::GPUWrite> GPUWrite for T {}
 impl<T: crate::renderer::render_graph::PushConstantBlock> PushConstantBlock for T {}

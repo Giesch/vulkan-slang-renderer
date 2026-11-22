@@ -164,5 +164,20 @@ path = "cases/negative/external_compatible_with_impl.rs"
 [[bin]]
 name = "negative_indirect_request_fields"
 path = "cases/negative/indirect_request_fields.rs"
+[[bin]]
+name = "positive_vertex_interfaces"
+path = "cases/positive/vertex_interfaces.rs"
+[[bin]]
+name = "negative_mismatched_typed_mesh"
+path = "cases/negative/mismatched_typed_mesh.rs"
+[[bin]]
+name = "negative_runtime_builder_typed_methods"
+path = "cases/negative/runtime_builder_typed_methods.rs"
+[[bin]]
+name = "negative_no_vertex_indexed_key"
+path = "cases/negative/no_vertex_indexed_key.rs"
+[[bin]]
+name = "negative_relabel_graphics_handle"
+path = "cases/negative/relabel_graphics_handle.rs"
 
 [workspace]

@@ -9,8 +9,8 @@
 #![allow(dead_code)]
 
 use mltrs_renderer::renderer::pipeline::{
-    Compute, DrawIndexed, DrawIndexedIndirect, DrawVertexCount, NoPush, PickingPipelineHandle,
-    PipelineHandle, PushBlock,
+    Compute, DrawIndexed, DrawIndexedIndirect, DrawVertexCount, GraphicsPipelineHandle, NoPush,
+    NoVertex, PickingPipelineHandle, PipelineHandle, PushBlock, RuntimeVertex,
 };
 use mltrs_renderer::renderer::render_graph::{
     self, ComputeNode, ComputePipelineKey, DrawIndexedIndirectKey, DrawIndexedKey,
@@ -77,7 +77,7 @@ fn no_push_families(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
-    render_pipeline: &PipelineHandle<DrawVertexCount, NoPush>,
+    render_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
     picking_pipeline: &PickingPipelineHandle,
     storage: &CpuUpdatedBufferHandle<Particle>,
@@ -101,7 +101,7 @@ fn logical_then_prepared(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
-    render_pipeline: &PipelineHandle<DrawVertexCount, NoPush>,
+    render_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
     renderer: &mut Renderer,
 ) -> render_graph::PreparedRenderGraph<(ComputeNode<SimParams>, DrawVertexCountNode<RenderParams>)>
@@ -132,10 +132,10 @@ fn logical_then_prepared(
 
 /// The indexed draw families with an indirect argument buffer.
 fn indexed_families(
-    render_pipeline: &PipelineHandle<DrawIndexed, NoPush>,
+    render_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexed, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
-    indirect_pipeline: &PipelineHandle<DrawIndexedIndirect, NoPush>,
+    indirect_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexedIndirect, NoPush>,
     indirect_params: &UniformBufferHandle<RenderParams>,
     args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
 ) {
@@ -168,11 +168,11 @@ fn push_families(
     push_pipeline: &PipelineHandle<Compute, PushBlock<ScalePush>>,
     push_params: &UniformBufferHandle<ScaleParams>,
     items: &CpuUpdatedBufferHandle<OtherElement>,
-    vertex_push_pipeline: &PipelineHandle<DrawVertexCount, PushBlock<ScalePush>>,
+    vertex_push_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, PushBlock<ScalePush>>,
     vertex_push_params: &UniformBufferHandle<ScaleParams>,
-    indexed_push_pipeline: &PipelineHandle<DrawIndexed, PushBlock<ScalePush>>,
+    indexed_push_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexed, PushBlock<ScalePush>>,
     indexed_push_params: &UniformBufferHandle<ScaleParams>,
-    indirect_push_pipeline: &PipelineHandle<DrawIndexedIndirect, PushBlock<ScalePush>>,
+    indirect_push_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexedIndirect, PushBlock<ScalePush>>,
     indirect_push_params: &UniformBufferHandle<ScaleParams>,
     args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
 ) {

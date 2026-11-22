@@ -4,7 +4,9 @@
 
 #![allow(dead_code)]
 
-use mltrs_renderer::renderer::pipeline::{DrawIndexedIndirect, NoPush, PipelineHandle};
+use mltrs_renderer::renderer::pipeline::{
+    DrawIndexedIndirect, GraphicsPipelineHandle, NoPush, RuntimeVertex,
+};
 use mltrs_renderer::renderer::render_graph::{DrawIndexedIndirectKey, draw_indexed_indirect};
 use mltrs_renderer::renderer::{
     GpuUpdatedBufferHandle, GpuUpdatedSlot, ImmutableBufferHandle, UniformBufferHandle,
@@ -16,7 +18,7 @@ use render_graph_api_checks::generated::shader_atlas::render::{
 };
 
 fn wrong(
-    indirect_pipeline: &PipelineHandle<DrawIndexedIndirect, NoPush>,
+    indirect_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexedIndirect, NoPush>,
     indirect_params: &UniformBufferHandle<RenderParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
     args: &ImmutableBufferHandle<OtherElement>,

@@ -319,8 +319,13 @@ pub fn human_report(mat3: &Mat3) -> String {
             )
             .unwrap();
         }
-        for gi in 0..active(m.num_tex_gens) {
-            if let Some(g) = &m.tex_coord_gens[gi] {
+        for (gi, tex_gen) in m
+            .tex_coord_gens
+            .iter()
+            .enumerate()
+            .take(active(m.num_tex_gens))
+        {
+            if let Some(g) = tex_gen {
                 writeln!(w, "  texgen{gi}: {} from {} via {}", g.ty, g.src, g.matrix).unwrap();
             }
         }
@@ -500,10 +505,13 @@ pub fn subset_summary(mat3: &Mat3) -> String {
                 swap_nondefault += 1;
             }
         }
-        for gi in 0..active(m.num_tex_gens) {
-            if let Some(g) = &m.tex_coord_gens[gi] {
-                texgens.insert(format!("({}, {}, {})", g.ty, g.src, g.matrix));
-            }
+        for g in m
+            .tex_coord_gens
+            .iter()
+            .take(active(m.num_tex_gens))
+            .flatten()
+        {
+            texgens.insert(format!("({}, {}, {})", g.ty, g.src, g.matrix));
         }
         for mtx in m.tex_matrices.iter().flatten() {
             let identity = mtx.scale == [1.0, 1.0]

@@ -281,6 +281,52 @@ const CASES: &[Case] = &[
         file: "trait_bridge.rs",
         expectation: Expectation::Compiles,
     },
+    // Typed indexed configs keep their vertex type through the returned
+    // graphics handle, packed-bytes configs are `RuntimeVertex`, and both
+    // lower into the typed and dynamic indexed draw nodes.
+    Case {
+        bin: "positive_vertex_interfaces",
+        file: "vertex_interfaces.rs",
+        expectation: Expectation::Compiles,
+    },
+    // A typed indexed config accepts only a mesh of its own vertex type.
+    Case {
+        bin: "negative_mismatched_typed_mesh",
+        file: "mismatched_typed_mesh.rs",
+        expectation: Expectation::Fails {
+            code: "E0308",
+            snippets: &["MeshHandle<MeshVertex>", "MeshHandle<OtherVertex>"],
+        },
+    },
+    // A packed-bytes config has no typed vertex upload or typed shared mesh.
+    Case {
+        bin: "negative_runtime_builder_typed_methods",
+        file: "runtime_builder_typed_methods.rs",
+        expectation: Expectation::Fails {
+            code: "E0599",
+            snippets: &["with_shared_mesh", "with_vertices", "RuntimeVertex"],
+        },
+    },
+    // A `NoVertex` graphics handle has no indexed draw key, whatever its
+    // draw-call kind.
+    Case {
+        bin: "negative_no_vertex_indexed_key",
+        file: "no_vertex_indexed_key.rs",
+        expectation: Expectation::Fails {
+            code: "E0277",
+            snippets: &["NoVertex", "IndexedVertexInterface"],
+        },
+    },
+    // Graphics handles have private fields, so a caller cannot rebuild one
+    // with a different vertex interface.
+    Case {
+        bin: "negative_relabel_graphics_handle",
+        file: "relabel_graphics_handle.rs",
+        expectation: Expectation::Fails {
+            code: "E0451",
+            snippets: &["GraphicsPipelineHandle", "private field"],
+        },
+    },
     // Pipeline families are distinct key types, so a handle or key of one
     // family has no `Into` conversion to another family's key.
     Case {

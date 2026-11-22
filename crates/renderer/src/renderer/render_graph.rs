@@ -5,13 +5,15 @@ pub type PreparedRenderGraph<N> = mltrs_render_graph::PreparedRenderGraph<N, sup
 
 use super::pipeline::PipelineIndex;
 use super::pipeline::{
-    Compute, DrawIndexed, DrawIndexedIndirect, DrawVertexCount, NoPush as RendererNoPush,
-    PickingPipelineHandle, PipelineHandle, PushBlock as RendererPushBlock,
+    Compute, DrawIndexed, DrawIndexedIndirect, DrawVertexCount, GraphicsPipelineHandle,
+    NoPush as RendererNoPush, PickingPipelineHandle, PipelineHandle,
+    PushBlock as RendererPushBlock,
 };
 use super::storage_buffer::{
     CpuUpdatedBufferHandle, GpuUpdatedBufferHandle, ImmutableBufferHandle, SingletonBufferHandle,
 };
 use super::uniform_buffer::UniformBufferHandle;
+use super::vertex_description::{IndexedVertexInterface, NoVertex};
 
 impl<T> From<&UniformBufferHandle<T>> for UniformSlot<T> {
     fn from(handle: &UniformBufferHandle<T>) -> Self {
@@ -38,21 +40,48 @@ impl<T> From<&SingletonBufferHandle<T>> for SingletonSlot<T> {
         Self::from_backend(handle.index(), handle.len())
     }
 }
-macro_rules! renderer_pipeline_adapters {
-    ($(($kind:ty, $key:ident)),+ $(,)?) => {$(
-        impl From<&PipelineHandle<$kind, RendererNoPush>> for $key<NoPush> {
-            fn from(handle: &PipelineHandle<$kind, RendererNoPush>) -> Self { Self::new(handle.index().raw()) }
+
+impl From<&PipelineHandle<Compute, RendererNoPush>> for ComputePipelineKey<NoPush> {
+    fn from(handle: &PipelineHandle<Compute, RendererNoPush>) -> Self {
+        Self::new(handle.index().raw())
+    }
+}
+
+impl<B: GraphShaderParams + PushConstantBlock> From<&PipelineHandle<Compute, RendererPushBlock<B>>>
+    for ComputePipelineKey<PushBlock<B>>
+{
+    fn from(handle: &PipelineHandle<Compute, RendererPushBlock<B>>) -> Self {
+        Self::new(handle.index().raw())
+    }
+}
+
+// Graphics handles lower to the graph's untyped keys once the vertex
+// interface matches the draw family: vertex-count draws need `NoVertex`, and
+// indexed draws need an indexed interface.
+macro_rules! renderer_graphics_pipeline_adapters {
+    ($(($kind:ty, $key:ident, [$($bounds:tt)*], $interface:ty)),+ $(,)?) => {$(
+        impl<$($bounds)*> From<&GraphicsPipelineHandle<$interface, $kind, RendererNoPush>>
+            for $key<NoPush>
+        {
+            fn from(handle: &GraphicsPipelineHandle<$interface, $kind, RendererNoPush>) -> Self {
+                Self::new(handle.raw().index().raw())
+            }
         }
-        impl<B: GraphShaderParams + PushConstantBlock> From<&PipelineHandle<$kind, RendererPushBlock<B>>> for $key<PushBlock<B>> {
-            fn from(handle: &PipelineHandle<$kind, RendererPushBlock<B>>) -> Self { Self::new(handle.index().raw()) }
+
+        impl<$($bounds)* B: GraphShaderParams + PushConstantBlock>
+            From<&GraphicsPipelineHandle<$interface, $kind, RendererPushBlock<B>>>
+            for $key<PushBlock<B>>
+        {
+            fn from(handle: &GraphicsPipelineHandle<$interface, $kind, RendererPushBlock<B>>) -> Self {
+                Self::new(handle.raw().index().raw())
+            }
         }
     )+};
 }
-renderer_pipeline_adapters! {
-    (Compute, ComputePipelineKey),
-    (DrawVertexCount, DrawVertexCountKey),
-    (DrawIndexed, DrawIndexedKey),
-    (DrawIndexedIndirect, DrawIndexedIndirectKey),
+renderer_graphics_pipeline_adapters! {
+    (DrawVertexCount, DrawVertexCountKey, [], NoVertex),
+    (DrawIndexed, DrawIndexedKey, [I: IndexedVertexInterface,], I),
+    (DrawIndexedIndirect, DrawIndexedIndirectKey, [I: IndexedVertexInterface,], I),
 }
 impl From<&PickingPipelineHandle> for PickingPipelineKey {
     fn from(handle: &PickingPipelineHandle) -> Self {

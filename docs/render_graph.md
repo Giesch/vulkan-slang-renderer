@@ -79,6 +79,32 @@ pipeline's family and push interface in its type. A vertex-count pipeline
 cannot drive an indexed draw. A push-constant pipeline cannot build a
 no-push command.
 
+`Renderer::create_pipeline` returns a
+`GraphicsPipelineHandle<I, D, P>`. `I` is the pipeline's vertex interface,
+fixed by the config constructor:
+
+| Constructor | Interface `I` | Draw kind |
+| --- | --- | --- |
+| generated indexed `pipeline_config()` then `.with_vertices(vec, indices)` or `.with_shared_mesh(&mesh)` | `TypedVertex<V>` | `DrawIndexed` (or `.indirect()`) |
+| `PipelineConfigBuilder::build_indexed_bytes(bytes, indices)` | `RuntimeVertex` | `DrawIndexed` (or `.indirect()`) |
+| generated vertex-count `pipeline_config()` (`build_vertex_count`) | `NoVertex` | `DrawVertexCount` |
+
+Indexed draws and the indexed keys accept only `TypedVertex<V>` and
+`RuntimeVertex` handles (the sealed `IndexedVertexInterface` trait).
+Vertex-count draws and `DrawVertexCountKey` accept only `NoVertex`
+handles. The handle's fields are private, so a handle cannot be built or
+relabeled outside the renderer. Compute pipelines keep the plain
+`PipelineHandle<Compute, P>`. None of the interface markers is a vertex type
+or implements `GPUWrite`; only a generated `V: VertexDescription` is uploaded.
+
+`create_pipeline` checks the vertex input against the shader entry before it
+allocates anything. A `TypedVertex<V>` config must match the shader's binding
+(binding, stride, input rate) and attributes (location, binding, format,
+offset) exactly, which also covers a `build_indexed::<V, P>()` call made
+by hand. A packed-bytes config needs a nonzero multiple of the shader's vertex
+stride and nonempty indices. A vertex-count config needs a shader without
+vertex input. Typed vertices also need nonempty vertex and index data.
+
 The graph fixes two ordering hazards of the manual API:
 
 - Uniform and storage writes happen inside the graph, after the flight-slot
@@ -127,8 +153,9 @@ that are private to the renderer crate and cover every graph implementor
 through one-way blanket impls. The public traits are defined at the `mltrs_render_graph` crate root and
 reexported under `renderer::render_graph`, not directly under `renderer`. There is
 no blanket in the other direction: a type implementing only the renderer
-trait directly cannot enter graph construction. Renderer-owned types that
-never enter the graph (like `NoVertex`) keep direct renderer-trait impls.
+trait directly cannot enter graph construction. The vertex interface markers
+(`NoVertex`, `TypedVertex<V>`, `RuntimeVertex`) implement neither trait;
+they are type-level labels, not GPU data.
 
 Game-owned types implement the graph traits. Only code inside the renderer
 crate can implement the backend traits directly; public renderer APIs accept
@@ -286,7 +313,11 @@ the same `LowerCtx` and pass the same validation as typed nodes; they carry no
 resource bindings or push block yet. A `Vec<N>` of one node type is a node
 whose frame is a `Vec<N::Frame>` of the same length, checked at execution.
 The host creates the uniform buffer with `create_uniform_buffer_bytes` and the
-pipeline from a `RuntimeShader` (`shaders::runtime`) with `with_vertex_bytes`.
+pipeline from a `RuntimeShader` (`shaders::runtime`) with
+`PipelineConfigBuilder::build_indexed_bytes`, which yields a
+`GraphicsPipelineHandle<RuntimeVertex, DrawIndexed>`. `DynDrawNode::indexed`
+and `index_range` accept any indexed-interface handle; `vertex_count` accepts
+only a `NoVertex` handle.
 
 Compute parameter blocks with resource bindings require
 `.with_param_bindings(bindings)` before the command can enter a graph.

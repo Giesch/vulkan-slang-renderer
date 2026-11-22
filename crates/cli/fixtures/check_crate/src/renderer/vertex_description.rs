@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 pub use super::gpu_write::NoVertex;
 
 pub trait VertexDescription {
@@ -5,12 +7,8 @@ pub trait VertexDescription {
     fn attribute_descriptions() -> Vec<ash::vk::VertexInputAttributeDescription>;
 }
 
-impl VertexDescription for NoVertex {
-    fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
-        vec![]
-    }
+/// Stub of the renderer's typed vertex interface marker.
+pub struct TypedVertex<V>(PhantomData<fn() -> V>);
 
-    fn attribute_descriptions() -> Vec<ash::vk::VertexInputAttributeDescription> {
-        vec![]
-    }
-}
+/// Stub of the renderer's packed-bytes vertex interface marker.
+pub struct RuntimeVertex;

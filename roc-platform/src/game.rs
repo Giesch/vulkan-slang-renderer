@@ -5,7 +5,8 @@ use glam::{Mat4, Vec3};
 
 use mltrs::game::Game;
 use mltrs::renderer::{
-    DrawError, DrawIndexed, FrameRenderer, PipelineHandle, Renderer, UniformBufferHandle,
+    DrawError, DrawIndexed, FrameRenderer, GraphicsPipelineHandle, Renderer, TypedVertex,
+    UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -24,7 +25,7 @@ pub fn set_window_title(title: String) -> Result<(), String> {
 }
 
 pub struct BasicTriangle {
-    pipeline: PipelineHandle<DrawIndexed>,
+    pipeline: GraphicsPipelineHandle<TypedVertex<Vertex>, DrawIndexed>,
     uniform_buffer: UniformBufferHandle<MVPMatrices>,
 }
 
