@@ -159,23 +159,9 @@ fn real_roc_codegen_gate() {
     );
 
     let missing = compiled.join("basic_triangle.vert.spv");
-    let false_consumer = generated.join("FalseBytes.roc");
-    let wrong_first = fs::read(&missing).unwrap()[0].wrapping_add(1);
-    fs::write(
-        &false_consumer,
-        format!(
-            "import ShaderAtlas\n\nFalseBytes := {{}}\n\nexpect List.first(ShaderAtlas.basic_triangle.stages.vertex) == Ok({wrong_first})\n"
-        ),
-    )
-    .unwrap();
-
-    // Test missing-file diagnostics via `false_consumer` (which only reads the
-    // missing `.vertex` field) rather than `consumer`: in Roc release-fast-991b4e23,
-    // `roc test` segfaults in `boxy_lowering` when an `expect` projects a sibling
-    // field of a record whose other field failed to resolve (`{ a: nope, b: 1 }.b`).
     let saved = fs::read(&missing).unwrap();
     fs::remove_file(&missing).unwrap();
-    let missing_output = roc_test(roc, &generated, &false_consumer);
+    let missing_output = roc_test(roc, &generated, &consumer);
     fs::write(&missing, saved).unwrap();
     assert!(!missing_output.status.success());
     let missing_error = format!(
@@ -188,6 +174,16 @@ fn real_roc_codegen_gate() {
             && missing_error.contains("basic_triangle.vert.spv"),
         "{missing_error}"
     );
+
+    let false_consumer = generated.join("FalseBytes.roc");
+    let wrong_first = fs::read(&missing).unwrap()[0].wrapping_add(1);
+    fs::write(
+        &false_consumer,
+        format!(
+            "import ShaderAtlas\n\nFalseBytes := {{}}\n\nexpect List.first(ShaderAtlas.basic_triangle.stages.vertex) == Ok({wrong_first})\n"
+        ),
+    )
+    .unwrap();
     run(
         Command::new(roc)
             .arg("check")
