@@ -12,6 +12,8 @@
 //! - Command generation: pipelines, dispatch sizes, draw arguments, push
 //!   constants, and picking coordinates passed to the backend.
 //! - Address resolution: current-frame, previous-frame, and singleton buffers.
+//!
+//! `plain_backend_tests` drives plain-data graphs against the same fake.
 
 use super::*;
 use crate::backend::{BufferAddressKind, PhysicalImage};
@@ -19,14 +21,14 @@ use std::{cell::RefCell, rc::Rc};
 
 type Events = Rc<RefCell<Vec<String>>>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum FailPoint {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FailPoint {
     Wait,
     Submit,
     Present,
 }
 
-struct Resource {
+pub(super) struct Resource {
     id: usize,
     events: Events,
 }
@@ -37,14 +39,14 @@ impl Drop for Resource {
     }
 }
 
-struct Fake {
-    events: Events,
+pub(super) struct Fake {
+    pub(super) events: Events,
     max: u32,
     allocated: usize,
     fail_allocation: Option<usize>,
-    fail: Option<FailPoint>,
-    live: bool,
-    index_buffers_live: bool,
+    pub(super) fail: Option<FailPoint>,
+    pub(super) live: bool,
+    pub(super) index_buffers_live: bool,
     registered: Vec<Rc<Resource>>,
 }
 
@@ -543,10 +545,12 @@ struct Addresses;
 impl GraphBindingSet for Addresses {
     fn visit(&self, visit: &mut dyn FnMut(GraphBinding)) {
         visit(GraphBinding::Buffer(
-            GpuUpdatedSlot::<u32>::from_backend(2).current().erased(),
+            GpuUpdatedSlot::<u32>::from_backend(2, 4).current().erased(),
         ));
         visit(GraphBinding::Buffer(
-            GpuUpdatedSlot::<u32>::from_backend(2).previous().erased(),
+            GpuUpdatedSlot::<u32>::from_backend(2, 4)
+                .previous()
+                .erased(),
         ));
         visit(GraphBinding::Buffer(
             SingletonSlot::<u32>::from_backend(3, 4).addr_at(2).erased(),
@@ -570,13 +574,13 @@ impl GraphShaderParams for AddressParams {
     fn assemble_input(_: &Addresses, resolver: &BindingResolver<'_>) -> Self {
         assert_eq!(
             resolver
-                .buf(GpuUpdatedSlot::<u32>::from_backend(2).current())
+                .buf(GpuUpdatedSlot::<u32>::from_backend(2, 4).current())
                 .to_raw(),
             1200
         );
         assert_eq!(
             resolver
-                .read_buf(GpuUpdatedSlot::<u32>::from_backend(2).previous())
+                .read_buf(GpuUpdatedSlot::<u32>::from_backend(2, 4).previous())
                 .to_raw(),
             2200
         );

@@ -28,7 +28,7 @@ impl<T> From<&CpuUpdatedBufferHandle<T>> for CpuUpdatedSlot<T> {
 
 impl<T> From<&GpuUpdatedBufferHandle<T>> for GpuUpdatedSlot<T> {
     fn from(handle: &GpuUpdatedBufferHandle<T>) -> Self {
-        Self::from_backend(handle.index())
+        Self::from_backend(handle.index(), handle.len())
     }
 }
 

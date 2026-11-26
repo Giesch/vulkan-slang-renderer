@@ -11,31 +11,10 @@
 //! here; the graph resolves them to concrete bindless handles and addresses
 //! at execute time and performs every CPU buffer write itself.
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "tests drive the pure compiler; phase 3a wires it into execution"
-    )
-)]
 mod compile;
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "tests construct the plain-data vocabulary; later phases lower into it"
-    )
-)]
 mod desc;
 mod dynamic;
 pub use dynamic::{DynDrawCall, DynDrawNode};
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "tests drive pure frame expansion; phase 3a wires it into execution"
-    )
-)]
 mod expand;
 #[cfg_attr(
     not(test),
@@ -45,6 +24,7 @@ mod expand;
     )
 )]
 mod lower;
+pub mod plain;
 #[cfg(test)]
 mod test_desc;
 mod validate;
@@ -425,12 +405,15 @@ pub struct UniformSlot<T> {
 pub struct CpuUpdatedSlot<T> {
     index: usize,
     len: u32,
+    element_size: usize,
     _elem: PhantomData<fn() -> T>,
 }
 
 /// A `Copy` key for a buffer updated by the GPU during frame execution.
 pub struct GpuUpdatedSlot<T> {
     index: usize,
+    len: u32,
+    element_size: usize,
     _elem: PhantomData<fn() -> T>,
 }
 
@@ -446,6 +429,7 @@ pub struct ImmutableSlot<T> {
 pub struct SingletonSlot<T> {
     index: usize,
     len: u32,
+    element_size: usize,
     _elem: PhantomData<fn() -> T>,
 }
 
@@ -513,42 +497,76 @@ impl<T> UniformSlot<T> {
         }
     }
 }
+
 impl<T> CpuUpdatedSlot<T> {
     /// Backend integration: index and capacity must describe a live storage buffer of T.
     pub fn from_backend(index: usize, len: u32) -> Self {
+        Self::from_backend_with_element_size(index, len, std::mem::size_of::<T>())
+    }
+
+    /// Backend integration for a buffer whose element stride is only known at
+    /// runtime, such as one created from bytes.
+    pub fn from_backend_with_element_size(index: usize, len: u32, element_size: usize) -> Self {
         Self {
             index,
             len,
+            element_size,
             _elem: PhantomData,
         }
     }
 }
+
 impl<T> GpuUpdatedSlot<T> {
-    /// Backend integration: index must identify a live GPU-updated buffer of T.
-    pub fn from_backend(index: usize) -> Self {
+    /// Backend integration: index and capacity must describe a live GPU-updated buffer of T.
+    pub fn from_backend(index: usize, len: u32) -> Self {
+        Self::from_backend_with_element_size(index, len, std::mem::size_of::<T>())
+    }
+
+    /// Backend integration for a buffer whose element stride is only known at
+    /// runtime, such as one created from bytes.
+    pub fn from_backend_with_element_size(index: usize, len: u32, element_size: usize) -> Self {
         Self {
             index,
+            len,
+            element_size,
             _elem: PhantomData,
         }
     }
 }
+
 impl<T> ImmutableSlot<T> {
     /// Backend integration: index and capacity must describe a live immutable buffer of T.
     pub fn from_backend(index: usize, len: u32) -> Self {
+        Self::from_backend_with_element_size(index, len, std::mem::size_of::<T>())
+    }
+
+    /// Backend integration for a buffer whose element stride is only known at
+    /// runtime, such as one created from bytes: `addr_at` steps by
+    /// `element_size` instead of `size_of::<T>()`.
+    pub fn from_backend_with_element_size(index: usize, len: u32, element_size: usize) -> Self {
         Self {
             index,
             len,
-            element_size: std::mem::size_of::<T>(),
+            element_size,
             _elem: PhantomData,
         }
     }
 }
+
 impl<T> SingletonSlot<T> {
     /// Backend integration: index and capacity must describe a live singleton buffer of T.
     pub fn from_backend(index: usize, len: u32) -> Self {
+        Self::from_backend_with_element_size(index, len, std::mem::size_of::<T>())
+    }
+
+    /// Backend integration for a buffer whose element stride is only known at
+    /// runtime, such as one created from bytes: `addr_at` steps by
+    /// `element_size` instead of `size_of::<T>()`.
+    pub fn from_backend_with_element_size(index: usize, len: u32, element_size: usize) -> Self {
         Self {
             index,
             len,
+            element_size,
             _elem: PhantomData,
         }
     }
@@ -595,7 +613,7 @@ impl<T> SingletonSlot<T> {
     }
 
     pub fn addr_at(self, index: u32) -> ImmutableBufferBinding<T> {
-        let byte_offset = element_byte_offset(index, self.len, std::mem::size_of::<T>());
+        let byte_offset = element_byte_offset(index, self.len, self.element_size);
         ImmutableBufferBinding::new(BufferBindingKind::Singleton, self.index, byte_offset)
     }
 }
@@ -1485,6 +1503,8 @@ impl_graph_node_for_tuple!(
 
 #[cfg(test)]
 mod backend_tests;
+#[cfg(test)]
+mod plain_backend_tests;
 
 #[derive(Clone, Copy)]
 struct PhysImage {
@@ -1704,30 +1724,8 @@ impl<N: GraphNode> RenderGraph<N> {
     where
         N: CompatibleWith<B>,
     {
-        let max = renderer.max_image_dimension_2d();
-        let extent_errors = validate::extent_limit_errors(&self.texture_decls, max);
-        if !extent_errors.is_empty() {
-            anyhow::bail!(validate::validation_message(&extent_errors));
-        }
-
-        let mut phys = vec![];
-        let mut keep_alive = vec![];
-        for (i, decl) in self.texture_decls.iter().enumerate() {
-            let phys_count = self.tex_phys[i];
-            let mut images = vec![];
-            for _ in 0..phys_count {
-                let SizeClass::Fixed(width, height) = decl.size else {
-                    unreachable!()
-                };
-                let (image, resource) = renderer.prepare_image(width, height, decl.format)?;
-                images.push(PhysImage {
-                    storage: image.storage,
-                    sampled: image.sampled,
-                });
-                keep_alive.push(resource);
-            }
-            phys.push(PhysTex { images });
-        }
+        let (phys, keep_alive) =
+            prepare_physical_textures(renderer, &self.texture_decls, &self.tex_phys)?;
 
         Ok(PreparedRenderGraph {
             nodes: self.nodes,
@@ -1738,6 +1736,76 @@ impl<N: GraphNode> RenderGraph<N> {
             _keep_alive: keep_alive,
         })
     }
+}
+
+/// Checks device limits, then creates `tex_phys[i]` physical images for each
+/// validated logical texture `decls[i]`.
+fn prepare_physical_textures<B: PreparationBackend>(
+    renderer: &mut B,
+    decls: &[TexDecl],
+    tex_phys: &[u32],
+) -> anyhow::Result<(Vec<PhysTex>, Vec<B::Resource>)> {
+    let max = renderer.max_image_dimension_2d();
+    let extent_errors = validate::extent_limit_errors(decls, max);
+    if !extent_errors.is_empty() {
+        anyhow::bail!(validate::validation_message(&extent_errors));
+    }
+
+    let mut phys = vec![];
+    let mut keep_alive = vec![];
+    for (decl, phys_count) in decls.iter().zip(tex_phys) {
+        let mut images = vec![];
+        for _ in 0..*phys_count {
+            let SizeClass::Fixed(width, height) = decl.size else {
+                unreachable!("validation rejects window-relative sizes")
+            };
+            let (image, resource) = renderer.prepare_image(width, height, decl.format)?;
+            images.push(PhysImage {
+                storage: image.storage,
+                sampled: image.sampled,
+            });
+            keep_alive.push(resource);
+        }
+        phys.push(PhysTex { images });
+    }
+
+    Ok((phys, keep_alive))
+}
+
+// NOTE This is necessary because the graph uses copied slot keys,
+// instead of references to owned ones.
+// TODO An alternative would be to use reference counted handles
+// that keep resources alive while a graph referencing them is alive.
+fn validate_live_buffers(
+    uniform_slots: &[usize],
+    buffer_slots: &[CapturedBufferSlot],
+    lookup: &dyn FrameLookup,
+) -> anyhow::Result<()> {
+    for index in uniform_slots {
+        anyhow::ensure!(
+            lookup.uniform_live(*index),
+            "render graph: uniform buffer slot {index} was dropped"
+        );
+    }
+
+    for slot in buffer_slots {
+        let live = match slot.kind {
+            desc::BufferKind::Singleton => lookup.singleton_live(slot.index),
+            desc::BufferKind::Index => lookup.index_buffer_live(slot.index),
+            desc::BufferKind::GpuUpdatedFlight
+            | desc::BufferKind::Immutable
+            | desc::BufferKind::Storage => lookup.storage_live(slot.index),
+        };
+        anyhow::ensure!(
+            live,
+            "render graph: {} ({:?}, slot {}) was dropped",
+            slot.name,
+            slot.kind,
+            slot.index,
+        );
+    }
+
+    Ok(())
 }
 
 /// An executable render graph, returned by [`RenderGraph::prepare`]
@@ -1753,36 +1821,8 @@ pub struct PreparedRenderGraph<N: GraphNode, B: BackendTypes> {
 }
 
 impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
-    // NOTE This is necessary because the graph uses copied slot keys,
-    // instead of references to owned ones.
-    // TODO An alternative would be to use reference counted handles
-    // that keep resources alive while a graph referencing them is alive.
     fn validate_buffers(&self, lookup: &dyn FrameLookup) -> anyhow::Result<()> {
-        for index in &self.uniform_slots {
-            anyhow::ensure!(
-                lookup.uniform_live(*index),
-                "render graph: uniform buffer slot {index} was dropped"
-            );
-        }
-
-        for slot in &self.buffer_slots {
-            let live = match slot.kind {
-                desc::BufferKind::Singleton => lookup.singleton_live(slot.index),
-                desc::BufferKind::Index => lookup.index_buffer_live(slot.index),
-                desc::BufferKind::GpuUpdatedFlight
-                | desc::BufferKind::Immutable
-                | desc::BufferKind::Storage => lookup.storage_live(slot.index),
-            };
-            anyhow::ensure!(
-                live,
-                "render graph: {} ({:?}, slot {}) was dropped",
-                slot.name,
-                slot.kind,
-                slot.index,
-            );
-        }
-
-        Ok(())
+        validate_live_buffers(&self.uniform_slots, &self.buffer_slots, lookup)
     }
 
     pub fn execute<F: FrameBackend<Backend = B>>(
@@ -2036,11 +2076,7 @@ mod tests {
     fn missing_captured_buffer_slots_return_named_errors() {
         let mut graph = super::PreparedRenderGraph::<_, EmptyBackend> {
             nodes: (super::UploadNode::<u32> {
-                slot: super::CpuUpdatedSlot {
-                    index: 42,
-                    len: 1,
-                    _elem: std::marker::PhantomData,
-                },
+                slot: super::CpuUpdatedSlot::from_backend(42, 1),
             },),
             uniform_slots: vec![42],
             buffer_slots: vec![],
@@ -2078,11 +2114,7 @@ mod tests {
 
     #[test]
     fn oversized_upload_returns_error_without_staging_writes() {
-        let slot = super::CpuUpdatedSlot::<u32> {
-            index: 42,
-            len: 2,
-            _elem: std::marker::PhantomData,
-        };
+        let slot = super::CpuUpdatedSlot::<u32>::from_backend(42, 2);
         let mut staged = super::StagedWrites::default();
         let error = staged
             .stage_storage(slot, &[1, 2, 3])
@@ -2308,11 +2340,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "out of bounds for buffer of 2 element")]
     fn singleton_addr_at_out_of_bounds_panics() {
-        let singleton = SingletonSlot::<u32> {
-            index: 0,
-            len: 2,
-            _elem: PhantomData,
-        };
+        let singleton = SingletonSlot::<u32>::from_backend(0, 2);
         singleton.addr_at(2);
     }
 
@@ -2330,11 +2358,7 @@ mod tests {
             std::mem::size_of::<u32>() as u64
         );
 
-        let singleton = SingletonSlot::<u32> {
-            index: 0,
-            len: 2,
-            _elem: PhantomData,
-        };
+        let singleton = SingletonSlot::<u32>::from_backend(0, 2);
         assert_eq!(
             singleton.addr_at(1).erased().byte_offset,
             std::mem::size_of::<u32>() as u64
@@ -2364,11 +2388,7 @@ mod tests {
         let read: ReadBufferBinding<u32> = immutable.addr_at(1).into();
         assert_raw_equal(read.erased(), immutable.addr_at(1).erased());
 
-        let singleton = SingletonSlot::<u32> {
-            index: 5,
-            len: 4,
-            _elem: PhantomData,
-        };
+        let singleton = SingletonSlot::<u32>::from_backend(5, 4);
         let read: ReadBufferBinding<u32> = singleton.addr().into();
         assert_raw_equal(read.erased(), singleton.addr().erased());
     }
@@ -2394,18 +2414,11 @@ mod tests {
         };
         assert_eq!(copied(uniform), (1, 1));
 
-        let storage = CpuUpdatedSlot::<NotCopy> {
-            index: 2,
-            len: 3,
-            _elem: PhantomData,
-        };
+        let storage = CpuUpdatedSlot::<NotCopy>::from_backend(2, 3);
         let storage_copy = storage;
         assert_eq!((storage.index, storage_copy.len), (2, 3));
 
-        let gpu_updated = GpuUpdatedSlot::<NotCopy> {
-            index: 4,
-            _elem: PhantomData,
-        };
+        let gpu_updated = GpuUpdatedSlot::<NotCopy>::from_backend(4, 5);
         let gpu_updated_copy = gpu_updated.clone();
         assert_eq!(gpu_updated.index, gpu_updated_copy.index);
 
@@ -2417,11 +2430,7 @@ mod tests {
         };
         assert_eq!(immutable.clone().len, 6);
 
-        let singleton = SingletonSlot::<NotCopy> {
-            index: 7,
-            len: 8,
-            _elem: PhantomData,
-        };
+        let singleton = SingletonSlot::<NotCopy>::from_backend(7, 8);
         let (a, b) = (singleton, singleton);
         assert_eq!((a.index, b.len), (7, 8));
     }

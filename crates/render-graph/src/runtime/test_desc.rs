@@ -7,7 +7,7 @@ use super::desc::{
     GraphDesc, GraphFormat, GroupSource, LeafPass, PassDesc, PipelineDecl, PipelineKind, PushDesc,
     RasterDesc, RasterTargets, ResourceFieldKind, ResourceRef, SchemaDesc, SchemaTable, SizeClass,
     SlotSel, TexAccess, TexDecl, TexId, TexUsage, UniformDecl, UniformId, UniformSourceDesc,
-    ValueDecl, ValueId, ValueKind,
+    ValueDecl, ValueId, ValueKind, ValueScope,
 };
 use super::validate::{Analysis, GraphError, validate};
 
@@ -105,10 +105,16 @@ impl DescBuilder {
 
     pub(crate) fn value(&mut self, kind: ValueKind, optional: bool) -> ValueId {
         let id = ValueId(self.desc.values.len() as u32);
+        let scope = if optional {
+            ValueScope::When { gate: id }
+        } else {
+            ValueScope::Top
+        };
         self.desc.values.push(ValueDecl {
             name: format!("value{}", id.0),
             kind,
             optional,
+            scope,
         });
 
         id

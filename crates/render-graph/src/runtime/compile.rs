@@ -1,4 +1,6 @@
-//! Pure compilation. Phase 1 keeps this separate from execution.
+//! Pure compilation into a per-frame program. Typed graphs plan through their
+//! nodes; plain-data graphs (`plain.rs`) execute the compiled passes and
+//! assembly programs.
 use super::desc::*;
 use super::validate::Analysis;
 
@@ -6,6 +8,8 @@ use super::validate::Analysis;
 pub(crate) struct CompiledGraph {
     pub(crate) passes: Vec<CompiledPass>,
     pub(crate) assemblies: Vec<AssemblyProgram>,
+    /// the block schema each assembly program fills, by `AsmId`
+    pub(crate) assembly_schemas: Vec<SchemaId>,
     pub(crate) tex_phys: Vec<u32>,
     pub(crate) value_count: u32,
 }
@@ -166,9 +170,11 @@ fn push_assembly(
     push: Option<&PushDesc>,
     schemas: &SchemaTable,
     assemblies: &mut Vec<AssemblyProgram>,
+    assembly_schemas: &mut Vec<SchemaId>,
 ) -> Option<AsmId> {
     push.map(|push| {
         let id = AsmId(assemblies.len() as u32);
+        assembly_schemas.push(push.schema);
         assemblies.push(build_assembly(
             schemas.get(push.schema).unwrap(),
             push.data,
@@ -195,18 +201,25 @@ pub(crate) fn compile(
             )
         })
         .collect::<Vec<_>>();
+    let mut assembly_schemas = desc
+        .uniforms
+        .iter()
+        .map(|uniform| uniform.schema)
+        .collect::<Vec<_>>();
 
     fn leaf(
         desc: &GraphDesc,
         schemas: &SchemaTable,
         assemblies: &mut Vec<AssemblyProgram>,
+        assembly_schemas: &mut Vec<SchemaId>,
         pass: &LeafPass,
     ) -> CompiledLeaf {
         let leaf_access = access(desc, pass);
 
         match pass {
             LeafPass::Compute(compute) => {
-                let push_asm = push_assembly(compute.push.as_ref(), schemas, assemblies);
+                let push_asm =
+                    push_assembly(compute.push.as_ref(), schemas, assemblies, assembly_schemas);
 
                 CompiledLeaf {
                     kind: CompiledLeafKind::Dispatch {
@@ -225,7 +238,12 @@ pub(crate) fn compile(
                     .draws
                     .iter()
                     .map(|draw| {
-                        let push_asm = push_assembly(draw.push.as_ref(), schemas, assemblies);
+                        let push_asm = push_assembly(
+                            draw.push.as_ref(),
+                            schemas,
+                            assemblies,
+                            assembly_schemas,
+                        );
 
                         CompiledDraw {
                             pipeline: draw.pipeline,
@@ -249,21 +267,41 @@ pub(crate) fn compile(
         .passes
         .iter()
         .map(|pass| match pass {
-            PassDesc::Leaf(body_leaf) => {
-                CompiledPass::Leaf(leaf(desc, schemas, &mut assemblies, body_leaf))
-            }
+            PassDesc::Leaf(body_leaf) => CompiledPass::Leaf(leaf(
+                desc,
+                schemas,
+                &mut assemblies,
+                &mut assembly_schemas,
+                body_leaf,
+            )),
             PassDesc::Repeat { count, body, .. } => CompiledPass::Repeat {
                 count: *count,
                 body: body
                     .iter()
-                    .map(|body_leaf| leaf(desc, schemas, &mut assemblies, body_leaf))
+                    .map(|body_leaf| {
+                        leaf(
+                            desc,
+                            schemas,
+                            &mut assemblies,
+                            &mut assembly_schemas,
+                            body_leaf,
+                        )
+                    })
                     .collect(),
             },
             PassDesc::When { value, body, .. } => CompiledPass::When {
                 gate: *value,
                 body: body
                     .iter()
-                    .map(|body_leaf| leaf(desc, schemas, &mut assemblies, body_leaf))
+                    .map(|body_leaf| {
+                        leaf(
+                            desc,
+                            schemas,
+                            &mut assemblies,
+                            &mut assembly_schemas,
+                            body_leaf,
+                        )
+                    })
                     .collect(),
             },
         })
@@ -272,6 +310,7 @@ pub(crate) fn compile(
     CompiledGraph {
         passes,
         assemblies,
+        assembly_schemas,
         tex_phys: analysis.tex_phys.clone(),
         value_count: desc.values.len() as u32,
     }
@@ -316,16 +355,16 @@ mod tests {
         }
     }
 
-    /// interior padding is its own step, so the assembler never reads bytes the
+    /// interior padding gets no step, so the assembler never reads bytes the
     /// layout does not name
     #[test]
     fn assembly_interleaved_data_resource_and_padding() {
         let schema = schema(vec![
             data(0, 0, 8, 0),
-            data(1, 8, 8, 8),
-            resource(2, 16, 4, SchemaFieldKind::SampledTex),
+            data(1, 8, 4, 8),
+            resource(2, 16, 8, SchemaFieldKind::SampledTex),
             resource(3, 24, 8, SchemaFieldKind::BufAddr),
-            data(4, 32, 4, 16),
+            data(4, 32, 4, 12),
         ]);
         let value = ValueId(5);
         let program = build_assembly(
@@ -357,7 +396,7 @@ mod tests {
                     src: AssemblySrc::FrameBytes {
                         value,
                         src_offset: 8,
-                        len: 8,
+                        len: 4,
                     },
                 },
                 AssemblyStep {
@@ -378,7 +417,7 @@ mod tests {
                     dst_offset: 32,
                     src: AssemblySrc::FrameBytes {
                         value,
-                        src_offset: 16,
+                        src_offset: 12,
                         len: 4,
                     },
                 },
@@ -387,7 +426,7 @@ mod tests {
         assert!(
             steps
                 .iter()
-                .all(|step| !(20..24).contains(&step.dst_offset))
+                .all(|step| !(12..16).contains(&step.dst_offset))
         );
     }
 
@@ -423,9 +462,9 @@ mod tests {
     #[test]
     fn assembly_resource_only_schema() {
         let schema = schema(vec![
-            resource(0, 0, 4, SchemaFieldKind::SampledTex),
+            resource(0, 0, 8, SchemaFieldKind::SampledTex),
             resource(1, 8, 8, SchemaFieldKind::BufAddr),
-            resource(2, 16, 4, SchemaFieldKind::StorageTex),
+            resource(2, 16, 8, SchemaFieldKind::StorageTex),
         ]);
         let bound = bindings(&[read(3), buffer(0), write(4)]);
         let AssemblyProgram::Steps(steps) = build_assembly(&schema, None, &bound) else {

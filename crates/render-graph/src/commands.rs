@@ -26,6 +26,22 @@ impl PushConstantBytes {
         }
     }
 
+    /// An already-assembled push block; validation bounds its size.
+    pub(crate) fn from_bytes(block: &[u8]) -> Self {
+        assert!(
+            block.len() <= 128,
+            "a push block of {} bytes exceeds the 128-byte budget",
+            block.len()
+        );
+        let mut bytes = [0; 128];
+        bytes[..block.len()].copy_from_slice(block);
+
+        Self {
+            bytes,
+            len: block.len(),
+        }
+    }
+
     pub fn as_slice(&self) -> &[u8] {
         &self.bytes[..self.len]
     }
