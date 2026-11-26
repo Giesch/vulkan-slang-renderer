@@ -22,12 +22,15 @@ Roc defaults are:
 
 - input: `<project>/shaders/source/`
 - Roc modules: `<project>/Generated/`
-- SPIR-V: `<project>/shaders/compiled/`
+- SPIR-V and reflection JSON: `<project>/shaders/compiled/`
 
 `--source-dir`, `--roc-dir`, and `--compiled-dir` preserve their existing
 process-current-directory-relative behavior when passed as relative paths.
 Generated modules import every stage with an importer-relative
-`import "..." as name : List(U8)`, including paths containing spaces.
+`import "..." as name : List(U8)`, including paths containing spaces, and the
+shader's reflection JSON (`<stem>.json`, or `<stem>.comp.json` for compute, the
+same files Rust codegen writes) as `reflection_json : Str`. Every generated
+module places its `##` moduledoc after its imports.
 
 The selected Roc and compiled directories are tool-owned and replaced after a
 successful run. Empty readable source directories therefore produce a valid
@@ -40,81 +43,234 @@ The checked-in Roc example is `roc-platform/examples/basic-triangle/main.roc`.
 Run `just roc-platform roc-shaders basic-triangle` to compile its
 `shaders/source/` into its own `shaders/compiled/` and `Generated/` directories.
 `just roc-platform roc-shaders` with no argument compiles every
-`roc-platform/examples/*/` directory.
-The host retains its separate Rust shader sources and bindings.
+`roc-platform/examples/*/` directory. The host retains its separate Rust shader
+sources and bindings.
 
 ## Public modules
 
 Import `ShaderAtlas` from `Generated/ShaderAtlas.roc`. It exposes:
 
+- `shaders_source_dir : Str`, the shader source directory relative to the Roc
+  project root (the directory containing `main.roc`), `/`-separated, such as
+  `"shaders/source"` or `"../shared/shaders"`. It is absolute only when no
+  relative path exists (another Windows drive). A host resolves it against the
+  project root, so generated files stay machine-independent;
 - `shader_names`, in deterministic source-name order;
-- one snake_case value per graphics or compute shader;
-- complete typed reflection for that shader;
-- `stages.vertex` and `stages.fragment`, or `stages.compute`, as `List(U8)`;
-- original reflected source and entry-point names;
-- compute workgroup dimensions.
+- one snake_case value per graphics or compute shader, in the same order, with
+  complete typed reflection and `stages.vertex` and `stages.fragment`, or
+  `stages.compute`, as `List(U8)`.
 
-Each shader module `Generated/<Module>.roc` also exposes one
-`<snake_type>_type : ShaderReflection.StructType` value per reflected struct type:
-parameter-block and push-constant element types, nested struct fields, pointer
-pointees, and structured resource results. The values are sorted by name, and
-`reflection` refers to them by name. Entry-point parameter structs stay inline
-in `reflection`. Two struct types with the same name and different fields in
-one shader fail generation.
+### Shader modules
+
+Each shader gets `Generated/<Shader>.roc`. Besides its types (below), it
+exposes:
+
+- `reflection : GraphicsReflection` or `ComputeReflection`, preserving original
+  reflected source, entry-point names, and compute workgroup dimensions;
+- `stages`;
+- one value per `ParameterBlock` global, named after the parameter
+  (`BasicTriangle.params` for `ParameterBlock<TriangleParams> params`), of type
+  `UniformSpec(data, bindings)`: the parameter name, its position among the
+  shader's parameter blocks in descriptor-set-layout order, and the element
+  type's `schema`;
+- one `PushSpec(data, bindings)` value for a `[[vk::push_constant]]` block,
+  named after the parameter;
+- `shader`, the pipeline descriptor.
+
+`shader` is a `GraphicsShader(uniforms, push)` for a graphics shader, a
+`GraphicsIndirectShader(uniforms, push)` when the vertex entry point reads
+`SV_DrawIndex`, and a `ComputeShader(uniforms, push)` for a compute shader. The
+three are distinct nominal types, so a pipeline constructor accepts only its
+own kind. Each carries the shader's snake_case `name`, its SPIR-V
+(`vertex_spv` and `fragment_spv`, or `compute_spv`), `reflection_json`,
+`reflection`, compute `workgroup_size`, `push`, and `uniform_slots`.
+
+`uniforms` is a closed record with one `UniformSlot(data, bindings)` field per
+parameter block, named like the module values, and `{}` for none:
+
+```roc
+shader : GraphicsShader(
+    {
+        params : UniformSlot(TriangleParamsData, TriangleParamsBindings),
+    },
+    NoPush,
+)
+```
+
+`uniform_slots : uniforms -> List(U32)` returns the slots' indices in
+descriptor-set-layout order. A record with a missing, extra, or differently
+typed slot fails to typecheck, for zero, one, or many parameter blocks. `push`
+is `NoPush` or the module's `PushSpec`. A parameter named `reflection`,
+`stages`, `shader`, `reflection_json`, or a stage import (`vertex_bytes`,
+`fragment_bytes`, `compute_bytes`), or one that collides with a
+`<snake_type>_type` value, fails generation.
+
+Each shader module also exposes one `<snake_type>_type : StructType` value per
+reflected struct type: parameter-block and push-constant element types, nested
+struct fields, pointer pointees, and structured resource results. The values
+are sorted by name, and `reflection` refers to them by name. Entry-point
+parameter structs stay inline in `reflection`. Two struct types with the same
+name and different fields in one shader fail generation.
+
+### `ShaderReflection`
 
 Generated modules import `pf.ShaderReflection`, so the app header must bind the
-platform under the shorthand `pf`. `roc-platform/platform/ShaderReflection.roc`
-defines the lossless typed reflection schema and the shared logical types. The
-schema preserves ordered lists, all binding/field/resource/pointer/enum/layout
-variants, option distinctions, numeric values, and original strings. Rust
-`usize` metadata is checked and emitted as `U64`; enum values remain `I64`, with
-their signed/unsigned tag kind.
+platform under the shorthand `pf`. Each module lists the `ShaderReflection`
+types it uses in `exposing [...]` and names them unqualified. It calls the
+`ShaderReflection` functions (`pack`, `array_bytes`, `f32_bytes`, `i32_bytes`,
+`u32_bytes`, `u64_bytes`) qualified. `roc-platform/platform/ShaderReflection.roc`
+defines:
 
-`ShaderTypes.roc` contains the project's reachable struct and enum types. Field
-types map to `ShaderReflection` types or to nested project types:
+- the lossless typed reflection schema. It preserves ordered lists, all
+  binding/field/resource/pointer/enum/layout variants, option distinctions,
+  numeric values, and original strings. Rust `usize` metadata is checked and
+  emitted as `U64`; enum values remain `I64`, with their signed/unsigned tag
+  kind;
+- the logical vector, matrix, address, and handle types with their
+  little-endian `to_bytes`, and `ElementPacker(elem)`;
+- the binding vocabulary: `SampledTexBinding`, `StorageTexBinding`, and
+  `BufferBinding(elem)`, `ReadBufferBinding(elem)`, and
+  `ImmutableBufferBinding(elem)` for `mltrs::Addr<T>`, `ReadAddr<T>`, and
+  `ImmutableAddr<T>` fields. They are opaque: `new` builds one from a
+  `SampledTexSource`, `StorageTexSource`, or `BufferTarget` (a declared buffer
+  index, `Current` or `Previous` slot, and byte offset), and `erase` turns one
+  into a `GraphBinding`. `BufferBinding` and `ImmutableBufferBinding` widen to
+  a `ReadBufferBinding` of the same buffer with `as_read`. A buffer binding's
+  `elem` is checked against the field's pointee type;
+- the block descriptors `BlockSchema`, `SchemaField`, `SchemaFieldKind`,
+  `ResourceFieldKind`, `UniformSpec`, `PushSpec`, `NoPush`, and the opaque
+  `UniformSlot(data, bindings)` (`new`, `index`, `schema`);
+- the shader descriptors `GraphicsShader`, `GraphicsIndirectShader`, and
+  `ComputeShader`.
+
+### Types and packers
+
+Logical structs and enums live with their Slang declaration's owner. Types
+declared in a shader are nested in that shader's generated module, such as
+`BasicTriangle.Vertex`, with their packers. Types declared in shared `.slang`
+modules are emitted once in corresponding generated modules, such as
+`Mltrs.MvpMatrices` and `Particle.Particle`. As in Rust codegen, modules one
+directory below the source root are grouped under the directory's name.
+References and packers import shared dependencies by their owning module.
+There is no aggregate `ShaderTypes.roc`; regeneration removes a stale one from
+the managed output directory. Two shaders may each declare a local type with
+the same name.
+
+The CPU can construct parameter blocks, push blocks, nested structs and
+pointees, and their enums. A fragment-input struct only carries data between
+shader stages and is not emitted. Each logical type is nominal, nested in its
+owning module, with a derived `is_eq`, so `==` works. A structural record
+literal or a bare tag constructs a value. A handle or address value uses the
+payload constructor, `PointerAddress.(addr)`. Every struct with a GPU layout
+also has the associated items `gpu_size : U32`,
+`to_bytes : <Type> -> List(U8)`, and `packer : ElementPacker(<Type>)` (its
+`gpu_size` as the stride, and `to_bytes`), reached as `<Module>.<Type>.packer`
+or called as `value.to_bytes()`. They pack a logical value into the bytes the
+GPU reads:
+
+- parameter blocks, push blocks, nested structs, and pointer pointees place
+  each field at its reflected offset; a std140 block's size is its reflected
+  end rounded up to 16, a push block's or pointee's size is the reflected one.
+  A `Std430DataLayout` pointee follows the SPIR-V layout: `float3 a; float3 b;`
+  places `b` at 16 in 32 bytes, `float3 a; float s;` tail-packs `s` at 12 in
+  16 bytes, and `float3 a; float4 b;` places `b` at 16 in 32 bytes;
+- enums pack through their associated `tag` function;
+- one struct with two different layouts fails generation.
+
+The packers use the `ShaderReflection` byte helpers: the qualified functions
+(`ShaderReflection.pack`, `ShaderReflection.f32_bytes`,
+`ShaderReflection.array_bytes`, ...) and the exposed types' own packers
+(`Float4x4.to_bytes`, ...). A fixed array with the wrong length crashes.
+
+Field types map to `ShaderReflection` types or to nested project types. Each
+row names the exposed, unqualified form:
 
 | Reflected value | Roc logical value |
 | --- | --- |
 | float/int/uint/u64 scalar | `F32` / `I32` / `U32` / `U64` |
-| vector | `ShaderReflection.Float{n}` / `Int{n}` / `Uint{n}` / `Uint64x{n}` for widths 1 to 4, a record with `x`, `y`, `z`, `w` fields as applicable |
-| supported matrix | `ShaderReflection.Float4x4` / `Int4x4` / `Uint4x4`, a row-major record with `row_0` through `row_3` of the vector alias |
+| vector | `Float{n}` / `Int{n}` / `Uint{n}` / `Uint64x{n}` for widths 1 to 4, a record with `x`, `y`, `z`, `w` fields as applicable |
+| supported matrix | `Float4x4` / `Int4x4` / `Uint4x4`, a row-major record with `row_0` through `row_3` of the vector alias |
 | fixed vector array | `List(alias)`; required count/stride remain in reflection |
-| physical pointer | nominal `ShaderReflection.PointerAddress` wrapping `U64` |
-| descriptor handle | distinct nominal `ShaderReflection.DescriptorHandle` wrapping `U64` |
-| texture/storage resource | nominal `ShaderReflection.ResourceReference` wrapping `Str` |
-| enum | typed cases plus an explicit numeric-tag function |
+| physical pointer | nominal `PointerAddress` wrapping `U64`, built as `PointerAddress.(addr)` |
+| descriptor handle | distinct nominal `DescriptorHandle` wrapping `U64`, built as `DescriptorHandle.(index)` |
+| texture/storage resource | not supported; generation fails. Declare a `.Handle` field instead. |
+| enum | nominal tag union with an associated `tag : <Enum> -> U32/I32` function |
 
-The `ShaderReflection` type names are reserved: a shader struct named `Float3`,
-`Float4x4`, or `PointerAddress` fails generation.
+### Render-graph split
+
+Every parameter-block and push-block element type splits into per-frame data
+and build-time bindings, mirroring Rust's `GraphShaderParams` split, and gets an
+associated `schema : BlockSchema(data, bindings)`:
+
+- A type without pointer or handle fields is its own data; `bindings` is `{}`.
+  Its schema copies each field from its reflected offset (`src_offset` equals
+  `offset`), and `data_size` equals `gpu_size`.
+- A type with pointer or handle fields gets a `<Type>Bindings` record alias,
+  with one binding wrapper per pointer or handle field (`vertices :
+  ImmutableBufferBinding(Vertex)`), and, when data fields remain, a nominal
+  `<Type>Data` with only the data fields, packed compactly in declaration
+  order with its own `gpu_size`, `to_bytes`, and `packer`. Without data
+  fields, `data` is `{}`.
+
+A `BlockSchema` carries the type's `name`, `gpu_size`, `data_size`, and
+`resource_fields`, and its `fields` sorted by `offset`. Binding field `i` is the
+`i`th pointer or handle field in declaration order, with key `i` and an 8-byte
+`SampledTex`, `StorageTex`, or `BufAddr` kind matching `resource_fields`; data
+fields take the keys after them. `pack_data` produces exactly `data_size`
+bytes; `extract_bindings` returns `(key, GraphBinding)` pairs in key order. The
+fields satisfy the render graph's layout checks: they do not overlap, fit in
+`gpu_size`, and read inside `data_size`. A block whose `data_size` is 0 has no
+`Data` fields and lowers with no data value (`data: None`).
+
+A data field whose nested struct contains a pointer or handle fails generation
+(flatten it into the block), as does a generated `<Type>Data` or
+`<Type>Bindings` name that collides with another type. A parameter block of 0
+bytes fails generation, as does a push block that is empty, not a multiple of
+4 bytes, or larger than the 128 bytes Vulkan guarantees.
+
+The `ShaderReflection` type names a module may expose and the Roc builtin
+modules and types (`List`, `Str`, `Result`, `U32`, ...) are reserved: a shader
+struct, shader file, or shared Slang module named `Float3`, `Float4x4`,
+`PointerAddress`, `BlockSchema`, `GraphicsShader`, `List`, or any other of them
+fails generation.
 
 Original reflected spelling is retained in reflection data. Generated nonempty
 records use multiline fields with trailing commas. One blank line separates
 sibling definitions inside every generated module. Generated values and fields
 use snake_case; modules, types, and tags use PascalCase. Invalid or
 reserved identifiers, normalized collisions, incompatible shared definitions,
-and case-insensitive output filename collisions fail before replacement.
+bare texture or storage resource fields, and case-insensitive output filename
+collisions fail before replacement.
 
 ## Guarantees and limits
 
-Generated values are logical application data. They do **not** guarantee GPU
-memory layout, padding, ownership, pointer dereference, descriptor validity,
-resource lookup, upload behavior, or renderer integration. No encoders,
-pipeline builders, render-graph helpers, or host ABI are generated.
+Handles and addresses carry no ownership, dereference, or descriptor validity
+guarantee. The `to_bytes` packers produce GPU bytes; the byte order of a
+matrix follows the shader's declared layout (row-major, so `row_i` holds glam
+column `i`).
 
 The separate `roc-platform` host still renders its Rust-owned shader and uses
-Rust bindings under `src/generated/`. Roc codegen does not change runtime shader
-selection, hot reload, or platform/compiler pins.
+Rust bindings under `src/generated/`. The resource planner and render graph
+that consume `shader`, `UniformSpec`, and `BlockSchema` come later. Roc
+codegen does not change runtime shader selection, hot reload, or
+platform/compiler pins.
 
 ## Verification
 
 `just test` covers generation, schemas, names, paths, manifests, stale cleanup,
-safety checks, and Rust regressions without requiring Roc.
+safety checks, std430 float3 pointee packers, block splits, and Rust regressions
+without requiring Roc.
 
 `just roc-codegen-test [ROC]` is the explicit real-compiler gate. It reports the
-selected executable/version, generates fresh graphics and compute fixtures,
-checks and formats every module against `roc-platform/platform/main.roc` as the
-app's platform, and evaluates full imported SPIR-V contents and
-representative reflection from a consumer running in another working directory.
-It also proves missing imports and false byte expectations fail. `ROC` defaults
-to `roc` on `PATH`; missing/incompatible compilers fail rather than skip.
-`just pre-commit` runs this gate when `roc` is on `PATH`.
+selected executable/version, generates fresh graphics, graphics-indirect, and
+compute fixtures, checks and formats every module against
+`roc-platform/platform/main.roc` as the app's platform, and evaluates full
+imported SPIR-V contents and representative reflection from a consumer running
+in another working directory. A block consumer evaluates float3 pointee bytes,
+compact data packing, binding extraction, and reassembles every split block
+from its schema to the exact bytes of the full type's `to_bytes`. It also
+proves missing imports and false byte expectations fail, and that a wrong
+uniform record, a graphics-indirect shader in a graphics pipeline, or a binding
+with another pointee type fails to typecheck. `ROC` defaults to `roc` on
+`PATH`; missing/incompatible compilers fail rather than skip. `just pre-commit`
+runs this gate when `roc` is on `PATH`.

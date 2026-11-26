@@ -1,4 +1,4 @@
-{{ name }} : {% if members.is_empty() %}{}{% else %}{
+{% if members.is_empty() %}{}{% else %}{
 {%- for member in members %}
     {{ member.name }} : {{ member.value }},
 {%- endfor %}

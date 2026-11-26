@@ -81,7 +81,17 @@ fn real_roc_codegen_gate() {
         copy_fixture(name, &source);
     }
 
-    copy_fixture_from("roc_codegen", "roc_shared.shader.slang", &source);
+    for name in [
+        "roc_shared.shader.slang",
+        "roc_blocks.shader.slang",
+        "roc_no_blocks.shader.slang",
+        "ownership.shader.slang",
+        "ownership_shared.slang",
+        "ownership_leaf.slang",
+    ] {
+        copy_fixture_from("roc_codegen", name, &source);
+    }
+    copy_fixture_from("alignment", "vertex_pulling_float3.shader.slang", &source);
     run(
         Command::new(env!("CARGO_BIN_EXE_mltrs"))
             .args(["shaders", "compile", "--crate-dir"])
@@ -91,7 +101,11 @@ fn real_roc_codegen_gate() {
             .current_dir(std::env::temp_dir()),
         "fresh Roc generation",
     );
-    for name in ["SyntheticReflection.roc", "SyntheticConsumer.roc"] {
+    for name in [
+        "SyntheticReflection.roc",
+        "SyntheticConsumer.roc",
+        "BlockConsumer.roc",
+    ] {
         copy_fixture_from("roc_codegen", name, &generated);
     }
     write_app_main(&generated);
@@ -100,11 +114,18 @@ fn real_roc_codegen_gate() {
         "roc fmt --check generated tree",
     );
     for module in [
-        "ShaderTypes.roc",
         "BasicTriangle.roc",
+        "Mltrs.roc",
+        "Ownership.roc",
+        "OwnershipLeaf.roc",
+        "OwnershipShared.roc",
+        "Particle.roc",
         "Particles.roc",
+        "RocBlocks.roc",
+        "RocNoBlocks.roc",
         "RocShared.roc",
         "ShaderAtlas.roc",
+        "VertexPullingFloat3.roc",
         "SyntheticReflection.roc",
     ] {
         run(
@@ -124,7 +145,56 @@ fn real_roc_codegen_gate() {
     let particle_fragment = bytes_literal(&compiled.join("roc_shared.frag.spv"));
     let consumer = generated.join("Consumer.roc");
     let consumer_source = format!(
-        "import pf.ShaderReflection\nimport ShaderAtlas\nimport ShaderTypes\n\nConsumer := {{}}\n\nvertex : ShaderTypes.Vertex\nvertex = {{ position: {{ x: 1.0, y: 2.0, z: 3.0 }}, color: {{ x: 0.25, y: 0.5, z: 0.75 }} }}\nparticle : ShaderTypes.Particle\nparticle = {{ position: {{ x: 4.0, y: 5.0 }}, velocity: {{ x: 6.0, y: 7.0 }}, color: {{ x: 0.1, y: 0.2, z: 0.3, w: 0.4 }} }}\naddress : ShaderReflection.PointerAddress\naddress = PointerAddress(18446744073709551615)\nrow = {{ x: 1.0, y: 2.0, z: 3.0, w: 4.0 }}\nmatrices : ShaderTypes.MvpMatrices\nmatrices = {{ model: {{ row_0: row, row_1: row, row_2: row, row_3: row }}, view: {{ row_0: row, row_1: row, row_2: row, row_3: row }}, proj: {{ row_0: row, row_1: row, row_2: row, row_3: row }} }}\nparams : ShaderTypes.SimParams\nparams = {{ particles_in: address, particles_out: PointerAddress(0), delta_time: 0.016 }}\n\nexpect ShaderAtlas.basic_triangle.stages.vertex == [{vertex}]\nexpect ShaderAtlas.basic_triangle.stages.fragment == [{fragment}]\nexpect ShaderAtlas.particles.stages.compute == [{compute}]\nexpect ShaderAtlas.roc_shared.stages.vertex == [{particle_vertex}]\nexpect ShaderAtlas.roc_shared.stages.fragment == [{particle_fragment}]\nexpect ShaderAtlas.basic_triangle.reflection.source_file_name == \"basic_triangle.shader.slang\"\nexpect ShaderAtlas.basic_triangle.reflection.vertex_entry_point.entry_point_name == \"vertexMain\"\nexpect ShaderAtlas.basic_triangle.reflection.fragment_entry_point.entry_point_name == \"fragmentMain\"\nexpect ShaderAtlas.particles.reflection.compute_entry_point.entry_point_name == \"computeMain\"\nexpect ShaderAtlas.particles.reflection.workgroup_size == {{ x: 256, y: 1, z: 1 }}\nexpect vertex.position.z == 3.0\nexpect particle.velocity.y == 7.0\nexpect matrices.model.row_2.w == 4.0\nexpect match params.particles_in {{ PointerAddress(raw) => raw == 18446744073709551615 }}\n"
+        r#"import pf.ShaderReflection
+import BasicTriangle
+import Mltrs
+import Ownership
+import Particle
+import Particles
+import ShaderAtlas
+
+Consumer := {{}}
+
+vertex : BasicTriangle.Vertex
+vertex = {{ position: {{ x: 1.0, y: 2.0, z: 3.0 }}, color: {{ x: 0.25, y: 0.5, z: 0.75 }} }}
+
+particle : Particle.Particle
+particle = {{ position: {{ x: 4.0, y: 5.0 }}, velocity: {{ x: 6.0, y: 7.0 }}, color: {{ x: 0.1, y: 0.2, z: 0.3, w: 0.4 }} }}
+
+address : ShaderReflection.PointerAddress
+address = ShaderReflection.PointerAddress.(18446744073709551615)
+
+row = {{ x: 1.0, y: 2.0, z: 3.0, w: 4.0 }}
+
+matrices : Mltrs.MvpMatrices
+matrices = {{ model: {{ row_0: row, row_1: row, row_2: row, row_3: row }}, view: {{ row_0: row, row_1: row, row_2: row, row_3: row }}, proj: {{ row_0: row, row_1: row, row_2: row, row_3: row }} }}
+
+params : Particles.SimParams
+params = {{ particles_in: address, particles_out: ShaderReflection.PointerAddress.(0), delta_time: 0.016 }}
+
+local_params : Ownership.LocalParams
+local_params = {{ payload: {{ data: {{ color: row }}, mode: On }} }}
+
+expect ShaderAtlas.basic_triangle.stages.vertex == [{vertex}]
+expect ShaderAtlas.basic_triangle.stages.fragment == [{fragment}]
+expect ShaderAtlas.particles.stages.compute == [{compute}]
+expect ShaderAtlas.roc_shared.stages.vertex == [{particle_vertex}]
+expect ShaderAtlas.roc_shared.stages.fragment == [{particle_fragment}]
+expect ShaderAtlas.basic_triangle.reflection.source_file_name == "basic_triangle.shader.slang"
+expect ShaderAtlas.basic_triangle.reflection.vertex_entry_point.entry_point_name == "vertexMain"
+expect ShaderAtlas.basic_triangle.reflection.fragment_entry_point.entry_point_name == "fragmentMain"
+expect ShaderAtlas.particles.reflection.compute_entry_point.entry_point_name == "computeMain"
+expect ShaderAtlas.particles.reflection.workgroup_size == {{ x: 256, y: 1, z: 1 }}
+expect ShaderAtlas.shaders_source_dir == "shaders/source"
+expect ShaderAtlas.shader_names |> List.contains("vertex_pulling_float3")
+expect vertex.position.z == 3.0
+expect particle.velocity.y == 7.0
+expect matrices.model.row_2.w == 4.0
+expect params.particles_in == ShaderReflection.PointerAddress.(18446744073709551615)
+expect List.len(Particle.Particle.to_bytes(particle)) == 32
+expect List.len(local_params.to_bytes()) == Ownership.LocalParams.gpu_size.to_u64()
+expect List.sublist(local_params.to_bytes(), {{ start: 16, len: 4 }}) == [7, 0, 0, 0]
+"#
     );
     fs::write(&consumer, consumer_source).unwrap();
     run(
@@ -145,7 +215,7 @@ fn real_roc_codegen_gate() {
     );
     let evaluated = roc_test(roc, &generated, &consumer);
     assert!(
-        String::from_utf8_lossy(&evaluated.stdout).contains("All (14) tests passed"),
+        String::from_utf8_lossy(&evaluated.stdout).contains("All (19) tests passed"),
         "{}",
         String::from_utf8_lossy(&evaluated.stdout)
     );
@@ -157,6 +227,65 @@ fn real_roc_codegen_gate() {
         String::from_utf8_lossy(&synthetic.stdout),
         String::from_utf8_lossy(&synthetic.stderr)
     );
+
+    let blocks = roc_test(roc, &generated, &generated.join("BlockConsumer.roc"));
+    assert!(
+        blocks.status.success()
+            && String::from_utf8_lossy(&blocks.stdout).contains("All (42) tests passed"),
+        "{}{}",
+        String::from_utf8_lossy(&blocks.stdout),
+        String::from_utf8_lossy(&blocks.stderr)
+    );
+
+    // The uniform record and binding wrappers are checked statically.
+    for (name, mismatch) in [
+        (
+            "MissingUniform",
+            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema) })",
+        ),
+        (
+            "SwappedUniforms",
+            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.params.schema), params: UniformSlot.new(1, RocBlocks.tint.schema) })",
+        ),
+        (
+            "ExtraUniform",
+            "graphics_slots(RocNoBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema) })",
+        ),
+        (
+            "IndirectAsDirect",
+            "graphics_slots(VertexPullingFloat3.shader, { params: UniformSlot.new(0, VertexPullingFloat3.params.schema) })",
+        ),
+        (
+            "WrongPointee",
+            "(VertexPullingFloat3.PullParams.schema.extract_bindings)({ pairs: tail_binding, tails: tail_binding, wides: ImmutableBufferBinding.new(target) })",
+        ),
+    ] {
+        let negative = generated.join(format!("{name}.roc"));
+        fs::write(
+            &negative,
+            format!(
+                "import pf.ShaderReflection exposing [GraphicsShader, ImmutableBufferBinding, UniformSlot]\nimport RocBlocks\nimport RocNoBlocks\nimport VertexPullingFloat3\n\n{name} := {{}}\n\ngraphics_slots : GraphicsShader(uniforms, push), uniforms -> List(U32)\ngraphics_slots = |shader, uniforms| (shader.uniform_slots)(uniforms)\n\ntarget = {{ buffer: 0, slot: Current, offset: 0 }}\n\ntail_binding : ImmutableBufferBinding(VertexPullingFloat3.TailVertex)\ntail_binding = ImmutableBufferBinding.new(target)\n\nexpect {mismatch} == []\n"
+            ),
+        )
+        .unwrap();
+        let checked = Command::new(roc)
+            .arg("check")
+            .arg(format!("--main={}", generated.join("main.roc").display()))
+            .arg(&negative)
+            .current_dir(std::env::temp_dir())
+            .output()
+            .expect("failed to execute roc check");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&checked.stdout),
+            String::from_utf8_lossy(&checked.stderr)
+        );
+        assert!(
+            !checked.status.success() && text.contains("type mismatch"),
+            "{name} should fail to typecheck:\n{text}"
+        );
+        fs::remove_file(negative).unwrap();
+    }
 
     let missing = compiled.join("basic_triangle.vert.spv");
     let saved = fs::read(&missing).unwrap();
@@ -249,7 +378,7 @@ fn real_roc_codegen_gate() {
     );
     assert!(
         logical.status.success()
-            && String::from_utf8_lossy(&logical.stdout).contains("All (8) tests passed"),
+            && String::from_utf8_lossy(&logical.stdout).contains("All (10) tests passed"),
         "{}{}",
         String::from_utf8_lossy(&logical.stdout),
         String::from_utf8_lossy(&logical.stderr)

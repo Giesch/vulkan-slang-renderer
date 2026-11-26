@@ -1,8 +1,15 @@
-# Generated; directories are tool-owned.
 {% for entry in modules -%}
 import {{ entry.module }}
-{% endfor %}
+{% endfor -%}
+{% if !modules.is_empty() %}
+{% endif -%}
+## Generated; directories are tool-owned.
 ShaderAtlas := {}.{
+
+    ## The shader sources, relative to the Roc project root.
+    shaders_source_dir : Str
+    shaders_source_dir = {{ shaders_source_dir }}
+
     shader_names : List(Str)
     shader_names = [{{ self.shader_names() }}]
 {%- for entry in modules %}
