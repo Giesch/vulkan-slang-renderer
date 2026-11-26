@@ -132,14 +132,17 @@ defines:
   `BufferBinding(elem)`, `ReadBufferBinding(elem)`, and
   `ImmutableBufferBinding(elem)` for `mltrs::Addr<T>`, `ReadAddr<T>`, and
   `ImmutableAddr<T>` fields. They are opaque: `new` builds one from a
-  `SampledTexSource`, `StorageTexSource`, or `BufferTarget` (a declared buffer
-  index, `Current` or `Previous` slot, and byte offset), and `erase` turns one
+  `SampledTexSource`, `StorageTexSource`, or `BufferTarget` (a declared buffer,
+  `Current` or `Previous` slot, and byte offset), and `erase` turns one
   into a `GraphBinding`. `BufferBinding` and `ImmutableBufferBinding` widen to
   a `ReadBufferBinding` of the same buffer with `as_read`. A buffer binding's
   `elem` is checked against the field's pointee type;
 - the block descriptors `BlockSchema`, `SchemaField`, `SchemaFieldKind`,
   `ResourceFieldKind`, `UniformSpec`, `PushSpec`, `NoPush`, and the opaque
-  `UniformSlot(data, bindings)` (`new`, `index`, `schema`);
+  `UniformSlot(data, bindings)` (`new`, `index`, `schema`, `provenance`);
+- `Provenance` and `DeclaredResource`, which tie every source, target, and
+  uniform slot to the resource planner declaration it names (see
+  [`roc_render_graph.md`](roc_render_graph.md));
 - the shader descriptors `GraphicsShader`, `GraphicsIndirectShader`, and
   `ComputeShader`.
 

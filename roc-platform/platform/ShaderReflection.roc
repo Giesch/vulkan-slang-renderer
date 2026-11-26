@@ -226,13 +226,26 @@ ShaderReflection := {}.{
 	## Every generated struct with a GPU layout exposes one as `packer`.
 	ElementPacker(elem) : { stride : U32, to_bytes : elem -> List(U8) }
 
+	## The resource planner declaration a slot or binding was minted from: its
+	## name and a digest of everything it declares. A render graph rejects a
+	## slot or binding whose provenance differs from its planner's entry, so
+	## another planner's ids cannot alias this one's.
+	Provenance : { name : Str, digest : List(U8) }
+
+	## A declared resource: its id in its planner table and its provenance.
+	DeclaredResource : { id : U32, provenance : Provenance }
+
 	## The texture a sampled binding reads: a logical graph texture's latest
 	## version, the version before its latest write, or an imported texture.
-	SampledTexSource : [Read(U32), ReadPrevious(U32), Imported(U32)]
+	SampledTexSource : [
+		Read(DeclaredResource),
+		ReadPrevious(DeclaredResource),
+		Imported(DeclaredResource),
+	]
 
 	## The logical graph texture a storage binding writes, and how: `Write`
 	## produces the next version, `Mutate` edits the current one in place.
-	StorageTexSource : [Write(U32), Mutate(U32)]
+	StorageTexSource : [Write(DeclaredResource), Mutate(DeclaredResource)]
 
 	## The buffer slot a buffer binding addresses. Only GPU-updated buffers
 	## keep a `Previous` slot.
@@ -240,7 +253,7 @@ ShaderReflection := {}.{
 
 	## A buffer binding's declared buffer, slot, and the byte offset of the
 	## bound element.
-	BufferTarget : { buffer : U32, slot : BufferSlot, offset : U32 }
+	BufferTarget : { buffer : DeclaredResource, slot : BufferSlot, offset : U32 }
 
 	## Whether a shader may write through a buffer binding.
 	BufferAccess : [Read, Mutate]
@@ -346,10 +359,14 @@ ShaderReflection := {}.{
 	UniformSlot(data, bindings) :: {
 		index : U32,
 		schema : BlockSchema(data, bindings),
+		provenance : Provenance,
 	}.{
-		new : U32, BlockSchema(data, bindings) -> UniformSlot(data, bindings)
-		new = |slot_index, block_schema|
-			UniformSlot.{ index: slot_index, schema: block_schema }
+		new : U32, BlockSchema(data, bindings), Provenance -> UniformSlot(data, bindings)
+		new = |slot_index, block_schema, slot_provenance|
+			UniformSlot.{ index: slot_index, schema: block_schema, provenance: slot_provenance }
+
+		provenance : UniformSlot(data, bindings) -> Provenance
+		provenance = |slot| slot.provenance
 
 		index : UniformSlot(data, bindings) -> U32
 		index = |slot| slot.index

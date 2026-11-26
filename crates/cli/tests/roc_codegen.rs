@@ -241,19 +241,19 @@ expect List.sublist(local_params.to_bytes(), {{ start: 16, len: 4 }}) == [7, 0, 
     for (name, mismatch) in [
         (
             "MissingUniform",
-            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema) })",
+            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema, provenance) })",
         ),
         (
             "SwappedUniforms",
-            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.params.schema), params: UniformSlot.new(1, RocBlocks.tint.schema) })",
+            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.params.schema, provenance), params: UniformSlot.new(1, RocBlocks.tint.schema, provenance) })",
         ),
         (
             "ExtraUniform",
-            "graphics_slots(RocNoBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema) })",
+            "graphics_slots(RocNoBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema, provenance) })",
         ),
         (
             "IndirectAsDirect",
-            "graphics_slots(VertexPullingFloat3.shader, { params: UniformSlot.new(0, VertexPullingFloat3.params.schema) })",
+            "graphics_slots(VertexPullingFloat3.shader, { params: UniformSlot.new(0, VertexPullingFloat3.params.schema, provenance) })",
         ),
         (
             "WrongPointee",
@@ -264,7 +264,7 @@ expect List.sublist(local_params.to_bytes(), {{ start: 16, len: 4 }}) == [7, 0, 
         fs::write(
             &negative,
             format!(
-                "import pf.ShaderReflection exposing [GraphicsShader, ImmutableBufferBinding, UniformSlot]\nimport RocBlocks\nimport RocNoBlocks\nimport VertexPullingFloat3\n\n{name} := {{}}\n\ngraphics_slots : GraphicsShader(uniforms, push), uniforms -> List(U32)\ngraphics_slots = |shader, uniforms| (shader.uniform_slots)(uniforms)\n\ntarget = {{ buffer: 0, slot: Current, offset: 0 }}\n\ntail_binding : ImmutableBufferBinding(VertexPullingFloat3.TailVertex)\ntail_binding = ImmutableBufferBinding.new(target)\n\nexpect {mismatch} == []\n"
+                "import pf.ShaderReflection exposing [GraphicsShader, ImmutableBufferBinding, UniformSlot]\nimport RocBlocks\nimport RocNoBlocks\nimport VertexPullingFloat3\n\n{name} := {{}}\n\ngraphics_slots : GraphicsShader(uniforms, push), uniforms -> List(U32)\ngraphics_slots = |shader, uniforms| (shader.uniform_slots)(uniforms)\n\nprovenance = {{ name: \"test\", digest: [] }}\n\ntarget = {{ buffer: {{ id: 0, provenance }}, slot: Current, offset: 0 }}\n\ntail_binding : ImmutableBufferBinding(VertexPullingFloat3.TailVertex)\ntail_binding = ImmutableBufferBinding.new(target)\n\nexpect {mismatch} == []\n"
             ),
         )
         .unwrap();

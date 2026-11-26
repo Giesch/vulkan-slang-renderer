@@ -21,6 +21,12 @@ import VertexPullingFloat3
 
 BlockConsumer := {}
 
+## The provenance a resource planner would record; these bindings are built
+## by hand.
+provenance = { name: "test", digest: [] }
+
+declared = |id| { id, provenance }
+
 ## Little-endian F32 bytes.
 one = [0, 0, 128, 63]
 
@@ -168,7 +174,7 @@ block_params = {
 	tails: PointerAddress.(33),
 }
 
-tails_target = { buffer: 2, slot: Current, offset: 64 }
+tails_target = { buffer: declared(2), slot: Current, offset: 64 }
 
 block_params_data : RocBlocks.BlockParamsData
 block_params_data = { offset: position, scale: color3, bias: 0.5 }
@@ -183,14 +189,14 @@ expect
 expect valid_layout(RocBlocks.BlockParams.schema)
 expect
 	(RocBlocks.BlockParams.schema.extract_bindings)({
-		pairs: ImmutableBufferBinding.new({ buffer: 1, slot: Current, offset: 0 }),
-		tex: SampledTexBinding.new(Imported(4)),
+		pairs: ImmutableBufferBinding.new({ buffer: declared(1), slot: Current, offset: 0 }),
+		tex: SampledTexBinding.new(Imported(declared(4))),
 		tails: ImmutableBufferBinding.new(tails_target).as_read(),
 	})
 		== [
-			(0, Buffer({ buffer: 1, slot: Current, offset: 0 }, Read)),
-			(1, SampledTex(Imported(4))),
-			(2, Buffer({ buffer: 2, slot: Current, offset: 64 }, Read)),
+			(0, Buffer({ buffer: declared(1), slot: Current, offset: 0 }, Read)),
+			(1, SampledTex(Imported(declared(4)))),
+			(2, Buffer({ buffer: declared(2), slot: Current, offset: 64 }, Read)),
 		]
 
 # A mixed std430 push block: a pointer and a storage handle, then tail-packed
@@ -215,12 +221,12 @@ expect
 expect valid_layout(push_schema)
 expect
 	(push_schema.extract_bindings)({
-		wides: BufferBinding.new({ buffer: 3, slot: Current, offset: 32 }),
-		target: StorageTexBinding.new(Write(6)),
+		wides: BufferBinding.new({ buffer: declared(3), slot: Current, offset: 32 }),
+		target: StorageTexBinding.new(Write(declared(6))),
 	})
 		== [
-			(0, Buffer({ buffer: 3, slot: Current, offset: 32 }, Mutate)),
-			(1, StorageTex(Write(6))),
+			(0, Buffer({ buffer: declared(3), slot: Current, offset: 32 }, Mutate)),
+			(1, StorageTex(Write(declared(6)))),
 		]
 
 # A pointer-only block has no data.
@@ -246,7 +252,7 @@ sim_params = {
 	delta_time: 0.5,
 }
 
-previous_particles = { buffer: 0, slot: Previous, offset: 0 }
+previous_particles = { buffer: declared(0), slot: Previous, offset: 0 }
 
 expect
 	assemble(Particles.SimParams.schema, half, [7, 8]) == sim_params.to_bytes()
@@ -254,11 +260,11 @@ expect valid_layout(Particles.SimParams.schema)
 expect
 	(Particles.SimParams.schema.extract_bindings)({
 		particles_in: BufferBinding.new(previous_particles).as_read(),
-		particles_out: BufferBinding.new({ buffer: 0, slot: Current, offset: 0 }),
+		particles_out: BufferBinding.new({ buffer: declared(0), slot: Current, offset: 0 }),
 	})
 		== [
-			(0, Buffer({ buffer: 0, slot: Previous, offset: 0 }, Read)),
-			(1, Buffer({ buffer: 0, slot: Current, offset: 0 }, Mutate)),
+			(0, Buffer({ buffer: declared(0), slot: Previous, offset: 0 }, Read)),
+			(1, Buffer({ buffer: declared(0), slot: Current, offset: 0 }, Mutate)),
 		]
 
 matrices : Mltrs.MvpMatrices
@@ -278,16 +284,16 @@ expect valid_layout(BasicTriangle.TriangleParams.schema)
 
 # Widening keeps the buffer target and reads through it.
 expect
-	BufferBinding.new({ buffer: 5, slot: Current, offset: 0 }).as_read().erase()
-		== ReadBufferBinding.new({ buffer: 5, slot: Current, offset: 0 }).erase()
+	BufferBinding.new({ buffer: declared(5), slot: Current, offset: 0 }).as_read().erase()
+		== ReadBufferBinding.new({ buffer: declared(5), slot: Current, offset: 0 }).erase()
 
 # One uniform slot per parameter block, named after the parameter.
 expect
 	graphics_slots(
 		RocBlocks.shader,
 		{
-			tint: UniformSlot.new(5, RocBlocks.tint.schema),
-			params: UniformSlot.new(9, RocBlocks.params.schema),
+			tint: UniformSlot.new(5, RocBlocks.tint.schema, provenance),
+			params: UniformSlot.new(9, RocBlocks.params.schema, provenance),
 		},
 	)
 		== [5, 9]
@@ -296,19 +302,19 @@ expect graphics_slots(RocNoBlocks.shader, {}) == []
 expect
 	indirect_slots(
 		VertexPullingFloat3.shader,
-		{ params: UniformSlot.new(2, VertexPullingFloat3.params.schema) },
+		{ params: UniformSlot.new(2, VertexPullingFloat3.params.schema, provenance) },
 	)
 		== [2]
 expect
 	compute_slots(
 		Particles.shader,
-		{ sim_params: UniformSlot.new(4, Particles.sim_params.schema) },
+		{ sim_params: UniformSlot.new(4, Particles.sim_params.schema, provenance) },
 	)
 		== [4]
 expect
 	graphics_slots(
 		BasicTriangle.shader,
-		{ params: UniformSlot.new(0, BasicTriangle.params.schema) },
+		{ params: UniformSlot.new(0, BasicTriangle.params.schema, provenance) },
 	)
 		== [0]
 expect Particles.shader.workgroup_size == { x: 256, y: 1, z: 1 }

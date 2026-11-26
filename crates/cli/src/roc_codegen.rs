@@ -1168,13 +1168,15 @@ struct Definition {
 
 /// The `ShaderReflection` type names a generated module may expose; a shader
 /// type with one of these names would shadow it.
-const SHADER_REFLECTION_TYPES: [&str; 28] = [
+const SHADER_REFLECTION_TYPES: [&str; 30] = [
     "PointerAddress",
     "DescriptorHandle",
     "StructType",
     "GraphicsReflection",
     "ComputeReflection",
     "ElementPacker",
+    "Provenance",
+    "DeclaredResource",
     "SampledTexSource",
     "StorageTexSource",
     "BufferSlot",
