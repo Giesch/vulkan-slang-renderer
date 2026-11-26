@@ -1,8 +1,6 @@
 //! These are stubs of renderer::gpu_write types
 //! that generated shaders need to refer to.
 
-pub enum NoVertex {}
-
 /// Stub of the renderer's GPU-data marker. The stub render_graph module
 /// defines the graph-local `GPUWrite`/`PushConstantBlock` traits that
 /// generated code implements; the one-way blanket impls below mirror the

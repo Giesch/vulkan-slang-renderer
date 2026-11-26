@@ -1,0 +1,187 @@
+---
+source: crates/cli/src/build_tasks.rs
+info:
+  relative_path: shaders/compiled/vertex_pulling_float3.json
+---
+{
+  "sourceFileName": "vertex_pulling_float3.shader.slang",
+  "globalParameters": [
+    {
+      "kind": "parameterBlock",
+      "parameterName": "params",
+      "elementType": {
+        "typeName": "PullParams",
+        "fields": [
+          {
+            "kind": "pointer",
+            "fieldName": "pairs",
+            "binding": {
+              "kind": "uniform",
+              "offset": 0,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "PairVertex",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 32,
+            "access": "immutable"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "tails",
+            "binding": {
+              "kind": "uniform",
+              "offset": 8,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "TailVertex",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "scalar",
+                  "fieldName": "scale",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 12,
+                    "size": 4
+                  },
+                  "scalarType": "float32"
+                }
+              ]
+            },
+            "pointeeSize": 16,
+            "access": "immutable"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "wides",
+            "binding": {
+              "kind": "uniform",
+              "offset": 16,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "WideVertex",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 16
+                  },
+                  "elementCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 32,
+            "access": "immutable"
+          }
+        ]
+      }
+    }
+  ],
+  "vertexEntryPoint": {
+    "entryPointName": "vertMain",
+    "stage": "vertex",
+    "parameters": [
+      {
+        "kind": "scalar",
+        "parameterName": "vertexId",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
+      },
+      {
+        "kind": "scalar",
+        "parameterName": "drawIndex",
+        "semanticName": "SV_DRAWINDEX",
+        "scalarType": "uint32"
+      }
+    ]
+  },
+  "fragmentEntryPoint": {
+    "entryPointName": "fragMain",
+    "stage": "fragment",
+    "parameters": []
+  },
+  "pipelineLayout": {
+    "descriptorSetLayouts": [
+      {
+        "bindingRanges": [
+          {
+            "binding": 0,
+            "descriptorType": "constantBuffer",
+            "descriptorCount": 1,
+            "stageFlags": "all",
+            "size": 32
+          }
+        ]
+      }
+    ],
+    "pushConstantRanges": [],
+    "bindlessHeapSet": null
+  }
+}
