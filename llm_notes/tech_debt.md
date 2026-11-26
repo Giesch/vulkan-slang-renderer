@@ -18,7 +18,7 @@ Each entry states what's wrong, why it's tolerable today, and what "done" means.
 > named item.
 
 1. [Vulkan objects leak when an init function fails partway](#1-vulkan-objects-leak-when-an-init-function-fails-partway) — cleanup debt, diagnostic cost
-2. [Dangling pipeline when a hot reload's `create_graphics_pipeline` fails](#2-dangling-pipeline-when-a-hot-reloads-create_graphics_pipeline-fails) — **correctness bug**, debug builds only
+2. [Dangling pipeline when a hot reload's `create_graphics_pipeline` fails](#2-dangling-pipeline-when-a-hot-reloads-create_graphics_pipeline-fails---done) — **done**
 3. [Remove the legacy `disable_depth_test` flag](#3-remove-the-legacy-disable_depth_test-flag---done) — **done**
 4. [Duplicate struct names across shared slang modules resolve by silent last-write-wins](#4-duplicate-struct-names-across-shared-slang-modules-resolve-by-silent-last-write-wins) — latent **silent-wrong-output** hazard in codegen
 5. [Validation and fault injection cannot run in release builds](#5-validation-and-fault-injection-cannot-run-in-release-builds) — release builds are unsweepable, coverage gap
@@ -111,47 +111,33 @@ non-vacuous by skipping a `destroy_image_view` and watching
 `VUID-vkDestroyDevice-device-05137` appear (`build_reproducibility.md` §7.2/§7.4).
 Only the forcing-a-failure-at-each-`?` half is still manual.
 
-## 2. Dangling pipeline when a hot reload's `create_graphics_pipeline` fails
+## 2. Dangling pipeline when a hot reload's `create_graphics_pipeline` fails — **done**
 
-**Not debt — an actual correctness bug**, found while surveying §1 and kept
-here so it isn't lost. Unlike §1 this one is use-after-free, not a leak: the
-renderer keeps drawing with a `vk::Pipeline` it has already queued for
-destruction.
+Fixed. `try_shader_recompile` used to push the live `vk::Pipeline` onto
+`old_pipelines` *before* `create_graphics_pipeline` built its replacement, so a
+failed build left the renderer drawing with a handle queued for destruction (a
+use-after-free a few frames later).
 
-**The problem.** In `try_shader_recompile` (`src/renderer.rs:2638-2668`) the
-old pipeline handle is retired *before* its replacement exists:
+Both `try_shader_recompile` and `try_compute_shader_recompile` now build the
+replacement first and only then swap it in and retire the old pipeline. A
+compile failure, or a shader-module or pipeline failure after
+`create_from_atlas` succeeds, logs an error and returns with the previous
+pipeline untouched and drawing; in the latter case the freshly created pipeline
+layout and descriptor set layouts are destroyed, and `create_graphics_pipeline`
+and the shared `create_compute_vk_pipeline` destroy their temporary shader
+modules on the failure path. A failure partway through
+`VkCreate::vk_create` itself (some descriptor set layouts created, a later one
+failing) still leaks those layouts; that is init-path cleanup debt and stays
+tracked by §1.
 
-```rust
-self.old_pipelines.push((                     // :2648 — queued for destruction
-    self.total_frames,
-    render_pipeline_mut.pipeline,             // vk::Pipeline is Copy — the field still holds it
-    tmp_pipeline_layout.pipeline_layout,
-    descriptor_set_layouts,
-));
-// ...
-render_pipeline_mut.pipeline = create_graphics_pipeline(/* ... */)?;   // :2659 — may fail
-```
+Verified by temporarily forcing the rebuild to fail in `try_shader_recompile`
+and touching `basic_triangle`'s shader under lavapipe with `VKR_SWEEP=1`: the
+reload logged its error, frames kept presenting, and teardown exited 0 with no
+validation messages.
 
-If that `?` returns `Err`, the assignment never happens, so
-`render_pipeline_mut.pipeline` still holds the handle now sitting in
-`old_pipelines`. A few frames later the deferred cleanup destroys it and the
-renderer draws with a dead pipeline.
-
-**Why it hasn't bitten.** Debug builds only (hot reload is
-`#[cfg(debug_assertions)]`), and hard to reach: shader compile errors return
-early at `:2632`, so you need a shader that compiles cleanly but that Vulkan
-then refuses to build a pipeline from. It is also silent when it does happen —
-the failed reload logs an error and the corruption shows up frames later as a
-GPU hang or garbage output, with no obvious link back to the reload.
-
-**Fix.** Build the new pipeline first; only retire the old handle once the new
-one succeeds. That ordering also makes the reload atomic — a failed recompile
-leaves the previous pipeline intact and drawing, which is the behavior you want
-from hot reload anyway.
-
-**Done means.** A forced `create_graphics_pipeline` failure during reload
-leaves the old pipeline live and rendering, with no validation complaints and
-no entry orphaned in `old_pipelines`.
+Hot reload has since become a runtime setting (`RendererConfig::shader_hot_reload`,
+`VKR_SHADER_HOT_RELOAD`) rather than debug-only, which is what made the fix
+worth making now.
 
 ## 3. Remove the legacy `disable_depth_test` flag — **done**
 

@@ -62,7 +62,7 @@ shader-debug example="viking_room":
       cargo run -p {{example}}; \
     }
 
-# run a release build
+# run a release build (VKR_SHADER_HOT_RELOAD=1 turns on shader hot reload)
 release example="basic_triangle": shaders
     cargo run --release -p {{example}}
 

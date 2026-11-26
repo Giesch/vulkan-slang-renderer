@@ -16,8 +16,9 @@ pub struct RuntimeShader {
 
 impl RuntimeShader {
     /// `reflection_json` is the compiler's reflection output for the shader;
-    /// the SPIR-V slices are its vertex and fragment stages. Hot reload never
-    /// touches an entry created here.
+    /// the SPIR-V slices are its vertex and fragment stages. When shader hot
+    /// reload is on, the renderer recompiles it from its `source_file_name` in
+    /// the hot reload source dir like any generated entry.
     pub fn new(
         reflection_json: &str,
         vertex_spv: &[u8],
@@ -42,10 +43,6 @@ fn read_spv(bytes: &[u8], stage: &str) -> anyhow::Result<Vec<u32>> {
 impl ShaderAtlasEntry for RuntimeShader {
     fn source_file_name(&self) -> &str {
         &self.reflection.source_file_name
-    }
-
-    fn hot_reload(&self) -> bool {
-        false
     }
 
     fn reflection_json(&self) -> &ReflectionJson {
@@ -102,7 +99,6 @@ mod tests {
         let module = spv_module();
         let shader = RuntimeShader::new(REFLECTION, &module, &module).unwrap();
 
-        assert!(!shader.hot_reload());
         assert_eq!(shader.layout_bindings().len(), 1);
         assert_eq!(
             shader

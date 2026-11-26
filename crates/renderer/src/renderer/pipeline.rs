@@ -182,7 +182,6 @@ impl PipelineStorage {
         self.0[index.raw()].as_ref().unwrap()
     }
 
-    #[cfg(debug_assertions)] // used only during hot reload
     pub fn get_mut_by_index(&mut self, index: GraphicsPipelineIndex) -> &mut RendererPipeline {
         self.0[index.raw()].as_mut().unwrap()
     }
@@ -206,7 +205,7 @@ pub(super) struct RendererPipeline {
 
     pub shader: Box<dyn ShaderAtlasEntry>,
 
-    #[cfg_attr(not(debug_assertions), expect(unused))] // used only during hot reload
+    /// kept so a hot reload rebuilds with the state the pipeline was created with
     pub raster_state: RasterState,
 }
 
@@ -463,20 +462,10 @@ impl ComputePipelineStorage {
         handle
     }
 
-    #[cfg(debug_assertions)]
-    #[expect(unused)]
-    pub fn get_mut<P>(
-        &mut self,
-        handle: &PipelineHandle<Compute, P>,
-    ) -> &mut ComputeRendererPipeline {
-        self.0[handle.index].as_mut().unwrap()
-    }
-
     pub fn get_by_index(&self, index: ComputePipelineIndex) -> &ComputeRendererPipeline {
         self.0[index.raw()].as_ref().unwrap()
     }
 
-    #[cfg(debug_assertions)]
     pub fn get_mut_by_index(
         &mut self,
         index: ComputePipelineIndex,

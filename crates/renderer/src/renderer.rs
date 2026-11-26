@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::ffi::{CStr, CString, c_char};
 use std::fs::File;
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use ash::vk;
@@ -19,12 +19,9 @@ use crate::env_config::EnvConfig;
 use crate::shaders;
 use crate::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader, ShaderAtlasEntry};
 
-#[cfg(debug_assertions)]
 use crate::shader_watcher;
-#[cfg(debug_assertions)]
 use crate::shaders::SpvBytes as _;
 use crate::shaders::json::ReflectedDescriptorSetLayout;
-#[cfg(debug_assertions)]
 use log::*;
 
 pub mod debug;
@@ -135,6 +132,36 @@ pub enum MaxMSAASamples {
     Off,
 }
 
+/// The application's choices for [`Renderer::init`]. Environment overrides
+/// arrive separately, in [`EnvConfig`].
+#[derive(Debug, Clone)]
+pub struct RendererConfig {
+    pub enable_egui: bool,
+    /// Clamped to `0.25..=1.0`.
+    pub render_scale: f32,
+    pub max_msaa_samples: MaxMSAASamples,
+    pub needs_stencil: bool,
+    /// Recompile shaders from `shaders_source_dir` when a source file changes,
+    /// in any build profile. `VKR_SHADER_HOT_RELOAD` overrides this when set.
+    pub shader_hot_reload: bool,
+    /// Absolute path of the slang source dir the shaders were generated from;
+    /// empty when there is none, which disables hot reload.
+    pub shaders_source_dir: PathBuf,
+}
+
+impl Default for RendererConfig {
+    fn default() -> Self {
+        Self {
+            enable_egui: false,
+            render_scale: 1.0,
+            max_msaa_samples: MaxMSAASamples::default(),
+            needs_stencil: false,
+            shader_hot_reload: false,
+            shaders_source_dir: PathBuf::new(),
+        }
+    }
+}
+
 pub struct Renderer {
     // fields that are created once
     /// the environment, parsed once at startup; see `env_config`
@@ -143,12 +170,13 @@ pub struct Renderer {
     width: f32,
     height: f32,
     total_frames: usize,
-    #[cfg(debug_assertions)]
-    shaders_source_dir: &'static std::path::Path,
-    /// `None` when the atlas has no slang source dir to watch
-    #[cfg(debug_assertions)]
+    /// The slang source dir hot reload recompiles from; `None` when hot reload
+    /// is off or there is no source dir, and pipelines use precompiled SPIR-V.
+    hot_reload_source_dir: Option<PathBuf>,
+    /// Watches `hot_reload_source_dir`; `None` exactly when it is.
     shader_watcher: Option<shader_watcher::ShaderChanges>,
-    #[cfg(debug_assertions)]
+    /// Pipelines replaced by a hot reload, kept until the frame that last used
+    /// them has retired.
     old_pipelines: Vec<(
         usize,
         vk::Pipeline,
@@ -294,22 +322,18 @@ impl Renderer {
     pub fn init(
         window: Window,
         env: EnvConfig,
-        enable_egui: bool,
-        render_scale: f32,
-        max_msaa_samples: MaxMSAASamples,
-        needs_stencil: bool,
-        #[cfg(debug_assertions)] shaders_source_dir: &'static str,
+        config: RendererConfig,
     ) -> Result<Self, anyhow::Error> {
-        #[cfg(debug_assertions)]
-        let shaders_source_dir = std::path::Path::new(shaders_source_dir);
-        #[cfg(debug_assertions)]
-        let shader_watcher = if shaders_source_dir.as_os_str().is_empty() {
-            None
-        } else {
-            Some(shader_watcher::watch(shaders_source_dir)?)
+        let shader_hot_reload = env.resolve_shader_hot_reload(config.shader_hot_reload);
+        let has_shaders_source_dir = !config.shaders_source_dir.as_os_str().is_empty();
+        let hot_reload_source_dir =
+            (shader_hot_reload && has_shaders_source_dir).then_some(config.shaders_source_dir);
+        let shader_watcher = match &hot_reload_source_dir {
+            Some(source_dir) => Some(shader_watcher::watch(source_dir)?),
+            None => None,
         };
 
-        let render_scale = render_scale.clamp(0.25, 1.0);
+        let render_scale = config.render_scale.clamp(0.25, 1.0);
 
         let (window_width, window_height) = window.size();
         let aspect_ratio = window_width as f32 / window_height as f32;
@@ -383,7 +407,7 @@ impl Renderer {
         let descriptor_heap = DescriptorHeap::new(&device)?;
 
         let msaa_samples =
-            get_max_usable_sample_count(physical_device_properties, max_msaa_samples);
+            get_max_usable_sample_count(physical_device_properties, config.max_msaa_samples);
 
         let graphics_queue = unsafe { device.get_device_queue(queue_family_indices.graphics, 0) };
         let presentation_queue =
@@ -409,9 +433,9 @@ impl Renderer {
         let (image_available, render_finished, frame_timeline) =
             create_sync_objects(&device, &swapchain_images)?;
 
-        let depth_format = find_depth_format(&instance, physical_device, needs_stencil);
+        let depth_format = find_depth_format(&instance, physical_device, config.needs_stencil);
 
-        let egui = if enable_egui {
+        let egui = if config.enable_egui {
             Some(EguiIntegration::new(
                 &instance,
                 physical_device,
@@ -465,11 +489,8 @@ impl Renderer {
             width: window_width as f32,
             height: window_height as f32,
             total_frames: 0,
-            #[cfg(debug_assertions)]
-            shaders_source_dir,
-            #[cfg(debug_assertions)]
+            hot_reload_source_dir,
             shader_watcher,
-            #[cfg(debug_assertions)]
             old_pipelines: vec![],
             window: window.clone(),
             entry,
@@ -1387,8 +1408,7 @@ impl Renderer {
             &self.device,
             self.descriptor_heap.layout(),
             &*picking_config.shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            self.hot_reload_source_dir.as_deref(),
         )?;
 
         // picking renders ids into a uint target with no depth attachment, so
@@ -1472,45 +1492,15 @@ impl Renderer {
             &self.device,
             self.descriptor_heap.layout(),
             &*config.shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            self.hot_reload_source_dir.as_deref(),
         )?;
 
-        let shader_module = {
-            let shader_module_create_info = vk::ShaderModuleCreateInfo::default()
-                .code(&pipeline_layout.compute_shader.spv_bytes);
-            unsafe {
-                self.device
-                    .create_shader_module(&shader_module_create_info, None)?
-            }
-        };
-
-        let stage = vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::COMPUTE)
-            .module(shader_module)
-            .name(&pipeline_layout.compute_shader.entry_point_name);
-
-        let compute_pipeline_create_info = vk::ComputePipelineCreateInfo::default()
-            .stage(stage)
-            .layout(pipeline_layout.pipeline_layout);
-
-        let pipeline = unsafe {
-            self.device.create_compute_pipelines(
-                vk::PipelineCache::null(),
-                &[compute_pipeline_create_info],
-                None,
-            )
-        }
-        .map_err(|(_pipelines, err)| err)?[0];
+        let pipeline = create_compute_vk_pipeline(&self.device, &pipeline_layout)?;
 
         self.set_debug_name(
             pipeline,
             debug::clean_shader_name(config.shader.source_file_name()),
         );
-
-        unsafe {
-            self.device.destroy_shader_module(shader_module, None);
-        }
 
         let layout_bindings = config.shader.layout_bindings();
         let descriptor_pool = create_descriptor_pool_from_layouts(
@@ -1596,8 +1586,7 @@ impl Renderer {
             &self.device,
             self.descriptor_heap.layout(),
             &*config.shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            self.hot_reload_source_dir.as_deref(),
         )?;
 
         let pipeline = create_graphics_pipeline(
@@ -2563,8 +2552,8 @@ impl Renderer {
         // The slot the draws were queued against
         let queue_flight_slot = self.flight_slot;
 
-        #[cfg(debug_assertions)]
-        {
+        let shader_hot_reload = self.shader_watcher.is_some();
+        if shader_hot_reload {
             let mut graphics_indices: Vec<GraphicsPipelineIndex> = pending_draws
                 .iter()
                 .map(|cmd| match cmd {
@@ -2965,7 +2954,6 @@ impl Renderer {
         }
     }
 
-    #[cfg(debug_assertions)]
     fn check_for_shader_recompile(
         &mut self,
         graphics_pipeline_indices: &[GraphicsPipelineIndex],
@@ -3021,144 +3009,149 @@ impl Renderer {
     }
 
     // shader hot reload
-    #[cfg(debug_assertions)]
+    //
+    // Each reload builds the replacement vk::Pipeline before touching the live
+    // one, so a reload that fails anywhere leaves the previous pipeline intact
+    // and drawing, and only a replaced pipeline is ever queued for destruction.
     fn try_shader_recompile(
         &mut self,
         pipeline_index: GraphicsPipelineIndex,
     ) -> Result<(), anyhow::Error> {
-        if !self
-            .pipelines
-            .get_by_index(pipeline_index)
-            .shader
-            .hot_reload()
-        {
-            return Ok(());
-        }
+        let render_pipeline = self.pipelines.get_by_index(pipeline_index);
 
-        let mut tmp_pipeline_layout = match ShaderPipelineLayout::create_from_atlas(
+        let new_layout = match ShaderPipelineLayout::create_from_atlas(
             &self.device,
             self.descriptor_heap.layout(),
-            &*self.pipelines.get_by_index(pipeline_index).shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            &*render_pipeline.shader,
+            self.hot_reload_source_dir.as_deref(),
         ) {
-            Ok(shaders) => shaders,
-            Err(e) => {
-                error!("failed to compile shaders: {e}");
+            Ok(layout) => layout,
+            Err(err) => {
+                error!("failed to compile shaders: {err}");
+                return Ok(());
+            }
+        };
+
+        // rebuild with the state this pipeline was created with, not the
+        // default — otherwise a reloaded shader silently reverts to
+        // alpha-blend / back-cull / depth-less
+        let new_pipeline = match create_graphics_pipeline(
+            &self.device,
+            self.image_format,
+            Some(self.depth_format),
+            self.msaa_samples,
+            &new_layout,
+            &render_pipeline.raster_state,
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(err) => {
+                let name = render_pipeline.shader.source_file_name();
+                error!("failed to rebuild the pipeline for reloaded shader {name}: {err}");
+                self.destroy_unused_pipeline_layout(
+                    new_layout.pipeline_layout,
+                    &new_layout.descriptor_set_layouts,
+                );
                 return Ok(());
             }
         };
 
         let render_pipeline_mut = self.pipelines.get_mut_by_index(pipeline_index);
-
-        std::mem::swap(&mut tmp_pipeline_layout, &mut render_pipeline_mut.layout);
-
-        let descriptor_set_layouts = tmp_pipeline_layout
-            .descriptor_set_layouts
-            .into_iter()
-            .map(|t| t.0)
-            .collect();
-        self.old_pipelines.push((
-            self.total_frames,
-            render_pipeline_mut.pipeline,
-            tmp_pipeline_layout.pipeline_layout,
-            descriptor_set_layouts,
-        ));
-
-        // rebuild with the state this pipeline was created with, not the
-        // default — otherwise a reloaded shader silently reverts to
-        // alpha-blend / back-cull / depth-less
-        let raster_state = render_pipeline_mut.raster_state;
-
-        render_pipeline_mut.pipeline = create_graphics_pipeline(
-            &self.device,
-            self.image_format,
-            Some(self.depth_format),
-            self.msaa_samples,
-            &render_pipeline_mut.layout,
-            &raster_state,
-        )?;
+        let old_layout = std::mem::replace(&mut render_pipeline_mut.layout, new_layout);
+        let old_pipeline = std::mem::replace(&mut render_pipeline_mut.pipeline, new_pipeline);
+        self.retire_replaced_pipeline(
+            old_pipeline,
+            old_layout.pipeline_layout,
+            &old_layout.descriptor_set_layouts,
+        );
 
         info!("finished recompiling shaders");
 
         Ok(())
     }
 
-    #[cfg(debug_assertions)]
     fn try_compute_shader_recompile(
         &mut self,
         compute_pipeline_index: ComputePipelineIndex,
     ) -> Result<(), anyhow::Error> {
         let compute_pipeline = self.compute_pipelines.get_by_index(compute_pipeline_index);
+        let name = compute_pipeline.shader.source_file_name();
 
-        let mut tmp_layout = match ComputeShaderPipelineLayout::create_from_atlas(
+        let new_layout = match ComputeShaderPipelineLayout::create_from_atlas(
             &self.device,
             self.descriptor_heap.layout(),
             &*compute_pipeline.shader,
-            #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            self.hot_reload_source_dir.as_deref(),
         ) {
             Ok(layout) => layout,
-            Err(e) => {
-                error!("failed to compile compute shader: {e}");
+            Err(err) => {
+                error!("failed to compile compute shader: {err}");
                 return Ok(());
             }
         };
 
-        let compute_pipeline_mut = self
-            .compute_pipelines
-            .get_mut_by_index(compute_pipeline_index);
-
-        std::mem::swap(&mut tmp_layout, &mut compute_pipeline_mut.layout);
-
-        let descriptor_set_layouts = tmp_layout
-            .descriptor_set_layouts
-            .into_iter()
-            .map(|t| t.0)
-            .collect();
-        self.old_pipelines.push((
-            self.total_frames,
-            compute_pipeline_mut.pipeline,
-            tmp_layout.pipeline_layout,
-            descriptor_set_layouts,
-        ));
-
-        // Create new compute pipeline
-        let shader_module = {
-            let shader_module_create_info = vk::ShaderModuleCreateInfo::default()
-                .code(&compute_pipeline_mut.layout.compute_shader.spv_bytes);
-            unsafe {
-                self.device
-                    .create_shader_module(&shader_module_create_info, None)?
+        let new_pipeline = match create_compute_vk_pipeline(&self.device, &new_layout) {
+            Ok(pipeline) => pipeline,
+            Err(err) => {
+                error!("failed to rebuild the pipeline for reloaded compute shader {name}: {err}");
+                self.destroy_unused_pipeline_layout(
+                    new_layout.pipeline_layout,
+                    &new_layout.descriptor_set_layouts,
+                );
+                return Ok(());
             }
         };
 
-        let stage = vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::COMPUTE)
-            .module(shader_module)
-            .name(&compute_pipeline_mut.layout.compute_shader.entry_point_name);
-
-        let compute_pipeline_create_info = vk::ComputePipelineCreateInfo::default()
-            .stage(stage)
-            .layout(compute_pipeline_mut.layout.pipeline_layout);
-
-        compute_pipeline_mut.pipeline = unsafe {
-            self.device.create_compute_pipelines(
-                vk::PipelineCache::null(),
-                &[compute_pipeline_create_info],
-                None,
-            )
-        }
-        .map_err(|(_pipelines, err)| err)?[0];
-
-        unsafe {
-            self.device.destroy_shader_module(shader_module, None);
-        }
-
-        let name = compute_pipeline_mut.shader.source_file_name();
         info!("finished recompiling compute shader: {name}");
 
+        let compute_pipeline_mut = self
+            .compute_pipelines
+            .get_mut_by_index(compute_pipeline_index);
+        let old_layout = std::mem::replace(&mut compute_pipeline_mut.layout, new_layout);
+        let old_pipeline = std::mem::replace(&mut compute_pipeline_mut.pipeline, new_pipeline);
+        self.retire_replaced_pipeline(
+            old_pipeline,
+            old_layout.pipeline_layout,
+            &old_layout.descriptor_set_layouts,
+        );
+
         Ok(())
+    }
+
+    /// Queues a pipeline that a hot reload replaced for destruction once the
+    /// frames that may still be using it have retired.
+    fn retire_replaced_pipeline(
+        &mut self,
+        pipeline: vk::Pipeline,
+        pipeline_layout: vk::PipelineLayout,
+        descriptor_set_layouts: &[(vk::DescriptorSetLayout, DescriptorCounts)],
+    ) {
+        let descriptor_set_layouts = descriptor_set_layouts
+            .iter()
+            .map(|&(descriptor_set_layout, _)| descriptor_set_layout)
+            .collect();
+        self.old_pipelines.push((
+            self.total_frames,
+            pipeline,
+            pipeline_layout,
+            descriptor_set_layouts,
+        ));
+    }
+
+    /// Destroys the layout objects a hot reload created for a pipeline it then
+    /// failed to build. Nothing has recorded against them, so no frame wait is
+    /// needed.
+    fn destroy_unused_pipeline_layout(
+        &self,
+        pipeline_layout: vk::PipelineLayout,
+        descriptor_set_layouts: &[(vk::DescriptorSetLayout, DescriptorCounts)],
+    ) {
+        unsafe {
+            self.device.destroy_pipeline_layout(pipeline_layout, None);
+            for &(descriptor_set_layout, _) in descriptor_set_layouts {
+                self.device
+                    .destroy_descriptor_set_layout(descriptor_set_layout, None);
+            }
+        }
     }
 
     pub fn on_resize(&mut self) -> anyhow::Result<()> {
@@ -3227,7 +3220,6 @@ impl Drop for Renderer {
                     .destroy_image(self.resolve_images[i], &mut self.resolve_image_memories[i]);
             }
 
-            #[cfg(debug_assertions)]
             for (_frame, old_pipeline, old_pipeline_layout, old_descriptor_set_layouts) in
                 &self.old_pipelines
             {
@@ -4232,7 +4224,13 @@ fn create_graphics_pipeline(
     let frag_create_info = vk::ShaderModuleCreateInfo::default().code(frag_shader_spv);
 
     let vert_shader = unsafe { device.create_shader_module(&vert_create_info, None)? };
-    let frag_shader = unsafe { device.create_shader_module(&frag_create_info, None)? };
+    let frag_shader = match unsafe { device.create_shader_module(&frag_create_info, None) } {
+        Ok(frag_shader) => frag_shader,
+        Err(err) => {
+            unsafe { device.destroy_shader_module(vert_shader, None) };
+            return Err(err.into());
+        }
+    };
 
     let vert_create_info = vk::PipelineShaderStageCreateInfo::default()
         .stage(vk::ShaderStageFlags::VERTEX)
@@ -4332,16 +4330,52 @@ fn create_graphics_pipeline(
         .push_next(&mut rendering_info);
 
     let graphics_pipelines = unsafe {
-        device
-            .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-            .map_err(|e| anyhow::anyhow!("failed to create graphics pipelines: {e:?}"))?
+        device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
     };
-    let graphics_pipeline = graphics_pipelines[0];
 
+    // destroyed before the error check so a failed build leaks neither module
     unsafe { device.destroy_shader_module(frag_shader, None) };
     unsafe { device.destroy_shader_module(vert_shader, None) };
 
-    Ok(graphics_pipeline)
+    let graphics_pipelines = graphics_pipelines.map_err(|(_pipelines, err)| {
+        anyhow::anyhow!("failed to create graphics pipelines: {err:?}")
+    })?;
+
+    Ok(graphics_pipelines[0])
+}
+
+/// Builds `pipeline_layout`'s compute pipeline. The shader module only lives
+/// for the call, failure included.
+fn create_compute_vk_pipeline(
+    device: &ash::Device,
+    pipeline_layout: &ComputeShaderPipelineLayout,
+) -> Result<vk::Pipeline, anyhow::Error> {
+    let shader_module_create_info =
+        vk::ShaderModuleCreateInfo::default().code(&pipeline_layout.compute_shader.spv_bytes);
+    let shader_module = unsafe { device.create_shader_module(&shader_module_create_info, None)? };
+
+    let stage = vk::PipelineShaderStageCreateInfo::default()
+        .stage(vk::ShaderStageFlags::COMPUTE)
+        .module(shader_module)
+        .name(&pipeline_layout.compute_shader.entry_point_name);
+
+    let compute_pipeline_create_info = vk::ComputePipelineCreateInfo::default()
+        .stage(stage)
+        .layout(pipeline_layout.pipeline_layout);
+
+    let compute_pipelines = unsafe {
+        device.create_compute_pipelines(
+            vk::PipelineCache::null(),
+            &[compute_pipeline_create_info],
+            None,
+        )
+    };
+
+    unsafe { device.destroy_shader_module(shader_module, None) };
+
+    let compute_pipelines = compute_pipelines.map_err(|(_pipelines, err)| err)?;
+
+    Ok(compute_pipelines[0])
 }
 
 fn create_command_pool(
@@ -5311,7 +5345,6 @@ fn create_color_image(
 /// updated at runtime. If the reloaded shader's reflected interface changed,
 /// writing through the old structs would silently corrupt GPU data — fail
 /// loudly instead.
-#[cfg(debug_assertions)]
 fn assert_shader_interface_unchanged<T: serde::Serialize>(
     embedded: &T,
     fresh: &T,
@@ -5348,16 +5381,17 @@ struct ShaderPipelineLayout {
 }
 
 impl ShaderPipelineLayout {
-    #[cfg(debug_assertions)]
+    /// Compiles `shader` from its slang source when hot reload is on, and
+    /// otherwise loads its precompiled SPIR-V without invoking slang.
     fn create_from_atlas(
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ShaderAtlasEntry,
-        shaders_source_dir: &std::path::Path,
+        hot_reload_source_dir: Option<&Path>,
     ) -> Result<Self, anyhow::Error> {
-        if !shader.hot_reload() {
+        let Some(shaders_source_dir) = hot_reload_source_dir else {
             return Self::from_precompiled(device, bindless_heap_layout, shader);
-        }
+        };
 
         let shaders::ReflectedShader {
             vertex_shader,
@@ -5399,15 +5433,6 @@ impl ShaderPipelineLayout {
         })
     }
 
-    #[cfg(not(debug_assertions))]
-    fn create_from_atlas(
-        device: &ash::Device,
-        bindless_heap_layout: vk::DescriptorSetLayout,
-        shader: &dyn ShaderAtlasEntry,
-    ) -> Result<Self, anyhow::Error> {
-        Self::from_precompiled(device, bindless_heap_layout, shader)
-    }
-
     fn from_precompiled(
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
@@ -5446,13 +5471,17 @@ pub(crate) struct ComputeShaderPipelineLayout {
 }
 
 impl ComputeShaderPipelineLayout {
-    #[cfg(debug_assertions)]
+    /// see [`ShaderPipelineLayout::create_from_atlas`]
     fn create_from_atlas(
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ComputeShaderAtlasEntry,
-        shaders_source_dir: &std::path::Path,
+        hot_reload_source_dir: Option<&Path>,
     ) -> Result<Self, anyhow::Error> {
+        let Some(shaders_source_dir) = hot_reload_source_dir else {
+            return Self::from_precompiled(device, bindless_heap_layout, shader);
+        };
+
         let shaders::ReflectedComputeShader {
             compute_shader,
             reflection_json,
@@ -5489,8 +5518,7 @@ impl ComputeShaderPipelineLayout {
         })
     }
 
-    #[cfg(not(debug_assertions))]
-    fn create_from_atlas(
+    fn from_precompiled(
         device: &ash::Device,
         bindless_heap_layout: vk::DescriptorSetLayout,
         shader: &dyn ComputeShaderAtlasEntry,
