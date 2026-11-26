@@ -8,7 +8,7 @@ use glam::camera::rh::{proj::directx, view::look_at_mat4};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use mltrs::game::*;
 use mltrs::renderer::{
-    CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawVertexCountNode, FrameRenderer,
+    CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawNode, FrameRenderer,
     PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, SingletonBufferHandle,
     SingletonSlot, UniformBufferHandle, UploadNode, draw_vertex_count, upload,
 };
@@ -25,8 +25,7 @@ const SHAPE_BUFFER_SIZE: u32 = 32;
 const MOON_START: Vec3 = Vec3::new(1.0, 0.0, 1.0);
 const SUN_START: Vec3 = Vec3::new(4.0, 5.0, 2.0);
 
-type RayMarchingGraph =
-    PreparedRenderGraph<(UploadNode<BoxRect>, DrawVertexCountNode<RayMarchingParams>)>;
+type RayMarchingGraph = PreparedRenderGraph<(UploadNode<BoxRect>, DrawNode<RayMarchingParams>)>;
 
 struct RayMarching {
     start_time: Instant,

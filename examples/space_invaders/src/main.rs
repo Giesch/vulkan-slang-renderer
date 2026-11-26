@@ -11,8 +11,8 @@ use mltrs::game::*;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    CpuUpdatedBufferHandle, DrawError, DrawVertexCount, FrameRenderer, GraphicsPipelineHandle,
-    NoVertex, RasterState, Renderer, TextureFilter, TextureHandle, UniformBufferHandle,
+    CpuUpdatedBufferHandle, DrawError, FrameRenderer, Graphics, PipelineHandle, RasterState,
+    Renderer, TextureFilter, TextureHandle, UniformBufferHandle,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -24,7 +24,7 @@ fn main() -> Result<(), anyhow::Error> {
 
 struct SpaceInvaders {
     frame_counter: usize,
-    pipeline: GraphicsPipelineHandle<NoVertex, DrawVertexCount>,
+    pipeline: PipelineHandle<Graphics>,
     params_buffer: UniformBufferHandle<SpaceInvadersParams>,
     sprites_buffer: CpuUpdatedBufferHandle<Sprite>,
     debug_boxes_buffer: CpuUpdatedBufferHandle<DebugBox>,

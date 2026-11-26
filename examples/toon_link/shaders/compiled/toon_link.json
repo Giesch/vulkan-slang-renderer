@@ -299,6 +299,64 @@
             },
             "pointeeSize": 32,
             "access": "immutable"
+          },
+          {
+            "kind": "pointer",
+            "fieldName": "vertices",
+            "binding": {
+              "kind": "uniform",
+              "offset": 344,
+              "size": 8
+            },
+            "pointeeType": {
+              "typeName": "Vertex",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "normal",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "uv0",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 32,
+                    "size": 8
+                  },
+                  "elementCount": 2,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
+            },
+            "pointeeSize": 48,
+            "access": "immutable"
           }
         ]
       }
@@ -741,60 +799,6 @@
     "entryPointName": "vertMain",
     "stage": "vertex",
     "parameters": [
-      {
-        "kind": "struct",
-        "parameterName": "vertex",
-        "binding": {
-          "kind": "varyingInput",
-          "index": 0,
-          "count": 3
-        },
-        "typeName": "Vertex",
-        "fields": [
-          {
-            "kind": "vector",
-            "fieldName": "position",
-            "binding": {
-              "kind": "varyingInput",
-              "index": 0,
-              "count": 1
-            },
-            "elementCount": 3,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "vector",
-            "fieldName": "normal",
-            "binding": {
-              "kind": "varyingInput",
-              "index": 1,
-              "count": 1
-            },
-            "elementCount": 3,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "vector",
-            "fieldName": "uv0",
-            "binding": {
-              "kind": "varyingInput",
-              "index": 2,
-              "count": 1
-            },
-            "elementCount": 2,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          }
-        ]
-      },
       {
         "kind": "scalar",
         "parameterName": "vertexId",

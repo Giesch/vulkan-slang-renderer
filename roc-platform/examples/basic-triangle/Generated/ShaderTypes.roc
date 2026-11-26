@@ -14,6 +14,11 @@ ShaderTypes := {}.{
 		proj : ShaderReflection.Float4x4,
 	}
 
+	TriangleParams : {
+		mvp : MvpMatrices,
+		vertices : ShaderReflection.PointerAddress,
+	}
+
 	Vertex : {
 		position : ShaderReflection.Float3,
 		color : ShaderReflection.Float3,

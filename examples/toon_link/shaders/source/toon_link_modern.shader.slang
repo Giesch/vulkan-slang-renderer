@@ -40,6 +40,9 @@ struct ModernParams {
     // Same deformation as the GameCube mode; see skinning.slang.
     mltrs::ImmutableAddr<SkinJoint> palette;
     mltrs::ImmutableAddr<VertexSkinning> skinning;
+    // The bind-pose vertices, indexed by SV_VertexID like `skinning`; the
+    // same buffer the GameCube mode reads.
+    mltrs::ImmutableAddr<Vertex> vertices;
 }
 
 enum ModernRamp : uint {
@@ -56,12 +59,6 @@ enum ModernDiagnostic : uint {
     AlbedoOnly = 5
 }
 
-struct ModernVertex {
-    float3 position;
-    float3 normal;
-    float2 uv0;
-}
-
 struct ModernFragment {
     float4 position : SV_Position;
     float3 normal;
@@ -70,8 +67,9 @@ struct ModernFragment {
 }
 
 [shader("vertex")]
-ModernFragment vertMain(ModernVertex vertex, uint vertexId : SV_VertexID, uint drawIndex : SV_DrawIndex) {
+ModernFragment vertMain(uint vertexId : SV_VertexID, uint drawIndex : SV_DrawIndex) {
     // Skin in model space before projection and before any shading input.
+    let vertex = params.vertices[vertexId];
     let skinned = SkinnedVertex(params.palette, params.skinning[vertexId], vertex.position, vertex.normal);
 
     return ModernFragment(

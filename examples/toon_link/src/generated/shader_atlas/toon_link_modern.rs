@@ -6,17 +6,14 @@ use std::ffi::CString;
 use std::io::Cursor;
 
 use ash::util::read_spv;
-use ash::vk;
 use facet::Facet;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
-pub use super::skinning::{SkinJoint, VertexSkinning};
+pub use super::skinning::{SkinJoint, Vertex, VertexSkinning};
 #[allow(unused_imports)]
 use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
-#[allow(unused)]
-use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use mltrs::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
@@ -162,10 +159,12 @@ pub struct ModernParams {
     pub diagnostic: ModernDiagnostic,
     pub palette: ImmutableAddr<SkinJoint>,
     pub skinning: ImmutableAddr<VertexSkinning>,
+    pub vertices: ImmutableAddr<Vertex>,
+    pub _padding_0: [u8; 8],
 }
 
 impl GPUWrite for ModernParams {}
-const _: () = assert!(std::mem::size_of::<ModernParams>() == 320);
+const _: () = assert!(std::mem::size_of::<ModernParams>() == 336);
 const _: () = assert!(std::mem::offset_of!(ModernParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(ModernParams, main_direction) == 192);
@@ -190,16 +189,8 @@ const _: () = assert!(std::mem::offset_of!(ModernParams, palette) == 304);
 const _: () = assert!(std::mem::size_of::<ImmutableAddr<SkinJoint>>() == 8);
 const _: () = assert!(std::mem::offset_of!(ModernParams, skinning) == 312);
 const _: () = assert!(std::mem::size_of::<ImmutableAddr<VertexSkinning>>() == 8);
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[repr(C, align(16))]
-pub struct ModernVertex {
-    pub position: glam::Vec3,
-    pub normal: glam::Vec3,
-    pub uv0: glam::Vec2,
-}
-
-impl GPUWrite for ModernVertex {}
+const _: () = assert!(std::mem::offset_of!(ModernParams, vertices) == 320);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<Vertex>>() == 8);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<ModernParams>,
@@ -291,6 +282,7 @@ pub struct ModernParamsBindings {
     pub ramp_texture: SampledTexBinding,
     pub palette: ImmutableBufferBinding<SkinJoint>,
     pub skinning: ImmutableBufferBinding<VertexSkinning>,
+    pub vertices: ImmutableBufferBinding<Vertex>,
 }
 
 impl GraphParamBindingSet for ModernParamsBindings {
@@ -306,6 +298,7 @@ impl GraphBindingSet for ModernParamsBindings {
         f(GraphBinding::SampledTex(self.ramp_texture));
         f(GraphBinding::Buffer(self.palette.erased()));
         f(GraphBinding::Buffer(self.skinning.erased()));
+        f(GraphBinding::Buffer(self.vertices.erased()));
     }
 }
 /// Complete graph inputs before resource references resolve to GPU values.
@@ -323,6 +316,7 @@ pub struct ModernParamsInput {
     pub diagnostic: ModernDiagnostic,
     pub palette: ImmutableBufferBinding<SkinJoint>,
     pub skinning: ImmutableBufferBinding<VertexSkinning>,
+    pub vertices: ImmutableBufferBinding<Vertex>,
 }
 
 impl GraphShaderParams for ModernParams {
@@ -344,6 +338,7 @@ impl GraphShaderParams for ModernParams {
             ramp_texture: bindings.ramp_texture,
             palette: bindings.palette,
             skinning: bindings.skinning,
+            vertices: bindings.vertices,
         }
     }
 
@@ -361,6 +356,8 @@ impl GraphShaderParams for ModernParams {
             diagnostic: input.diagnostic,
             palette: resolver.immutable_buf(input.palette),
             skinning: resolver.immutable_buf(input.skinning),
+            vertices: resolver.immutable_buf(input.vertices),
+            _padding_0: Default::default(),
         }
     }
 }
@@ -370,50 +367,13 @@ impl GraphBindingSet for ModernParamsInput {
         f(GraphBinding::SampledTex(self.ramp_texture));
         f(GraphBinding::Buffer(self.palette.erased()));
         f(GraphBinding::Buffer(self.skinning.erased()));
+        f(GraphBinding::Buffer(self.vertices.erased()));
     }
 }
 
 impl mltrs::renderer::render_graph::PushConstantBlock for ModernMultiDraw {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<ModernMultiDraw>() <= 128);
-
-// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
-// must agree with this struct's Rust layout
-const _: () = assert!(std::mem::size_of::<ModernVertex>() == 32);
-const _: () = assert!(std::mem::offset_of!(ModernVertex, position) == 0);
-const _: () = assert!(std::mem::offset_of!(ModernVertex, normal) == 12);
-const _: () = assert!(std::mem::offset_of!(ModernVertex, uv0) == 24);
-
-impl VertexDescription for ModernVertex {
-    fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
-        let binding_description = ash::vk::VertexInputBindingDescription::default()
-            .binding(0)
-            .stride(std::mem::size_of::<Self>() as u32)
-            .input_rate(ash::vk::VertexInputRate::VERTEX);
-
-        vec![binding_description]
-    }
-
-    fn attribute_descriptions() -> Vec<ash::vk::VertexInputAttributeDescription> {
-        vec![
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(ModernVertex, position) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(0),
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(ModernVertex, normal) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(1),
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(ModernVertex, uv0) as u32)
-                .format(ash::vk::Format::R32G32_SFLOAT)
-                .binding(0)
-                .location(2),
-        ]
-    }
-}
 
 #[derive(Clone)]
 pub struct Shader {
@@ -435,7 +395,7 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> IndexedPipelineConfig<'a, ModernVertex, PushBlock<ModernMultiDraw>> {
+    ) -> PipelineConfig<'a, GraphicsIndirect, PushBlock<ModernMultiDraw>> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -457,7 +417,7 @@ impl Shader {
             uniform_buffer_handles,
             storage_texture_handles,
         }
-        .build_indexed()
+        .build_graphics_indirect()
     }
 
     fn vert_entry_point_name(&self) -> CString {
@@ -502,14 +462,6 @@ impl Shader {
 impl ShaderAtlasEntry for Shader {
     fn source_file_name(&self) -> &str {
         &self.reflection_json.source_file_name
-    }
-
-    fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
-        ModernVertex::binding_descriptions()
-    }
-
-    fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription> {
-        ModernVertex::attribute_descriptions()
     }
 
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {

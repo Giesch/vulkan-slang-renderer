@@ -6,7 +6,7 @@ use facet::Facet;
 use mltrs::editor::Slider;
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
     ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_vertex_count,
 };
 
@@ -19,7 +19,7 @@ fn main() -> Result<(), anyhow::Error> {
     SerenityCRT::run()
 }
 
-type SerenityGraph = PreparedRenderGraph<DrawVertexCountNode<SerenityCRTParams>>;
+type SerenityGraph = PreparedRenderGraph<DrawNode<SerenityCRTParams>>;
 
 struct SerenityCRT {
     start_time: Instant,

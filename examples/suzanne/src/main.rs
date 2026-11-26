@@ -9,8 +9,9 @@ use mltrs::game::Game;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
-    ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_indexed,
+    DrawError, DrawNode, FrameRenderer, IndexBufferHandle, PreparedRenderGraph, RenderGraph,
+    Renderer, ResourcePlanner, SingletonBufferHandle, SingletonSlot, TextureFilter, TextureHandle,
+    UniformBufferHandle, draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -27,9 +28,11 @@ pub struct Suzanne {
     graph: SuzanneGraph,
     /// Bound into the graph at build time; kept here for ownership.
     _textures: Vec<TextureHandle>,
-    /// The graph captured this buffer's slot at build time; the handle stays
-    /// here to keep the buffer alive.
+    // The graph captured these buffers' slots at build time; the handles stay
+    // here to keep the buffers alive.
     _params_buffer: UniformBufferHandle<SuzanneParams>,
+    _vertex_buffer: SingletonBufferHandle<Vertex>,
+    _index_buffer: IndexBufferHandle,
 }
 
 impl Suzanne {
@@ -65,8 +68,11 @@ impl Suzanne {
 
             let vertex = Vertex {
                 position,
+                _padding_0: [0; 4],
                 color: Vec3::splat(1.0),
+                _padding_1: [0; 4],
                 tex_coord,
+                _padding_2: [0; 8],
             };
 
             vertices.push(vertex);
@@ -102,21 +108,23 @@ impl Game for Suzanne {
         let resources = Resources {
             params_buffer: &params_buffer,
         };
-        let pipeline_config = shaders
-            .suzanne
-            .pipeline_config(resources)
-            .with_vertices(vertices, indices);
+        let pipeline_config = shaders.suzanne.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
+
+        let vertex_buffer = renderer.create_singleton_buffer(&vertices)?;
+        let index_buffer = renderer.create_index_buffer(&indices, vertex_buffer.len())?;
 
         let graph = RenderGraph::new(
             ResourcePlanner::new(),
             draw_indexed(
                 &pipeline,
+                &index_buffer,
                 &params_buffer,
                 SuzanneParamsBindings {
                     texture0: textures[0].bindless_handle().into(),
                     texture1: textures[1].bindless_handle().into(),
                     texture2: textures[2].bindless_handle().into(),
+                    vertices: SingletonSlot::from(&vertex_buffer).addr(),
                 },
             ),
         )?
@@ -129,6 +137,8 @@ impl Game for Suzanne {
             graph,
             _textures: textures,
             _params_buffer: params_buffer,
+            _vertex_buffer: vertex_buffer,
+            _index_buffer: index_buffer,
         })
     }
 

@@ -10,7 +10,7 @@ use mltrs::game::{Game, Input, MouseButton};
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
     ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_vertex_count,
 };
 
@@ -30,7 +30,7 @@ pub struct EditState {
     pub rotation_speed: Slider,
 }
 
-type KochCurveGraph = PreparedRenderGraph<DrawVertexCountNode<KochCurveParams>>;
+type KochCurveGraph = PreparedRenderGraph<DrawNode<KochCurveParams>>;
 
 pub struct KochCurve {
     start_time: Instant,

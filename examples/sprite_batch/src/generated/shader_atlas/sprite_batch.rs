@@ -6,15 +6,12 @@ use std::ffi::CString;
 use std::io::Cursor;
 
 use ash::util::read_spv;
-use ash::vk;
 use serde::Serialize;
 
 pub use super::mltrs::Projection;
 #[allow(unused_imports)]
 use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
-#[allow(unused)]
-use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use mltrs::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
@@ -187,7 +184,7 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> PipelineConfig<'a, NoVertex, DrawVertexCount, NoPush> {
+    ) -> PipelineConfig<'a, Graphics, NoPush> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -209,7 +206,7 @@ impl Shader {
             uniform_buffer_handles,
             storage_texture_handles,
         }
-        .build_vertex_count()
+        .build_graphics()
     }
 
     fn vert_entry_point_name(&self) -> CString {
@@ -254,14 +251,6 @@ impl Shader {
 impl ShaderAtlasEntry for Shader {
     fn source_file_name(&self) -> &str {
         &self.reflection_json.source_file_name
-    }
-
-    fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
-        vec![]
-    }
-
-    fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription> {
-        vec![]
     }
 
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {

@@ -75,35 +75,47 @@ live renderer handles. Node constructors take `impl Into<Key>`, so a
 pipeline handle reference (`&pipeline`) converts at the call site. Mint
 buffer slots with `UniformSlot::from(&buffer)`, `CpuUpdatedSlot::from(&buffer)`,
 or `(&buffer).into()` inline. The keys are `Copy`. Each key carries the
-pipeline's family and push interface in its type. A vertex-count pipeline
-cannot drive an indexed draw. A push-constant pipeline cannot build a
-no-push command.
+pipeline's family and push interface in its type: `ComputePipelineKey`,
+`GraphicsPipelineKey`, or `GraphicsIndirectPipelineKey`. A direct graphics
+pipeline cannot drive an indirect draw, nor the reverse. A push-constant
+pipeline cannot build a no-push command.
 
-`Renderer::create_pipeline` returns a
-`GraphicsPipelineHandle<I, D, P>`. `I` is the pipeline's vertex interface,
-fixed by the config constructor:
+### Vertex pulling and pipeline kinds
 
-| Constructor | Interface `I` | Draw kind |
-| --- | --- | --- |
-| generated indexed `pipeline_config()` then `.with_vertices(vec, indices)` or `.with_shared_mesh(&mesh)` | `TypedVertex<V>` | `DrawIndexed` (or `.indirect()`) |
-| `PipelineConfigBuilder::build_indexed_bytes(bytes, indices)` | `RuntimeVertex` | `DrawIndexed` (or `.indirect()`) |
-| generated vertex-count `pipeline_config()` (`build_vertex_count`) | `NoVertex` | `DrawVertexCount` |
+There is no fixed-function vertex input. A vertex entry point takes only
+system values, `uint vertexId : SV_VertexID` (plus `uint drawIndex :
+SV_DrawIndex` for indirect draws), and reads its vertex struct through an
+`mltrs::ImmutableAddr<Vertex>`, `ReadAddr<Vertex>`, or `Addr<Vertex>` field of
+its parameter or push block. Reflection rejects a varying struct parameter on
+a vertex entry point with a diagnostic naming that replacement. The vertex
+struct is a std430 pointee, so a `float3` field is followed by 4 bytes of
+padding unless a scalar packs into it; the generated Rust struct spells the
+padding out as `_padding_N` fields and asserts every offset.
 
-Indexed draws and the indexed keys accept only `TypedVertex<V>` and
-`RuntimeVertex` handles (the sealed `IndexedVertexInterface` trait).
-Vertex-count draws and `DrawVertexCountKey` accept only `NoVertex`
-handles. The handle's fields are private, so a handle cannot be built or
-relabeled outside the renderer. Compute pipelines keep the plain
-`PipelineHandle<Compute, P>`. None of the interface markers is a vertex type
-or implements `GPUWrite`; only a generated `V: VertexDescription` is uploaded.
+`Renderer::create_pipeline` returns a `PipelineHandle<K, P>`. `K` is the
+draw-call kind, decided by the shader:
 
-`create_pipeline` checks the vertex input against the shader entry before it
-allocates anything. A `TypedVertex<V>` config must match the shader's binding
-(binding, stride, input rate) and attributes (location, binding, format,
-offset) exactly, which also covers a `build_indexed::<V, P>()` call made
-by hand. A packed-bytes config needs a nonzero multiple of the shader's vertex
-stride and nonempty indices. A vertex-count config needs a shader without
-vertex input. Typed vertices also need nonempty vertex and index data.
+| Vertex entry point | Generated `pipeline_config()` | Kind `K` | Draws |
+| --- | --- | --- | --- |
+| does not read `SV_DrawIndex` | `PipelineConfig<'_, Graphics, P>` (`build_graphics`) | `Graphics` | vertex-count, indexed, index-range |
+| reads `SV_DrawIndex` | `PipelineConfig<'_, GraphicsIndirect, P>` (`build_graphics_indirect`) | `GraphicsIndirect` | indexed-indirect |
+
+Compute pipelines are `PipelineHandle<Compute, P>`. The handle's fields are
+private, so a handle cannot be built or relabeled outside the renderer.
+`create_pipeline` checks the shader against `K` before it allocates anything,
+which matters for a `RuntimeShader` built by hand: a vertex struct parameter is
+rejected, and `SV_DrawIndex` must be read exactly when `K` is
+`GraphicsIndirect`.
+
+Vertices live in an ordinary buffer, usually a singleton buffer bound through
+`SingletonSlot::from(&vertices).addr()`. Indexed draws bind an untyped
+hardware index buffer of `u32` indices, created with
+`Renderer::create_index_buffer(&indices, vertex_count)`. It rejects empty
+indices and a zero vertex count; debug builds also reject any index
+`>= vertex_count`, naming its position. The returned `IndexBufferHandle`
+converts to a `Copy` `IndexBufferSlot` that carries its index count. One
+vertex buffer and one index buffer can serve any number of pipelines and
+draws; `examples/multi_mesh` and `examples/toon_link` share one of each.
 
 The graph fixes two ordering hazards of the manual API:
 
@@ -153,9 +165,9 @@ that are private to the renderer crate and cover every graph implementor
 through one-way blanket impls. The public traits are defined at the `mltrs_render_graph` crate root and
 reexported under `renderer::render_graph`, not directly under `renderer`. There is
 no blanket in the other direction: a type implementing only the renderer
-trait directly cannot enter graph construction. The vertex interface markers
-(`NoVertex`, `TypedVertex<V>`, `RuntimeVertex`) implement neither trait;
-they are type-level labels, not GPU data.
+trait directly cannot enter graph construction. The pipeline kind markers
+(`Graphics`, `GraphicsIndirect`, `Compute`) implement neither trait; they
+are type-level labels, not GPU data.
 
 Game-owned types implement the graph traits. Only code inside the renderer
 crate can implement the backend traits directly; public renderer APIs accept
@@ -257,6 +269,9 @@ its immutable/singleton identity, so lowering still records the read-only
 access and the resolver still routes it to the immutable/singleton storage.
 `examples/ray_marching` binds its sphere singleton this way.
 
+An `IndexBufferHandle` is affine like the others: the graph captures its
+`IndexBufferSlot`, and `execute` checks that slot like any buffer slot.
+
 `upload(slot)` is a node that copies a `Vec<T>` from the params tuple
 into the buffer each frame; the slot is a `CpuUpdatedSlot<T>`, or the storage
 buffer handle it is minted from. An oversized vector returns an error identifying
@@ -280,12 +295,13 @@ dispatch(&compute_push_pipeline, &params_buffer, group_count)
 upload(&storage_buffer)
 optional(node_or_tuple)          // frame element becomes Option<...>
 repeat((body,))                  // frame element becomes (LoopCount, (body,))
-draw_vertex_count(&vertex_count_pipeline, &params_buffer, n, bindings)
-draw_indexed(&indexed_pipeline, &params_buffer, bindings)
-draw_index_range(&indexed_pipeline, &params_buffer, first, count, bindings)
-draw_indexed_indirect(&indirect_pipeline, &params_buffer,
-    &args_buffer, first, count, bindings)
-draw_indexed(&indexed_push_pipeline, &params_buffer, bindings)
+draw_vertex_count(&graphics_pipeline, &params_buffer, n, bindings)
+draw_indexed(&graphics_pipeline, &index_buffer, &params_buffer, bindings)
+draw_index_range(&graphics_pipeline, &index_buffer, &params_buffer,
+    first, count, bindings)
+draw_indexed_indirect(&graphics_indirect_pipeline, &index_buffer,
+    &params_buffer, &args_buffer, first, count, bindings)
+draw_indexed(&graphics_push_pipeline, &index_buffer, &params_buffer, bindings)
     .with_push_constant(push_input)
 picking::<Cursor>(&picking_pipeline)
 ```
@@ -298,13 +314,14 @@ both arrays from one table of per-node data.
 
 `DynDrawNode` is a draw node built from runtime data instead of a generated
 params type, for a host whose graph arrives as plain data (the Roc platform).
-Its constructors take the pipeline family's key, a uniform slot, and the
-parameter block's GPU size:
+Its constructors take a `Graphics` pipeline key, an index buffer slot for
+indexed draws, a uniform slot, and the parameter block's GPU size:
 
 ```rust
-DynDrawNode::indexed(&indexed_pipeline, &uniform_buffer, gpu_size)
-DynDrawNode::index_range(&indexed_pipeline, &uniform_buffer, gpu_size, first, count)
-DynDrawNode::vertex_count(&vertex_count_pipeline, &uniform_buffer, gpu_size, count)
+DynDrawNode::indexed(&graphics_pipeline, &index_buffer, &uniform_buffer, gpu_size)
+DynDrawNode::index_range(&graphics_pipeline, &index_buffer, &uniform_buffer, gpu_size,
+    first, count)
+DynDrawNode::vertex_count(&graphics_pipeline, &uniform_buffer, gpu_size, count)
 ```
 
 Its frame value is a `Vec<u8>` of exactly `gpu_size` packed bytes; any other
@@ -314,10 +331,8 @@ resource bindings or push block yet. A `Vec<N>` of one node type is a node
 whose frame is a `Vec<N::Frame>` of the same length, checked at execution.
 The host creates the uniform buffer with `create_uniform_buffer_bytes` and the
 pipeline from a `RuntimeShader` (`shaders::runtime`) with
-`PipelineConfigBuilder::build_indexed_bytes`, which yields a
-`GraphicsPipelineHandle<RuntimeVertex, DrawIndexed>`. `DynDrawNode::indexed`
-and `index_range` accept any indexed-interface handle; `vertex_count` accepts
-only a `NoVertex` handle.
+`PipelineConfigBuilder::build_graphics`, which yields a
+`PipelineHandle<Graphics, NoPush>`. Indirect draws have no dynamic form.
 
 Compute parameter blocks with resource bindings require
 `.with_param_bindings(bindings)` before the command can enter a graph.
@@ -396,6 +411,9 @@ The validator enforces these rules:
 - An upload must target a storage buffer, and its declared maximum element
   count must fit the buffer. Indirect draw arguments must use an immutable
   buffer. Buffer byte offsets must fit in `u32`.
+- An indexed draw's indices must be an index buffer, and a `draw_index_range`
+  range must fit in the slot's index count. Execution checks the range again
+  against the live buffer's count.
 - Fixed texture dimensions must be nonzero. Extents beyond the device's
   `maxImageDimension2D` are not logical errors: preparation checks them
   against the live device before allocating.

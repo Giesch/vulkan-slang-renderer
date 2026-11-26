@@ -1,5 +1,5 @@
-//! Demonstrates the multi-draw queue, shared meshes, per-pipeline raster state
-//! and per-texture options.
+//! Demonstrates the multi-draw queue, a vertex buffer and index buffer shared
+//! by many pipelines, per-pipeline raster state and per-texture options.
 //!
 //! The foreground is the original multi-draw scene: three shapes concatenated
 //! into one mesh, each baked centered at the origin and placed by its own model
@@ -28,10 +28,10 @@ use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
 
 use mltrs::game::Game;
 use mltrs::renderer::{
-    BlendMode, CullMode, DrawError, DrawNode, FrameRenderer, MeshHandle, PreparedRenderGraph,
-    RasterState, RenderGraph, Renderer, ResourcePlanner, RgbaPixels, SamplerOptions,
-    TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
-    UniformBufferHandle, draw_index_range,
+    BlendMode, CullMode, DrawError, DrawNode, FrameRenderer, IndexBufferHandle,
+    PreparedRenderGraph, RasterState, RenderGraph, Renderer, ResourcePlanner, RgbaPixels,
+    SamplerOptions, SingletonBufferHandle, SingletonSlot, TextureColorSpace, TextureFilter,
+    TextureHandle, TextureOptions, TextureWrap, UniformBufferHandle, draw_index_range,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -334,14 +334,14 @@ type MultiMeshFrame = [MultiMeshParamsData; DRAWS.len()];
 pub struct MultiMesh {
     start_time: Instant,
     graph: MultiMeshGraph,
-    #[allow(unused)]
-    mesh: MeshHandle<Vertex>,
     specs: Vec<PipelineSpec>,
     /// The graph bound these at build time; kept here for ownership.
     _textures: Vec<TextureHandle>,
-    /// The graph captured these buffers' slots at build time; the handles
-    /// stay here to keep the buffers alive.
+    // The graph captured these buffers' slots at build time; the handles
+    // stay here to keep the buffers alive.
     _params_buffers: Vec<UniformBufferHandle<MultiMeshParams>>,
+    _vertex_buffer: SingletonBufferHandle<Vertex>,
+    _index_buffer: IndexBufferHandle,
 }
 
 impl Game for MultiMesh {
@@ -361,8 +361,10 @@ impl Game for MultiMesh {
         // ties INDEX_COUNT (which DRAWS provably covers) to the actual mesh
         assert_eq!(indices.len(), INDEX_COUNT as usize);
 
-        // one shared mesh; every pipeline is pointed at it with .with_shared_mesh()
-        let mesh = renderer.create_mesh(&vertices, &indices)?;
+        // one shared vertex buffer and index buffer; every draw binds both
+        let vertex_buffer = renderer.create_singleton_buffer(&vertices)?;
+        let index_buffer = renderer.create_index_buffer(&indices, vertex_buffer.len())?;
+        let vertex_slot = SingletonSlot::from(&vertex_buffer);
 
         let textures = create_textures(renderer)?;
 
@@ -378,7 +380,6 @@ impl Game for MultiMesh {
             let pipeline_config = shaders
                 .multi_mesh
                 .pipeline_config(resources)
-                .with_shared_mesh(&mesh)
                 .with_raster_state(spec.raster);
             let pipeline = renderer.create_pipeline(pipeline_config)?;
             pairs.push((pipeline, params_buffer));
@@ -393,6 +394,7 @@ impl Game for MultiMesh {
 
             draw_index_range(
                 pipeline,
+                &index_buffer,
                 params_buffer,
                 first_index,
                 index_count,
@@ -400,6 +402,7 @@ impl Game for MultiMesh {
                     texture: textures[specs[pipeline_index].texture]
                         .bindless_handle()
                         .into(),
+                    vertices: vertex_slot.addr(),
                 },
             )
         };
@@ -415,10 +418,11 @@ impl Game for MultiMesh {
         Ok(Self {
             start_time: Instant::now(),
             graph,
-            mesh,
             specs,
             _textures: textures,
             _params_buffers,
+            _vertex_buffer: vertex_buffer,
+            _index_buffer: index_buffer,
         })
     }
 
@@ -686,6 +690,18 @@ fn build_mesh() -> (Vec<Vertex>, Vec<u32>) {
     (vertices, indices)
 }
 
+/// a std430 `Vertex`, whose float3 fields each pad to 16 bytes
+fn vertex(position: Vec3, normal: Vec3, uv0: Vec2) -> Vertex {
+    Vertex {
+        position,
+        _padding_0: [0; 4],
+        normal,
+        _padding_1: [0; 4],
+        uv0,
+        _padding_2: [0; 8],
+    }
+}
+
 /// quad [p0, p1, p2, p3] in CCW order viewed from outside, with matching UVs
 fn push_quad(
     vertices: &mut Vec<Vertex>,
@@ -696,11 +712,7 @@ fn push_quad(
 ) {
     let base = vertices.len() as u32;
     for (position, uv0) in corners.into_iter().zip(uvs) {
-        vertices.push(Vertex {
-            position,
-            normal,
-            uv0,
-        });
+        vertices.push(vertex(position, normal, uv0));
     }
     indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
 }
@@ -711,11 +723,7 @@ fn push_triangle(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>, corners: [V
         .normalize();
     let base = vertices.len() as u32;
     for position in corners {
-        vertices.push(Vertex {
-            position,
-            normal,
-            uv0: Vec2::ZERO,
-        });
+        vertices.push(vertex(position, normal, Vec2::ZERO));
     }
     indices.extend([base, base + 1, base + 2]);
 }
@@ -847,21 +855,13 @@ fn build_disc(vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>) {
     let normal = Vec3::Y;
 
     let base = vertices.len() as u32;
-    vertices.push(Vertex {
-        position: Vec3::ZERO,
-        normal,
-        uv0: Vec2::ZERO,
-    });
+    vertices.push(vertex(Vec3::ZERO, normal, Vec2::ZERO));
     // 19 rim vertices: rim 18 duplicates rim 0's position so wedge 17 doesn't
     // need to wrap around
     for i in 0..=WEDGES {
         let angle = i as f32 / WEDGES as f32 * std::f32::consts::TAU;
         let position = Vec3::new(angle.cos(), 0.0, angle.sin()) * RADIUS;
-        vertices.push(Vertex {
-            position,
-            normal,
-            uv0: Vec2::ZERO,
-        });
+        vertices.push(vertex(position, normal, Vec2::ZERO));
     }
 
     for i in 0..WEDGES {
