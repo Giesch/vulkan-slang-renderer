@@ -2,10 +2,12 @@ import pf.ShaderReflection exposing [BlockSchema, ComputeShader, NoPush, Uniform
 import pf.ResourcePlanner
 import pf.RenderGraph
 import pf.GraphSet
+import pf.Game
 
 ## Negative controls `just roc-platform roc-test` expects to crash:
 ## `GraphSet.select` and `GraphSet.draw` reject a graph their set did not
-## register.
+## register, and a `Game.new` game rejects a submission from a set other
+## than the one it registered.
 ForeignSelection := {}
 
 schema : BlockSchema({ value : U32 }, {})
@@ -68,3 +70,24 @@ foreign = GraphSet.map2(graphs, graphs, |_, _| other.register())
 expect graphs.select(|_| twice.register()).draw({ value: 1 }).to_host().graph_id == 1
 
 expect foreign.draw({ value: 1 }).to_host().graph_id == 0
+
+## `graphs` and `other` share a type but not a definition: this game
+## registers `graphs` and submits `other`'s graph at the same id.
+mismatched : Game
+mismatched = Game.new({
+	init!: |_| Game.Init.titled("foreign submission"),
+	graphs,
+	draw: |_frame| other.draw({ value: 1 }),
+})
+
+expect Game.draw(mismatched, { aspect_ratio: 1.0, elapsed: 0.0 }).graph_id == 0
+
+## The positive control: drawing from the registered set is accepted.
+matched : Game
+matched = Game.new({
+	init!: |_| Game.Init.titled("own submission"),
+	graphs,
+	draw: |_frame| graphs.draw({ value: 1 }),
+})
+
+expect Game.draw(matched, { aspect_ratio: 1.0, elapsed: 0.0 }).graph_id == 0

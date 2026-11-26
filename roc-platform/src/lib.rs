@@ -6,6 +6,7 @@
 use std::ffi::c_void;
 use std::io::{self, BufRead, Write};
 use std::mem::ManuallyDrop;
+use std::ptr::NonNull;
 
 use mltrs::game::Game;
 
@@ -21,7 +22,7 @@ use crate::roc_platform_abi::{
     DefaultAllocators, DefaultHandlers, HostStderrLineResult, HostStderrLineResultPayload,
     HostStderrLineResultTag, HostStdinLineResult, HostStdinLineResultPayload,
     HostStdinLineResultTag, HostStdoutLineResult, HostStdoutLineResultPayload,
-    HostStdoutLineResultTag, RocHost, RocStr, make_roc_host, roc_init,
+    HostStdoutLineResultTag, RocHost, RocStr, make_roc_host, roc_init_owned,
 };
 
 static mut ROC_HOST: *mut RocHost = core::ptr::null_mut();
@@ -138,7 +139,7 @@ pub extern "C" fn roc_stdout_line(message: RocStr) -> HostStdoutLineResult {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn roc_alloc(length: usize, alignment: usize) -> *mut c_void {
+pub extern "C" fn roc_alloc(length: usize, alignment: usize) -> NonNull<c_void> {
     DefaultAllocators::roc_alloc(roc_host_ptr(), length, alignment)
 }
 
@@ -152,7 +153,7 @@ pub extern "C" fn roc_realloc(
     ptr: *mut c_void,
     new_length: usize,
     alignment: usize,
-) -> *mut c_void {
+) -> NonNull<c_void> {
     DefaultAllocators::roc_realloc(roc_host_ptr(), ptr, new_length, alignment)
 }
 
@@ -171,14 +172,12 @@ pub extern "C" fn roc_crashed(bytes: *const u8, len: usize) {
     DefaultHandlers::roc_crashed(roc_host_ptr(), bytes, len);
 }
 
-/// Call the app's `init!` and take ownership of the window title it returns.
+/// Call the app's `init!` and copy the window title it returns.
 fn window_title_from_roc() -> String {
-    let config = unsafe { roc_init() };
-    let title = config.window_title.as_str().to_string();
-    // Safety: `roc_init` transfers the record to the host, and this is the only
-    // decref of its one field.
-    unsafe { config.window_title.decref(roc_host()) };
-    title
+    // Safety: the generated wrapper owns the record and releases it on drop.
+    let init = unsafe { roc_init_owned() };
+
+    init.window_title.as_str().to_string()
 }
 
 /// C-compatible main entry point for the Roc program.

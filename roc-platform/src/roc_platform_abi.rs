@@ -24,6 +24,7 @@
 #![allow(unexpected_cfgs)]
 
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use core::sync::atomic::{fence, AtomicIsize, Ordering};
 #[cfg(not(no_roc_std_helpers))]
 use std::alloc::Layout;
@@ -118,9 +119,11 @@ pub type RocBox = *mut c_void;
 #[repr(C)]
 pub struct RocHost {
     pub env: *mut c_void,
-    pub roc_alloc: extern "C" fn(*mut RocHost, usize, usize) -> *mut c_void,
+    /// Never returns null; see `roc_alloc` below.
+    pub roc_alloc: extern "C" fn(*mut RocHost, usize, usize) -> NonNull<c_void>,
     pub roc_dealloc: extern "C" fn(*mut RocHost, *mut c_void, usize),
-    pub roc_realloc: extern "C" fn(*mut RocHost, *mut c_void, usize, usize) -> *mut c_void,
+    /// Never returns null; see `roc_realloc` below.
+    pub roc_realloc: extern "C" fn(*mut RocHost, *mut c_void, usize, usize) -> NonNull<c_void>,
     pub roc_dbg: extern "C" fn(*mut RocHost, *const u8, usize),
     pub roc_expect_failed: extern "C" fn(*mut RocHost, *const u8, usize),
     pub roc_crashed: extern "C" fn(*mut RocHost, *const u8, usize),
@@ -135,7 +138,7 @@ impl RocHost {
     #[inline]
     pub unsafe fn alloc(&self, alignment: usize, length: usize) -> *mut c_void {
         let host = self as *const RocHost as *mut RocHost;
-        (self.roc_alloc)(host, length, alignment)
+        (self.roc_alloc)(host, length, alignment).as_ptr()
     }
 
     /// Deallocate memory previously allocated with `alloc`.
@@ -162,7 +165,7 @@ impl RocHost {
         new_length: usize,
     ) -> *mut c_void {
         let host = self as *const RocHost as *mut RocHost;
-        (self.roc_realloc)(host, old_ptr, new_length, alignment)
+        (self.roc_realloc)(host, old_ptr, new_length, alignment).as_ptr()
     }
 }
 
@@ -199,9 +202,11 @@ pub type RocErasedCallableOnDrop = extern "C" fn(*mut u8, *mut RocHost);
 pub struct RocErasedCallablePayload {
     pub callable_fn_ptr: RocErasedCallableFn,
     pub on_drop: Option<RocErasedCallableOnDrop>,
+    pub on_copy: Option<extern "C" fn(*mut u8, isize)>,
+    pub capture_size: usize,
 }
 
-const _: () = assert!(core::mem::size_of::<RocErasedCallablePayload>() == 2 * core::mem::size_of::<usize>(), "RocErasedCallablePayload size mismatch");
+const _: () = assert!(core::mem::size_of::<RocErasedCallablePayload>() == 4 * core::mem::size_of::<usize>(), "RocErasedCallablePayload size mismatch");
 const _: () = assert!(core::mem::offset_of!(RocErasedCallablePayload, callable_fn_ptr) == 0, "RocErasedCallablePayload.callable_fn_ptr offset mismatch");
 const _: () = assert!(core::mem::offset_of!(RocErasedCallablePayload, on_drop) == core::mem::size_of::<usize>(), "RocErasedCallablePayload.on_drop offset mismatch");
 
@@ -261,7 +266,7 @@ pub unsafe fn roc_erased_callable_allocate(
     let rc = data.sub(core::mem::size_of::<isize>()) as *mut isize;
     *rc = 1;
     let payload = roc_erased_callable_payload_ptr(data);
-    *payload = RocErasedCallablePayload { callable_fn_ptr, on_drop };
+    *payload = RocErasedCallablePayload { callable_fn_ptr, on_drop, on_copy: None, capture_size };
     data
 }
 
@@ -956,6 +961,119 @@ impl<T: core::fmt::Debug, const ELEMENTS_REFCOUNTED: bool> core::fmt::Debug for 
     }
 }
 
+/// A Roc list whose items have a type only the application knows.
+///
+/// This host knows neither the size of an item nor whether items are
+/// refcounted, so it cannot read an item, allocate such a list, or release
+/// one. It can move the list, retain it, and pass it back to Roc. To release
+/// it, pass it to a Roc function that takes ownership of it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RocOpaqueList {
+    pub elements: *mut c_void,
+    pub length: usize,
+    pub capacity_or_alloc_ptr: usize,
+}
+
+impl RocOpaqueList {
+    /// Return the number of items in the list.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.length
+    }
+
+    /// Return true if the list has zero items.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    /// Increment the reference count by `amount`.
+    ///
+    /// # Safety
+    /// `self` must point at a live Roc list allocation. The retained references
+    /// must be handed back to Roc.
+    pub unsafe fn incref(self, amount: isize) {
+        unsafe { retain_list_allocation(self.elements as *mut u8, self.capacity_or_alloc_ptr, amount); }
+    }
+}
+
+/// A Roc list whose items hold opaque Roc values.
+///
+/// The items have a known layout, so the host can read them. Whether the
+/// opaque values inside them are refcounted is known only to Roc, and the
+/// list's allocation header depends on it, so the host cannot allocate such
+/// a list or release one. It can move the list, retain it, and pass it back
+/// to Roc. To release it, pass it to a Roc function that takes ownership of
+/// it.
+#[repr(C)]
+pub struct RocHeldList<T> {
+    pub elements: *mut T,
+    pub length: usize,
+    pub capacity_or_alloc_ptr: usize,
+}
+
+impl<T> Clone for RocHeldList<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for RocHeldList<T> {}
+
+impl<T> RocHeldList<T> {
+    /// Return the number of items in the list.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.length
+    }
+
+    /// Return true if the list has zero items.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    /// Return the list items as a slice.
+    pub fn as_slice(&self) -> &[T] {
+        if self.elements.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.elements, self.length) }
+        }
+    }
+
+    /// Increment the reference count by `amount`.
+    ///
+    /// # Safety
+    /// `self` must point at a live Roc list allocation. The retained references
+    /// must be handed back to Roc.
+    pub unsafe fn incref(self, amount: isize) {
+        unsafe { retain_list_allocation(self.elements as *mut u8, self.capacity_or_alloc_ptr, amount); }
+    }
+}
+
+/// Add `amount` references to a list's allocation. The refcount slot sits
+/// directly before the allocation's first item whatever the item type is,
+/// and a seamless slice names its allocation in `capacity_or_alloc_ptr`.
+unsafe fn retain_list_allocation(elements: *mut u8, capacity_or_alloc_ptr: usize, amount: isize) {
+    let alloc_ptr = if (capacity_or_alloc_ptr & 1) != 0 {
+        (capacity_or_alloc_ptr & !1) as *mut u8
+    } else {
+        elements
+    };
+    if alloc_ptr.is_null() {
+        return;
+    }
+    let rc = unsafe { (alloc_ptr as *mut AtomicIsize).sub(1) };
+    if unsafe { (*rc).load(Ordering::Relaxed) } == 0 {
+        return; // REFCOUNT_STATIC_DATA
+    }
+    unsafe {
+        (*rc).fetch_add(amount, Ordering::Relaxed);
+    }
+}
+
 /// Statically describes how to release one owned Roc ABI value of type `T`.
 ///
 /// # Safety
@@ -1098,55 +1216,1393 @@ unsafe impl<T> RocRelease<*mut T> for RocBoxSpineRelease<T> {
     }
 }
 
-/// Element type for __AnonStruct_621dc7eda441df2f
+/// Element type for Game.HostConfig
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct AnonStruct621dc7eda441df2f {
-    pub init_bang: RocErasedCallable,
+pub struct GameHostConfig {
+    pub graphs: RocList<ValidatedRenderGraphHostGraph>,
 }
 
-/// Element type for __AnonStruct_621dc7eda441df2f
+/// Element type for Game.HostConfig
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct AnonStruct621dc7eda441df2f {
-    pub init_bang: RocErasedCallable,
+pub struct GameHostConfig {
+    pub graphs: RocList<ValidatedRenderGraphHostGraph>,
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<AnonStruct621dc7eda441df2f>() == 8, "AnonStruct621dc7eda441df2f size mismatch");
+const _: () = assert!(core::mem::size_of::<GameHostConfig>() == 24, "GameHostConfig size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<AnonStruct621dc7eda441df2f>() == 8, "AnonStruct621dc7eda441df2f alignment mismatch");
+const _: () = assert!(core::mem::align_of::<GameHostConfig>() == 8, "GameHostConfig alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<AnonStruct621dc7eda441df2f>() == 4, "AnonStruct621dc7eda441df2f size mismatch");
+const _: () = assert!(core::mem::size_of::<GameHostConfig>() == 12, "GameHostConfig size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<AnonStruct621dc7eda441df2f>() == 4, "AnonStruct621dc7eda441df2f alignment mismatch");
+const _: () = assert!(core::mem::align_of::<GameHostConfig>() == 4, "GameHostConfig alignment mismatch");
 
-/// Element type for InitConfig
+/// Element type for ValidatedRenderGraph.HostGraph
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct InitConfig {
-    pub window_title: RocStr,
+pub struct ValidatedRenderGraphHostGraph {
+    pub buffers: RocList<ValidatedRenderGraphHostBuffer>,
+    pub desc: RenderGraphDescGraphDesc,
+    pub import_decls: RocList<ValidatedRenderGraphHostImport>,
+    pub pipeline_indices: RocListWith<u32, false>,
+    pub pipelines: RocList<ValidatedRenderGraphHostPipeline>,
+    pub schemas: RenderGraphDescSchemaTable,
+    pub uniform_buffers: RocList<ValidatedRenderGraphHostUniformBuffer>,
+    pub uniform_slots: RocListWith<u32, false>,
 }
 
-/// Element type for InitConfig
+/// Element type for ValidatedRenderGraph.HostGraph
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct InitConfig {
-    pub window_title: RocStr,
+pub struct ValidatedRenderGraphHostGraph {
+    pub buffers: RocList<ValidatedRenderGraphHostBuffer>,
+    pub desc: RenderGraphDescGraphDesc,
+    pub import_decls: RocList<ValidatedRenderGraphHostImport>,
+    pub pipeline_indices: RocListWith<u32, false>,
+    pub pipelines: RocList<ValidatedRenderGraphHostPipeline>,
+    pub schemas: RenderGraphDescSchemaTable,
+    pub uniform_buffers: RocList<ValidatedRenderGraphHostUniformBuffer>,
+    pub uniform_slots: RocListWith<u32, false>,
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<InitConfig>() == 24, "InitConfig size mismatch");
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostGraph>() == 368, "ValidatedRenderGraphHostGraph size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<InitConfig>() == 8, "InitConfig alignment mismatch");
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostGraph>() == 8, "ValidatedRenderGraphHostGraph alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<InitConfig>() == 12, "InitConfig size mismatch");
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostGraph>() == 188, "ValidatedRenderGraphHostGraph size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<InitConfig>() == 4, "InitConfig alignment mismatch");
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostGraph>() == 4, "ValidatedRenderGraphHostGraph alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostBuffer
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostBuffer {
+    pub contents: ValidatedRenderGraphHostBufferContents,
+    pub name: RocStr,
+    pub element_size: u32,
+    pub len: u32,
+    pub role: ValidatedRenderGraphHostBufferRole,
+}
+
+/// Element type for ValidatedRenderGraph.HostBuffer
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostBuffer {
+    pub contents: ValidatedRenderGraphHostBufferContents,
+    pub name: RocStr,
+    pub element_size: u32,
+    pub len: u32,
+    pub role: ValidatedRenderGraphHostBufferRole,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostBuffer>() == 80, "ValidatedRenderGraphHostBuffer size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostBuffer>() == 8, "ValidatedRenderGraphHostBuffer alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostBuffer>() == 44, "ValidatedRenderGraphHostBuffer size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostBuffer>() == 4, "ValidatedRenderGraphHostBuffer alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostIndices
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostIndices {
+    pub indices: RocListWith<u32, false>,
+    pub vertex_count: u32,
+}
+
+/// Element type for ValidatedRenderGraph.HostIndices
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostIndices {
+    pub indices: RocListWith<u32, false>,
+    pub vertex_count: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostIndices>() == 32, "ValidatedRenderGraphHostIndices size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostIndices>() == 8, "ValidatedRenderGraphHostIndices alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostIndices>() == 16, "ValidatedRenderGraphHostIndices size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostIndices>() == 4, "ValidatedRenderGraphHostIndices alignment mismatch");
+
+/// Element type for RenderGraphDesc.GraphDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescGraphDesc {
+    pub buffers: RocList<RenderGraphDescBufferDecl>,
+    pub import_decls: RocList<RenderGraphDescImportDecl>,
+    pub passes: RocList<RenderGraphDescPassDesc>,
+    pub pipelines: RocList<RenderGraphDescPipelineDecl>,
+    pub textures: RocList<RenderGraphDescTexDecl>,
+    pub uniforms: RocList<RenderGraphDescUniformDecl>,
+    pub uploads: RocList<RenderGraphDescUploadDesc>,
+    pub values: RocList<RenderGraphDescValueDecl>,
+    pub picking: RenderGraphDescMaybePicking,
+}
+
+/// Element type for RenderGraphDesc.GraphDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescGraphDesc {
+    pub buffers: RocList<RenderGraphDescBufferDecl>,
+    pub import_decls: RocList<RenderGraphDescImportDecl>,
+    pub passes: RocList<RenderGraphDescPassDesc>,
+    pub pipelines: RocList<RenderGraphDescPipelineDecl>,
+    pub textures: RocList<RenderGraphDescTexDecl>,
+    pub uniforms: RocList<RenderGraphDescUniformDecl>,
+    pub uploads: RocList<RenderGraphDescUploadDesc>,
+    pub values: RocList<RenderGraphDescValueDecl>,
+    pub picking: RenderGraphDescMaybePicking,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescGraphDesc>() == 200, "RenderGraphDescGraphDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescGraphDesc>() == 8, "RenderGraphDescGraphDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescGraphDesc>() == 104, "RenderGraphDescGraphDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescGraphDesc>() == 4, "RenderGraphDescGraphDesc alignment mismatch");
+
+/// Element type for RenderGraphDesc.BufferDecl
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescBufferDecl {
+    pub name: RocStr,
+    pub capacity: RenderGraphDescMaybeU32,
+    pub elem_size: RenderGraphDescMaybeU32,
+    pub kind: RenderGraphDescBufferKind,
+}
+
+/// Element type for RenderGraphDesc.BufferDecl
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescBufferDecl {
+    pub name: RocStr,
+    pub capacity: RenderGraphDescMaybeU32,
+    pub elem_size: RenderGraphDescMaybeU32,
+    pub kind: RenderGraphDescBufferKind,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBufferDecl>() == 48, "RenderGraphDescBufferDecl size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBufferDecl>() == 8, "RenderGraphDescBufferDecl alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBufferDecl>() == 32, "RenderGraphDescBufferDecl size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBufferDecl>() == 4, "RenderGraphDescBufferDecl alignment mismatch");
+
+/// Element type for RenderGraphDesc.ImportDecl
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescImportDecl {
+    pub name: RocStr,
+}
+
+/// Element type for RenderGraphDesc.ImportDecl
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescImportDecl {
+    pub name: RocStr,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescImportDecl>() == 24, "RenderGraphDescImportDecl size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescImportDecl>() == 8, "RenderGraphDescImportDecl alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescImportDecl>() == 12, "RenderGraphDescImportDecl size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescImportDecl>() == 4, "RenderGraphDescImportDecl alignment mismatch");
+
+/// Element type for RenderGraphDesc.DispatchDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescDispatchDesc {
+    pub name: RocStr,
+    pub push: RenderGraphDescMaybePush,
+    pub groups: RenderGraphDescGroupSource,
+    pub pipeline: u32,
+    pub uniform: u32,
+}
+
+/// Element type for RenderGraphDesc.DispatchDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescDispatchDesc {
+    pub name: RocStr,
+    pub push: RenderGraphDescMaybePush,
+    pub groups: RenderGraphDescGroupSource,
+    pub pipeline: u32,
+    pub uniform: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescDispatchDesc>() == 96, "RenderGraphDescDispatchDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescDispatchDesc>() == 8, "RenderGraphDescDispatchDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescDispatchDesc>() == 64, "RenderGraphDescDispatchDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescDispatchDesc>() == 4, "RenderGraphDescDispatchDesc alignment mismatch");
+
+/// Element type for RenderGraphDesc.GroupCount
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescGroupCount {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
+/// Element type for RenderGraphDesc.GroupCount
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescGroupCount {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescGroupCount>() == 12, "RenderGraphDescGroupCount size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescGroupCount>() == 4, "RenderGraphDescGroupCount alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescGroupCount>() == 12, "RenderGraphDescGroupCount size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescGroupCount>() == 4, "RenderGraphDescGroupCount alignment mismatch");
+
+/// Element type for RenderGraphDesc.PushDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescPushDesc {
+    pub bindings: RocListWith<RenderGraphDescResourceBinding, false>,
+    pub data: RenderGraphDescMaybeU32,
+    pub schema: u32,
+}
+
+/// Element type for RenderGraphDesc.PushDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescPushDesc {
+    pub bindings: RocListWith<RenderGraphDescResourceBinding, false>,
+    pub data: RenderGraphDescMaybeU32,
+    pub schema: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPushDesc>() == 40, "RenderGraphDescPushDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPushDesc>() == 8, "RenderGraphDescPushDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPushDesc>() == 24, "RenderGraphDescPushDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPushDesc>() == 4, "RenderGraphDescPushDesc alignment mismatch");
+
+/// Element type for RenderGraphDesc.ResourceBinding
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescResourceBinding {
+    pub resource: RenderGraphDescResourceRef,
+    pub key: u16,
+}
+
+/// Element type for RenderGraphDesc.ResourceBinding
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescResourceBinding {
+    pub resource: RenderGraphDescResourceRef,
+    pub key: u16,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceBinding>() == 32, "RenderGraphDescResourceBinding size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceBinding>() == 4, "RenderGraphDescResourceBinding alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceBinding>() == 32, "RenderGraphDescResourceBinding size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceBinding>() == 4, "RenderGraphDescResourceBinding alignment mismatch");
+
+/// Element type for RenderGraphDesc.BufferRef
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescBufferRef {
+    pub buffer: u32,
+    pub offset: u32,
+    pub range: RenderGraphDescMaybeU32,
+    pub slot: RenderGraphDescSlotSel,
+}
+
+/// Element type for RenderGraphDesc.BufferRef
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescBufferRef {
+    pub buffer: u32,
+    pub offset: u32,
+    pub range: RenderGraphDescMaybeU32,
+    pub slot: RenderGraphDescSlotSel,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBufferRef>() == 20, "RenderGraphDescBufferRef size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBufferRef>() == 4, "RenderGraphDescBufferRef alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBufferRef>() == 20, "RenderGraphDescBufferRef size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBufferRef>() == 4, "RenderGraphDescBufferRef alignment mismatch");
+
+/// Element type for RenderGraphDesc.RasterDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescRasterDesc {
+    pub draws: RocList<RenderGraphDescDrawDesc>,
+    pub name: RocStr,
+    pub raster_targets: RenderGraphDescRasterTargets,
+}
+
+/// Element type for RenderGraphDesc.RasterDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescRasterDesc {
+    pub draws: RocList<RenderGraphDescDrawDesc>,
+    pub name: RocStr,
+    pub raster_targets: RenderGraphDescRasterTargets,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescRasterDesc>() == 88, "RenderGraphDescRasterDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescRasterDesc>() == 8, "RenderGraphDescRasterDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescRasterDesc>() == 48, "RenderGraphDescRasterDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescRasterDesc>() == 4, "RenderGraphDescRasterDesc alignment mismatch");
+
+/// Element type for RenderGraphDesc.DrawDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescDrawDesc {
+    pub name: RocStr,
+    pub push: RenderGraphDescMaybePush,
+    pub call: RenderGraphDescDrawCall,
+    pub pipeline: u32,
+    pub uniform: u32,
+}
+
+/// Element type for RenderGraphDesc.DrawDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescDrawDesc {
+    pub name: RocStr,
+    pub push: RenderGraphDescMaybePush,
+    pub call: RenderGraphDescDrawCall,
+    pub pipeline: u32,
+    pub uniform: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescDrawDesc>() == 112, "RenderGraphDescDrawDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescDrawDesc>() == 8, "RenderGraphDescDrawDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescDrawDesc>() == 80, "RenderGraphDescDrawDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescDrawDesc>() == 4, "RenderGraphDescDrawDesc alignment mismatch");
+
+/// Element type for RenderGraphDesc.IndexRangeCall
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescIndexRangeCall {
+    pub first_index: u32,
+    pub index_count: u32,
+    pub indices: u32,
+}
+
+/// Element type for RenderGraphDesc.IndexRangeCall
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescIndexRangeCall {
+    pub first_index: u32,
+    pub index_count: u32,
+    pub indices: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescIndexRangeCall>() == 12, "RenderGraphDescIndexRangeCall size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescIndexRangeCall>() == 4, "RenderGraphDescIndexRangeCall alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescIndexRangeCall>() == 12, "RenderGraphDescIndexRangeCall size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescIndexRangeCall>() == 4, "RenderGraphDescIndexRangeCall alignment mismatch");
+
+/// Element type for RenderGraphDesc.IndexedIndirectCall
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescIndexedIndirectCall {
+    pub args: RenderGraphDescBufferRef,
+    pub draw_count: u32,
+    pub indices: u32,
+}
+
+/// Element type for RenderGraphDesc.IndexedIndirectCall
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescIndexedIndirectCall {
+    pub args: RenderGraphDescBufferRef,
+    pub draw_count: u32,
+    pub indices: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescIndexedIndirectCall>() == 28, "RenderGraphDescIndexedIndirectCall size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescIndexedIndirectCall>() == 4, "RenderGraphDescIndexedIndirectCall alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescIndexedIndirectCall>() == 28, "RenderGraphDescIndexedIndirectCall size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescIndexedIndirectCall>() == 4, "RenderGraphDescIndexedIndirectCall alignment mismatch");
+
+/// Element type for RenderGraphDesc.WholeIndexedCall
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescWholeIndexedCall {
+    pub indices: u32,
+}
+
+/// Element type for RenderGraphDesc.WholeIndexedCall
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescWholeIndexedCall {
+    pub indices: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescWholeIndexedCall>() == 4, "RenderGraphDescWholeIndexedCall size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescWholeIndexedCall>() == 4, "RenderGraphDescWholeIndexedCall alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescWholeIndexedCall>() == 4, "RenderGraphDescWholeIndexedCall size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescWholeIndexedCall>() == 4, "RenderGraphDescWholeIndexedCall alignment mismatch");
+
+/// Element type for RenderGraphDesc.OffscreenTargets
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescOffscreenTargets {
+    pub color: RocListWith<u32, false>,
+    pub depth: RenderGraphDescMaybeU32,
+}
+
+/// Element type for RenderGraphDesc.OffscreenTargets
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescOffscreenTargets {
+    pub color: RocListWith<u32, false>,
+    pub depth: RenderGraphDescMaybeU32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescOffscreenTargets>() == 32, "RenderGraphDescOffscreenTargets size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescOffscreenTargets>() == 8, "RenderGraphDescOffscreenTargets alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescOffscreenTargets>() == 20, "RenderGraphDescOffscreenTargets size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescOffscreenTargets>() == 4, "RenderGraphDescOffscreenTargets alignment mismatch");
+
+/// Element type for RenderGraphDesc.RepeatPass
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescRepeatPass {
+    pub body: RocList<RenderGraphDescLeafPass>,
+    pub name: RocStr,
+    pub count: u32,
+}
+
+/// Element type for RenderGraphDesc.RepeatPass
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescRepeatPass {
+    pub body: RocList<RenderGraphDescLeafPass>,
+    pub name: RocStr,
+    pub count: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescRepeatPass>() == 56, "RenderGraphDescRepeatPass size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescRepeatPass>() == 8, "RenderGraphDescRepeatPass alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescRepeatPass>() == 28, "RenderGraphDescRepeatPass size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescRepeatPass>() == 4, "RenderGraphDescRepeatPass alignment mismatch");
+
+/// Element type for RenderGraphDesc.WhenPass
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescWhenPass {
+    pub body: RocList<RenderGraphDescLeafPass>,
+    pub name: RocStr,
+    pub value: u32,
+}
+
+/// Element type for RenderGraphDesc.WhenPass
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescWhenPass {
+    pub body: RocList<RenderGraphDescLeafPass>,
+    pub name: RocStr,
+    pub value: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescWhenPass>() == 56, "RenderGraphDescWhenPass size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescWhenPass>() == 8, "RenderGraphDescWhenPass alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescWhenPass>() == 28, "RenderGraphDescWhenPass size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescWhenPass>() == 4, "RenderGraphDescWhenPass alignment mismatch");
+
+/// Element type for RenderGraphDesc.PickingDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescPickingDesc {
+    pub cursor: u32,
+}
+
+/// Element type for RenderGraphDesc.PickingDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescPickingDesc {
+    pub cursor: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPickingDesc>() == 4, "RenderGraphDescPickingDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPickingDesc>() == 4, "RenderGraphDescPickingDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPickingDesc>() == 4, "RenderGraphDescPickingDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPickingDesc>() == 4, "RenderGraphDescPickingDesc alignment mismatch");
+
+/// Element type for RenderGraphDesc.PipelineDecl
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescPipelineDecl {
+    pub name: RocStr,
+    pub params: u32,
+    pub push: RenderGraphDescMaybeU32,
+    pub kind: RenderGraphDescPipelineKind,
+}
+
+/// Element type for RenderGraphDesc.PipelineDecl
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescPipelineDecl {
+    pub name: RocStr,
+    pub params: u32,
+    pub push: RenderGraphDescMaybeU32,
+    pub kind: RenderGraphDescPipelineKind,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPipelineDecl>() == 40, "RenderGraphDescPipelineDecl size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPipelineDecl>() == 8, "RenderGraphDescPipelineDecl alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPipelineDecl>() == 28, "RenderGraphDescPipelineDecl size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPipelineDecl>() == 4, "RenderGraphDescPipelineDecl alignment mismatch");
+
+/// Element type for RenderGraphDesc.TexDecl
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescTexDecl {
+    pub name: RocStr,
+    pub size: RenderGraphDescSizeClass,
+    pub format: RenderGraphDescGraphFormat,
+    pub usage: RenderGraphDescTexUsage,
+}
+
+/// Element type for RenderGraphDesc.TexDecl
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescTexDecl {
+    pub name: RocStr,
+    pub size: RenderGraphDescSizeClass,
+    pub format: RenderGraphDescGraphFormat,
+    pub usage: RenderGraphDescTexUsage,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescTexDecl>() == 40, "RenderGraphDescTexDecl size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescTexDecl>() == 8, "RenderGraphDescTexDecl alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescTexDecl>() == 28, "RenderGraphDescTexDecl size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescTexDecl>() == 4, "RenderGraphDescTexDecl alignment mismatch");
+
+/// Element type for RenderGraphDesc.UniformDecl
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescUniformDecl {
+    pub name: RocStr,
+    pub source: RenderGraphDescUniformSourceDesc,
+    pub schema: u32,
+}
+
+/// Element type for RenderGraphDesc.UniformDecl
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescUniformDecl {
+    pub name: RocStr,
+    pub source: RenderGraphDescUniformSourceDesc,
+    pub schema: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescUniformDecl>() == 64, "RenderGraphDescUniformDecl size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescUniformDecl>() == 8, "RenderGraphDescUniformDecl alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescUniformDecl>() == 36, "RenderGraphDescUniformDecl size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescUniformDecl>() == 4, "RenderGraphDescUniformDecl alignment mismatch");
+
+/// Element type for RenderGraphDesc.UniformSourceDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescUniformSourceDesc {
+    pub bindings: RocListWith<RenderGraphDescResourceBinding, false>,
+    pub data: RenderGraphDescMaybeU32,
+}
+
+/// Element type for RenderGraphDesc.UniformSourceDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescUniformSourceDesc {
+    pub bindings: RocListWith<RenderGraphDescResourceBinding, false>,
+    pub data: RenderGraphDescMaybeU32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescUniformSourceDesc>() == 32, "RenderGraphDescUniformSourceDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescUniformSourceDesc>() == 8, "RenderGraphDescUniformSourceDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescUniformSourceDesc>() == 20, "RenderGraphDescUniformSourceDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescUniformSourceDesc>() == 4, "RenderGraphDescUniformSourceDesc alignment mismatch");
+
+/// Element type for RenderGraphDesc.UploadDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescUploadDesc {
+    pub name: RocStr,
+    pub buffer: u32,
+    pub value: u32,
+}
+
+/// Element type for RenderGraphDesc.UploadDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescUploadDesc {
+    pub name: RocStr,
+    pub buffer: u32,
+    pub value: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescUploadDesc>() == 32, "RenderGraphDescUploadDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescUploadDesc>() == 8, "RenderGraphDescUploadDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescUploadDesc>() == 20, "RenderGraphDescUploadDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescUploadDesc>() == 4, "RenderGraphDescUploadDesc alignment mismatch");
+
+/// Element type for RenderGraphDesc.ValueDecl
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescValueDecl {
+    pub name: RocStr,
+    pub kind: RenderGraphDescValueKind,
+    pub scope: RenderGraphDescValueScope,
+    pub optional: bool,
+}
+
+/// Element type for RenderGraphDesc.ValueDecl
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescValueDecl {
+    pub name: RocStr,
+    pub kind: RenderGraphDescValueKind,
+    pub scope: RenderGraphDescValueScope,
+    pub optional: bool,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescValueDecl>() == 48, "RenderGraphDescValueDecl size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescValueDecl>() == 8, "RenderGraphDescValueDecl alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescValueDecl>() == 36, "RenderGraphDescValueDecl size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescValueDecl>() == 4, "RenderGraphDescValueDecl alignment mismatch");
+
+/// Element type for RenderGraphDesc.ArrayValue
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescArrayValue {
+    pub elem: u32,
+    pub max_len: u32,
+}
+
+/// Element type for RenderGraphDesc.ArrayValue
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescArrayValue {
+    pub elem: u32,
+    pub max_len: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescArrayValue>() == 8, "RenderGraphDescArrayValue size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescArrayValue>() == 4, "RenderGraphDescArrayValue alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescArrayValue>() == 8, "RenderGraphDescArrayValue size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescArrayValue>() == 4, "RenderGraphDescArrayValue alignment mismatch");
+
+/// Element type for RenderGraphDesc.BytesValue
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescBytesValue {
+    pub schema: u32,
+}
+
+/// Element type for RenderGraphDesc.BytesValue
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescBytesValue {
+    pub schema: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBytesValue>() == 4, "RenderGraphDescBytesValue size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBytesValue>() == 4, "RenderGraphDescBytesValue alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBytesValue>() == 4, "RenderGraphDescBytesValue size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBytesValue>() == 4, "RenderGraphDescBytesValue alignment mismatch");
+
+/// Element type for RenderGraphDesc.RepeatScope
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescRepeatScope {
+    pub count: u32,
+}
+
+/// Element type for RenderGraphDesc.RepeatScope
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescRepeatScope {
+    pub count: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescRepeatScope>() == 4, "RenderGraphDescRepeatScope size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescRepeatScope>() == 4, "RenderGraphDescRepeatScope alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescRepeatScope>() == 4, "RenderGraphDescRepeatScope size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescRepeatScope>() == 4, "RenderGraphDescRepeatScope alignment mismatch");
+
+/// Element type for RenderGraphDesc.WhenScope
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescWhenScope {
+    pub gate: u32,
+}
+
+/// Element type for RenderGraphDesc.WhenScope
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescWhenScope {
+    pub gate: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescWhenScope>() == 4, "RenderGraphDescWhenScope size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescWhenScope>() == 4, "RenderGraphDescWhenScope alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescWhenScope>() == 4, "RenderGraphDescWhenScope size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescWhenScope>() == 4, "RenderGraphDescWhenScope alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostImport
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostImport {
+    pub name: RocStr,
+}
+
+/// Element type for ValidatedRenderGraph.HostImport
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostImport {
+    pub name: RocStr,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostImport>() == 24, "ValidatedRenderGraphHostImport size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostImport>() == 8, "ValidatedRenderGraphHostImport alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostImport>() == 12, "ValidatedRenderGraphHostImport size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostImport>() == 4, "ValidatedRenderGraphHostImport alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostPipeline
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostPipeline {
+    pub name: RocStr,
+    pub reflection_json: RocStr,
+    pub stages: ValidatedRenderGraphHostPipelineStages,
+    pub uniform_buffers: RocListWith<u32, false>,
+    pub kind: RenderGraphDescPipelineKind,
+}
+
+/// Element type for ValidatedRenderGraph.HostPipeline
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostPipeline {
+    pub name: RocStr,
+    pub reflection_json: RocStr,
+    pub stages: ValidatedRenderGraphHostPipelineStages,
+    pub uniform_buffers: RocListWith<u32, false>,
+    pub kind: RenderGraphDescPipelineKind,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostPipeline>() == 152, "ValidatedRenderGraphHostPipeline size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostPipeline>() == 8, "ValidatedRenderGraphHostPipeline alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostPipeline>() == 80, "ValidatedRenderGraphHostPipeline size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostPipeline>() == 4, "ValidatedRenderGraphHostPipeline alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostComputeStages
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostComputeStages {
+    pub compute_spv: RocListWith<u8, false>,
+    pub workgroup_size: ValidatedRenderGraphHostWorkgroupSize,
+}
+
+/// Element type for ValidatedRenderGraph.HostComputeStages
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostComputeStages {
+    pub compute_spv: RocListWith<u8, false>,
+    pub workgroup_size: ValidatedRenderGraphHostWorkgroupSize,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostComputeStages>() == 40, "ValidatedRenderGraphHostComputeStages size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostComputeStages>() == 8, "ValidatedRenderGraphHostComputeStages alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostComputeStages>() == 24, "ValidatedRenderGraphHostComputeStages size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostComputeStages>() == 4, "ValidatedRenderGraphHostComputeStages alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostWorkgroupSize
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostWorkgroupSize {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
+/// Element type for ValidatedRenderGraph.HostWorkgroupSize
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostWorkgroupSize {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostWorkgroupSize>() == 12, "ValidatedRenderGraphHostWorkgroupSize size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostWorkgroupSize>() == 4, "ValidatedRenderGraphHostWorkgroupSize alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostWorkgroupSize>() == 12, "ValidatedRenderGraphHostWorkgroupSize size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostWorkgroupSize>() == 4, "ValidatedRenderGraphHostWorkgroupSize alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostGraphicsStages
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostGraphicsStages {
+    pub fragment_spv: RocListWith<u8, false>,
+    pub vertex_spv: RocListWith<u8, false>,
+    pub raster: RasterState,
+}
+
+/// Element type for ValidatedRenderGraph.HostGraphicsStages
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostGraphicsStages {
+    pub fragment_spv: RocListWith<u8, false>,
+    pub vertex_spv: RocListWith<u8, false>,
+    pub raster: RasterState,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostGraphicsStages>() == 64, "ValidatedRenderGraphHostGraphicsStages size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostGraphicsStages>() == 8, "ValidatedRenderGraphHostGraphicsStages alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostGraphicsStages>() == 36, "ValidatedRenderGraphHostGraphicsStages size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostGraphicsStages>() == 4, "ValidatedRenderGraphHostGraphicsStages alignment mismatch");
+
+/// Element type for RasterState
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RasterState {
+    pub blend: RasterStateBlendMode,
+    pub color_write: RasterStateColorWrite,
+    pub cull: RasterStateCullMode,
+    pub depth_test: RasterStateDepthCompare,
+    pub depth_write: bool,
+    pub stencil: RasterStateStencilMode,
+}
+
+/// Element type for RasterState
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RasterState {
+    pub blend: RasterStateBlendMode,
+    pub color_write: RasterStateColorWrite,
+    pub cull: RasterStateCullMode,
+    pub depth_test: RasterStateDepthCompare,
+    pub depth_write: bool,
+    pub stencil: RasterStateStencilMode,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RasterState>() == 10, "RasterState size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RasterState>() == 1, "RasterState alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RasterState>() == 10, "RasterState size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RasterState>() == 1, "RasterState alignment mismatch");
+
+/// Element type for RasterState.ColorWrite
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RasterStateColorWrite {
+    pub a: bool,
+    pub b: bool,
+    pub g: bool,
+    pub r: bool,
+}
+
+/// Element type for RasterState.ColorWrite
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RasterStateColorWrite {
+    pub a: bool,
+    pub b: bool,
+    pub g: bool,
+    pub r: bool,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RasterStateColorWrite>() == 4, "RasterStateColorWrite size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RasterStateColorWrite>() == 1, "RasterStateColorWrite alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RasterStateColorWrite>() == 4, "RasterStateColorWrite size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RasterStateColorWrite>() == 1, "RasterStateColorWrite alignment mismatch");
+
+/// Element type for RenderGraphDesc.SchemaTable
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaTable {
+    pub schemas: RocList<RenderGraphDescSchemaDesc>,
+}
+
+/// Element type for RenderGraphDesc.SchemaTable
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaTable {
+    pub schemas: RocList<RenderGraphDescSchemaDesc>,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaTable>() == 24, "RenderGraphDescSchemaTable size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaTable>() == 8, "RenderGraphDescSchemaTable alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaTable>() == 12, "RenderGraphDescSchemaTable size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaTable>() == 4, "RenderGraphDescSchemaTable alignment mismatch");
+
+/// Element type for RenderGraphDesc.SchemaDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaDesc {
+    pub layout: RenderGraphDescMaybeLayout,
+    pub name: RocStr,
+    pub resource_fields: RocListWith<RenderGraphDescResourceFieldKind, false>,
+    pub size: u32,
+}
+
+/// Element type for RenderGraphDesc.SchemaDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaDesc {
+    pub layout: RenderGraphDescMaybeLayout,
+    pub name: RocStr,
+    pub resource_fields: RocListWith<RenderGraphDescResourceFieldKind, false>,
+    pub size: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaDesc>() == 88, "RenderGraphDescSchemaDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaDesc>() == 8, "RenderGraphDescSchemaDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaDesc>() == 44, "RenderGraphDescSchemaDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaDesc>() == 4, "RenderGraphDescSchemaDesc alignment mismatch");
+
+/// Element type for RenderGraphDesc.SchemaLayout
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaLayout {
+    pub fields: RocListWith<RenderGraphDescSchemaField, false>,
+}
+
+/// Element type for RenderGraphDesc.SchemaLayout
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaLayout {
+    pub fields: RocListWith<RenderGraphDescSchemaField, false>,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaLayout>() == 24, "RenderGraphDescSchemaLayout size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaLayout>() == 8, "RenderGraphDescSchemaLayout alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaLayout>() == 12, "RenderGraphDescSchemaLayout size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaLayout>() == 4, "RenderGraphDescSchemaLayout alignment mismatch");
+
+/// Element type for RenderGraphDesc.SchemaField
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaField {
+    pub kind: RenderGraphDescSchemaFieldKind,
+    pub len: u32,
+    pub offset: u32,
+    pub key: u16,
+}
+
+/// Element type for RenderGraphDesc.SchemaField
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaField {
+    pub kind: RenderGraphDescSchemaFieldKind,
+    pub len: u32,
+    pub offset: u32,
+    pub key: u16,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaField>() == 20, "RenderGraphDescSchemaField size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaField>() == 4, "RenderGraphDescSchemaField alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaField>() == 20, "RenderGraphDescSchemaField size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaField>() == 4, "RenderGraphDescSchemaField alignment mismatch");
+
+/// Element type for RenderGraphDesc.DataField
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescDataField {
+    pub src_offset: u32,
+}
+
+/// Element type for RenderGraphDesc.DataField
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescDataField {
+    pub src_offset: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescDataField>() == 4, "RenderGraphDescDataField size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescDataField>() == 4, "RenderGraphDescDataField alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescDataField>() == 4, "RenderGraphDescDataField size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescDataField>() == 4, "RenderGraphDescDataField alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostUniformBuffer
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostUniformBuffer {
+    pub name: RocStr,
+    pub size: u32,
+}
+
+/// Element type for ValidatedRenderGraph.HostUniformBuffer
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostUniformBuffer {
+    pub name: RocStr,
+    pub size: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostUniformBuffer>() == 32, "ValidatedRenderGraphHostUniformBuffer size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostUniformBuffer>() == 8, "ValidatedRenderGraphHostUniformBuffer alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostUniformBuffer>() == 16, "ValidatedRenderGraphHostUniformBuffer size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostUniformBuffer>() == 4, "ValidatedRenderGraphHostUniformBuffer alignment mismatch");
+
+/// Element type for GraphSet.Draw
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GraphSetDraw {
+    pub values: RocList<ValidatedRenderGraphHostFrameValue>,
+    pub graph_id: u32,
+}
+
+/// Element type for GraphSet.Draw
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GraphSetDraw {
+    pub values: RocList<ValidatedRenderGraphHostFrameValue>,
+    pub graph_id: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<GraphSetDraw>() == 32, "GraphSetDraw size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<GraphSetDraw>() == 8, "GraphSetDraw alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<GraphSetDraw>() == 16, "GraphSetDraw size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<GraphSetDraw>() == 4, "GraphSetDraw alignment mismatch");
+
+/// Element type for ValidatedRenderGraph.HostArray
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostArray {
+    pub bytes: RocListWith<u8, false>,
+    pub count: u32,
+}
+
+/// Element type for ValidatedRenderGraph.HostArray
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostArray {
+    pub bytes: RocListWith<u8, false>,
+    pub count: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostArray>() == 32, "ValidatedRenderGraphHostArray size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostArray>() == 8, "ValidatedRenderGraphHostArray alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostArray>() == 16, "ValidatedRenderGraphHostArray size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostArray>() == 4, "ValidatedRenderGraphHostArray alignment mismatch");
+
+/// Element type for Game.Frame
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameFrame {
+    pub aspect_ratio: f32,
+    pub elapsed: f32,
+}
+
+/// Element type for Game.Frame
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameFrame {
+    pub aspect_ratio: f32,
+    pub elapsed: f32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<GameFrame>() == 8, "GameFrame size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<GameFrame>() == 4, "GameFrame alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<GameFrame>() == 8, "GameFrame size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<GameFrame>() == 4, "GameFrame alignment mismatch");
+
+/// Element type for Game.Init
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameInit {
+    pub shaders_source_dir: RocStr,
+    pub window_title: RocStr,
+    pub shader_hot_reload: bool,
+}
+
+/// Element type for Game.Init
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GameInit {
+    pub shaders_source_dir: RocStr,
+    pub window_title: RocStr,
+    pub shader_hot_reload: bool,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<GameInit>() == 56, "GameInit size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<GameInit>() == 8, "GameInit alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<GameInit>() == 28, "GameInit size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<GameInit>() == 4, "GameInit alignment mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -1238,6 +2694,97 @@ const _: () = assert!(core::mem::size_of::<HostStderrLineResult>() == 16, "HostS
 const _: () = assert!(core::mem::align_of::<HostStderrLineResult>() == 4, "HostStderrLineResult alignment mismatch");
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostStderrLineResult, tag) == 12, "HostStderrLineResult tag offset mismatch");
+
+/// Tag discriminant for Try.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostStdoutLineResultTag {
+    Err = 0,
+    Ok = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union HostStdoutLineResultPayload {
+    pub err: core::mem::ManuallyDrop<RocStr>,
+    pub ok: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct HostStdoutLineResultPayloadAlignment;
+
+/// Tag union: Try
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostStdoutLineResult {
+    pub _payload_alignment: [HostStdoutLineResultPayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: HostStdoutLineResultTag,
+}
+
+/// Tag union: Try
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostStdoutLineResult {
+    pub payload: HostStdoutLineResultPayload,
+    pub tag: HostStdoutLineResultTag,
+}
+
+impl HostStdoutLineResult {
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostStdoutLineResultTag::Err` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
+        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Borrow the `Err` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostStdoutLineResultTag::Err` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
+        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostStdoutLineResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    }
+
+    /// Move the `Err` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `HostStdoutLineResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<HostStdoutLineResult>() == 32, "HostStdoutLineResult size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<HostStdoutLineResult>() == 8, "HostStdoutLineResult alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(HostStdoutLineResult, tag) == 24, "HostStdoutLineResult tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<HostStdoutLineResult>() == 16, "HostStdoutLineResult size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<HostStdoutLineResult>() == 4, "HostStdoutLineResult alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(HostStdoutLineResult, tag) == 12, "HostStdoutLineResult tag offset mismatch");
 
 /// Tag discriminant for Try.
 #[repr(u8)]
@@ -1366,96 +2913,2582 @@ const _: () = assert!(core::mem::align_of::<HostStdinLineResult>() == 4, "HostSt
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(core::mem::offset_of!(HostStdinLineResult, tag) == 12, "HostStdinLineResult tag offset mismatch");
 
-/// Tag discriminant for Try.
+/// Tag discriminant for ValidatedRenderGraph.HostBufferContents.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostStdoutLineResultTag {
-    Err = 0,
-    Ok = 1,
+pub enum ValidatedRenderGraphHostBufferContentsTag {
+    Bytes = 0,
+    Indices = 1,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union HostStdoutLineResultPayload {
-    pub err: core::mem::ManuallyDrop<RocStr>,
-    pub ok: [u8; 0],
+pub union ValidatedRenderGraphHostBufferContentsPayload {
+    pub bytes: core::mem::ManuallyDrop<RocListWith<u8, false>>,
+    pub indices: core::mem::ManuallyDrop<ValidatedRenderGraphHostIndices>,
 }
 
 #[cfg(target_pointer_width = "32")]
 #[repr(align(4))]
 #[derive(Clone, Copy)]
-pub struct HostStdoutLineResultPayloadAlignment;
+pub struct ValidatedRenderGraphHostBufferContentsPayloadAlignment;
 
-/// Tag union: Try
+/// Tag union: ValidatedRenderGraph.HostBufferContents
 #[cfg(target_pointer_width = "32")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostStdoutLineResult {
-    pub _payload_alignment: [HostStdoutLineResultPayloadAlignment; 0],
-    pub payload: [u8; 12],
-    pub tag: HostStdoutLineResultTag,
+pub struct ValidatedRenderGraphHostBufferContents {
+    pub _payload_alignment: [ValidatedRenderGraphHostBufferContentsPayloadAlignment; 0],
+    pub payload: [u8; 16],
+    pub tag: ValidatedRenderGraphHostBufferContentsTag,
 }
 
-/// Tag union: Try
+/// Tag union: ValidatedRenderGraph.HostBufferContents
 #[cfg(not(target_pointer_width = "32"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct HostStdoutLineResult {
-    pub payload: HostStdoutLineResultPayload,
-    pub tag: HostStdoutLineResultTag,
+pub struct ValidatedRenderGraphHostBufferContents {
+    pub payload: ValidatedRenderGraphHostBufferContentsPayload,
+    pub tag: ValidatedRenderGraphHostBufferContentsTag,
 }
 
-impl HostStdoutLineResult {
-    /// Borrow the `Err` payload without creating another owner.
+impl ValidatedRenderGraphHostBufferContents {
+    /// Borrow the `Bytes` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostStdoutLineResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `ValidatedRenderGraphHostBufferContentsTag::Bytes` and the payload must still be initialized.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn borrow_payload_bytes_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(self.payload.as_ptr() as *const RocListWith<u8, false>) }
     }
 
-    /// Borrow the `Err` payload without creating another owner.
+    /// Borrow the `Bytes` payload without creating another owner.
     ///
     /// # Safety
-    /// `self.tag` must be `HostStdoutLineResultTag::Err` and the payload must still be initialized.
+    /// `self.tag` must be `ValidatedRenderGraphHostBufferContentsTag::Bytes` and the payload must still be initialized.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn borrow_payload_err_unchecked(&self) -> &RocStr {
-        unsafe { &*(&self.payload.err as *const core::mem::ManuallyDrop<RocStr> as *const RocStr) }
+    pub unsafe fn borrow_payload_bytes_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(&self.payload.bytes as *const core::mem::ManuallyDrop<RocListWith<u8, false>> as *const RocListWith<u8, false>) }
     }
 
-    /// Move the `Err` payload out of one owned tag-union shell.
+    /// Move the `Bytes` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostStdoutLineResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `ValidatedRenderGraphHostBufferContentsTag::Bytes`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(target_pointer_width = "32")]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
-        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocStr) }
+    pub unsafe fn take_payload_bytes_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocListWith<u8, false>) }
     }
 
-    /// Move the `Err` payload out of one owned tag-union shell.
+    /// Move the `Bytes` payload out of one owned tag-union shell.
     ///
     /// # Safety
-    /// `self.tag` must be `HostStdoutLineResultTag::Err`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    /// `self.tag` must be `ValidatedRenderGraphHostBufferContentsTag::Bytes`. After this call, `self` is logically uninitialized and must not be read or destroyed.
     #[cfg(not(target_pointer_width = "32"))]
-    pub unsafe fn take_payload_err_unchecked(&mut self) -> RocStr {
-        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.err) }
+    pub unsafe fn take_payload_bytes_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.bytes) }
+    }
+
+    /// Borrow the `Indices` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostBufferContentsTag::Indices` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_indices_unchecked(&self) -> &ValidatedRenderGraphHostIndices {
+        unsafe { &*(self.payload.as_ptr() as *const ValidatedRenderGraphHostIndices) }
+    }
+
+    /// Borrow the `Indices` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostBufferContentsTag::Indices` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_indices_unchecked(&self) -> &ValidatedRenderGraphHostIndices {
+        unsafe { &*(&self.payload.indices as *const core::mem::ManuallyDrop<ValidatedRenderGraphHostIndices> as *const ValidatedRenderGraphHostIndices) }
+    }
+
+    /// Move the `Indices` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostBufferContentsTag::Indices`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_indices_unchecked(&mut self) -> ValidatedRenderGraphHostIndices {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const ValidatedRenderGraphHostIndices) }
+    }
+
+    /// Move the `Indices` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostBufferContentsTag::Indices`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_indices_unchecked(&mut self) -> ValidatedRenderGraphHostIndices {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.indices) }
     }
 
 }
 
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<HostStdoutLineResult>() == 32, "HostStdoutLineResult size mismatch");
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostBufferContents>() == 40, "ValidatedRenderGraphHostBufferContents size mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::align_of::<HostStdoutLineResult>() == 8, "HostStdoutLineResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostBufferContents>() == 8, "ValidatedRenderGraphHostBufferContents alignment mismatch");
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::offset_of!(HostStdoutLineResult, tag) == 24, "HostStdoutLineResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostBufferContents, tag) == 32, "ValidatedRenderGraphHostBufferContents tag offset mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::size_of::<HostStdoutLineResult>() == 16, "HostStdoutLineResult size mismatch");
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostBufferContents>() == 20, "ValidatedRenderGraphHostBufferContents size mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::align_of::<HostStdoutLineResult>() == 4, "HostStdoutLineResult alignment mismatch");
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostBufferContents>() == 4, "ValidatedRenderGraphHostBufferContents alignment mismatch");
 #[cfg(target_pointer_width = "32")]
-const _: () = assert!(core::mem::offset_of!(HostStdoutLineResult, tag) == 12, "HostStdoutLineResult tag offset mismatch");
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostBufferContents, tag) == 16, "ValidatedRenderGraphHostBufferContents tag offset mismatch");
+
+/// Tag union: ValidatedRenderGraph.HostBufferRole
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidatedRenderGraphHostBufferRole {
+    CpuUpdated = 0,
+    GpuUpdated = 1,
+    Immutable = 2,
+    Index = 3,
+    IndirectArgs = 4,
+    Singleton = 5,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostBufferRole>() == 1, "ValidatedRenderGraphHostBufferRole size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostBufferRole>() == 1, "ValidatedRenderGraphHostBufferRole alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostBufferRole>() == 1, "ValidatedRenderGraphHostBufferRole size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostBufferRole>() == 1, "ValidatedRenderGraphHostBufferRole alignment mismatch");
+
+/// Tag discriminant for RenderGraphDesc.MaybeU32.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescMaybeU32Tag {
+    None = 0,
+    Some = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescMaybeU32Payload {
+    pub none: [u8; 0],
+    pub some: core::mem::ManuallyDrop<u32>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybeU32PayloadAlignment;
+
+/// Tag union: RenderGraphDesc.MaybeU32
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybeU32 {
+    pub _payload_alignment: [RenderGraphDescMaybeU32PayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: RenderGraphDescMaybeU32Tag,
+}
+
+/// Tag union: RenderGraphDesc.MaybeU32
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybeU32 {
+    pub payload: RenderGraphDescMaybeU32Payload,
+    pub tag: RenderGraphDescMaybeU32Tag,
+}
+
+impl RenderGraphDescMaybeU32 {
+    /// Borrow the `Some` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybeU32Tag::Some` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_some_unchecked(&self) -> &u32 {
+        unsafe { &*(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Borrow the `Some` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybeU32Tag::Some` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_some_unchecked(&self) -> &u32 {
+        unsafe { &*(&self.payload.some as *const core::mem::ManuallyDrop<u32> as *const u32) }
+    }
+
+    /// Move the `Some` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybeU32Tag::Some`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_some_unchecked(&mut self) -> u32 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Move the `Some` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybeU32Tag::Some`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_some_unchecked(&mut self) -> u32 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.some) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescMaybeU32>() == 8, "RenderGraphDescMaybeU32 size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescMaybeU32>() == 4, "RenderGraphDescMaybeU32 alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescMaybeU32, tag) == 4, "RenderGraphDescMaybeU32 tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescMaybeU32>() == 8, "RenderGraphDescMaybeU32 size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescMaybeU32>() == 4, "RenderGraphDescMaybeU32 alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescMaybeU32, tag) == 4, "RenderGraphDescMaybeU32 tag offset mismatch");
+
+/// Tag union: RenderGraphDesc.BufferKind
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescBufferKind {
+    GpuUpdatedFlight = 0,
+    Immutable = 1,
+    Index = 2,
+    Singleton = 3,
+    Storage = 4,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBufferKind>() == 1, "RenderGraphDescBufferKind size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBufferKind>() == 1, "RenderGraphDescBufferKind alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBufferKind>() == 1, "RenderGraphDescBufferKind size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBufferKind>() == 1, "RenderGraphDescBufferKind alignment mismatch");
+
+/// Tag discriminant for RenderGraphDesc.PassDesc.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescPassDescTag {
+    Leaf = 0,
+    Repeat = 1,
+    When = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescPassDescPayload {
+    pub leaf: core::mem::ManuallyDrop<RenderGraphDescLeafPass>,
+    pub repeat: core::mem::ManuallyDrop<RenderGraphDescRepeatPass>,
+    pub when: core::mem::ManuallyDrop<RenderGraphDescWhenPass>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescPassDescPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.PassDesc
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescPassDesc {
+    pub _payload_alignment: [RenderGraphDescPassDescPayloadAlignment; 0],
+    pub payload: [u8; 68],
+    pub tag: RenderGraphDescPassDescTag,
+}
+
+/// Tag union: RenderGraphDesc.PassDesc
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescPassDesc {
+    pub payload: RenderGraphDescPassDescPayload,
+    pub tag: RenderGraphDescPassDescTag,
+}
+
+impl RenderGraphDescPassDesc {
+    /// Borrow the `Leaf` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::Leaf` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_leaf_unchecked(&self) -> &RenderGraphDescLeafPass {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescLeafPass) }
+    }
+
+    /// Borrow the `Leaf` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::Leaf` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_leaf_unchecked(&self) -> &RenderGraphDescLeafPass {
+        unsafe { &*(&self.payload.leaf as *const core::mem::ManuallyDrop<RenderGraphDescLeafPass> as *const RenderGraphDescLeafPass) }
+    }
+
+    /// Move the `Leaf` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::Leaf`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_leaf_unchecked(&mut self) -> RenderGraphDescLeafPass {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescLeafPass) }
+    }
+
+    /// Move the `Leaf` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::Leaf`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_leaf_unchecked(&mut self) -> RenderGraphDescLeafPass {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.leaf) }
+    }
+
+    /// Borrow the `Repeat` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::Repeat` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_repeat_unchecked(&self) -> &RenderGraphDescRepeatPass {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescRepeatPass) }
+    }
+
+    /// Borrow the `Repeat` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::Repeat` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_repeat_unchecked(&self) -> &RenderGraphDescRepeatPass {
+        unsafe { &*(&self.payload.repeat as *const core::mem::ManuallyDrop<RenderGraphDescRepeatPass> as *const RenderGraphDescRepeatPass) }
+    }
+
+    /// Move the `Repeat` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::Repeat`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_repeat_unchecked(&mut self) -> RenderGraphDescRepeatPass {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescRepeatPass) }
+    }
+
+    /// Move the `Repeat` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::Repeat`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_repeat_unchecked(&mut self) -> RenderGraphDescRepeatPass {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.repeat) }
+    }
+
+    /// Borrow the `When` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::When` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_when_unchecked(&self) -> &RenderGraphDescWhenPass {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescWhenPass) }
+    }
+
+    /// Borrow the `When` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::When` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_when_unchecked(&self) -> &RenderGraphDescWhenPass {
+        unsafe { &*(&self.payload.when as *const core::mem::ManuallyDrop<RenderGraphDescWhenPass> as *const RenderGraphDescWhenPass) }
+    }
+
+    /// Move the `When` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::When`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_when_unchecked(&mut self) -> RenderGraphDescWhenPass {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescWhenPass) }
+    }
+
+    /// Move the `When` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescPassDescTag::When`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_when_unchecked(&mut self) -> RenderGraphDescWhenPass {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.when) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPassDesc>() == 112, "RenderGraphDescPassDesc size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPassDesc>() == 8, "RenderGraphDescPassDesc alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescPassDesc, tag) == 104, "RenderGraphDescPassDesc tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPassDesc>() == 72, "RenderGraphDescPassDesc size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPassDesc>() == 4, "RenderGraphDescPassDesc alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescPassDesc, tag) == 68, "RenderGraphDescPassDesc tag offset mismatch");
+
+/// Tag discriminant for RenderGraphDesc.LeafPass.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescLeafPassTag {
+    Compute = 0,
+    Raster = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescLeafPassPayload {
+    pub compute: core::mem::ManuallyDrop<RenderGraphDescDispatchDesc>,
+    pub raster: core::mem::ManuallyDrop<RenderGraphDescRasterDesc>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescLeafPassPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.LeafPass
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescLeafPass {
+    pub _payload_alignment: [RenderGraphDescLeafPassPayloadAlignment; 0],
+    pub payload: [u8; 64],
+    pub tag: RenderGraphDescLeafPassTag,
+}
+
+/// Tag union: RenderGraphDesc.LeafPass
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescLeafPass {
+    pub payload: RenderGraphDescLeafPassPayload,
+    pub tag: RenderGraphDescLeafPassTag,
+}
+
+impl RenderGraphDescLeafPass {
+    /// Borrow the `Compute` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescLeafPassTag::Compute` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_compute_unchecked(&self) -> &RenderGraphDescDispatchDesc {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescDispatchDesc) }
+    }
+
+    /// Borrow the `Compute` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescLeafPassTag::Compute` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_compute_unchecked(&self) -> &RenderGraphDescDispatchDesc {
+        unsafe { &*(&self.payload.compute as *const core::mem::ManuallyDrop<RenderGraphDescDispatchDesc> as *const RenderGraphDescDispatchDesc) }
+    }
+
+    /// Move the `Compute` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescLeafPassTag::Compute`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_compute_unchecked(&mut self) -> RenderGraphDescDispatchDesc {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescDispatchDesc) }
+    }
+
+    /// Move the `Compute` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescLeafPassTag::Compute`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_compute_unchecked(&mut self) -> RenderGraphDescDispatchDesc {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.compute) }
+    }
+
+    /// Borrow the `Raster` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescLeafPassTag::Raster` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_raster_unchecked(&self) -> &RenderGraphDescRasterDesc {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescRasterDesc) }
+    }
+
+    /// Borrow the `Raster` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescLeafPassTag::Raster` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_raster_unchecked(&self) -> &RenderGraphDescRasterDesc {
+        unsafe { &*(&self.payload.raster as *const core::mem::ManuallyDrop<RenderGraphDescRasterDesc> as *const RenderGraphDescRasterDesc) }
+    }
+
+    /// Move the `Raster` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescLeafPassTag::Raster`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_raster_unchecked(&mut self) -> RenderGraphDescRasterDesc {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescRasterDesc) }
+    }
+
+    /// Move the `Raster` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescLeafPassTag::Raster`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_raster_unchecked(&mut self) -> RenderGraphDescRasterDesc {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.raster) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescLeafPass>() == 104, "RenderGraphDescLeafPass size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescLeafPass>() == 8, "RenderGraphDescLeafPass alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescLeafPass, tag) == 96, "RenderGraphDescLeafPass tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescLeafPass>() == 68, "RenderGraphDescLeafPass size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescLeafPass>() == 4, "RenderGraphDescLeafPass alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescLeafPass, tag) == 64, "RenderGraphDescLeafPass tag offset mismatch");
+
+/// Tag discriminant for RenderGraphDesc.GroupSource.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescGroupSourceTag {
+    Fixed = 0,
+    Value = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescGroupSourcePayload {
+    pub fixed: core::mem::ManuallyDrop<RenderGraphDescGroupCount>,
+    pub value: core::mem::ManuallyDrop<u32>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescGroupSourcePayloadAlignment;
+
+/// Tag union: RenderGraphDesc.GroupSource
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescGroupSource {
+    pub _payload_alignment: [RenderGraphDescGroupSourcePayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: RenderGraphDescGroupSourceTag,
+}
+
+/// Tag union: RenderGraphDesc.GroupSource
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescGroupSource {
+    pub payload: RenderGraphDescGroupSourcePayload,
+    pub tag: RenderGraphDescGroupSourceTag,
+}
+
+impl RenderGraphDescGroupSource {
+    /// Borrow the `Fixed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescGroupSourceTag::Fixed` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_fixed_unchecked(&self) -> &RenderGraphDescGroupCount {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescGroupCount) }
+    }
+
+    /// Borrow the `Fixed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescGroupSourceTag::Fixed` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_fixed_unchecked(&self) -> &RenderGraphDescGroupCount {
+        unsafe { &*(&self.payload.fixed as *const core::mem::ManuallyDrop<RenderGraphDescGroupCount> as *const RenderGraphDescGroupCount) }
+    }
+
+    /// Move the `Fixed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescGroupSourceTag::Fixed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_fixed_unchecked(&mut self) -> RenderGraphDescGroupCount {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescGroupCount) }
+    }
+
+    /// Move the `Fixed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescGroupSourceTag::Fixed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_fixed_unchecked(&mut self) -> RenderGraphDescGroupCount {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.fixed) }
+    }
+
+    /// Borrow the `Value` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescGroupSourceTag::Value` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_value_unchecked(&self) -> &u32 {
+        unsafe { &*(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Borrow the `Value` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescGroupSourceTag::Value` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_value_unchecked(&self) -> &u32 {
+        unsafe { &*(&self.payload.value as *const core::mem::ManuallyDrop<u32> as *const u32) }
+    }
+
+    /// Move the `Value` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescGroupSourceTag::Value`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_value_unchecked(&mut self) -> u32 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Move the `Value` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescGroupSourceTag::Value`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_value_unchecked(&mut self) -> u32 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.value) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescGroupSource>() == 16, "RenderGraphDescGroupSource size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescGroupSource>() == 4, "RenderGraphDescGroupSource alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescGroupSource, tag) == 12, "RenderGraphDescGroupSource tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescGroupSource>() == 16, "RenderGraphDescGroupSource size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescGroupSource>() == 4, "RenderGraphDescGroupSource alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescGroupSource, tag) == 12, "RenderGraphDescGroupSource tag offset mismatch");
+
+/// Tag discriminant for RenderGraphDesc.MaybePush.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescMaybePushTag {
+    None = 0,
+    Some = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescMaybePushPayload {
+    pub none: [u8; 0],
+    pub some: core::mem::ManuallyDrop<RenderGraphDescPushDesc>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybePushPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.MaybePush
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybePush {
+    pub _payload_alignment: [RenderGraphDescMaybePushPayloadAlignment; 0],
+    pub payload: [u8; 24],
+    pub tag: RenderGraphDescMaybePushTag,
+}
+
+/// Tag union: RenderGraphDesc.MaybePush
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybePush {
+    pub payload: RenderGraphDescMaybePushPayload,
+    pub tag: RenderGraphDescMaybePushTag,
+}
+
+impl RenderGraphDescMaybePush {
+    /// Borrow the `Some` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybePushTag::Some` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_some_unchecked(&self) -> &RenderGraphDescPushDesc {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescPushDesc) }
+    }
+
+    /// Borrow the `Some` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybePushTag::Some` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_some_unchecked(&self) -> &RenderGraphDescPushDesc {
+        unsafe { &*(&self.payload.some as *const core::mem::ManuallyDrop<RenderGraphDescPushDesc> as *const RenderGraphDescPushDesc) }
+    }
+
+    /// Move the `Some` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybePushTag::Some`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_some_unchecked(&mut self) -> RenderGraphDescPushDesc {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescPushDesc) }
+    }
+
+    /// Move the `Some` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybePushTag::Some`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_some_unchecked(&mut self) -> RenderGraphDescPushDesc {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.some) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescMaybePush>() == 48, "RenderGraphDescMaybePush size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescMaybePush>() == 8, "RenderGraphDescMaybePush alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescMaybePush, tag) == 40, "RenderGraphDescMaybePush tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescMaybePush>() == 28, "RenderGraphDescMaybePush size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescMaybePush>() == 4, "RenderGraphDescMaybePush alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescMaybePush, tag) == 24, "RenderGraphDescMaybePush tag offset mismatch");
+
+/// Payload struct for Buf variant.
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescResourceRefBufPayload {
+    pub _0: RenderGraphDescBufferRef,
+    pub _1: RenderGraphDescBufAccess,
+}
+
+/// Payload struct for Buf variant.
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescResourceRefBufPayload {
+    pub _0: RenderGraphDescBufferRef,
+    pub _1: RenderGraphDescBufAccess,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceRefBufPayload>() == 24, "RenderGraphDescResourceRefBufPayload size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceRefBufPayload>() == 4, "RenderGraphDescResourceRefBufPayload alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceRefBufPayload>() == 24, "RenderGraphDescResourceRefBufPayload size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceRefBufPayload>() == 4, "RenderGraphDescResourceRefBufPayload alignment mismatch");
+
+/// Payload struct for Tex variant.
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescResourceRefTexPayload {
+    pub _0: u32,
+    pub _1: RenderGraphDescTexAccess,
+}
+
+/// Payload struct for Tex variant.
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescResourceRefTexPayload {
+    pub _0: u32,
+    pub _1: RenderGraphDescTexAccess,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceRefTexPayload>() == 8, "RenderGraphDescResourceRefTexPayload size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceRefTexPayload>() == 4, "RenderGraphDescResourceRefTexPayload alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceRefTexPayload>() == 8, "RenderGraphDescResourceRefTexPayload size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceRefTexPayload>() == 4, "RenderGraphDescResourceRefTexPayload alignment mismatch");
+
+/// Tag discriminant for RenderGraphDesc.ResourceRef.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescResourceRefTag {
+    Buf = 0,
+    External = 1,
+    Tex = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescResourceRefPayload {
+    pub buf: core::mem::ManuallyDrop<RenderGraphDescResourceRefBufPayload>,
+    pub external: core::mem::ManuallyDrop<u32>,
+    pub tex: core::mem::ManuallyDrop<RenderGraphDescResourceRefTexPayload>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescResourceRefPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.ResourceRef
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescResourceRef {
+    pub _payload_alignment: [RenderGraphDescResourceRefPayloadAlignment; 0],
+    pub payload: [u8; 24],
+    pub tag: RenderGraphDescResourceRefTag,
+}
+
+/// Tag union: RenderGraphDesc.ResourceRef
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescResourceRef {
+    pub payload: RenderGraphDescResourceRefPayload,
+    pub tag: RenderGraphDescResourceRefTag,
+}
+
+impl RenderGraphDescResourceRef {
+    /// Borrow the `Buf` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::Buf` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_buf_unchecked(&self) -> &RenderGraphDescResourceRefBufPayload {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescResourceRefBufPayload) }
+    }
+
+    /// Borrow the `Buf` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::Buf` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_buf_unchecked(&self) -> &RenderGraphDescResourceRefBufPayload {
+        unsafe { &*(&self.payload.buf as *const core::mem::ManuallyDrop<RenderGraphDescResourceRefBufPayload> as *const RenderGraphDescResourceRefBufPayload) }
+    }
+
+    /// Move the `Buf` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::Buf`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_buf_unchecked(&mut self) -> RenderGraphDescResourceRefBufPayload {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescResourceRefBufPayload) }
+    }
+
+    /// Move the `Buf` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::Buf`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_buf_unchecked(&mut self) -> RenderGraphDescResourceRefBufPayload {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.buf) }
+    }
+
+    /// Borrow the `External` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::External` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_external_unchecked(&self) -> &u32 {
+        unsafe { &*(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Borrow the `External` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::External` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_external_unchecked(&self) -> &u32 {
+        unsafe { &*(&self.payload.external as *const core::mem::ManuallyDrop<u32> as *const u32) }
+    }
+
+    /// Move the `External` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::External`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_external_unchecked(&mut self) -> u32 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Move the `External` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::External`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_external_unchecked(&mut self) -> u32 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.external) }
+    }
+
+    /// Borrow the `Tex` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::Tex` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_tex_unchecked(&self) -> &RenderGraphDescResourceRefTexPayload {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescResourceRefTexPayload) }
+    }
+
+    /// Borrow the `Tex` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::Tex` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_tex_unchecked(&self) -> &RenderGraphDescResourceRefTexPayload {
+        unsafe { &*(&self.payload.tex as *const core::mem::ManuallyDrop<RenderGraphDescResourceRefTexPayload> as *const RenderGraphDescResourceRefTexPayload) }
+    }
+
+    /// Move the `Tex` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::Tex`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_tex_unchecked(&mut self) -> RenderGraphDescResourceRefTexPayload {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescResourceRefTexPayload) }
+    }
+
+    /// Move the `Tex` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescResourceRefTag::Tex`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_tex_unchecked(&mut self) -> RenderGraphDescResourceRefTexPayload {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.tex) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceRef>() == 28, "RenderGraphDescResourceRef size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceRef>() == 4, "RenderGraphDescResourceRef alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescResourceRef, tag) == 24, "RenderGraphDescResourceRef tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceRef>() == 28, "RenderGraphDescResourceRef size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceRef>() == 4, "RenderGraphDescResourceRef alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescResourceRef, tag) == 24, "RenderGraphDescResourceRef tag offset mismatch");
+
+/// Tag union: RenderGraphDesc.SlotSel
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescSlotSel {
+    Current = 0,
+    Previous = 1,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSlotSel>() == 1, "RenderGraphDescSlotSel size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSlotSel>() == 1, "RenderGraphDescSlotSel alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSlotSel>() == 1, "RenderGraphDescSlotSel size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSlotSel>() == 1, "RenderGraphDescSlotSel alignment mismatch");
+
+/// Tag union: RenderGraphDesc.BufAccess
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescBufAccess {
+    Mutate = 0,
+    Read = 1,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBufAccess>() == 1, "RenderGraphDescBufAccess size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBufAccess>() == 1, "RenderGraphDescBufAccess alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescBufAccess>() == 1, "RenderGraphDescBufAccess size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescBufAccess>() == 1, "RenderGraphDescBufAccess alignment mismatch");
+
+/// Tag union: RenderGraphDesc.TexAccess
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescTexAccess {
+    Mutate = 0,
+    Read = 1,
+    ReadPrevious = 2,
+    Write = 3,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescTexAccess>() == 1, "RenderGraphDescTexAccess size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescTexAccess>() == 1, "RenderGraphDescTexAccess alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescTexAccess>() == 1, "RenderGraphDescTexAccess size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescTexAccess>() == 1, "RenderGraphDescTexAccess alignment mismatch");
+
+/// Tag discriminant for RenderGraphDesc.DrawCall.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescDrawCallTag {
+    IndexRange = 0,
+    IndexedIndirect = 1,
+    VertexCount = 2,
+    WholeIndexed = 3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescDrawCallPayload {
+    pub index_range: core::mem::ManuallyDrop<RenderGraphDescIndexRangeCall>,
+    pub indexed_indirect: core::mem::ManuallyDrop<RenderGraphDescIndexedIndirectCall>,
+    pub vertex_count: core::mem::ManuallyDrop<u32>,
+    pub whole_indexed: core::mem::ManuallyDrop<RenderGraphDescWholeIndexedCall>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescDrawCallPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.DrawCall
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescDrawCall {
+    pub _payload_alignment: [RenderGraphDescDrawCallPayloadAlignment; 0],
+    pub payload: [u8; 28],
+    pub tag: RenderGraphDescDrawCallTag,
+}
+
+/// Tag union: RenderGraphDesc.DrawCall
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescDrawCall {
+    pub payload: RenderGraphDescDrawCallPayload,
+    pub tag: RenderGraphDescDrawCallTag,
+}
+
+impl RenderGraphDescDrawCall {
+    /// Borrow the `IndexRange` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::IndexRange` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_index_range_unchecked(&self) -> &RenderGraphDescIndexRangeCall {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescIndexRangeCall) }
+    }
+
+    /// Borrow the `IndexRange` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::IndexRange` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_index_range_unchecked(&self) -> &RenderGraphDescIndexRangeCall {
+        unsafe { &*(&self.payload.index_range as *const core::mem::ManuallyDrop<RenderGraphDescIndexRangeCall> as *const RenderGraphDescIndexRangeCall) }
+    }
+
+    /// Move the `IndexRange` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::IndexRange`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_index_range_unchecked(&mut self) -> RenderGraphDescIndexRangeCall {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescIndexRangeCall) }
+    }
+
+    /// Move the `IndexRange` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::IndexRange`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_index_range_unchecked(&mut self) -> RenderGraphDescIndexRangeCall {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.index_range) }
+    }
+
+    /// Borrow the `IndexedIndirect` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::IndexedIndirect` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_indexed_indirect_unchecked(&self) -> &RenderGraphDescIndexedIndirectCall {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescIndexedIndirectCall) }
+    }
+
+    /// Borrow the `IndexedIndirect` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::IndexedIndirect` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_indexed_indirect_unchecked(&self) -> &RenderGraphDescIndexedIndirectCall {
+        unsafe { &*(&self.payload.indexed_indirect as *const core::mem::ManuallyDrop<RenderGraphDescIndexedIndirectCall> as *const RenderGraphDescIndexedIndirectCall) }
+    }
+
+    /// Move the `IndexedIndirect` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::IndexedIndirect`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_indexed_indirect_unchecked(&mut self) -> RenderGraphDescIndexedIndirectCall {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescIndexedIndirectCall) }
+    }
+
+    /// Move the `IndexedIndirect` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::IndexedIndirect`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_indexed_indirect_unchecked(&mut self) -> RenderGraphDescIndexedIndirectCall {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.indexed_indirect) }
+    }
+
+    /// Borrow the `VertexCount` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::VertexCount` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_vertex_count_unchecked(&self) -> &u32 {
+        unsafe { &*(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Borrow the `VertexCount` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::VertexCount` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_vertex_count_unchecked(&self) -> &u32 {
+        unsafe { &*(&self.payload.vertex_count as *const core::mem::ManuallyDrop<u32> as *const u32) }
+    }
+
+    /// Move the `VertexCount` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::VertexCount`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_vertex_count_unchecked(&mut self) -> u32 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Move the `VertexCount` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::VertexCount`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_vertex_count_unchecked(&mut self) -> u32 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.vertex_count) }
+    }
+
+    /// Borrow the `WholeIndexed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::WholeIndexed` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_whole_indexed_unchecked(&self) -> &RenderGraphDescWholeIndexedCall {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescWholeIndexedCall) }
+    }
+
+    /// Borrow the `WholeIndexed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::WholeIndexed` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_whole_indexed_unchecked(&self) -> &RenderGraphDescWholeIndexedCall {
+        unsafe { &*(&self.payload.whole_indexed as *const core::mem::ManuallyDrop<RenderGraphDescWholeIndexedCall> as *const RenderGraphDescWholeIndexedCall) }
+    }
+
+    /// Move the `WholeIndexed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::WholeIndexed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_whole_indexed_unchecked(&mut self) -> RenderGraphDescWholeIndexedCall {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescWholeIndexedCall) }
+    }
+
+    /// Move the `WholeIndexed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescDrawCallTag::WholeIndexed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_whole_indexed_unchecked(&mut self) -> RenderGraphDescWholeIndexedCall {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.whole_indexed) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescDrawCall>() == 32, "RenderGraphDescDrawCall size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescDrawCall>() == 4, "RenderGraphDescDrawCall alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescDrawCall, tag) == 28, "RenderGraphDescDrawCall tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescDrawCall>() == 32, "RenderGraphDescDrawCall size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescDrawCall>() == 4, "RenderGraphDescDrawCall alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescDrawCall, tag) == 28, "RenderGraphDescDrawCall tag offset mismatch");
+
+/// Tag discriminant for RenderGraphDesc.RasterTargets.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescRasterTargetsTag {
+    Main = 0,
+    Offscreen = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescRasterTargetsPayload {
+    pub main: [u8; 0],
+    pub offscreen: core::mem::ManuallyDrop<RenderGraphDescOffscreenTargets>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescRasterTargetsPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.RasterTargets
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescRasterTargets {
+    pub _payload_alignment: [RenderGraphDescRasterTargetsPayloadAlignment; 0],
+    pub payload: [u8; 20],
+    pub tag: RenderGraphDescRasterTargetsTag,
+}
+
+/// Tag union: RenderGraphDesc.RasterTargets
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescRasterTargets {
+    pub payload: RenderGraphDescRasterTargetsPayload,
+    pub tag: RenderGraphDescRasterTargetsTag,
+}
+
+impl RenderGraphDescRasterTargets {
+    /// Borrow the `Offscreen` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescRasterTargetsTag::Offscreen` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_offscreen_unchecked(&self) -> &RenderGraphDescOffscreenTargets {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescOffscreenTargets) }
+    }
+
+    /// Borrow the `Offscreen` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescRasterTargetsTag::Offscreen` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_offscreen_unchecked(&self) -> &RenderGraphDescOffscreenTargets {
+        unsafe { &*(&self.payload.offscreen as *const core::mem::ManuallyDrop<RenderGraphDescOffscreenTargets> as *const RenderGraphDescOffscreenTargets) }
+    }
+
+    /// Move the `Offscreen` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescRasterTargetsTag::Offscreen`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_offscreen_unchecked(&mut self) -> RenderGraphDescOffscreenTargets {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescOffscreenTargets) }
+    }
+
+    /// Move the `Offscreen` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescRasterTargetsTag::Offscreen`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_offscreen_unchecked(&mut self) -> RenderGraphDescOffscreenTargets {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.offscreen) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescRasterTargets>() == 40, "RenderGraphDescRasterTargets size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescRasterTargets>() == 8, "RenderGraphDescRasterTargets alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescRasterTargets, tag) == 32, "RenderGraphDescRasterTargets tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescRasterTargets>() == 24, "RenderGraphDescRasterTargets size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescRasterTargets>() == 4, "RenderGraphDescRasterTargets alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescRasterTargets, tag) == 20, "RenderGraphDescRasterTargets tag offset mismatch");
+
+/// Tag discriminant for RenderGraphDesc.MaybePicking.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescMaybePickingTag {
+    None = 0,
+    Some = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescMaybePickingPayload {
+    pub none: [u8; 0],
+    pub some: core::mem::ManuallyDrop<RenderGraphDescPickingDesc>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybePickingPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.MaybePicking
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybePicking {
+    pub _payload_alignment: [RenderGraphDescMaybePickingPayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: RenderGraphDescMaybePickingTag,
+}
+
+/// Tag union: RenderGraphDesc.MaybePicking
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybePicking {
+    pub payload: RenderGraphDescMaybePickingPayload,
+    pub tag: RenderGraphDescMaybePickingTag,
+}
+
+impl RenderGraphDescMaybePicking {
+    /// Borrow the `Some` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybePickingTag::Some` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_some_unchecked(&self) -> &RenderGraphDescPickingDesc {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescPickingDesc) }
+    }
+
+    /// Borrow the `Some` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybePickingTag::Some` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_some_unchecked(&self) -> &RenderGraphDescPickingDesc {
+        unsafe { &*(&self.payload.some as *const core::mem::ManuallyDrop<RenderGraphDescPickingDesc> as *const RenderGraphDescPickingDesc) }
+    }
+
+    /// Move the `Some` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybePickingTag::Some`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_some_unchecked(&mut self) -> RenderGraphDescPickingDesc {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescPickingDesc) }
+    }
+
+    /// Move the `Some` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybePickingTag::Some`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_some_unchecked(&mut self) -> RenderGraphDescPickingDesc {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.some) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescMaybePicking>() == 8, "RenderGraphDescMaybePicking size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescMaybePicking>() == 4, "RenderGraphDescMaybePicking alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescMaybePicking, tag) == 4, "RenderGraphDescMaybePicking tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescMaybePicking>() == 8, "RenderGraphDescMaybePicking size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescMaybePicking>() == 4, "RenderGraphDescMaybePicking alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescMaybePicking, tag) == 4, "RenderGraphDescMaybePicking tag offset mismatch");
+
+/// Tag union: RenderGraphDesc.PipelineKind
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescPipelineKind {
+    Compute = 0,
+    Graphics = 1,
+    GraphicsIndirect = 2,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPipelineKind>() == 1, "RenderGraphDescPipelineKind size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPipelineKind>() == 1, "RenderGraphDescPipelineKind alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescPipelineKind>() == 1, "RenderGraphDescPipelineKind size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescPipelineKind>() == 1, "RenderGraphDescPipelineKind alignment mismatch");
+
+/// Tag union: RenderGraphDesc.GraphFormat
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescGraphFormat {
+    R32Float = 0,
+    Rgba32Float = 1,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescGraphFormat>() == 1, "RenderGraphDescGraphFormat size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescGraphFormat>() == 1, "RenderGraphDescGraphFormat alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescGraphFormat>() == 1, "RenderGraphDescGraphFormat size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescGraphFormat>() == 1, "RenderGraphDescGraphFormat alignment mismatch");
+
+/// Payload struct for Fixed variant.
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSizeClassFixedPayload {
+    pub _0: u32,
+    pub _1: u32,
+}
+
+/// Payload struct for Fixed variant.
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSizeClassFixedPayload {
+    pub _0: u32,
+    pub _1: u32,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSizeClassFixedPayload>() == 8, "RenderGraphDescSizeClassFixedPayload size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSizeClassFixedPayload>() == 4, "RenderGraphDescSizeClassFixedPayload alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSizeClassFixedPayload>() == 8, "RenderGraphDescSizeClassFixedPayload size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSizeClassFixedPayload>() == 4, "RenderGraphDescSizeClassFixedPayload alignment mismatch");
+
+/// Tag discriminant for RenderGraphDesc.SizeClass.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescSizeClassTag {
+    Fixed = 0,
+    Window = 1,
+    WindowDiv = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescSizeClassPayload {
+    pub fixed: core::mem::ManuallyDrop<RenderGraphDescSizeClassFixedPayload>,
+    pub window: [u8; 0],
+    pub window_div: core::mem::ManuallyDrop<u32>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSizeClassPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.SizeClass
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSizeClass {
+    pub _payload_alignment: [RenderGraphDescSizeClassPayloadAlignment; 0],
+    pub payload: [u8; 8],
+    pub tag: RenderGraphDescSizeClassTag,
+}
+
+/// Tag union: RenderGraphDesc.SizeClass
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSizeClass {
+    pub payload: RenderGraphDescSizeClassPayload,
+    pub tag: RenderGraphDescSizeClassTag,
+}
+
+impl RenderGraphDescSizeClass {
+    /// Borrow the `Fixed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSizeClassTag::Fixed` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_fixed_unchecked(&self) -> &RenderGraphDescSizeClassFixedPayload {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescSizeClassFixedPayload) }
+    }
+
+    /// Borrow the `Fixed` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSizeClassTag::Fixed` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_fixed_unchecked(&self) -> &RenderGraphDescSizeClassFixedPayload {
+        unsafe { &*(&self.payload.fixed as *const core::mem::ManuallyDrop<RenderGraphDescSizeClassFixedPayload> as *const RenderGraphDescSizeClassFixedPayload) }
+    }
+
+    /// Move the `Fixed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSizeClassTag::Fixed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_fixed_unchecked(&mut self) -> RenderGraphDescSizeClassFixedPayload {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescSizeClassFixedPayload) }
+    }
+
+    /// Move the `Fixed` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSizeClassTag::Fixed`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_fixed_unchecked(&mut self) -> RenderGraphDescSizeClassFixedPayload {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.fixed) }
+    }
+
+    /// Borrow the `WindowDiv` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSizeClassTag::WindowDiv` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_window_div_unchecked(&self) -> &u32 {
+        unsafe { &*(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Borrow the `WindowDiv` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSizeClassTag::WindowDiv` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_window_div_unchecked(&self) -> &u32 {
+        unsafe { &*(&self.payload.window_div as *const core::mem::ManuallyDrop<u32> as *const u32) }
+    }
+
+    /// Move the `WindowDiv` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSizeClassTag::WindowDiv`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_window_div_unchecked(&mut self) -> u32 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Move the `WindowDiv` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSizeClassTag::WindowDiv`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_window_div_unchecked(&mut self) -> u32 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.window_div) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSizeClass>() == 12, "RenderGraphDescSizeClass size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSizeClass>() == 4, "RenderGraphDescSizeClass alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescSizeClass, tag) == 8, "RenderGraphDescSizeClass tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSizeClass>() == 12, "RenderGraphDescSizeClass size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSizeClass>() == 4, "RenderGraphDescSizeClass alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescSizeClass, tag) == 8, "RenderGraphDescSizeClass tag offset mismatch");
+
+/// Tag union: RenderGraphDesc.TexUsage
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescTexUsage {
+    Color = 0,
+    Depth = 1,
+    Storage = 2,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescTexUsage>() == 1, "RenderGraphDescTexUsage size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescTexUsage>() == 1, "RenderGraphDescTexUsage alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescTexUsage>() == 1, "RenderGraphDescTexUsage size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescTexUsage>() == 1, "RenderGraphDescTexUsage alignment mismatch");
+
+/// Tag discriminant for RenderGraphDesc.ValueKind.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescValueKindTag {
+    Array = 0,
+    Bytes = 1,
+    Count = 2,
+    Groups = 3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescValueKindPayload {
+    pub array: core::mem::ManuallyDrop<RenderGraphDescArrayValue>,
+    pub bytes: core::mem::ManuallyDrop<RenderGraphDescBytesValue>,
+    pub count: [u8; 0],
+    pub groups: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescValueKindPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.ValueKind
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescValueKind {
+    pub _payload_alignment: [RenderGraphDescValueKindPayloadAlignment; 0],
+    pub payload: [u8; 8],
+    pub tag: RenderGraphDescValueKindTag,
+}
+
+/// Tag union: RenderGraphDesc.ValueKind
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescValueKind {
+    pub payload: RenderGraphDescValueKindPayload,
+    pub tag: RenderGraphDescValueKindTag,
+}
+
+impl RenderGraphDescValueKind {
+    /// Borrow the `Array` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueKindTag::Array` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_array_unchecked(&self) -> &RenderGraphDescArrayValue {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescArrayValue) }
+    }
+
+    /// Borrow the `Array` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueKindTag::Array` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_array_unchecked(&self) -> &RenderGraphDescArrayValue {
+        unsafe { &*(&self.payload.array as *const core::mem::ManuallyDrop<RenderGraphDescArrayValue> as *const RenderGraphDescArrayValue) }
+    }
+
+    /// Move the `Array` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueKindTag::Array`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_array_unchecked(&mut self) -> RenderGraphDescArrayValue {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescArrayValue) }
+    }
+
+    /// Move the `Array` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueKindTag::Array`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_array_unchecked(&mut self) -> RenderGraphDescArrayValue {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.array) }
+    }
+
+    /// Borrow the `Bytes` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueKindTag::Bytes` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_bytes_unchecked(&self) -> &RenderGraphDescBytesValue {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescBytesValue) }
+    }
+
+    /// Borrow the `Bytes` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueKindTag::Bytes` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_bytes_unchecked(&self) -> &RenderGraphDescBytesValue {
+        unsafe { &*(&self.payload.bytes as *const core::mem::ManuallyDrop<RenderGraphDescBytesValue> as *const RenderGraphDescBytesValue) }
+    }
+
+    /// Move the `Bytes` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueKindTag::Bytes`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_bytes_unchecked(&mut self) -> RenderGraphDescBytesValue {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescBytesValue) }
+    }
+
+    /// Move the `Bytes` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueKindTag::Bytes`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_bytes_unchecked(&mut self) -> RenderGraphDescBytesValue {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.bytes) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescValueKind>() == 12, "RenderGraphDescValueKind size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescValueKind>() == 4, "RenderGraphDescValueKind alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescValueKind, tag) == 8, "RenderGraphDescValueKind tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescValueKind>() == 12, "RenderGraphDescValueKind size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescValueKind>() == 4, "RenderGraphDescValueKind alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescValueKind, tag) == 8, "RenderGraphDescValueKind tag offset mismatch");
+
+/// Tag discriminant for RenderGraphDesc.ValueScope.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescValueScopeTag {
+    Repeat = 0,
+    Top = 1,
+    When = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescValueScopePayload {
+    pub repeat: core::mem::ManuallyDrop<RenderGraphDescRepeatScope>,
+    pub top: [u8; 0],
+    pub when: core::mem::ManuallyDrop<RenderGraphDescWhenScope>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescValueScopePayloadAlignment;
+
+/// Tag union: RenderGraphDesc.ValueScope
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescValueScope {
+    pub _payload_alignment: [RenderGraphDescValueScopePayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: RenderGraphDescValueScopeTag,
+}
+
+/// Tag union: RenderGraphDesc.ValueScope
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescValueScope {
+    pub payload: RenderGraphDescValueScopePayload,
+    pub tag: RenderGraphDescValueScopeTag,
+}
+
+impl RenderGraphDescValueScope {
+    /// Borrow the `Repeat` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueScopeTag::Repeat` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_repeat_unchecked(&self) -> &RenderGraphDescRepeatScope {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescRepeatScope) }
+    }
+
+    /// Borrow the `Repeat` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueScopeTag::Repeat` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_repeat_unchecked(&self) -> &RenderGraphDescRepeatScope {
+        unsafe { &*(&self.payload.repeat as *const core::mem::ManuallyDrop<RenderGraphDescRepeatScope> as *const RenderGraphDescRepeatScope) }
+    }
+
+    /// Move the `Repeat` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueScopeTag::Repeat`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_repeat_unchecked(&mut self) -> RenderGraphDescRepeatScope {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescRepeatScope) }
+    }
+
+    /// Move the `Repeat` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueScopeTag::Repeat`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_repeat_unchecked(&mut self) -> RenderGraphDescRepeatScope {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.repeat) }
+    }
+
+    /// Borrow the `When` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueScopeTag::When` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_when_unchecked(&self) -> &RenderGraphDescWhenScope {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescWhenScope) }
+    }
+
+    /// Borrow the `When` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueScopeTag::When` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_when_unchecked(&self) -> &RenderGraphDescWhenScope {
+        unsafe { &*(&self.payload.when as *const core::mem::ManuallyDrop<RenderGraphDescWhenScope> as *const RenderGraphDescWhenScope) }
+    }
+
+    /// Move the `When` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueScopeTag::When`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_when_unchecked(&mut self) -> RenderGraphDescWhenScope {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescWhenScope) }
+    }
+
+    /// Move the `When` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescValueScopeTag::When`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_when_unchecked(&mut self) -> RenderGraphDescWhenScope {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.when) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescValueScope>() == 8, "RenderGraphDescValueScope size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescValueScope>() == 4, "RenderGraphDescValueScope alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescValueScope, tag) == 4, "RenderGraphDescValueScope tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescValueScope>() == 8, "RenderGraphDescValueScope size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescValueScope>() == 4, "RenderGraphDescValueScope alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescValueScope, tag) == 4, "RenderGraphDescValueScope tag offset mismatch");
+
+/// Tag discriminant for ValidatedRenderGraph.HostPipelineStages.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidatedRenderGraphHostPipelineStagesTag {
+    Compute = 0,
+    Graphics = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union ValidatedRenderGraphHostPipelineStagesPayload {
+    pub compute: core::mem::ManuallyDrop<ValidatedRenderGraphHostComputeStages>,
+    pub graphics: core::mem::ManuallyDrop<ValidatedRenderGraphHostGraphicsStages>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostPipelineStagesPayloadAlignment;
+
+/// Tag union: ValidatedRenderGraph.HostPipelineStages
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostPipelineStages {
+    pub _payload_alignment: [ValidatedRenderGraphHostPipelineStagesPayloadAlignment; 0],
+    pub payload: [u8; 36],
+    pub tag: ValidatedRenderGraphHostPipelineStagesTag,
+}
+
+/// Tag union: ValidatedRenderGraph.HostPipelineStages
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostPipelineStages {
+    pub payload: ValidatedRenderGraphHostPipelineStagesPayload,
+    pub tag: ValidatedRenderGraphHostPipelineStagesTag,
+}
+
+impl ValidatedRenderGraphHostPipelineStages {
+    /// Borrow the `Compute` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostPipelineStagesTag::Compute` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_compute_unchecked(&self) -> &ValidatedRenderGraphHostComputeStages {
+        unsafe { &*(self.payload.as_ptr() as *const ValidatedRenderGraphHostComputeStages) }
+    }
+
+    /// Borrow the `Compute` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostPipelineStagesTag::Compute` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_compute_unchecked(&self) -> &ValidatedRenderGraphHostComputeStages {
+        unsafe { &*(&self.payload.compute as *const core::mem::ManuallyDrop<ValidatedRenderGraphHostComputeStages> as *const ValidatedRenderGraphHostComputeStages) }
+    }
+
+    /// Move the `Compute` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostPipelineStagesTag::Compute`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_compute_unchecked(&mut self) -> ValidatedRenderGraphHostComputeStages {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const ValidatedRenderGraphHostComputeStages) }
+    }
+
+    /// Move the `Compute` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostPipelineStagesTag::Compute`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_compute_unchecked(&mut self) -> ValidatedRenderGraphHostComputeStages {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.compute) }
+    }
+
+    /// Borrow the `Graphics` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostPipelineStagesTag::Graphics` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_graphics_unchecked(&self) -> &ValidatedRenderGraphHostGraphicsStages {
+        unsafe { &*(self.payload.as_ptr() as *const ValidatedRenderGraphHostGraphicsStages) }
+    }
+
+    /// Borrow the `Graphics` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostPipelineStagesTag::Graphics` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_graphics_unchecked(&self) -> &ValidatedRenderGraphHostGraphicsStages {
+        unsafe { &*(&self.payload.graphics as *const core::mem::ManuallyDrop<ValidatedRenderGraphHostGraphicsStages> as *const ValidatedRenderGraphHostGraphicsStages) }
+    }
+
+    /// Move the `Graphics` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostPipelineStagesTag::Graphics`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_graphics_unchecked(&mut self) -> ValidatedRenderGraphHostGraphicsStages {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const ValidatedRenderGraphHostGraphicsStages) }
+    }
+
+    /// Move the `Graphics` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostPipelineStagesTag::Graphics`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_graphics_unchecked(&mut self) -> ValidatedRenderGraphHostGraphicsStages {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.graphics) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostPipelineStages>() == 72, "ValidatedRenderGraphHostPipelineStages size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostPipelineStages>() == 8, "ValidatedRenderGraphHostPipelineStages alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostPipelineStages, tag) == 64, "ValidatedRenderGraphHostPipelineStages tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostPipelineStages>() == 40, "ValidatedRenderGraphHostPipelineStages size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostPipelineStages>() == 4, "ValidatedRenderGraphHostPipelineStages alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostPipelineStages, tag) == 36, "ValidatedRenderGraphHostPipelineStages tag offset mismatch");
+
+/// Tag union: RasterState.BlendMode
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RasterStateBlendMode {
+    Alpha = 0,
+    DstAlpha = 1,
+    Opaque = 2,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RasterStateBlendMode>() == 1, "RasterStateBlendMode size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RasterStateBlendMode>() == 1, "RasterStateBlendMode alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RasterStateBlendMode>() == 1, "RasterStateBlendMode size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RasterStateBlendMode>() == 1, "RasterStateBlendMode alignment mismatch");
+
+/// Tag union: RasterState.CullMode
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RasterStateCullMode {
+    Back = 0,
+    Front = 1,
+    None = 2,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RasterStateCullMode>() == 1, "RasterStateCullMode size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RasterStateCullMode>() == 1, "RasterStateCullMode alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RasterStateCullMode>() == 1, "RasterStateCullMode size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RasterStateCullMode>() == 1, "RasterStateCullMode alignment mismatch");
+
+/// Tag union: RasterState.DepthCompare
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RasterStateDepthCompare {
+    Always = 0,
+    Disabled = 1,
+    Less = 2,
+    LessEqual = 3,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RasterStateDepthCompare>() == 1, "RasterStateDepthCompare size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RasterStateDepthCompare>() == 1, "RasterStateDepthCompare alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RasterStateDepthCompare>() == 1, "RasterStateDepthCompare size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RasterStateDepthCompare>() == 1, "RasterStateDepthCompare alignment mismatch");
+
+/// Tag discriminant for RasterState.StencilMode.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RasterStateStencilModeTag {
+    Disabled = 0,
+    TestEqual = 1,
+    Write = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RasterStateStencilModePayload {
+    pub disabled: [u8; 0],
+    pub test_equal: core::mem::ManuallyDrop<u8>,
+    pub write: core::mem::ManuallyDrop<u8>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(1))]
+#[derive(Clone, Copy)]
+pub struct RasterStateStencilModePayloadAlignment;
+
+/// Tag union: RasterState.StencilMode
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RasterStateStencilMode {
+    pub _payload_alignment: [RasterStateStencilModePayloadAlignment; 0],
+    pub payload: [u8; 1],
+    pub tag: RasterStateStencilModeTag,
+}
+
+/// Tag union: RasterState.StencilMode
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RasterStateStencilMode {
+    pub payload: RasterStateStencilModePayload,
+    pub tag: RasterStateStencilModeTag,
+}
+
+impl RasterStateStencilMode {
+    /// Borrow the `TestEqual` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RasterStateStencilModeTag::TestEqual` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_test_equal_unchecked(&self) -> &u8 {
+        unsafe { &*(self.payload.as_ptr() as *const u8) }
+    }
+
+    /// Borrow the `TestEqual` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RasterStateStencilModeTag::TestEqual` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_test_equal_unchecked(&self) -> &u8 {
+        unsafe { &*(&self.payload.test_equal as *const core::mem::ManuallyDrop<u8> as *const u8) }
+    }
+
+    /// Move the `TestEqual` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RasterStateStencilModeTag::TestEqual`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_test_equal_unchecked(&mut self) -> u8 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u8) }
+    }
+
+    /// Move the `TestEqual` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RasterStateStencilModeTag::TestEqual`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_test_equal_unchecked(&mut self) -> u8 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.test_equal) }
+    }
+
+    /// Borrow the `Write` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RasterStateStencilModeTag::Write` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_write_unchecked(&self) -> &u8 {
+        unsafe { &*(self.payload.as_ptr() as *const u8) }
+    }
+
+    /// Borrow the `Write` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RasterStateStencilModeTag::Write` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_write_unchecked(&self) -> &u8 {
+        unsafe { &*(&self.payload.write as *const core::mem::ManuallyDrop<u8> as *const u8) }
+    }
+
+    /// Move the `Write` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RasterStateStencilModeTag::Write`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_write_unchecked(&mut self) -> u8 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u8) }
+    }
+
+    /// Move the `Write` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RasterStateStencilModeTag::Write`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_write_unchecked(&mut self) -> u8 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.write) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RasterStateStencilMode>() == 2, "RasterStateStencilMode size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RasterStateStencilMode>() == 1, "RasterStateStencilMode alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RasterStateStencilMode, tag) == 1, "RasterStateStencilMode tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RasterStateStencilMode>() == 2, "RasterStateStencilMode size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RasterStateStencilMode>() == 1, "RasterStateStencilMode alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RasterStateStencilMode, tag) == 1, "RasterStateStencilMode tag offset mismatch");
+
+/// Tag discriminant for RenderGraphDesc.MaybeLayout.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescMaybeLayoutTag {
+    None = 0,
+    Some = 1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescMaybeLayoutPayload {
+    pub none: [u8; 0],
+    pub some: core::mem::ManuallyDrop<RenderGraphDescSchemaLayout>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybeLayoutPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.MaybeLayout
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybeLayout {
+    pub _payload_alignment: [RenderGraphDescMaybeLayoutPayloadAlignment; 0],
+    pub payload: [u8; 12],
+    pub tag: RenderGraphDescMaybeLayoutTag,
+}
+
+/// Tag union: RenderGraphDesc.MaybeLayout
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescMaybeLayout {
+    pub payload: RenderGraphDescMaybeLayoutPayload,
+    pub tag: RenderGraphDescMaybeLayoutTag,
+}
+
+impl RenderGraphDescMaybeLayout {
+    /// Borrow the `Some` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybeLayoutTag::Some` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_some_unchecked(&self) -> &RenderGraphDescSchemaLayout {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescSchemaLayout) }
+    }
+
+    /// Borrow the `Some` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybeLayoutTag::Some` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_some_unchecked(&self) -> &RenderGraphDescSchemaLayout {
+        unsafe { &*(&self.payload.some as *const core::mem::ManuallyDrop<RenderGraphDescSchemaLayout> as *const RenderGraphDescSchemaLayout) }
+    }
+
+    /// Move the `Some` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybeLayoutTag::Some`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_some_unchecked(&mut self) -> RenderGraphDescSchemaLayout {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescSchemaLayout) }
+    }
+
+    /// Move the `Some` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescMaybeLayoutTag::Some`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_some_unchecked(&mut self) -> RenderGraphDescSchemaLayout {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.some) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescMaybeLayout>() == 32, "RenderGraphDescMaybeLayout size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescMaybeLayout>() == 8, "RenderGraphDescMaybeLayout alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescMaybeLayout, tag) == 24, "RenderGraphDescMaybeLayout tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescMaybeLayout>() == 16, "RenderGraphDescMaybeLayout size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescMaybeLayout>() == 4, "RenderGraphDescMaybeLayout alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescMaybeLayout, tag) == 12, "RenderGraphDescMaybeLayout tag offset mismatch");
+
+/// Tag discriminant for RenderGraphDesc.SchemaFieldKind.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescSchemaFieldKindTag {
+    BufAddr = 0,
+    Data = 1,
+    SampledTex = 2,
+    StorageTex = 3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RenderGraphDescSchemaFieldKindPayload {
+    pub buf_addr: [u8; 0],
+    pub data: core::mem::ManuallyDrop<RenderGraphDescDataField>,
+    pub sampled_tex: [u8; 0],
+    pub storage_tex: [u8; 0],
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaFieldKindPayloadAlignment;
+
+/// Tag union: RenderGraphDesc.SchemaFieldKind
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaFieldKind {
+    pub _payload_alignment: [RenderGraphDescSchemaFieldKindPayloadAlignment; 0],
+    pub payload: [u8; 4],
+    pub tag: RenderGraphDescSchemaFieldKindTag,
+}
+
+/// Tag union: RenderGraphDesc.SchemaFieldKind
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RenderGraphDescSchemaFieldKind {
+    pub payload: RenderGraphDescSchemaFieldKindPayload,
+    pub tag: RenderGraphDescSchemaFieldKindTag,
+}
+
+impl RenderGraphDescSchemaFieldKind {
+    /// Borrow the `Data` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSchemaFieldKindTag::Data` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_data_unchecked(&self) -> &RenderGraphDescDataField {
+        unsafe { &*(self.payload.as_ptr() as *const RenderGraphDescDataField) }
+    }
+
+    /// Borrow the `Data` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSchemaFieldKindTag::Data` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_data_unchecked(&self) -> &RenderGraphDescDataField {
+        unsafe { &*(&self.payload.data as *const core::mem::ManuallyDrop<RenderGraphDescDataField> as *const RenderGraphDescDataField) }
+    }
+
+    /// Move the `Data` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSchemaFieldKindTag::Data`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_data_unchecked(&mut self) -> RenderGraphDescDataField {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RenderGraphDescDataField) }
+    }
+
+    /// Move the `Data` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `RenderGraphDescSchemaFieldKindTag::Data`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_data_unchecked(&mut self) -> RenderGraphDescDataField {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.data) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaFieldKind>() == 8, "RenderGraphDescSchemaFieldKind size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaFieldKind>() == 4, "RenderGraphDescSchemaFieldKind alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescSchemaFieldKind, tag) == 4, "RenderGraphDescSchemaFieldKind tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescSchemaFieldKind>() == 8, "RenderGraphDescSchemaFieldKind size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescSchemaFieldKind>() == 4, "RenderGraphDescSchemaFieldKind alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(RenderGraphDescSchemaFieldKind, tag) == 4, "RenderGraphDescSchemaFieldKind tag offset mismatch");
+
+/// Tag union: RenderGraphDesc.ResourceFieldKind
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGraphDescResourceFieldKind {
+    BufAddr = 0,
+    SampledTex = 1,
+    StorageTex = 2,
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceFieldKind>() == 1, "RenderGraphDescResourceFieldKind size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceFieldKind>() == 1, "RenderGraphDescResourceFieldKind alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<RenderGraphDescResourceFieldKind>() == 1, "RenderGraphDescResourceFieldKind size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<RenderGraphDescResourceFieldKind>() == 1, "RenderGraphDescResourceFieldKind alignment mismatch");
+
+/// Tag discriminant for ValidatedRenderGraph.HostFrameValue.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidatedRenderGraphHostFrameValueTag {
+    Absent = 0,
+    Array = 1,
+    Bytes = 2,
+    Count = 3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union ValidatedRenderGraphHostFrameValuePayload {
+    pub absent: [u8; 0],
+    pub array: core::mem::ManuallyDrop<ValidatedRenderGraphHostArray>,
+    pub bytes: core::mem::ManuallyDrop<RocListWith<u8, false>>,
+    pub count: core::mem::ManuallyDrop<u32>,
+}
+
+#[cfg(target_pointer_width = "32")]
+#[repr(align(4))]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostFrameValuePayloadAlignment;
+
+/// Tag union: ValidatedRenderGraph.HostFrameValue
+#[cfg(target_pointer_width = "32")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostFrameValue {
+    pub _payload_alignment: [ValidatedRenderGraphHostFrameValuePayloadAlignment; 0],
+    pub payload: [u8; 16],
+    pub tag: ValidatedRenderGraphHostFrameValueTag,
+}
+
+/// Tag union: ValidatedRenderGraph.HostFrameValue
+#[cfg(not(target_pointer_width = "32"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValidatedRenderGraphHostFrameValue {
+    pub payload: ValidatedRenderGraphHostFrameValuePayload,
+    pub tag: ValidatedRenderGraphHostFrameValueTag,
+}
+
+impl ValidatedRenderGraphHostFrameValue {
+    /// Borrow the `Array` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Array` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_array_unchecked(&self) -> &ValidatedRenderGraphHostArray {
+        unsafe { &*(self.payload.as_ptr() as *const ValidatedRenderGraphHostArray) }
+    }
+
+    /// Borrow the `Array` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Array` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_array_unchecked(&self) -> &ValidatedRenderGraphHostArray {
+        unsafe { &*(&self.payload.array as *const core::mem::ManuallyDrop<ValidatedRenderGraphHostArray> as *const ValidatedRenderGraphHostArray) }
+    }
+
+    /// Move the `Array` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Array`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_array_unchecked(&mut self) -> ValidatedRenderGraphHostArray {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const ValidatedRenderGraphHostArray) }
+    }
+
+    /// Move the `Array` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Array`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_array_unchecked(&mut self) -> ValidatedRenderGraphHostArray {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.array) }
+    }
+
+    /// Borrow the `Bytes` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Bytes` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_bytes_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(self.payload.as_ptr() as *const RocListWith<u8, false>) }
+    }
+
+    /// Borrow the `Bytes` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Bytes` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_bytes_unchecked(&self) -> &RocListWith<u8, false> {
+        unsafe { &*(&self.payload.bytes as *const core::mem::ManuallyDrop<RocListWith<u8, false>> as *const RocListWith<u8, false>) }
+    }
+
+    /// Move the `Bytes` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Bytes`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_bytes_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const RocListWith<u8, false>) }
+    }
+
+    /// Move the `Bytes` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Bytes`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_bytes_unchecked(&mut self) -> RocListWith<u8, false> {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.bytes) }
+    }
+
+    /// Borrow the `Count` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Count` and the payload must still be initialized.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn borrow_payload_count_unchecked(&self) -> &u32 {
+        unsafe { &*(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Borrow the `Count` payload without creating another owner.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Count` and the payload must still be initialized.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn borrow_payload_count_unchecked(&self) -> &u32 {
+        unsafe { &*(&self.payload.count as *const core::mem::ManuallyDrop<u32> as *const u32) }
+    }
+
+    /// Move the `Count` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Count`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(target_pointer_width = "32")]
+    pub unsafe fn take_payload_count_unchecked(&mut self) -> u32 {
+        unsafe { core::ptr::read(self.payload.as_ptr() as *const u32) }
+    }
+
+    /// Move the `Count` payload out of one owned tag-union shell.
+    ///
+    /// # Safety
+    /// `self.tag` must be `ValidatedRenderGraphHostFrameValueTag::Count`. After this call, `self` is logically uninitialized and must not be read or destroyed.
+    #[cfg(not(target_pointer_width = "32"))]
+    pub unsafe fn take_payload_count_unchecked(&mut self) -> u32 {
+        unsafe { core::mem::ManuallyDrop::take(&mut self.payload.count) }
+    }
+
+}
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostFrameValue>() == 40, "ValidatedRenderGraphHostFrameValue size mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostFrameValue>() == 8, "ValidatedRenderGraphHostFrameValue alignment mismatch");
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostFrameValue, tag) == 32, "ValidatedRenderGraphHostFrameValue tag offset mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ValidatedRenderGraphHostFrameValue>() == 20, "ValidatedRenderGraphHostFrameValue size mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::align_of::<ValidatedRenderGraphHostFrameValue>() == 4, "ValidatedRenderGraphHostFrameValue alignment mismatch");
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::offset_of!(ValidatedRenderGraphHostFrameValue, tag) == 16, "ValidatedRenderGraphHostFrameValue tag offset mismatch");
 
 /// Arguments for Host.stderr_line!
 /// Roc signature: Str => Try({}, [StderrErr(Str)])
@@ -1474,6 +5507,79 @@ pub struct HostStderrLineArgs {
 pub struct HostStdoutLineArgs {
     pub arg0: RocStr,
 }
+
+// Platform Type Aliases
+
+pub type GameHostConfigGraphs = ValidatedRenderGraphHostGraph;
+pub type ValidatedRenderGraphHostGraphBuffers = ValidatedRenderGraphHostBuffer;
+pub type ValidatedRenderGraphHostBufferContentsIndices = ValidatedRenderGraphHostIndices;
+pub type RenderGraphDescGraphDescBuffers = RenderGraphDescBufferDecl;
+pub type RenderGraphDescGraphDescImportDecls = RenderGraphDescImportDecl;
+pub type RenderGraphDescGraphDescPasses = RenderGraphDescPassDesc;
+pub type RenderGraphDescGraphDescPassesPayload = RenderGraphDescPassDescPayload;
+pub type RenderGraphDescGraphDescPassesTag = RenderGraphDescPassDescTag;
+pub type RenderGraphDescGraphDescPassesLeaf = RenderGraphDescLeafPass;
+pub type RenderGraphDescGraphDescPassesLeafPayload = RenderGraphDescLeafPassPayload;
+pub type RenderGraphDescGraphDescPassesLeafTag = RenderGraphDescLeafPassTag;
+pub type RenderGraphDescGraphDescPassesLeafCompute = RenderGraphDescDispatchDesc;
+pub type RenderGraphDescGraphDescPassesLeafRaster = RenderGraphDescRasterDesc;
+pub type RenderGraphDescGraphDescPassesRepeat = RenderGraphDescRepeatPass;
+pub type RenderGraphDescGraphDescPassesWhen = RenderGraphDescWhenPass;
+pub type RenderGraphDescPassDescLeaf = RenderGraphDescLeafPass;
+pub type RenderGraphDescPassDescLeafPayload = RenderGraphDescLeafPassPayload;
+pub type RenderGraphDescPassDescLeafTag = RenderGraphDescLeafPassTag;
+pub type RenderGraphDescPassDescLeafCompute = RenderGraphDescDispatchDesc;
+pub type RenderGraphDescPassDescLeafRaster = RenderGraphDescRasterDesc;
+pub type RenderGraphDescPassDescRepeat = RenderGraphDescRepeatPass;
+pub type RenderGraphDescPassDescWhen = RenderGraphDescWhenPass;
+pub type RenderGraphDescLeafPassCompute = RenderGraphDescDispatchDesc;
+pub type RenderGraphDescLeafPassRaster = RenderGraphDescRasterDesc;
+pub type RenderGraphDescMaybePushSome = RenderGraphDescPushDesc;
+pub type RenderGraphDescPushDescBindings = RenderGraphDescResourceBinding;
+pub type RenderGraphDescResourceRefBuf = RenderGraphDescBufferRef;
+pub type RenderGraphDescResourceRefTex = RenderGraphDescTexAccess;
+pub type RenderGraphDescGroupSourceFixed = RenderGraphDescGroupCount;
+pub type RenderGraphDescRasterDescDraws = RenderGraphDescDrawDesc;
+pub type RenderGraphDescDrawCallIndexRange = RenderGraphDescIndexRangeCall;
+pub type RenderGraphDescDrawCallIndexedIndirect = RenderGraphDescIndexedIndirectCall;
+pub type RenderGraphDescDrawCallWholeIndexed = RenderGraphDescWholeIndexedCall;
+pub type RenderGraphDescRasterTargetsOffscreen = RenderGraphDescOffscreenTargets;
+pub type RenderGraphDescRepeatPassBody = RenderGraphDescLeafPass;
+pub type RenderGraphDescRepeatPassBodyPayload = RenderGraphDescLeafPassPayload;
+pub type RenderGraphDescRepeatPassBodyTag = RenderGraphDescLeafPassTag;
+pub type RenderGraphDescRepeatPassBodyCompute = RenderGraphDescDispatchDesc;
+pub type RenderGraphDescRepeatPassBodyRaster = RenderGraphDescRasterDesc;
+pub type RenderGraphDescWhenPassBody = RenderGraphDescLeafPass;
+pub type RenderGraphDescWhenPassBodyPayload = RenderGraphDescLeafPassPayload;
+pub type RenderGraphDescWhenPassBodyTag = RenderGraphDescLeafPassTag;
+pub type RenderGraphDescWhenPassBodyCompute = RenderGraphDescDispatchDesc;
+pub type RenderGraphDescWhenPassBodyRaster = RenderGraphDescRasterDesc;
+pub type RenderGraphDescGraphDescPipelines = RenderGraphDescPipelineDecl;
+pub type RenderGraphDescGraphDescTextures = RenderGraphDescTexDecl;
+pub type RenderGraphDescGraphDescUniforms = RenderGraphDescUniformDecl;
+pub type RenderGraphDescUniformSourceDescBindings = RenderGraphDescResourceBinding;
+pub type RenderGraphDescGraphDescUploads = RenderGraphDescUploadDesc;
+pub type RenderGraphDescGraphDescValues = RenderGraphDescValueDecl;
+pub type RenderGraphDescValueKindArray = RenderGraphDescArrayValue;
+pub type RenderGraphDescValueKindBytes = RenderGraphDescBytesValue;
+pub type RenderGraphDescValueScopeRepeat = RenderGraphDescRepeatScope;
+pub type RenderGraphDescValueScopeWhen = RenderGraphDescWhenScope;
+pub type RenderGraphDescMaybePickingSome = RenderGraphDescPickingDesc;
+pub type ValidatedRenderGraphHostGraphImportDecls = ValidatedRenderGraphHostImport;
+pub type ValidatedRenderGraphHostGraphPipelines = ValidatedRenderGraphHostPipeline;
+pub type ValidatedRenderGraphHostPipelineStagesCompute = ValidatedRenderGraphHostComputeStages;
+pub type ValidatedRenderGraphHostPipelineStagesGraphics = ValidatedRenderGraphHostGraphicsStages;
+pub type RenderGraphDescSchemaTableSchemas = RenderGraphDescSchemaDesc;
+pub type RenderGraphDescMaybeLayoutSome = RenderGraphDescSchemaLayout;
+pub type RenderGraphDescSchemaLayoutFields = RenderGraphDescSchemaField;
+pub type RenderGraphDescSchemaFieldKindData = RenderGraphDescDataField;
+pub type RenderGraphDescSchemaDescResourceFields = RenderGraphDescResourceFieldKind;
+pub type ValidatedRenderGraphHostGraphUniformBuffers = ValidatedRenderGraphHostUniformBuffer;
+pub type GraphSetDrawValues = ValidatedRenderGraphHostFrameValue;
+pub type GraphSetDrawValuesPayload = ValidatedRenderGraphHostFrameValuePayload;
+pub type GraphSetDrawValuesTag = ValidatedRenderGraphHostFrameValueTag;
+pub type GraphSetDrawValuesArray = ValidatedRenderGraphHostArray;
+pub type ValidatedRenderGraphHostFrameValueArray = ValidatedRenderGraphHostArray;
 
 // Generated Refcount Helpers
 
@@ -1516,6 +5622,49 @@ pub struct HostStderrLineResultRelease;
 
 unsafe impl RocRelease<HostStderrLineResult> for HostStderrLineResultRelease {
     unsafe fn release(value: HostStderrLineResult, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl HostStdoutLineResult {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            HostStdoutLineResultTag::Err => {
+                let payload = unsafe { value.take_payload_err_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            HostStdoutLineResultTag::Ok => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            HostStdoutLineResultTag::Err => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            HostStdoutLineResultTag::Ok => {},
+        }
+    }
+}
+
+pub struct HostStdoutLineResultRelease;
+
+unsafe impl RocRelease<HostStdoutLineResult> for HostStdoutLineResultRelease {
+    unsafe fn release(value: HostStdoutLineResult, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
@@ -1569,7 +5718,112 @@ unsafe impl RocRelease<HostStdinLineResult> for HostStdinLineResultRelease {
     }
 }
 
-impl HostStdoutLineResult {
+impl GameHostConfig {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_list_of_validated_render_graph_host_graph(value.graphs, roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.graphs.incref(amount); }
+    }
+}
+
+pub struct GameHostConfigRelease;
+
+unsafe impl RocRelease<GameHostConfig> for GameHostConfigRelease {
+    unsafe fn release(value: GameHostConfig, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostGraph {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_list_of_validated_render_graph_host_buffer(value.buffers, roc_host); }
+        unsafe { value.desc.decref(roc_host); }
+        unsafe { decref_list_of_validated_render_graph_host_import(value.import_decls, roc_host); }
+        unsafe { value.pipeline_indices.decref(roc_host); }
+        unsafe { decref_list_of_validated_render_graph_host_pipeline(value.pipelines, roc_host); }
+        unsafe { value.schemas.decref(roc_host); }
+        unsafe { decref_list_of_validated_render_graph_host_uniform_buffer(value.uniform_buffers, roc_host); }
+        unsafe { value.uniform_slots.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.buffers.incref(amount); }
+        unsafe { value.desc.incref(amount); }
+        unsafe { value.import_decls.incref(amount); }
+        unsafe { value.pipeline_indices.incref(amount); }
+        unsafe { value.pipelines.incref(amount); }
+        unsafe { value.schemas.incref(amount); }
+        unsafe { value.uniform_buffers.incref(amount); }
+        unsafe { value.uniform_slots.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostGraphRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostGraph> for ValidatedRenderGraphHostGraphRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostGraph, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostBuffer {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.contents.decref(roc_host); }
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.role.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.contents.incref(amount); }
+        unsafe { value.name.incref(amount); }
+        unsafe { value.role.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostBufferRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostBuffer> for ValidatedRenderGraphHostBufferRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostBuffer, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostBufferContents {
     /// Recursively decrement Roc-owned payloads.
     ///
     /// # Safety
@@ -1578,11 +5832,14 @@ impl HostStdoutLineResult {
         let mut value = self;
         let _ = roc_host;
         match value.tag {
-            HostStdoutLineResultTag::Err => {
-                let payload = unsafe { value.take_payload_err_unchecked() };
+            ValidatedRenderGraphHostBufferContentsTag::Bytes => {
+                let payload = unsafe { value.take_payload_bytes_unchecked() };
                 unsafe { payload.decref(roc_host); }
             },
-            HostStdoutLineResultTag::Ok => {},
+            ValidatedRenderGraphHostBufferContentsTag::Indices => {
+                let payload = unsafe { value.take_payload_indices_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
         }
     }
 
@@ -1595,31 +5852,34 @@ impl HostStdoutLineResult {
         let value = self;
         let _ = amount;
         match value.tag {
-            HostStdoutLineResultTag::Err => {
-                let payload = unsafe { core::ptr::read(value.borrow_payload_err_unchecked()) };
+            ValidatedRenderGraphHostBufferContentsTag::Bytes => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_bytes_unchecked()) };
                 unsafe { payload.incref(amount); }
             },
-            HostStdoutLineResultTag::Ok => {},
+            ValidatedRenderGraphHostBufferContentsTag::Indices => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_indices_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
         }
     }
 }
 
-pub struct HostStdoutLineResultRelease;
+pub struct ValidatedRenderGraphHostBufferContentsRelease;
 
-unsafe impl RocRelease<HostStdoutLineResult> for HostStdoutLineResultRelease {
-    unsafe fn release(value: HostStdoutLineResult, roc_host: &RocHost) {
+unsafe impl RocRelease<ValidatedRenderGraphHostBufferContents> for ValidatedRenderGraphHostBufferContentsRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostBufferContents, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
 
-impl AnonStruct621dc7eda441df2f {
+impl ValidatedRenderGraphHostIndices {
     /// Recursively decrement Roc-owned fields.
     ///
     /// # Safety
     /// `self` must own one live Roc reference for each refcounted field.
     pub unsafe fn decref(self, roc_host: &RocHost) {
         let value = self;
-        unsafe { decref_erased_callable(value.init_bang, roc_host); }
+        unsafe { value.indices.decref(roc_host); }
     }
 
     /// Increment Roc-owned fields.
@@ -1629,25 +5889,2534 @@ impl AnonStruct621dc7eda441df2f {
     /// be balanced by later decrefs.
     pub unsafe fn incref(self, amount: isize) {
         let value = self;
-        unsafe { incref_erased_callable(value.init_bang, amount); }
+        unsafe { value.indices.incref(amount); }
     }
 }
 
-pub struct AnonStruct621dc7eda441df2fRelease;
+pub struct ValidatedRenderGraphHostIndicesRelease;
 
-unsafe impl RocRelease<AnonStruct621dc7eda441df2f> for AnonStruct621dc7eda441df2fRelease {
-    unsafe fn release(value: AnonStruct621dc7eda441df2f, roc_host: &RocHost) {
+unsafe impl RocRelease<ValidatedRenderGraphHostIndices> for ValidatedRenderGraphHostIndicesRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostIndices, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
 }
 
-impl InitConfig {
+impl ValidatedRenderGraphHostBufferRole {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct ValidatedRenderGraphHostBufferRoleRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostBufferRole> for ValidatedRenderGraphHostBufferRoleRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostBufferRole, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescGraphDesc {
     /// Recursively decrement Roc-owned fields.
     ///
     /// # Safety
     /// `self` must own one live Roc reference for each refcounted field.
     pub unsafe fn decref(self, roc_host: &RocHost) {
         let value = self;
+        unsafe { decref_list_of_render_graph_desc_buffer_decl(value.buffers, roc_host); }
+        unsafe { decref_list_of_render_graph_desc_import_decl(value.import_decls, roc_host); }
+        unsafe { decref_list_of_render_graph_desc_pass_desc(value.passes, roc_host); }
+        unsafe { decref_list_of_render_graph_desc_pipeline_decl(value.pipelines, roc_host); }
+        unsafe { decref_list_of_render_graph_desc_tex_decl(value.textures, roc_host); }
+        unsafe { decref_list_of_render_graph_desc_uniform_decl(value.uniforms, roc_host); }
+        unsafe { decref_list_of_render_graph_desc_upload_desc(value.uploads, roc_host); }
+        unsafe { decref_list_of_render_graph_desc_value_decl(value.values, roc_host); }
+        unsafe { value.picking.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.buffers.incref(amount); }
+        unsafe { value.import_decls.incref(amount); }
+        unsafe { value.passes.incref(amount); }
+        unsafe { value.pipelines.incref(amount); }
+        unsafe { value.textures.incref(amount); }
+        unsafe { value.uniforms.incref(amount); }
+        unsafe { value.uploads.incref(amount); }
+        unsafe { value.values.incref(amount); }
+        unsafe { value.picking.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescGraphDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescGraphDesc> for RenderGraphDescGraphDescRelease {
+    unsafe fn release(value: RenderGraphDescGraphDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescBufferDecl {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.capacity.decref(roc_host); }
+        unsafe { value.elem_size.decref(roc_host); }
+        unsafe { value.kind.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+        unsafe { value.capacity.incref(amount); }
+        unsafe { value.elem_size.incref(amount); }
+        unsafe { value.kind.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescBufferDeclRelease;
+
+unsafe impl RocRelease<RenderGraphDescBufferDecl> for RenderGraphDescBufferDeclRelease {
+    unsafe fn release(value: RenderGraphDescBufferDecl, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescMaybeU32 {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescMaybeU32Tag::None => {},
+            RenderGraphDescMaybeU32Tag::Some => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescMaybeU32Tag::None => {},
+            RenderGraphDescMaybeU32Tag::Some => {},
+        }
+    }
+}
+
+pub struct RenderGraphDescMaybeU32Release;
+
+unsafe impl RocRelease<RenderGraphDescMaybeU32> for RenderGraphDescMaybeU32Release {
+    unsafe fn release(value: RenderGraphDescMaybeU32, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescBufferKind {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescBufferKindRelease;
+
+unsafe impl RocRelease<RenderGraphDescBufferKind> for RenderGraphDescBufferKindRelease {
+    unsafe fn release(value: RenderGraphDescBufferKind, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescImportDecl {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescImportDeclRelease;
+
+unsafe impl RocRelease<RenderGraphDescImportDecl> for RenderGraphDescImportDeclRelease {
+    unsafe fn release(value: RenderGraphDescImportDecl, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescPassDesc {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescPassDescTag::Leaf => {
+                let payload = unsafe { value.take_payload_leaf_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescPassDescTag::Repeat => {
+                let payload = unsafe { value.take_payload_repeat_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescPassDescTag::When => {
+                let payload = unsafe { value.take_payload_when_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescPassDescTag::Leaf => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_leaf_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescPassDescTag::Repeat => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_repeat_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescPassDescTag::When => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_when_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct RenderGraphDescPassDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescPassDesc> for RenderGraphDescPassDescRelease {
+    unsafe fn release(value: RenderGraphDescPassDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescLeafPass {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescLeafPassTag::Compute => {
+                let payload = unsafe { value.take_payload_compute_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescLeafPassTag::Raster => {
+                let payload = unsafe { value.take_payload_raster_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescLeafPassTag::Compute => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_compute_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescLeafPassTag::Raster => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_raster_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct RenderGraphDescLeafPassRelease;
+
+unsafe impl RocRelease<RenderGraphDescLeafPass> for RenderGraphDescLeafPassRelease {
+    unsafe fn release(value: RenderGraphDescLeafPass, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescDispatchDesc {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.push.decref(roc_host); }
+        unsafe { value.groups.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+        unsafe { value.push.incref(amount); }
+        unsafe { value.groups.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescDispatchDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescDispatchDesc> for RenderGraphDescDispatchDescRelease {
+    unsafe fn release(value: RenderGraphDescDispatchDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescGroupSource {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescGroupSourceTag::Fixed => {
+                let payload = unsafe { value.take_payload_fixed_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescGroupSourceTag::Value => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescGroupSourceTag::Fixed => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_fixed_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescGroupSourceTag::Value => {},
+        }
+    }
+}
+
+pub struct RenderGraphDescGroupSourceRelease;
+
+unsafe impl RocRelease<RenderGraphDescGroupSource> for RenderGraphDescGroupSourceRelease {
+    unsafe fn release(value: RenderGraphDescGroupSource, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescGroupCount {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescGroupCountRelease;
+
+unsafe impl RocRelease<RenderGraphDescGroupCount> for RenderGraphDescGroupCountRelease {
+    unsafe fn release(value: RenderGraphDescGroupCount, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescMaybePush {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescMaybePushTag::None => {},
+            RenderGraphDescMaybePushTag::Some => {
+                let payload = unsafe { value.take_payload_some_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescMaybePushTag::None => {},
+            RenderGraphDescMaybePushTag::Some => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_some_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct RenderGraphDescMaybePushRelease;
+
+unsafe impl RocRelease<RenderGraphDescMaybePush> for RenderGraphDescMaybePushRelease {
+    unsafe fn release(value: RenderGraphDescMaybePush, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescPushDesc {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.bindings.decref(roc_host); }
+        unsafe { value.data.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.bindings.incref(amount); }
+        unsafe { value.data.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescPushDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescPushDesc> for RenderGraphDescPushDescRelease {
+    unsafe fn release(value: RenderGraphDescPushDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescResourceBinding {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.resource.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.resource.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescResourceBindingRelease;
+
+unsafe impl RocRelease<RenderGraphDescResourceBinding> for RenderGraphDescResourceBindingRelease {
+    unsafe fn release(value: RenderGraphDescResourceBinding, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescResourceRef {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescResourceRefTag::Buf => {
+                let payload = unsafe { value.take_payload_buf_unchecked() };
+                unsafe { payload._0.decref(roc_host); }
+                unsafe { payload._1.decref(roc_host); }
+            },
+            RenderGraphDescResourceRefTag::External => {},
+            RenderGraphDescResourceRefTag::Tex => {
+                let payload = unsafe { value.take_payload_tex_unchecked() };
+                unsafe { payload._1.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescResourceRefTag::Buf => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_buf_unchecked()) };
+                unsafe { payload._0.incref(amount); }
+                unsafe { payload._1.incref(amount); }
+            },
+            RenderGraphDescResourceRefTag::External => {},
+            RenderGraphDescResourceRefTag::Tex => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_tex_unchecked()) };
+                unsafe { payload._1.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct RenderGraphDescResourceRefRelease;
+
+unsafe impl RocRelease<RenderGraphDescResourceRef> for RenderGraphDescResourceRefRelease {
+    unsafe fn release(value: RenderGraphDescResourceRef, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescBufferRef {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.range.decref(roc_host); }
+        unsafe { value.slot.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.range.incref(amount); }
+        unsafe { value.slot.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescBufferRefRelease;
+
+unsafe impl RocRelease<RenderGraphDescBufferRef> for RenderGraphDescBufferRefRelease {
+    unsafe fn release(value: RenderGraphDescBufferRef, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescSlotSel {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescSlotSelRelease;
+
+unsafe impl RocRelease<RenderGraphDescSlotSel> for RenderGraphDescSlotSelRelease {
+    unsafe fn release(value: RenderGraphDescSlotSel, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescBufAccess {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescBufAccessRelease;
+
+unsafe impl RocRelease<RenderGraphDescBufAccess> for RenderGraphDescBufAccessRelease {
+    unsafe fn release(value: RenderGraphDescBufAccess, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescTexAccess {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescTexAccessRelease;
+
+unsafe impl RocRelease<RenderGraphDescTexAccess> for RenderGraphDescTexAccessRelease {
+    unsafe fn release(value: RenderGraphDescTexAccess, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescRasterDesc {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_list_of_render_graph_desc_draw_desc(value.draws, roc_host); }
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.raster_targets.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.draws.incref(amount); }
+        unsafe { value.name.incref(amount); }
+        unsafe { value.raster_targets.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescRasterDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescRasterDesc> for RenderGraphDescRasterDescRelease {
+    unsafe fn release(value: RenderGraphDescRasterDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescDrawDesc {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.push.decref(roc_host); }
+        unsafe { value.call.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+        unsafe { value.push.incref(amount); }
+        unsafe { value.call.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescDrawDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescDrawDesc> for RenderGraphDescDrawDescRelease {
+    unsafe fn release(value: RenderGraphDescDrawDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescDrawCall {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescDrawCallTag::IndexRange => {
+                let payload = unsafe { value.take_payload_index_range_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescDrawCallTag::IndexedIndirect => {
+                let payload = unsafe { value.take_payload_indexed_indirect_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescDrawCallTag::VertexCount => {},
+            RenderGraphDescDrawCallTag::WholeIndexed => {
+                let payload = unsafe { value.take_payload_whole_indexed_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescDrawCallTag::IndexRange => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_index_range_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescDrawCallTag::IndexedIndirect => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_indexed_indirect_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescDrawCallTag::VertexCount => {},
+            RenderGraphDescDrawCallTag::WholeIndexed => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_whole_indexed_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct RenderGraphDescDrawCallRelease;
+
+unsafe impl RocRelease<RenderGraphDescDrawCall> for RenderGraphDescDrawCallRelease {
+    unsafe fn release(value: RenderGraphDescDrawCall, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescIndexRangeCall {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescIndexRangeCallRelease;
+
+unsafe impl RocRelease<RenderGraphDescIndexRangeCall> for RenderGraphDescIndexRangeCallRelease {
+    unsafe fn release(value: RenderGraphDescIndexRangeCall, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescIndexedIndirectCall {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.args.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.args.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescIndexedIndirectCallRelease;
+
+unsafe impl RocRelease<RenderGraphDescIndexedIndirectCall> for RenderGraphDescIndexedIndirectCallRelease {
+    unsafe fn release(value: RenderGraphDescIndexedIndirectCall, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescWholeIndexedCall {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescWholeIndexedCallRelease;
+
+unsafe impl RocRelease<RenderGraphDescWholeIndexedCall> for RenderGraphDescWholeIndexedCallRelease {
+    unsafe fn release(value: RenderGraphDescWholeIndexedCall, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescRasterTargets {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescRasterTargetsTag::Main => {},
+            RenderGraphDescRasterTargetsTag::Offscreen => {
+                let payload = unsafe { value.take_payload_offscreen_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescRasterTargetsTag::Main => {},
+            RenderGraphDescRasterTargetsTag::Offscreen => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_offscreen_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct RenderGraphDescRasterTargetsRelease;
+
+unsafe impl RocRelease<RenderGraphDescRasterTargets> for RenderGraphDescRasterTargetsRelease {
+    unsafe fn release(value: RenderGraphDescRasterTargets, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescOffscreenTargets {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.color.decref(roc_host); }
+        unsafe { value.depth.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.color.incref(amount); }
+        unsafe { value.depth.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescOffscreenTargetsRelease;
+
+unsafe impl RocRelease<RenderGraphDescOffscreenTargets> for RenderGraphDescOffscreenTargetsRelease {
+    unsafe fn release(value: RenderGraphDescOffscreenTargets, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescRepeatPass {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_list_of_render_graph_desc_leaf_pass(value.body, roc_host); }
+        unsafe { value.name.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.body.incref(amount); }
+        unsafe { value.name.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescRepeatPassRelease;
+
+unsafe impl RocRelease<RenderGraphDescRepeatPass> for RenderGraphDescRepeatPassRelease {
+    unsafe fn release(value: RenderGraphDescRepeatPass, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescWhenPass {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_list_of_render_graph_desc_leaf_pass(value.body, roc_host); }
+        unsafe { value.name.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.body.incref(amount); }
+        unsafe { value.name.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescWhenPassRelease;
+
+unsafe impl RocRelease<RenderGraphDescWhenPass> for RenderGraphDescWhenPassRelease {
+    unsafe fn release(value: RenderGraphDescWhenPass, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescMaybePicking {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescMaybePickingTag::None => {},
+            RenderGraphDescMaybePickingTag::Some => {
+                let payload = unsafe { value.take_payload_some_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescMaybePickingTag::None => {},
+            RenderGraphDescMaybePickingTag::Some => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_some_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct RenderGraphDescMaybePickingRelease;
+
+unsafe impl RocRelease<RenderGraphDescMaybePicking> for RenderGraphDescMaybePickingRelease {
+    unsafe fn release(value: RenderGraphDescMaybePicking, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescPickingDesc {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescPickingDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescPickingDesc> for RenderGraphDescPickingDescRelease {
+    unsafe fn release(value: RenderGraphDescPickingDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescPipelineDecl {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.push.decref(roc_host); }
+        unsafe { value.kind.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+        unsafe { value.push.incref(amount); }
+        unsafe { value.kind.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescPipelineDeclRelease;
+
+unsafe impl RocRelease<RenderGraphDescPipelineDecl> for RenderGraphDescPipelineDeclRelease {
+    unsafe fn release(value: RenderGraphDescPipelineDecl, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescPipelineKind {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescPipelineKindRelease;
+
+unsafe impl RocRelease<RenderGraphDescPipelineKind> for RenderGraphDescPipelineKindRelease {
+    unsafe fn release(value: RenderGraphDescPipelineKind, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescTexDecl {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.size.decref(roc_host); }
+        unsafe { value.format.decref(roc_host); }
+        unsafe { value.usage.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+        unsafe { value.size.incref(amount); }
+        unsafe { value.format.incref(amount); }
+        unsafe { value.usage.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescTexDeclRelease;
+
+unsafe impl RocRelease<RenderGraphDescTexDecl> for RenderGraphDescTexDeclRelease {
+    unsafe fn release(value: RenderGraphDescTexDecl, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescGraphFormat {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescGraphFormatRelease;
+
+unsafe impl RocRelease<RenderGraphDescGraphFormat> for RenderGraphDescGraphFormatRelease {
+    unsafe fn release(value: RenderGraphDescGraphFormat, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescSizeClass {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescSizeClassTag::Fixed => {},
+            RenderGraphDescSizeClassTag::Window => {},
+            RenderGraphDescSizeClassTag::WindowDiv => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescSizeClassTag::Fixed => {},
+            RenderGraphDescSizeClassTag::Window => {},
+            RenderGraphDescSizeClassTag::WindowDiv => {},
+        }
+    }
+}
+
+pub struct RenderGraphDescSizeClassRelease;
+
+unsafe impl RocRelease<RenderGraphDescSizeClass> for RenderGraphDescSizeClassRelease {
+    unsafe fn release(value: RenderGraphDescSizeClass, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescTexUsage {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescTexUsageRelease;
+
+unsafe impl RocRelease<RenderGraphDescTexUsage> for RenderGraphDescTexUsageRelease {
+    unsafe fn release(value: RenderGraphDescTexUsage, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescUniformDecl {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.source.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+        unsafe { value.source.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescUniformDeclRelease;
+
+unsafe impl RocRelease<RenderGraphDescUniformDecl> for RenderGraphDescUniformDeclRelease {
+    unsafe fn release(value: RenderGraphDescUniformDecl, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescUniformSourceDesc {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.bindings.decref(roc_host); }
+        unsafe { value.data.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.bindings.incref(amount); }
+        unsafe { value.data.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescUniformSourceDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescUniformSourceDesc> for RenderGraphDescUniformSourceDescRelease {
+    unsafe fn release(value: RenderGraphDescUniformSourceDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescUploadDesc {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescUploadDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescUploadDesc> for RenderGraphDescUploadDescRelease {
+    unsafe fn release(value: RenderGraphDescUploadDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescValueDecl {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.kind.decref(roc_host); }
+        unsafe { value.scope.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+        unsafe { value.kind.incref(amount); }
+        unsafe { value.scope.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescValueDeclRelease;
+
+unsafe impl RocRelease<RenderGraphDescValueDecl> for RenderGraphDescValueDeclRelease {
+    unsafe fn release(value: RenderGraphDescValueDecl, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescValueKind {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescValueKindTag::Array => {
+                let payload = unsafe { value.take_payload_array_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescValueKindTag::Bytes => {
+                let payload = unsafe { value.take_payload_bytes_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescValueKindTag::Count => {},
+            RenderGraphDescValueKindTag::Groups => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescValueKindTag::Array => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_array_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescValueKindTag::Bytes => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_bytes_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescValueKindTag::Count => {},
+            RenderGraphDescValueKindTag::Groups => {},
+        }
+    }
+}
+
+pub struct RenderGraphDescValueKindRelease;
+
+unsafe impl RocRelease<RenderGraphDescValueKind> for RenderGraphDescValueKindRelease {
+    unsafe fn release(value: RenderGraphDescValueKind, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescArrayValue {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescArrayValueRelease;
+
+unsafe impl RocRelease<RenderGraphDescArrayValue> for RenderGraphDescArrayValueRelease {
+    unsafe fn release(value: RenderGraphDescArrayValue, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescBytesValue {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescBytesValueRelease;
+
+unsafe impl RocRelease<RenderGraphDescBytesValue> for RenderGraphDescBytesValueRelease {
+    unsafe fn release(value: RenderGraphDescBytesValue, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescValueScope {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescValueScopeTag::Repeat => {
+                let payload = unsafe { value.take_payload_repeat_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescValueScopeTag::Top => {},
+            RenderGraphDescValueScopeTag::When => {
+                let payload = unsafe { value.take_payload_when_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescValueScopeTag::Repeat => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_repeat_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescValueScopeTag::Top => {},
+            RenderGraphDescValueScopeTag::When => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_when_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct RenderGraphDescValueScopeRelease;
+
+unsafe impl RocRelease<RenderGraphDescValueScope> for RenderGraphDescValueScopeRelease {
+    unsafe fn release(value: RenderGraphDescValueScope, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescRepeatScope {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescRepeatScopeRelease;
+
+unsafe impl RocRelease<RenderGraphDescRepeatScope> for RenderGraphDescRepeatScopeRelease {
+    unsafe fn release(value: RenderGraphDescRepeatScope, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescWhenScope {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescWhenScopeRelease;
+
+unsafe impl RocRelease<RenderGraphDescWhenScope> for RenderGraphDescWhenScopeRelease {
+    unsafe fn release(value: RenderGraphDescWhenScope, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostImport {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostImportRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostImport> for ValidatedRenderGraphHostImportRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostImport, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostPipeline {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.reflection_json.decref(roc_host); }
+        unsafe { value.stages.decref(roc_host); }
+        unsafe { value.uniform_buffers.decref(roc_host); }
+        unsafe { value.kind.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+        unsafe { value.reflection_json.incref(amount); }
+        unsafe { value.stages.incref(amount); }
+        unsafe { value.uniform_buffers.incref(amount); }
+        unsafe { value.kind.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostPipelineRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostPipeline> for ValidatedRenderGraphHostPipelineRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostPipeline, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostPipelineStages {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            ValidatedRenderGraphHostPipelineStagesTag::Compute => {
+                let payload = unsafe { value.take_payload_compute_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            ValidatedRenderGraphHostPipelineStagesTag::Graphics => {
+                let payload = unsafe { value.take_payload_graphics_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            ValidatedRenderGraphHostPipelineStagesTag::Compute => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_compute_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            ValidatedRenderGraphHostPipelineStagesTag::Graphics => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_graphics_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct ValidatedRenderGraphHostPipelineStagesRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostPipelineStages> for ValidatedRenderGraphHostPipelineStagesRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostPipelineStages, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostComputeStages {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.compute_spv.decref(roc_host); }
+        unsafe { value.workgroup_size.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.compute_spv.incref(amount); }
+        unsafe { value.workgroup_size.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostComputeStagesRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostComputeStages> for ValidatedRenderGraphHostComputeStagesRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostComputeStages, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostWorkgroupSize {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct ValidatedRenderGraphHostWorkgroupSizeRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostWorkgroupSize> for ValidatedRenderGraphHostWorkgroupSizeRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostWorkgroupSize, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostGraphicsStages {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.fragment_spv.decref(roc_host); }
+        unsafe { value.vertex_spv.decref(roc_host); }
+        unsafe { value.raster.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.fragment_spv.incref(amount); }
+        unsafe { value.vertex_spv.incref(amount); }
+        unsafe { value.raster.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostGraphicsStagesRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostGraphicsStages> for ValidatedRenderGraphHostGraphicsStagesRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostGraphicsStages, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RasterState {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.blend.decref(roc_host); }
+        unsafe { value.color_write.decref(roc_host); }
+        unsafe { value.cull.decref(roc_host); }
+        unsafe { value.depth_test.decref(roc_host); }
+        unsafe { value.stencil.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.blend.incref(amount); }
+        unsafe { value.color_write.incref(amount); }
+        unsafe { value.cull.incref(amount); }
+        unsafe { value.depth_test.incref(amount); }
+        unsafe { value.stencil.incref(amount); }
+    }
+}
+
+pub struct RasterStateRelease;
+
+unsafe impl RocRelease<RasterState> for RasterStateRelease {
+    unsafe fn release(value: RasterState, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RasterStateBlendMode {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RasterStateBlendModeRelease;
+
+unsafe impl RocRelease<RasterStateBlendMode> for RasterStateBlendModeRelease {
+    unsafe fn release(value: RasterStateBlendMode, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RasterStateColorWrite {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RasterStateColorWriteRelease;
+
+unsafe impl RocRelease<RasterStateColorWrite> for RasterStateColorWriteRelease {
+    unsafe fn release(value: RasterStateColorWrite, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RasterStateCullMode {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RasterStateCullModeRelease;
+
+unsafe impl RocRelease<RasterStateCullMode> for RasterStateCullModeRelease {
+    unsafe fn release(value: RasterStateCullMode, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RasterStateDepthCompare {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RasterStateDepthCompareRelease;
+
+unsafe impl RocRelease<RasterStateDepthCompare> for RasterStateDepthCompareRelease {
+    unsafe fn release(value: RasterStateDepthCompare, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RasterStateStencilMode {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = roc_host;
+        match value.tag {
+            RasterStateStencilModeTag::Disabled => {},
+            RasterStateStencilModeTag::TestEqual => {},
+            RasterStateStencilModeTag::Write => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RasterStateStencilModeTag::Disabled => {},
+            RasterStateStencilModeTag::TestEqual => {},
+            RasterStateStencilModeTag::Write => {},
+        }
+    }
+}
+
+pub struct RasterStateStencilModeRelease;
+
+unsafe impl RocRelease<RasterStateStencilMode> for RasterStateStencilModeRelease {
+    unsafe fn release(value: RasterStateStencilMode, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescSchemaTable {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_list_of_render_graph_desc_schema_desc(value.schemas, roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.schemas.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescSchemaTableRelease;
+
+unsafe impl RocRelease<RenderGraphDescSchemaTable> for RenderGraphDescSchemaTableRelease {
+    unsafe fn release(value: RenderGraphDescSchemaTable, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescSchemaDesc {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.layout.decref(roc_host); }
+        unsafe { value.name.decref(roc_host); }
+        unsafe { value.resource_fields.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.layout.incref(amount); }
+        unsafe { value.name.incref(amount); }
+        unsafe { value.resource_fields.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescSchemaDescRelease;
+
+unsafe impl RocRelease<RenderGraphDescSchemaDesc> for RenderGraphDescSchemaDescRelease {
+    unsafe fn release(value: RenderGraphDescSchemaDesc, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescMaybeLayout {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescMaybeLayoutTag::None => {},
+            RenderGraphDescMaybeLayoutTag::Some => {
+                let payload = unsafe { value.take_payload_some_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescMaybeLayoutTag::None => {},
+            RenderGraphDescMaybeLayoutTag::Some => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_some_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+        }
+    }
+}
+
+pub struct RenderGraphDescMaybeLayoutRelease;
+
+unsafe impl RocRelease<RenderGraphDescMaybeLayout> for RenderGraphDescMaybeLayoutRelease {
+    unsafe fn release(value: RenderGraphDescMaybeLayout, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescSchemaLayout {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.fields.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.fields.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescSchemaLayoutRelease;
+
+unsafe impl RocRelease<RenderGraphDescSchemaLayout> for RenderGraphDescSchemaLayoutRelease {
+    unsafe fn release(value: RenderGraphDescSchemaLayout, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescSchemaField {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.kind.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.kind.incref(amount); }
+    }
+}
+
+pub struct RenderGraphDescSchemaFieldRelease;
+
+unsafe impl RocRelease<RenderGraphDescSchemaField> for RenderGraphDescSchemaFieldRelease {
+    unsafe fn release(value: RenderGraphDescSchemaField, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescSchemaFieldKind {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            RenderGraphDescSchemaFieldKindTag::BufAddr => {},
+            RenderGraphDescSchemaFieldKindTag::Data => {
+                let payload = unsafe { value.take_payload_data_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            RenderGraphDescSchemaFieldKindTag::SampledTex => {},
+            RenderGraphDescSchemaFieldKindTag::StorageTex => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            RenderGraphDescSchemaFieldKindTag::BufAddr => {},
+            RenderGraphDescSchemaFieldKindTag::Data => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_data_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            RenderGraphDescSchemaFieldKindTag::SampledTex => {},
+            RenderGraphDescSchemaFieldKindTag::StorageTex => {},
+        }
+    }
+}
+
+pub struct RenderGraphDescSchemaFieldKindRelease;
+
+unsafe impl RocRelease<RenderGraphDescSchemaFieldKind> for RenderGraphDescSchemaFieldKindRelease {
+    unsafe fn release(value: RenderGraphDescSchemaFieldKind, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescDataField {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescDataFieldRelease;
+
+unsafe impl RocRelease<RenderGraphDescDataField> for RenderGraphDescDataFieldRelease {
+    unsafe fn release(value: RenderGraphDescDataField, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl RenderGraphDescResourceFieldKind {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let _ = self;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let _ = self;
+        let _ = amount;
+    }
+}
+
+pub struct RenderGraphDescResourceFieldKindRelease;
+
+unsafe impl RocRelease<RenderGraphDescResourceFieldKind> for RenderGraphDescResourceFieldKindRelease {
+    unsafe fn release(value: RenderGraphDescResourceFieldKind, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostUniformBuffer {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.name.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.name.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostUniformBufferRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostUniformBuffer> for ValidatedRenderGraphHostUniformBufferRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostUniformBuffer, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl GraphSetDraw {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { decref_list_of_validated_render_graph_host_frame_value(value.values, roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.values.incref(amount); }
+    }
+}
+
+pub struct GraphSetDrawRelease;
+
+unsafe impl RocRelease<GraphSetDraw> for GraphSetDrawRelease {
+    unsafe fn release(value: GraphSetDraw, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostFrameValue {
+    /// Recursively decrement Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted payload.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let mut value = self;
+        let _ = roc_host;
+        match value.tag {
+            ValidatedRenderGraphHostFrameValueTag::Absent => {},
+            ValidatedRenderGraphHostFrameValueTag::Array => {
+                let payload = unsafe { value.take_payload_array_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            ValidatedRenderGraphHostFrameValueTag::Bytes => {
+                let payload = unsafe { value.take_payload_bytes_unchecked() };
+                unsafe { payload.decref(roc_host); }
+            },
+            ValidatedRenderGraphHostFrameValueTag::Count => {},
+        }
+    }
+
+    /// Increment Roc-owned payloads.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = amount;
+        match value.tag {
+            ValidatedRenderGraphHostFrameValueTag::Absent => {},
+            ValidatedRenderGraphHostFrameValueTag::Array => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_array_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            ValidatedRenderGraphHostFrameValueTag::Bytes => {
+                let payload = unsafe { core::ptr::read(value.borrow_payload_bytes_unchecked()) };
+                unsafe { payload.incref(amount); }
+            },
+            ValidatedRenderGraphHostFrameValueTag::Count => {},
+        }
+    }
+}
+
+pub struct ValidatedRenderGraphHostFrameValueRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostFrameValue> for ValidatedRenderGraphHostFrameValueRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostFrameValue, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl ValidatedRenderGraphHostArray {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.bytes.decref(roc_host); }
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        unsafe { value.bytes.incref(amount); }
+    }
+}
+
+pub struct ValidatedRenderGraphHostArrayRelease;
+
+unsafe impl RocRelease<ValidatedRenderGraphHostArray> for ValidatedRenderGraphHostArrayRelease {
+    unsafe fn release(value: ValidatedRenderGraphHostArray, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl GameFrame {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        let _ = value;
+        let _ = roc_host;
+    }
+
+    /// Increment Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must point at live Roc allocations. The retained references must
+    /// be balanced by later decrefs.
+    pub unsafe fn incref(self, amount: isize) {
+        let value = self;
+        let _ = value;
+        let _ = amount;
+    }
+}
+
+pub struct GameFrameRelease;
+
+unsafe impl RocRelease<GameFrame> for GameFrameRelease {
+    unsafe fn release(value: GameFrame, roc_host: &RocHost) {
+        unsafe { value.decref(roc_host); }
+    }
+}
+
+impl GameInit {
+    /// Recursively decrement Roc-owned fields.
+    ///
+    /// # Safety
+    /// `self` must own one live Roc reference for each refcounted field.
+    pub unsafe fn decref(self, roc_host: &RocHost) {
+        let value = self;
+        unsafe { value.shaders_source_dir.decref(roc_host); }
         unsafe { value.window_title.decref(roc_host); }
     }
 
@@ -1658,16 +8427,204 @@ impl InitConfig {
     /// be balanced by later decrefs.
     pub unsafe fn incref(self, amount: isize) {
         let value = self;
+        unsafe { value.shaders_source_dir.incref(amount); }
         unsafe { value.window_title.incref(amount); }
     }
 }
 
-pub struct InitConfigRelease;
+pub struct GameInitRelease;
 
-unsafe impl RocRelease<InitConfig> for InitConfigRelease {
-    unsafe fn release(value: InitConfig, roc_host: &RocHost) {
+unsafe impl RocRelease<GameInit> for GameInitRelease {
+    unsafe fn release(value: GameInit, roc_host: &RocHost) {
         unsafe { value.decref(roc_host); }
     }
+}
+
+/// Release one owned reference to a `RocList<ValidatedRenderGraphHostGraph>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_validated_render_graph_host_graph(value: RocList<ValidatedRenderGraphHostGraph>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ValidatedRenderGraphHostGraphRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<ValidatedRenderGraphHostBuffer>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_validated_render_graph_host_buffer(value: RocList<ValidatedRenderGraphHostBuffer>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ValidatedRenderGraphHostBufferRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescBufferDecl>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_buffer_decl(value: RocList<RenderGraphDescBufferDecl>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescBufferDeclRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescImportDecl>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_import_decl(value: RocList<RenderGraphDescImportDecl>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescImportDeclRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescPassDesc>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_pass_desc(value: RocList<RenderGraphDescPassDesc>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescPassDescRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescDrawDesc>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_draw_desc(value: RocList<RenderGraphDescDrawDesc>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescDrawDescRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescLeafPass>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_leaf_pass(value: RocList<RenderGraphDescLeafPass>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescLeafPassRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescPipelineDecl>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_pipeline_decl(value: RocList<RenderGraphDescPipelineDecl>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescPipelineDeclRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescTexDecl>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_tex_decl(value: RocList<RenderGraphDescTexDecl>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescTexDeclRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescUniformDecl>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_uniform_decl(value: RocList<RenderGraphDescUniformDecl>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescUniformDeclRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescUploadDesc>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_upload_desc(value: RocList<RenderGraphDescUploadDesc>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescUploadDescRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescValueDecl>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_value_decl(value: RocList<RenderGraphDescValueDecl>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescValueDeclRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<ValidatedRenderGraphHostImport>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_validated_render_graph_host_import(value: RocList<ValidatedRenderGraphHostImport>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ValidatedRenderGraphHostImportRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<ValidatedRenderGraphHostPipeline>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_validated_render_graph_host_pipeline(value: RocList<ValidatedRenderGraphHostPipeline>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ValidatedRenderGraphHostPipelineRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<RenderGraphDescSchemaDesc>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_render_graph_desc_schema_desc(value: RocList<RenderGraphDescSchemaDesc>, roc_host: &RocHost) {
+    unsafe { value.release_with::<RenderGraphDescSchemaDescRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<ValidatedRenderGraphHostUniformBuffer>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_validated_render_graph_host_uniform_buffer(value: RocList<ValidatedRenderGraphHostUniformBuffer>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ValidatedRenderGraphHostUniformBufferRelease>(roc_host); }
+}
+
+/// Release one owned reference to a `RocList<ValidatedRenderGraphHostFrameValue>`.
+///
+/// The allocation's final reference is claimed atomically before any element
+/// is read, so concurrent owners cannot skip or duplicate element teardown.
+///
+/// # Safety
+/// `value` must own one live Roc list reference.
+pub unsafe fn decref_list_of_validated_render_graph_host_frame_value(value: RocList<ValidatedRenderGraphHostFrameValue>, roc_host: &RocHost) {
+    unsafe { value.release_with::<ValidatedRenderGraphHostFrameValueRelease>(roc_host); }
 }
 
 
@@ -1677,15 +8634,21 @@ unsafe impl RocRelease<InitConfig> for InitConfigRelease {
 
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    pub fn roc_alloc(length: usize, alignment: usize) -> *mut c_void;
+    /// Returns `length` bytes aligned to `alignment`. Never returns null: Roc writes through
+    /// the result without checking it, so a host that cannot allocate must stop the Roc
+    /// program and not return, exactly as `roc_crashed` does.
+    pub fn roc_alloc(length: usize, alignment: usize) -> NonNull<c_void>;
     pub fn roc_dealloc(ptr: *mut c_void, alignment: usize);
-    pub fn roc_realloc(ptr: *mut c_void, new_length: usize, alignment: usize) -> *mut c_void;
+    /// Never returns null, under the same rule as `roc_alloc`.
+    pub fn roc_realloc(ptr: *mut c_void, new_length: usize, alignment: usize) -> NonNull<c_void>;
     pub fn roc_dbg(bytes: *const u8, len: usize);
     pub fn roc_expect_failed(bytes: *const u8, len: usize);
+    /// Must never return: end the process. Roc code traps right after this
+    /// call, so returning terminates the process.
     pub fn roc_crashed(bytes: *const u8, len: usize);
 }
 
-extern "C" fn direct_roc_alloc(_host: *mut RocHost, length: usize, alignment: usize) -> *mut c_void {
+extern "C" fn direct_roc_alloc(_host: *mut RocHost, length: usize, alignment: usize) -> NonNull<c_void> {
     unsafe { roc_alloc(length, alignment) }
 }
 
@@ -1693,7 +8656,7 @@ extern "C" fn direct_roc_dealloc(_host: *mut RocHost, ptr: *mut c_void, alignmen
     unsafe { roc_dealloc(ptr, alignment); }
 }
 
-extern "C" fn direct_roc_realloc(_host: *mut RocHost, ptr: *mut c_void, new_length: usize, alignment: usize) -> *mut c_void {
+extern "C" fn direct_roc_realloc(_host: *mut RocHost, ptr: *mut c_void, new_length: usize, alignment: usize) -> NonNull<c_void> {
     unsafe { roc_realloc(ptr, new_length, alignment) }
 }
 
@@ -1761,7 +8724,7 @@ pub struct DefaultAllocators;
 #[cfg(not(no_roc_std_helpers))]
 impl DefaultAllocators {
     /// Allocate memory using the Rust global allocator.
-    pub extern "C" fn roc_alloc(_roc_host: *mut RocHost, length: usize, alignment: usize) -> *mut c_void {
+    pub extern "C" fn roc_alloc(_roc_host: *mut RocHost, length: usize, alignment: usize) -> NonNull<c_void> {
         unsafe {
             let min_alignment = alignment.max(core::mem::align_of::<usize>());
             let size_storage_bytes = min_alignment;
@@ -1778,7 +8741,7 @@ impl DefaultAllocators {
             let size_ptr = base_ptr.add(size_storage_bytes).sub(core::mem::size_of::<usize>()) as *mut usize;
             *size_ptr = total_size;
 
-            base_ptr.add(size_storage_bytes) as *mut c_void
+            NonNull::new_unchecked(base_ptr.add(size_storage_bytes) as *mut c_void)
         }
     }
 
@@ -1799,7 +8762,7 @@ impl DefaultAllocators {
     }
 
     /// Reallocate memory, preserving existing user data.
-    pub extern "C" fn roc_realloc(_roc_host: *mut RocHost, ptr: *mut c_void, new_length: usize, alignment: usize) -> *mut c_void {
+    pub extern "C" fn roc_realloc(_roc_host: *mut RocHost, ptr: *mut c_void, new_length: usize, alignment: usize) -> NonNull<c_void> {
         unsafe {
             let min_alignment = alignment.max(core::mem::align_of::<usize>());
             let size_storage_bytes = min_alignment;
@@ -1820,7 +8783,7 @@ impl DefaultAllocators {
             let new_user_ptr = new_base_ptr.add(size_storage_bytes);
             let new_size_ptr = new_user_ptr.sub(core::mem::size_of::<usize>()) as *mut usize;
             *new_size_ptr = new_total_size;
-            new_user_ptr as *mut c_void
+            NonNull::new_unchecked(new_user_ptr as *mut c_void)
         }
     }
 }
@@ -1883,20 +8846,52 @@ pub fn make_roc_host(env: *mut c_void) -> RocHost {
 
 #[allow(improper_ctypes)]
 unsafe extern "C" {
+    /// Entrypoint: config_for_host
+    pub fn roc_config() -> GameHostConfig;
+
+    /// Entrypoint: draw_for_host
+    pub fn roc_draw(arg0: GameFrame) -> GraphSetDraw;
+
     /// Entrypoint: init_for_host!
-    pub fn roc_init() -> InitConfig;
+    pub fn roc_init() -> GameInit;
 
 }
 
-const _: () = assert!(core::mem::size_of::<RocOwned<InitConfig, InitConfigRelease>>() == core::mem::size_of::<InitConfig>(), "roc_init owned result size mismatch");
-const _: () = assert!(core::mem::align_of::<RocOwned<InitConfig, InitConfigRelease>>() == core::mem::align_of::<InitConfig>(), "roc_init owned result alignment mismatch");
+const _: () = assert!(core::mem::size_of::<RocOwned<GameHostConfig, GameHostConfigRelease>>() == core::mem::size_of::<GameHostConfig>(), "roc_config owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<GameHostConfig, GameHostConfigRelease>>() == core::mem::align_of::<GameHostConfig>(), "roc_config owned result alignment mismatch");
+
+/// Owning wrapper for `roc_config`. The returned value is recursively
+/// released on Drop with no runtime descriptor or extra storage.
+///
+/// # Safety
+/// The raw entrypoint and its arguments must satisfy the generated host ABI.
+pub unsafe fn roc_config_owned() -> RocOwned<GameHostConfig, GameHostConfigRelease> {
+    let value = unsafe { roc_config() };
+    unsafe { RocOwned::from_raw(value) }
+}
+
+const _: () = assert!(core::mem::size_of::<RocOwned<GraphSetDraw, GraphSetDrawRelease>>() == core::mem::size_of::<GraphSetDraw>(), "roc_draw owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<GraphSetDraw, GraphSetDrawRelease>>() == core::mem::align_of::<GraphSetDraw>(), "roc_draw owned result alignment mismatch");
+
+/// Owning wrapper for `roc_draw`. The returned value is recursively
+/// released on Drop with no runtime descriptor or extra storage.
+///
+/// # Safety
+/// The raw entrypoint and its arguments must satisfy the generated host ABI.
+pub unsafe fn roc_draw_owned(arg0: GameFrame) -> RocOwned<GraphSetDraw, GraphSetDrawRelease> {
+    let value = unsafe { roc_draw(arg0) };
+    unsafe { RocOwned::from_raw(value) }
+}
+
+const _: () = assert!(core::mem::size_of::<RocOwned<GameInit, GameInitRelease>>() == core::mem::size_of::<GameInit>(), "roc_init owned result size mismatch");
+const _: () = assert!(core::mem::align_of::<RocOwned<GameInit, GameInitRelease>>() == core::mem::align_of::<GameInit>(), "roc_init owned result alignment mismatch");
 
 /// Owning wrapper for `roc_init`. The returned value is recursively
 /// released on Drop with no runtime descriptor or extra storage.
 ///
 /// # Safety
 /// The raw entrypoint and its arguments must satisfy the generated host ABI.
-pub unsafe fn roc_init_owned() -> RocOwned<InitConfig, InitConfigRelease> {
+pub unsafe fn roc_init_owned() -> RocOwned<GameInit, GameInitRelease> {
     let value = unsafe { roc_init() };
     unsafe { RocOwned::from_raw(value) }
 }

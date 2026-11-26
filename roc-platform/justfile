@@ -28,14 +28,15 @@ roc-test:
     roc check --main=platform-tests/main.roc platform-tests/RenderGraphTests.roc
     roc test --main=platform-tests/main.roc platform-tests/RenderGraphTests.roc
     roc check --main=platform-tests/main.roc platform-tests/ForeignSelection.roc
-    # selecting or drawing another set's graph must crash, not submit a foreign graph id
+    # selecting, drawing, or submitting another set's graph must crash, not submit a foreign graph id
     if output="$(roc test --main=platform-tests/main.roc platform-tests/ForeignSelection.roc 2>&1)"; then
-        echo "ForeignSelection.roc should crash in GraphSet.select and GraphSet.draw" >&2
+        echo "ForeignSelection.roc should crash in GraphSet.select, GraphSet.draw, and Game.new's draw" >&2
         exit 1
     fi
     grep -q "GraphSet chose a graph (id 1) this set did not register" <<< "$output"
     grep -q "GraphSet chose a graph (id 0) this set did not register" <<< "$output"
-    grep -q "2 failed" <<< "$output"
+    grep -q "draw submitted a graph (id 0) from a set other than the one Game.new registered" <<< "$output"
+    grep -q "3 failed" <<< "$output"
 
 # bundle the platform into dist/<hash>.tar.zst
 bundle:

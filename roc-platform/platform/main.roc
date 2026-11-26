@@ -1,12 +1,14 @@
 platform ""
 	requires {
-		game : {
-			init! : {} => Game.Init,
-		}
+		game : Game
 	}
-	exposes [Game, GraphSet, RasterState, RenderGraph, ResourcePlanner, ShaderReflection, Stderr, Stdin, Stdout]
+	exposes [Game, GraphSet, RasterState, RenderGraph, ResourcePlanner, ShaderReflection, Stderr, Stdout]
 	packages {}
-	provides { "roc_init": init_for_host! }
+	provides {
+		"roc_config": config_for_host,
+		"roc_draw": draw_for_host,
+		"roc_init": init_for_host!,
+	}
 	hosted {
 		"roc_stderr_line": Host.stderr_line!,
 		"roc_stdin_line": Host.stdin_line!,
@@ -19,9 +21,7 @@ platform ""
 
 import Stdout
 import Stderr
-import Stdin
 import Host
-import InitConfig
 import Game
 import ShaderReflection
 import ResourcePlanner
@@ -29,8 +29,14 @@ import RenderGraph
 import GraphSet
 import RasterState
 
-## The return type is nominal so the generated glue names it. An anonymous
-## record reaches Rust as a structural hash, and every field added to it
-## renames the Rust type.
-init_for_host! : {} => InitConfig
-init_for_host! = |{}| InitConfig.new((game.init!)({}))
+## Runs the app's `init!` once, before the host opens the window.
+init_for_host! : {} => Game.Init
+init_for_host! = |{}| Game.init!(game)
+
+## Setup fetches the graph definitions without calling the app's `draw`.
+config_for_host : {} -> Game.HostConfig
+config_for_host = |{}| game.host_config()
+
+## Frames transfer only the selected graph id and its frame values.
+draw_for_host : Game.Frame -> GraphSet.Draw
+draw_for_host = |frame| game.draw(frame)
