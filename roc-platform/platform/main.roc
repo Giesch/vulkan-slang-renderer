@@ -4,7 +4,7 @@ platform ""
 			init! : {} => Game.Init,
 		}
 	}
-	exposes [Stdout, Stderr, Stdin, Game, ShaderReflection]
+	exposes [Game, GraphSet, RasterState, RenderGraph, ResourcePlanner, ShaderReflection, Stderr, Stdin, Stdout]
 	packages {}
 	provides { "roc_init": init_for_host! }
 	hosted {
@@ -24,6 +24,10 @@ import Host
 import InitConfig
 import Game
 import ShaderReflection
+import ResourcePlanner
+import RenderGraph
+import GraphSet
+import RasterState
 
 ## The return type is nominal so the generated glue names it. An anonymous
 ## record reaches Rust as a structural hash, and every field added to it
