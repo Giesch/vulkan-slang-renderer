@@ -75,6 +75,14 @@ pub trait Game {
         false
     }
 
+    /// Override to choose whether the renderer recompiles shaders from
+    /// `Atlas::SHADERS_SOURCE_DIR` when a slang source changes. Default is on
+    /// in debug builds and off in release; `VKR_SHADER_HOT_RELOAD` overrides
+    /// either when set.
+    fn shader_hot_reload() -> bool {
+        cfg!(debug_assertions)
+    }
+
     /// Returns the debug window name and a mutable reference to the debug state for egui rendering.
     /// Return None to disable debug UI for this frame.
     /// Default implementation returns None.
@@ -139,6 +147,7 @@ pub trait Game {
             render_scale,
             max_msaa_samples,
             needs_stencil: Self::needs_stencil(),
+            shader_hot_reload: Self::shader_hot_reload(),
             shaders_source_dir: PathBuf::from(Self::Atlas::SHADERS_SOURCE_DIR),
         };
         let mut renderer = Renderer::init(window, env.clone(), renderer_config)?;

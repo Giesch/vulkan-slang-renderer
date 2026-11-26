@@ -11,8 +11,9 @@ use super::json::{ComputeReflectionJson, ReflectedPipelineLayout, ReflectionJson
 /// off the type before the atlas exists, so the renderer can start watching
 /// before any pipeline is created.
 pub trait ShaderAtlasRoot {
-    /// dev only: absolute path to the slang source dir this atlas was generated
-    /// from (baked in with the consuming crate's manifest dir).
+    /// Absolute path to the slang source dir this atlas was generated from
+    /// (baked in with the consuming crate's manifest dir). Shader hot reload
+    /// watches and recompiles from it when enabled.
     ///
     /// A `&str` rather than a `&Path` because `Path::new` is not a `const fn`.
     const SHADERS_SOURCE_DIR: &'static str;
@@ -33,27 +34,18 @@ impl ShaderAtlasRoot for NoAtlas {
 }
 
 pub trait ShaderAtlasEntry {
-    // dev only
-
     // used in hot reload
     fn source_file_name(&self) -> &str;
-
-    /// Whether dev builds recompile this entry from its slang source. An
-    /// entry created from precompiled SPIR-V at runtime has no source to
-    /// watch and keeps its bytes in every build profile.
-    fn hot_reload(&self) -> bool {
-        true
-    }
 
     // used in hot reload to detect interface changes that require a rebuild
     fn reflection_json(&self) -> &ReflectionJson;
 
-    // dev and release
+    // used whether or not hot reload is on
 
     // one set of descriptions per descriptor set
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>>;
 
-    // release only
+    // used when hot reload is off
 
     fn precompiled_shaders(&self) -> PrecompiledShaders;
 

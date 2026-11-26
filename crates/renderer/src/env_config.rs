@@ -36,6 +36,13 @@ pub struct EnvConfig {
     /// Unset (or false) keeps the default discrete-first order.
     pub prefer_integrated_gpu: Option<bool>,
 
+    /// `VKR_SHADER_HOT_RELOAD=1` / `=0` — force shader hot reload on or off,
+    /// overriding the application's `RendererConfig::shader_hot_reload`
+    /// (which `Game` defaults to on in debug builds and off in release).
+    /// Unset keeps the application's choice; see
+    /// [`EnvConfig::resolve_shader_hot_reload`].
+    pub shader_hot_reload: Option<bool>,
+
     /// `RUST_LOG` — consumed by `pretty_env_logger`, captured for reporting.
     ///
     /// Not load-bearing: validation counting keys off message severity, not the
@@ -50,8 +57,15 @@ impl EnvConfig {
             headless_sweep: flag("VKR_SWEEP"),
             inject_validation_fault: flag("VKR_INJECT_VALIDATION_FAULT"),
             prefer_integrated_gpu: optional_flag("VKR_PREFER_INTEGRATED"),
+            shader_hot_reload: optional_flag("VKR_SHADER_HOT_RELOAD"),
             rust_log: std::env::var("RUST_LOG").ok(),
         }
+    }
+
+    /// Whether shader hot reload is on: `VKR_SHADER_HOT_RELOAD` when set,
+    /// otherwise the application's default.
+    pub fn resolve_shader_hot_reload(&self, app_default: bool) -> bool {
+        self.shader_hot_reload.unwrap_or(app_default)
     }
 }
 
@@ -76,7 +90,61 @@ fn flag(name: &str) -> bool {
 /// Unset is `None`; otherwise the same truthiness rule as [`flag`].
 fn optional_flag(name: &str) -> Option<bool> {
     let value = std::env::var(name).ok()?;
+
+    Some(is_truthy(&value))
+}
+
+/// Empty, `"0"` and `"false"` (any case, surrounding whitespace ignored) are
+/// false; anything else is true.
+fn is_truthy(value: &str) -> bool {
     let value = value.trim();
     let is_falsey = value.is_empty() || value == "0" || value.eq_ignore_ascii_case("false");
-    Some(!is_falsey)
+
+    !is_falsey
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_truthy_treats_empty_zero_and_false_as_false() {
+        for value in ["", "  ", "0", " 0 ", "false", "FALSE", "False"] {
+            assert!(!is_truthy(value), "{value:?} should be false");
+        }
+
+        for value in ["1", "true", "yes", "on", "2"] {
+            assert!(is_truthy(value), "{value:?} should be true");
+        }
+    }
+
+    #[test]
+    fn optional_flag_is_none_for_an_unset_variable() {
+        assert_eq!(
+            optional_flag("VKR_TEST_VARIABLE_THAT_IS_NEVER_SET_ANYWHERE"),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_shader_hot_reload_prefers_the_environment_when_set() {
+        let unset = EnvConfig {
+            shader_hot_reload: None,
+            ..EnvConfig::default()
+        };
+        assert!(unset.resolve_shader_hot_reload(true));
+        assert!(!unset.resolve_shader_hot_reload(false));
+
+        let forced_on = EnvConfig {
+            shader_hot_reload: Some(true),
+            ..EnvConfig::default()
+        };
+        assert!(forced_on.resolve_shader_hot_reload(false));
+
+        let forced_off = EnvConfig {
+            shader_hot_reload: Some(false),
+            ..EnvConfig::default()
+        };
+        assert!(!forced_off.resolve_shader_hot_reload(true));
+    }
 }

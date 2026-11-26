@@ -822,6 +822,7 @@ mod tests {
             .expect("SDL Vulkan window");
         let renderer_config = RendererConfig {
             max_msaa_samples: MaxMSAASamples::Off,
+            shader_hot_reload: cfg!(debug_assertions),
             shaders_source_dir: ShaderAtlas::SHADERS_SOURCE_DIR.into(),
             ..RendererConfig::default()
         };

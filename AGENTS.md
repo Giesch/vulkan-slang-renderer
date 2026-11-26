@@ -105,6 +105,15 @@ cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection
 3. Generates: SPIR-V bytecode + reflection JSON in `shaders/compiled/`, and
    Rust bindings in `src/generated/` — all inside the example's crate
 
+**Hot reload** is a runtime renderer setting, not a build-profile gate:
+`RendererConfig::shader_hot_reload`, which `Game::shader_hot_reload()` defaults
+to `cfg!(debug_assertions)`; `VKR_SHADER_HOT_RELOAD=1`/`=0` overrides it in any
+build. When on, the renderer watches the atlas's `SHADERS_SOURCE_DIR`,
+recompiles edited `.slang` sources, and swaps the rebuilt pipelines; a reload
+that changes the reflected interface panics and asks for `just shaders` plus a
+rebuild. When off (or the source dir is empty), pipelines load the precompiled
+SPIR-V without invoking slang.
+
 The engine slang module is one vendored file, `crates/cli/vendor/mltrs.slang`,
 with every declaration (`Addr<T>`, `MVPMatrices`, `Projection`,
 `fullscreenPosition`, `superSample`, …) inside `namespace mltrs`. Shaders

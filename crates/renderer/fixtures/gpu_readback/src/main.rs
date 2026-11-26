@@ -18,6 +18,7 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     let renderer_config = RendererConfig {
         max_msaa_samples: MaxMSAASamples::Off,
+        shader_hot_reload: cfg!(debug_assertions),
         shaders_source_dir: concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source").into(),
         ..RendererConfig::default()
     };
