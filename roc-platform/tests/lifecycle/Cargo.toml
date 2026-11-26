@@ -1,0 +1,20 @@
+[package]
+name = "roc-platform-host-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# The host crate links Roc's entrypoints, so its CPU logic is tested here,
+# by path, without linking the host.
+[workspace]
+
+[dependencies]
+anyhow = "1.0.100"
+
+[[test]]
+name = "graph_lifecycle"
+path = "../graph_lifecycle.rs"
+
+[[test]]
+name = "shaders_source_dir"
+path = "../shaders_source_dir.rs"

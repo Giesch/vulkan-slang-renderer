@@ -6,9 +6,9 @@ _default:
 build:
     bash build.sh
 
-# run a Roc example with the dev backend; roc watches the sources and hot-reloads on change
+# run a Roc example from its directory, where its shaders_source_dir resolves; roc watches the sources and hot-reloads on change
 run example="basic-triangle": build
-    roc "examples/{{example}}/main.roc"
+    cd "examples/{{example}}" && roc main.roc
 
 # build an optimized standalone executable for an example
 exe example="basic-triangle": build
@@ -46,9 +46,10 @@ bundle:
 bundle-test:
     bash ci/bundle_test.sh
 
-# remove the cargo build output, the host archive, and the bundle
+# remove the cargo build output, the host test build output, the host archive, and the bundle
 clean:
     cargo clean
+    cargo clean --manifest-path tests/lifecycle/Cargo.toml
     rm -rf dist
     rm -f platform/targets/*/libhost.a
 
@@ -63,10 +64,6 @@ licenses:
 # regenerate src/roc_platform_abi.rs from platform/main.roc with the installed rust_glue shorthand
 glue:
     roc glue rust_glue ./src/ platform/main.roc
-
-# regenerate the shader bindings this crate compiles against
-rust-shaders:
-    cargo run -p mltrs-cli --manifest-path ../Cargo.toml -- shaders compile --crate-dir .
 
 # regenerate every example's Roc shader modules and SPIR-V, or one by name
 roc-shaders example="all":
