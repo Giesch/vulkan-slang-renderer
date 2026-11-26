@@ -62,34 +62,34 @@ impl mltrs_render_graph::backend::FrameLookup for Renderer {
     fn uniform_live(&self, index: usize) -> bool {
         self.uniform_buffers.contains(index)
     }
+
     fn storage_live(&self, index: usize) -> bool {
         self.storage_buffers.contains(index)
     }
+
     fn singleton_live(&self, index: usize) -> bool {
         self.singleton_buffers.contains(index)
     }
-    fn whole_index_count(&self, pipeline: usize) -> u32 {
-        use super::pipeline::{GraphicsPipelineIndex, VertexPipelineConfig};
-        match &self
-            .pipelines
-            .get_by_index(GraphicsPipelineIndex::from_raw(pipeline))
-            .vertex_pipeline_config
-        {
-            VertexPipelineConfig::VertexAndIndexBuffers(buffers) => buffers.index_count,
-            VertexPipelineConfig::SharedMesh(index) => self.meshes[index.raw()].index_count,
-            VertexPipelineConfig::VertexCount => {
-                unreachable!("unexpected indexed draw call for non-index pipeline")
-            }
-        }
+
+    fn index_buffer_live(&self, index: usize) -> bool {
+        self.index_buffers.contains(index)
+    }
+
+    fn index_count(&self, index: usize) -> u32 {
+        self.index_buffers
+            .get_by_index(index)
+            .map_or(0, |index_buffer| index_buffer.index_count)
     }
 }
 
 impl mltrs_render_graph::backend::FrameBackend for super::FrameRenderer<'_> {
     type Backend = Renderer;
     type Error = super::DrawError;
+
     fn lookup(&self) -> &dyn mltrs_render_graph::backend::FrameLookup {
         self.renderer
     }
+
     fn submit(
         mut self,
         batch: mltrs_render_graph::commands::CommandBatch,
@@ -126,17 +126,33 @@ impl mltrs_render_graph::backend::FrameBackend for super::FrameRenderer<'_> {
             );
         }
         for draw in batch.draws() {
+            let index_buffer = |index: usize| {
+                self.renderer
+                    .index_buffers
+                    .get_by_index(index)
+                    .map(|index_buffer| index_buffer.buffer)
+                    .ok_or_else(|| {
+                        super::DrawError::DrawError(anyhow::anyhow!(
+                            "index buffer {index} is no longer live"
+                        ))
+                    })
+            };
             let draw_call = match draw.draw_call() {
                 Logical::VertexCount(count) => super::DrawCallConfig::VertexCount(count),
-                Logical::IndexCount(count) => super::DrawCallConfig::IndexCount(count),
-                Logical::IndexRange {
+                Logical::Indexed {
+                    index_buffer: index,
                     first_index,
                     index_count,
-                } => super::DrawCallConfig::IndexRange {
+                } => super::DrawCallConfig::Indexed {
+                    index_buffer: index_buffer(index)?,
                     first_index,
                     index_count,
                 },
-                Logical::IndexedIndirect(request) => {
+                Logical::IndexedIndirect {
+                    index_buffer: index,
+                    request,
+                } => {
+                    let index_buffer = index_buffer(index)?;
                     let (buffer, byte_size) = self
                         .renderer
                         .storage_buffers
@@ -160,7 +176,8 @@ impl mltrs_render_graph::backend::FrameBackend for super::FrameRenderer<'_> {
                     )
                     .map_err(super::DrawError::DrawError)?;
                     super::DrawCallConfig::IndexedIndirect {
-                        buffer,
+                        index_buffer,
+                        args_buffer: buffer,
                         offset: request.offset(),
                         draw_count: request.draw_count(),
                     }

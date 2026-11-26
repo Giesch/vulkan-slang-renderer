@@ -51,7 +51,8 @@ impl GraphShaderParams for Params {
 }
 pub fn node<I: IndexedIndirectArgs>() -> IndirectDrawNode<Params, (), I> {
     draw_indexed_indirect(
-        DrawIndexedIndirectKey::<NoPush>::new(0),
+        GraphicsIndirectPipelineKey::<NoPush>::new(0),
+        IndexBufferSlot::from_backend(0, 3),
         UniformSlot::<Params>::from_backend(0),
         ImmutableSlot::<I>::from_backend(0, 1),
         0,

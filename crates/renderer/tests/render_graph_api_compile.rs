@@ -281,50 +281,52 @@ const CASES: &[Case] = &[
         file: "trait_bridge.rs",
         expectation: Expectation::Compiles,
     },
-    // Typed indexed configs keep their vertex type through the returned
-    // graphics handle, packed-bytes configs are `RuntimeVertex`, and both
-    // lower into the typed and dynamic indexed draw nodes.
+    // Generated configs infer `Graphics` / `GraphicsIndirect` from the
+    // shader's `SV_DrawIndex`; vertices are pulled through a singleton buffer
+    // address, and indexed draws take an index buffer handle or slot.
     Case {
-        bin: "positive_vertex_interfaces",
-        file: "vertex_interfaces.rs",
+        bin: "positive_vertex_pulling",
+        file: "vertex_pulling.rs",
         expectation: Expectation::Compiles,
     },
-    // A typed indexed config accepts only a mesh of its own vertex type.
+    // A shader reading `SV_DrawIndex` generates a `GraphicsIndirect` config,
+    // which is not a `Graphics` config.
     Case {
-        bin: "negative_mismatched_typed_mesh",
-        file: "mismatched_typed_mesh.rs",
+        bin: "negative_graphics_config_for_indirect_shader",
+        file: "graphics_config_for_indirect_shader.rs",
         expectation: Expectation::Fails {
             code: "E0308",
-            snippets: &["MeshHandle<MeshVertex>", "MeshHandle<OtherVertex>"],
+            snippets: &["PipelineConfig<'_, Graphics>", "GraphicsIndirect"],
         },
     },
-    // A packed-bytes config has no typed vertex upload or typed shared mesh.
+    // An indirect pipeline has no direct graphics key, so it cannot drive
+    // `draw_indexed`.
     Case {
-        bin: "negative_runtime_builder_typed_methods",
-        file: "runtime_builder_typed_methods.rs",
-        expectation: Expectation::Fails {
-            code: "E0599",
-            snippets: &["with_shared_mesh", "with_vertices", "RuntimeVertex"],
-        },
-    },
-    // A `NoVertex` graphics handle has no indexed draw key, whatever its
-    // draw-call kind.
-    Case {
-        bin: "negative_no_vertex_indexed_key",
-        file: "no_vertex_indexed_key.rs",
+        bin: "negative_graphics_key_from_indirect_handle",
+        file: "graphics_key_from_indirect_handle.rs",
         expectation: Expectation::Fails {
             code: "E0277",
-            snippets: &["NoVertex", "IndexedVertexInterface"],
+            snippets: &["GraphicsPipelineKey", "PipelineHandle<GraphicsIndirect>"],
         },
     },
-    // Graphics handles have private fields, so a caller cannot rebuild one
-    // with a different vertex interface.
+    // Index buffer handles have private fields, so a caller cannot forge one
+    // with an index count the buffer does not have.
     Case {
-        bin: "negative_relabel_graphics_handle",
-        file: "relabel_graphics_handle.rs",
+        bin: "negative_forge_index_buffer_handle",
+        file: "forge_index_buffer_handle.rs",
         expectation: Expectation::Fails {
             code: "E0451",
-            snippets: &["GraphicsPipelineHandle", "private field"],
+            snippets: &["IndexBufferHandle", "private field"],
+        },
+    },
+    // Pipeline handles have private fields, so a caller cannot relabel a
+    // `Graphics` handle as `GraphicsIndirect`.
+    Case {
+        bin: "negative_relabel_pipeline_handle",
+        file: "relabel_pipeline_handle.rs",
+        expectation: Expectation::Fails {
+            code: "E0451",
+            snippets: &["PipelineHandle", "private field"],
         },
     },
     // Pipeline families are distinct key types, so a handle or key of one
@@ -334,7 +336,7 @@ const CASES: &[Case] = &[
         file: "wrong_pipeline_kind.rs",
         expectation: Expectation::Fails {
             code: "E0277",
-            snippets: &["DrawVertexCountKey", "DrawIndexedKey"],
+            snippets: &["GraphicsIndirectPipelineKey", "GraphicsPipelineKey"],
         },
     },
     // The push interface is part of the pipeline's type: a no-push command

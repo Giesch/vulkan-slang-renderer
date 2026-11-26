@@ -38,7 +38,10 @@ impl FrameLookup for Backend {
     fn singleton_live(&self, _: usize) -> bool {
         true
     }
-    fn whole_index_count(&self, _: usize) -> u32 {
+    fn index_buffer_live(&self, _: usize) -> bool {
+        true
+    }
+    fn index_count(&self, _: usize) -> u32 {
         0
     }
 }

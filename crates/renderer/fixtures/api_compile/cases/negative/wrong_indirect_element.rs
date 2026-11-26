@@ -4,12 +4,11 @@
 
 #![allow(dead_code)]
 
-use mltrs_renderer::renderer::pipeline::{
-    DrawIndexedIndirect, GraphicsPipelineHandle, NoPush, RuntimeVertex,
-};
-use mltrs_renderer::renderer::render_graph::{DrawIndexedIndirectKey, draw_indexed_indirect};
+use mltrs_renderer::renderer::pipeline::{GraphicsIndirect, NoPush, PipelineHandle};
+use mltrs_renderer::renderer::render_graph::{GraphicsIndirectPipelineKey, draw_indexed_indirect};
 use mltrs_renderer::renderer::{
-    GpuUpdatedBufferHandle, GpuUpdatedSlot, ImmutableBufferHandle, UniformBufferHandle,
+    GpuUpdatedBufferHandle, GpuUpdatedSlot, ImmutableBufferHandle, IndexBufferHandle,
+    UniformBufferHandle,
 };
 
 use render_graph_api_checks::generated::shader_atlas::particle::{OtherElement, Particle};
@@ -18,13 +17,15 @@ use render_graph_api_checks::generated::shader_atlas::render::{
 };
 
 fn wrong(
-    indirect_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexedIndirect, NoPush>,
+    indirect_pipeline: &PipelineHandle<GraphicsIndirect, NoPush>,
+    indices: &IndexBufferHandle,
     indirect_params: &UniformBufferHandle<RenderParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
     args: &ImmutableBufferHandle<OtherElement>,
 ) {
     let _ = draw_indexed_indirect(
-        DrawIndexedIndirectKey::from(indirect_pipeline),
+        GraphicsIndirectPipelineKey::from(indirect_pipeline),
+        indices,
         indirect_params,
         args,
         0,
