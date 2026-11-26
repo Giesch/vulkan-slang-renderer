@@ -1,0 +1,19 @@
+import pf.ShaderReflection{% if !exposed.is_empty() %} exposing [{{ exposed|join(", ") }}]{% endif %}
+{% if !imports.is_empty() %}
+{% for import in imports -%}
+import {{ import }}
+{% endfor -%}
+{% endif %}
+## Generated shader types and their GPU byte packers.
+## Fixed arrays are lists: required lengths are preserved in reflection.
+{% if definitions.is_empty() -%}
+{{ module }} := {}
+{% else -%}
+{{ module }} := {}.{
+{%- for definition in definitions %}
+{%- if !loop.first %}
+{% endif %}
+{{ definition }}
+{%- endfor %}
+}
+{% endif -%}

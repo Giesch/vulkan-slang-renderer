@@ -1,11 +1,61 @@
-# Generated; logical values are not GPU memory layouts.
-import pf.ShaderReflection
+import pf.ShaderReflection exposing [ElementPacker, Float3, GraphicsReflection, PointerAddress, StructType]
+
+import Mltrs
+
 import "../shaders/compiled/basic_triangle.vert.spv" as vertex_bytes : List(U8)
 import "../shaders/compiled/basic_triangle.frag.spv" as fragment_bytes : List(U8)
+import "../shaders/compiled/basic_triangle.json" as reflection_json : Str
 
+## Generated shader types, GPU byte packers, and reflection.
 BasicTriangle := {}.{
-	mvp_matrices_type : ShaderReflection.StructType
-	mvp_matrices_type = ShaderReflection.StructType.{
+	TriangleParams := {
+		mvp : Mltrs.MvpMatrices,
+		vertices : PointerAddress,
+	}.{
+		is_eq : _
+
+		gpu_size : U32
+		gpu_size = 208
+
+		to_bytes : TriangleParams -> List(U8)
+		to_bytes = |value|
+			ShaderReflection.pack(
+				gpu_size.to_u64(),
+				[
+					(0, Mltrs.MvpMatrices.to_bytes(value.mvp)),
+					(192, PointerAddress.to_bytes(value.vertices)),
+				],
+			)
+
+		packer : ElementPacker(TriangleParams)
+		packer = { stride: gpu_size, to_bytes }
+	}
+
+	Vertex := {
+		position : Float3,
+		color : Float3,
+	}.{
+		is_eq : _
+
+		gpu_size : U32
+		gpu_size = 32
+
+		to_bytes : Vertex -> List(U8)
+		to_bytes = |value|
+			ShaderReflection.pack(
+				gpu_size.to_u64(),
+				[
+					(0, Float3.to_bytes(value.position)),
+					(16, Float3.to_bytes(value.color)),
+				],
+			)
+
+		packer : ElementPacker(Vertex)
+		packer = { stride: gpu_size, to_bytes }
+	}
+
+	mvp_matrices_type : StructType
+	mvp_matrices_type = StructType.{
 		type_name: "MVPMatrices",
 		fields: [
 			Matrix({
@@ -47,8 +97,8 @@ BasicTriangle := {}.{
 		],
 	}
 
-	triangle_params_type : ShaderReflection.StructType
-	triangle_params_type = ShaderReflection.StructType.{
+	triangle_params_type : StructType
+	triangle_params_type = StructType.{
 		type_name: "TriangleParams",
 		fields: [
 			Struct({
@@ -72,8 +122,8 @@ BasicTriangle := {}.{
 		],
 	}
 
-	vertex_type : ShaderReflection.StructType
-	vertex_type = ShaderReflection.StructType.{
+	vertex_type : StructType
+	vertex_type = StructType.{
 		type_name: "Vertex",
 		fields: [
 			Vector(
@@ -105,7 +155,7 @@ BasicTriangle := {}.{
 		],
 	}
 
-	reflection : ShaderReflection.GraphicsReflection
+	reflection : GraphicsReflection
 	reflection = {
 		source_file_name: "basic_triangle.shader.slang",
 		global_parameters: [

@@ -1,13 +1,26 @@
-# Generated; logical values are not GPU memory layouts.
-import pf.ShaderReflection
+import pf.ShaderReflection{% if !exposed.is_empty() %} exposing [{{ exposed|join(", ") }}]{% endif %}
+{% if !imports.is_empty() %}
+{% for import in imports -%}
+import {{ import }}
+{% endfor -%}
+{% endif -%}
+{% if !stage_imports.is_empty() || reflection_json_path.is_some() %}
 {% for import in stage_imports -%}
 import "{{ import.path }}" as {{ import.stage }}_bytes : List(U8)
-{% endfor %}
+{% endfor -%}
+{% if let Some(path) = reflection_json_path -%}
+import "{{ path }}" as reflection_json : Str
+{% endif -%}
+{% endif %}
+## Generated shader types, GPU byte packers, and reflection.
 {{ module }} := {}.{
+{%- for definition in logical_definitions %}
+{{ definition }}
+{% endfor -%}
 {%- for definition in struct_types %}
 {{ definition.block() }}
 {% endfor %}
-    reflection : ShaderReflection.{{ reflection_kind }}
+    reflection : {{ reflection_kind }}
     reflection = {{ reflection }}
 {%- if !stages.is_empty() %}
 
