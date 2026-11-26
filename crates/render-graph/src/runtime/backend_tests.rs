@@ -44,6 +44,7 @@ struct Fake {
     fail_allocation: Option<usize>,
     fail: Option<FailPoint>,
     live: bool,
+    index_buffers_live: bool,
     registered: Vec<Rc<Resource>>,
 }
 
@@ -56,6 +57,7 @@ impl Default for Fake {
             fail_allocation: None,
             fail: None,
             live: true,
+            index_buffers_live: true,
             registered: vec![],
         }
     }
@@ -127,7 +129,11 @@ impl FrameLookup for Fake {
         self.live
     }
 
-    fn whole_index_count(&self, _: usize) -> u32 {
+    fn index_buffer_live(&self, _: usize) -> bool {
+        self.index_buffers_live
+    }
+
+    fn index_count(&self, _: usize) -> u32 {
         12
     }
 }
@@ -162,13 +168,16 @@ impl FrameBackend for Frame<'_> {
         for draw in batch.draws() {
             let call = match draw.draw_call() {
                 DrawCallConfig::VertexCount(count) => format!("vertex:{count}"),
-                DrawCallConfig::IndexCount(count) => format!("index:{count}"),
-                DrawCallConfig::IndexRange {
+                DrawCallConfig::Indexed {
+                    index_buffer,
                     first_index,
                     index_count,
-                } => format!("range:{first_index}:{index_count}"),
-                DrawCallConfig::IndexedIndirect(request) => format!(
-                    "indirect:{}:{}:{}:{}:{}",
+                } => format!("indexed:{index_buffer}:{first_index}:{index_count}"),
+                DrawCallConfig::IndexedIndirect {
+                    index_buffer,
+                    request,
+                } => format!(
+                    "indirect:{index_buffer}:{}:{}:{}:{}:{}",
                     request.buffer(),
                     request.offset(),
                     request.draw_count(),
@@ -340,6 +349,50 @@ fn backend_dropped_buffer_rejected() {
     assert!(backend.events.borrow().is_empty());
 }
 
+/// The backend's index count is authoritative at execution: a buffer that
+/// shrank since the slot was minted fails planning instead of over-reading.
+#[test]
+fn backend_index_range_is_checked_against_the_live_index_count() {
+    let mut backend = Fake::default();
+    let node = draw_index_range(
+        GraphicsPipelineKey::<NoPush>::new(3),
+        IndexBufferSlot::from_backend(7, 24),
+        UniformSlot::<Plain>::from_backend(3),
+        6,
+        12,
+        (),
+    );
+    let mut prepared = RenderGraph::new(ResourcePlanner::new(), node)
+        .unwrap()
+        .prepare(&mut backend)
+        .unwrap();
+
+    let error = prepared.execute(Frame(&backend), &9).unwrap_err();
+    assert!(error.to_string().contains("out of bounds"), "{error}");
+    assert!(backend.events.borrow().is_empty(), "nothing submitted");
+}
+
+#[test]
+fn backend_dropped_index_buffer_rejected() {
+    let mut backend = Fake::default();
+    let node = draw_indexed(
+        GraphicsPipelineKey::<NoPush>::new(3),
+        IndexBufferSlot::from_backend(7, 12),
+        UniformSlot::<Plain>::from_backend(3),
+        (),
+    );
+    let mut prepared = RenderGraph::new(ResourcePlanner::new(), node)
+        .unwrap()
+        .prepare(&mut backend)
+        .unwrap();
+    backend.index_buffers_live = false;
+
+    let error = prepared.execute(Frame(&backend), &9).unwrap_err();
+    assert!(error.to_string().contains("buf.Index.7"), "{error}");
+    assert!(error.to_string().contains("dropped"), "{error}");
+    assert!(backend.events.borrow().is_empty());
+}
+
 #[test]
 fn backend_upload_capacity_rejected() {
     let mut backend = Fake::default();
@@ -430,19 +483,29 @@ fn backend_command_plan() {
             [4, 2, 1],
         ),
         draw_vertex_count(
-            DrawVertexCountKey::<PushBlock<Plain>>::new(2),
+            GraphicsPipelineKey::<PushBlock<Plain>>::new(2),
             UniformSlot::<Plain>::from_backend(2),
             3,
             (),
         )
         .with_push_constant(Plain(0x01010101)),
         draw_indexed(
-            DrawIndexedKey::<NoPush>::new(3),
+            GraphicsPipelineKey::<NoPush>::new(3),
+            IndexBufferSlot::from_backend(7, 12),
             UniformSlot::<Plain>::from_backend(3),
             (),
         ),
+        draw_index_range(
+            GraphicsPipelineKey::<NoPush>::new(3),
+            IndexBufferSlot::from_backend(7, 12),
+            UniformSlot::<Plain>::from_backend(3),
+            6,
+            6,
+            (),
+        ),
         draw_indexed_indirect(
-            DrawIndexedIndirectKey::<NoPush>::new(4),
+            GraphicsIndirectPipelineKey::<NoPush>::new(4),
+            IndexBufferSlot::from_backend(8, 12),
             UniformSlot::<Plain>::from_backend(4),
             ImmutableSlot::<super::tests::DrawIndexedIndirectCommand>::from_backend(5, 3),
             1,
@@ -456,14 +519,15 @@ fn backend_command_plan() {
         .prepare(&mut backend)
         .unwrap();
     prepared
-        .execute(Frame(&backend), &(7, 8, 9, 10, Cursor))
+        .execute(Frame(&backend), &(7, 8, 9, 9, 10, Cursor))
         .unwrap();
     let events = backend.events.borrow();
     for expected in [
         "compute:1:[4, 2, 1]:0",
         "draw:2:vertex:3:Some([1, 1, 1, 1])",
-        "draw:3:index:12:None",
-        "draw:4:indirect:5:20:2:20:4:None",
+        "draw:3:indexed:7:0:12:None",
+        "draw:3:indexed:7:6:6:None",
+        "draw:4:indirect:8:5:20:2:20:4:None",
         "picking:6:[12.5, 7.0]",
     ] {
         assert!(
@@ -567,12 +631,13 @@ fn backend_dynamic_draw_plan() {
     let mut backend = Fake::default();
     let nodes = vec![
         DynDrawNode::indexed(
-            DrawIndexedKey::<NoPush>::new(3),
+            GraphicsPipelineKey::<NoPush>::new(3),
+            IndexBufferSlot::from_backend(7, 12),
             UniformSlot::<()>::from_backend(3),
             192,
         ),
         DynDrawNode::vertex_count(
-            DrawVertexCountKey::<NoPush>::new(4),
+            GraphicsPipelineKey::<NoPush>::new(4),
             UniformSlot::<()>::from_backend(4),
             16,
             6,
@@ -606,7 +671,7 @@ fn backend_dynamic_draw_plan() {
     for expected in [
         "write:true:3:192",
         "write:true:4:16",
-        "draw:3:index:12:None",
+        "draw:3:indexed:7:0:12:None",
         "draw:4:vertex:6:None",
     ] {
         assert!(

@@ -65,7 +65,9 @@ pub trait FrameLookup: BindingLookup {
     fn uniform_live(&self, index: usize) -> bool;
     fn storage_live(&self, index: usize) -> bool;
     fn singleton_live(&self, index: usize) -> bool;
-    fn whole_index_count(&self, pipeline: usize) -> u32;
+    fn index_buffer_live(&self, index: usize) -> bool;
+    /// The number of indices in a live index buffer.
+    fn index_count(&self, index: usize) -> u32;
 }
 
 /// Consumes one frame. Apply writes after the flight-slot wait, preserve queued

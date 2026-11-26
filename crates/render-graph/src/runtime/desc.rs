@@ -63,6 +63,8 @@ pub(crate) enum BufferKind {
     Singleton,
     Immutable,
     Storage,
+    /// a hardware index buffer; its `capacity` is the index count
+    Index,
 }
 
 #[derive(Debug)]
@@ -254,9 +256,31 @@ pub(crate) struct DrawDesc {
 #[derive(Debug, Clone)]
 pub(crate) enum DrawCall {
     VertexCount(u32),
-    WholeIndexed,
-    IndexRange { first_index: u32, index_count: u32 },
-    IndexedIndirect { args: BufferRef, draw_count: u32 },
+    WholeIndexed {
+        indices: BufferId,
+    },
+    IndexRange {
+        indices: BufferId,
+        first_index: u32,
+        index_count: u32,
+    },
+    IndexedIndirect {
+        indices: BufferId,
+        args: BufferRef,
+        draw_count: u32,
+    },
+}
+
+impl DrawCall {
+    /// The index buffer an indexed draw binds; `None` for a vertex-count draw.
+    pub(crate) fn index_buffer(&self) -> Option<BufferId> {
+        match self {
+            Self::VertexCount(_) => None,
+            Self::WholeIndexed { indices }
+            | Self::IndexRange { indices, .. }
+            | Self::IndexedIndirect { indices, .. } => Some(*indices),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
