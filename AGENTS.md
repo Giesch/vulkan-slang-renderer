@@ -17,6 +17,9 @@ Last verified: 2026-09-19
 - **[`docs/roc_shader_codegen.md`](docs/roc_shader_codegen.md)** — Roc selection,
   public API and logical-value mapping, managed paths, safety boundaries, and
   compiler-independent versus real-Roc verification.
+- **[`docs/roc_render_graph.md`](docs/roc_render_graph.md)** — the pure-Roc
+  resource planner, render graph nodes, lowering, validation, and the
+  `HostGraph`/`Draw` wire form the platform host will consume.
 - **`llm_notes/`** — historical plans and phase records, written before or during
   a piece of work. **Treat as possibly out of date**: much of it is a snapshot of
   what was believed at the time, some of it was superseded by the work it

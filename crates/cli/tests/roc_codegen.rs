@@ -105,6 +105,8 @@ fn real_roc_codegen_gate() {
         "SyntheticReflection.roc",
         "SyntheticConsumer.roc",
         "BlockConsumer.roc",
+        "RenderGraphConsumer.roc",
+        "RenderGraphNegative.roc",
     ] {
         copy_fixture_from("roc_codegen", name, &generated);
     }
@@ -127,6 +129,7 @@ fn real_roc_codegen_gate() {
         "ShaderAtlas.roc",
         "VertexPullingFloat3.roc",
         "SyntheticReflection.roc",
+        "RenderGraphNegative.roc",
     ] {
         run(
             Command::new(roc)
@@ -237,23 +240,102 @@ expect List.sublist(local_params.to_bytes(), {{ start: 16, len: 4 }}) == [7, 0, 
         String::from_utf8_lossy(&blocks.stderr)
     );
 
+    // Render graphs built from generated modules through the platform API.
+    let graphs = roc_test(roc, &generated, &generated.join("RenderGraphConsumer.roc"));
+    assert!(
+        graphs.status.success()
+            && String::from_utf8_lossy(&graphs.stdout).contains("All (18) tests passed"),
+        "{}{}",
+        String::from_utf8_lossy(&graphs.stdout),
+        String::from_utf8_lossy(&graphs.stderr)
+    );
+
+    // Render graph misuse is a type error; `RenderGraphNegative.roc` checking
+    // cleanly above is the positive control each case edits.
+    let control = fs::read_to_string(generated.join("RenderGraphNegative.roc")).unwrap();
+    let control_line =
+        "checked = RenderGraph.draw_indexed(pipe, indices, params, triangle_bindings)";
+    assert!(control.contains(control_line));
+    for (name, misuse) in [
+        (
+            "WrongBufferElement",
+            "RenderGraph.draw_indexed(pipe, indices, params, { vertices: particles.addr() })",
+        ),
+        (
+            "IndirectShaderAsGraphics",
+            "ResourcePlanner.graphics_pipeline(planner3, { name: \"pull\", shader: VertexPullingFloat3.shader, uniforms: { params: pull_params }, raster: RasterState.default })",
+        ),
+        (
+            "MissingPushConstant",
+            "RenderGraph.draw_vertex_count(blocks_pipe, tint, 3, {})",
+        ),
+        (
+            "PushOnNoPushPipeline",
+            "RenderGraph.draw_indexed_with_push(pipe, indices, params, triangle_bindings, { data: {}, bindings: {} })",
+        ),
+        (
+            "WrongUniformField",
+            "ResourcePlanner.graphics_pipeline(planner3, { name: \"triangle\", shader: BasicTriangle.shader, uniforms: { tint: params }, raster: RasterState.default })",
+        ),
+        (
+            "WrongUniformSchema",
+            "RenderGraph.draw_indexed(pipe, indices, pull_params, triangle_bindings)",
+        ),
+        (
+            "IndirectArgsNotCommands",
+            "RenderGraph.draw_indexed_indirect(pull_pipe, indices, pull_params, pairs, 0, 1, pull_bindings)",
+        ),
+        (
+            "IndirectOnGraphicsPipeline",
+            "RenderGraph.draw_indexed_indirect(pipe, indices, params, commands, 0, 1, triangle_bindings)",
+        ),
+    ] {
+        let negative = generated.join(format!("{name}.roc"));
+        fs::write(
+            &negative,
+            control
+                .replace("RenderGraphNegative :=", &format!("{name} :="))
+                .replace(control_line, &format!("checked = {misuse}")),
+        )
+        .unwrap();
+        let checked = Command::new(roc)
+            .arg("check")
+            .arg(format!("--main={}", generated.join("main.roc").display()))
+            .arg(&negative)
+            .current_dir(std::env::temp_dir())
+            .output()
+            .expect("failed to execute roc check");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&checked.stdout),
+            String::from_utf8_lossy(&checked.stderr)
+        );
+        assert!(
+            !checked.status.success()
+                && text.contains("type mismatch")
+                && text.contains("1 error and 0 warnings"),
+            "{name} should fail to typecheck with exactly one type mismatch:\n{text}"
+        );
+        fs::remove_file(negative).unwrap();
+    }
+
     // The uniform record and binding wrappers are checked statically.
     for (name, mismatch) in [
         (
             "MissingUniform",
-            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema) })",
+            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema, provenance) })",
         ),
         (
             "SwappedUniforms",
-            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.params.schema), params: UniformSlot.new(1, RocBlocks.tint.schema) })",
+            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.params.schema, provenance), params: UniformSlot.new(1, RocBlocks.tint.schema, provenance) })",
         ),
         (
             "ExtraUniform",
-            "graphics_slots(RocNoBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema) })",
+            "graphics_slots(RocNoBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema, provenance) })",
         ),
         (
             "IndirectAsDirect",
-            "graphics_slots(VertexPullingFloat3.shader, { params: UniformSlot.new(0, VertexPullingFloat3.params.schema) })",
+            "graphics_slots(VertexPullingFloat3.shader, { params: UniformSlot.new(0, VertexPullingFloat3.params.schema, provenance) })",
         ),
         (
             "WrongPointee",
@@ -264,7 +346,7 @@ expect List.sublist(local_params.to_bytes(), {{ start: 16, len: 4 }}) == [7, 0, 
         fs::write(
             &negative,
             format!(
-                "import pf.ShaderReflection exposing [GraphicsShader, ImmutableBufferBinding, UniformSlot]\nimport RocBlocks\nimport RocNoBlocks\nimport VertexPullingFloat3\n\n{name} := {{}}\n\ngraphics_slots : GraphicsShader(uniforms, push), uniforms -> List(U32)\ngraphics_slots = |shader, uniforms| (shader.uniform_slots)(uniforms)\n\ntarget = {{ buffer: 0, slot: Current, offset: 0 }}\n\ntail_binding : ImmutableBufferBinding(VertexPullingFloat3.TailVertex)\ntail_binding = ImmutableBufferBinding.new(target)\n\nexpect {mismatch} == []\n"
+                "import pf.ShaderReflection exposing [GraphicsShader, ImmutableBufferBinding, UniformSlot]\nimport RocBlocks\nimport RocNoBlocks\nimport VertexPullingFloat3\n\n{name} := {{}}\n\ngraphics_slots : GraphicsShader(uniforms, push), uniforms -> List(U32)\ngraphics_slots = |shader, uniforms| (shader.uniform_slots)(uniforms)\n\nprovenance = {{ name: \"test\", digest: [] }}\n\ntarget = {{ buffer: {{ id: 0, provenance }}, slot: Current, offset: 0 }}\n\ntail_binding : ImmutableBufferBinding(VertexPullingFloat3.TailVertex)\ntail_binding = ImmutableBufferBinding.new(target)\n\nexpect {mismatch} == []\n"
             ),
         )
         .unwrap();
