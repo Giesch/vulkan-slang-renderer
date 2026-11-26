@@ -15,7 +15,7 @@ use mltrs_renderer::renderer::pipeline::{
 use mltrs_renderer::renderer::render_graph::{
     DrawIndexedKey, DynDrawNode, draw_index_range, draw_indexed,
 };
-use mltrs_renderer::renderer::{Renderer, UniformBufferHandle};
+use mltrs_renderer::renderer::{PipelineErrors, Renderer, UniformBufferHandle};
 
 use render_graph_api_checks::generated::shader_atlas::mesh::{
     self, MeshParams, MeshVertex, Resources,
@@ -26,7 +26,7 @@ fn typed_owned_vertices(
     params: &UniformBufferHandle<MeshParams>,
     vertices: Vec<MeshVertex>,
     indices: Vec<u32>,
-) -> anyhow::Result<GraphicsPipelineHandle<TypedVertex<MeshVertex>, DrawIndexed>> {
+) -> eros::Result<GraphicsPipelineHandle<TypedVertex<MeshVertex>, DrawIndexed>, PipelineErrors> {
     let config: PipelineConfig<'_, TypedVertex<MeshVertex>, DrawIndexed, NoPush> =
         mesh::Shader::init()
             .pipeline_config(Resources {
@@ -41,7 +41,7 @@ fn typed_shared_mesh(
     renderer: &mut Renderer,
     params: &UniformBufferHandle<MeshParams>,
     mesh_handle: &MeshHandle<MeshVertex>,
-) -> anyhow::Result<GraphicsPipelineHandle<TypedVertex<MeshVertex>, DrawIndexedIndirect>> {
+) -> eros::Result<GraphicsPipelineHandle<TypedVertex<MeshVertex>, DrawIndexedIndirect>, PipelineErrors> {
     let config = mesh::Shader::init()
         .pipeline_config(Resources {
             mesh_params_buffer: params,
@@ -57,7 +57,7 @@ fn runtime_packed_bytes(
     builder: PipelineConfigBuilder<'_>,
     vertex_bytes: Vec<u8>,
     indices: Vec<u32>,
-) -> anyhow::Result<GraphicsPipelineHandle<RuntimeVertex, DrawIndexed>> {
+) -> eros::Result<GraphicsPipelineHandle<RuntimeVertex, DrawIndexed>, PipelineErrors> {
     let config: PipelineConfig<'_, RuntimeVertex, DrawIndexed, NoPush> =
         builder.build_indexed_bytes(vertex_bytes, indices);
 

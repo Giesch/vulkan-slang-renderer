@@ -23,6 +23,12 @@ is not a dependency; don't reintroduce it.
   associated error type, which becomes the last member of the graph's typed
   sets (see `crates/render-graph/AGENTS.md`).
 
+The runtime shader entry point uses `RuntimeShaderErrors` for reflection JSON,
+vertex-layout validation, and invalid SPIR-V stages (`InvalidSpirv`). Pipeline
+creation includes `InvalidPipelineVertexInput` in `PipelineErrors` for typed or
+packed vertex-layout mismatches. Byte-sized uniform creation reports
+`EmptyUniformBuffer` before allocation when its requested size is zero.
+
 ## `DrawError`: the frame error
 
 `DrawError` (`crates/renderer/src/renderer/error.rs`) is the error of

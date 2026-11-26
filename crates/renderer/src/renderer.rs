@@ -307,7 +307,9 @@ impl Renderer {
         let shader_watcher = if shaders_source_dir.as_os_str().is_empty() {
             None
         } else {
-            Some(shader_watcher::watch(shaders_source_dir)?)
+            Some(shader_watcher::watch(shaders_source_dir).with_context(|| {
+                format!("Watch shader sources in {}", shaders_source_dir.display())
+            })?)
         };
 
         let render_scale = render_scale.clamp(0.25, 1.0);
@@ -1080,25 +1082,31 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn create_uniform_buffer<T: GPUWrite>(&mut self) -> eros::Result<UniformBufferHandle<T>> {
+    #[context("Create uniform buffer of {}", std::any::type_name::<T>())]
+    pub fn create_uniform_buffer<T: GPUWrite>(
+        &mut self,
+    ) -> eros::Result<UniformBufferHandle<T>, (vk::Result,)> {
         self.create_uniform_buffer_sized(std::mem::size_of::<T>() as u64)
     }
 
     /// A uniform buffer for an already-packed payload of exactly `byte_size`
     /// bytes per frame, such as one written by the render graph from bytes.
+    #[context("Create uniform buffer of {byte_size} bytes")]
     pub fn create_uniform_buffer_bytes(
         &mut self,
         byte_size: u64,
-    ) -> eros::Result<UniformBufferHandle<UniformBytes>> {
-        eros::ensure!(byte_size > 0, "a uniform buffer needs a nonzero size");
+    ) -> eros::Result<UniformBufferHandle<UniformBytes>, (EmptyUniformBuffer, vk::Result)> {
+        if byte_size == 0 {
+            return Err(EmptyUniformBuffer).union();
+        }
 
-        self.create_uniform_buffer_sized(byte_size)
+        self.create_uniform_buffer_sized(byte_size).widen()
     }
 
     fn create_uniform_buffer_sized<T>(
         &mut self,
         buffer_size: u64,
-    ) -> eros::Result<UniformBufferHandle<T>> {
+    ) -> eros::Result<UniformBufferHandle<T>, (vk::Result,)> {
         let mut buffers_per_frame: [Option<RawUniformBuffer>; MAX_FRAMES_IN_FLIGHT] =
             [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
@@ -1360,8 +1368,11 @@ impl Renderer {
     pub fn create_pipeline<I, D: DrawCall, P>(
         &mut self,
         config: PipelineConfig<I, D, P>,
-    ) -> eros::Result<GraphicsPipelineHandle<I, D, P>> {
-        let pipeline = self.init_pipeline(config)?;
+    ) -> eros::Result<GraphicsPipelineHandle<I, D, P>, PipelineErrors> {
+        let shader = config.shader.source_file_name().to_owned();
+        let pipeline = self
+            .init_pipeline(config)
+            .with_context(|| format!("Create pipeline for {shader}"))?;
         let handle = self.pipelines.add(pipeline);
 
         Ok(GraphicsPipelineHandle::new(handle))
@@ -1425,8 +1436,18 @@ impl Renderer {
     pub fn create_picking_pipeline(
         &mut self,
         picking_config: PipelineConfig<NoVertex, DrawVertexCount, NoPush>,
-    ) -> eros::Result<PickingPipelineHandle> {
-        picking_config.validate_vertex_input()?;
+    ) -> eros::Result<PickingPipelineHandle, PipelineErrors> {
+        let shader = picking_config.shader.source_file_name().to_owned();
+
+        self.init_picking_pipeline(picking_config)
+            .with_context(|| format!("Create picking pipeline for {shader}"))
+    }
+
+    fn init_picking_pipeline(
+        &mut self,
+        picking_config: PipelineConfig<NoVertex, DrawVertexCount, NoPush>,
+    ) -> eros::Result<PickingPipelineHandle, PipelineErrors> {
+        picking_config.validate_vertex_input().widen()?;
 
         // Lazily initialize picking resources on first use
         if self.picking.is_none() {
@@ -1442,7 +1463,8 @@ impl Renderer {
             &*picking_config.shader,
             #[cfg(debug_assertions)]
             self.shaders_source_dir,
-        )?;
+        )
+        .widen()?;
 
         // picking renders ids into a uint target with no depth attachment, so
         // blending is meaningless and the depth-stencil state is ignored
@@ -1673,10 +1695,10 @@ impl Renderer {
     fn init_pipeline<I, D: DrawCall, P>(
         &mut self,
         config: PipelineConfig<I, D, P>,
-    ) -> eros::Result<RendererPipeline> {
+    ) -> eros::Result<RendererPipeline, PipelineErrors> {
         // checked up front so the bail happens before create_graphics_pipeline
         // below allocates a vk::Pipeline we would then have to leak
-        config.validate_vertex_input()?;
+        config.validate_vertex_input().widen()?;
 
         let pipeline_layout = ShaderPipelineLayout::create_from_atlas(
             &self.device,
@@ -1708,19 +1730,22 @@ impl Renderer {
             VertexConfig::VertexAndIndexBuffers(_, indices)
             | VertexConfig::PackedBytes(_, indices) => {
                 let (vertex_buffer, vertex_buffer_memory) = match &config.vertex_config {
-                    VertexConfig::VertexAndIndexBuffers(vertices, _) => vertices.upload(
-                        &self.allocator,
-                        &self.device,
-                        self.command_pool,
-                        self.graphics_queue,
-                    )?,
+                    VertexConfig::VertexAndIndexBuffers(vertices, _) => vertices
+                        .upload(
+                            &self.allocator,
+                            &self.device,
+                            self.command_pool,
+                            self.graphics_queue,
+                        )
+                        .union()?,
                     VertexConfig::PackedBytes(bytes, _) => create_vertex_buffer(
                         &self.allocator,
                         &self.device,
                         self.command_pool,
                         self.graphics_queue,
                         bytes,
-                    )?,
+                    )
+                    .union()?,
                     VertexConfig::SharedMesh(_) | VertexConfig::VertexCount => unreachable!(),
                 };
 
@@ -3193,10 +3218,7 @@ impl Renderer {
 
     // shader hot reload
     #[cfg(debug_assertions)]
-    fn try_shader_recompile(
-        &mut self,
-        pipeline_index: GraphicsPipelineIndex,
-    ) -> eros::Result<()> {
+    fn try_shader_recompile(&mut self, pipeline_index: GraphicsPipelineIndex) -> eros::Result<()> {
         if !self
             .pipelines
             .get_by_index(pipeline_index)

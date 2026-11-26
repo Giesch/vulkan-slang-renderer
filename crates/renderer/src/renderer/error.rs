@@ -115,6 +115,51 @@ pub struct EmptyPipelineVertexData {
     pub shader: String,
 }
 
+/// A uniform buffer was requested with no payload.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("a uniform buffer needs a nonzero size")]
+pub struct EmptyUniformBuffer;
+
+/// A vertex source does not match the shader's reflected input.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidPipelineVertexInput {
+    #[error(
+        "pipeline for {shader} was built for vertex type {vertex_type} whose bindings (binding, stride, input rate) {actual:?} differ from the shader's {expected:?}"
+    )]
+    Bindings {
+        shader: String,
+        vertex_type: &'static str,
+        actual: Vec<(u32, u32, vk::VertexInputRate)>,
+        expected: Vec<(u32, u32, vk::VertexInputRate)>,
+    },
+    #[error(
+        "pipeline for {shader} was built for vertex type {vertex_type} whose attributes (location, binding, format, offset) {actual:?} differ from the shader's {expected:?}"
+    )]
+    Attributes {
+        shader: String,
+        vertex_type: &'static str,
+        actual: Vec<(u32, u32, vk::Format, u32)>,
+        expected: Vec<(u32, u32, vk::Format, u32)>,
+    },
+    #[error(
+        "pipeline for {shader} was given {bytes} vertex bytes, not a nonzero multiple of the vertex stride {stride}"
+    )]
+    PackedBytes {
+        shader: String,
+        bytes: usize,
+        stride: usize,
+    },
+    #[error("pipeline for {shader} was given empty index data by `.build_indexed_bytes()`")]
+    EmptyIndices { shader: String },
+    #[error(
+        "pipeline for {shader} draws with a vertex count, but its shader declares vertex input bindings {bindings:?}"
+    )]
+    UnexpectedBindings {
+        shader: String,
+        bindings: Vec<(u32, u32, vk::VertexInputRate)>,
+    },
+}
+
 /// The reflected bindless heap set index does not directly follow the reflected sets.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
@@ -153,6 +198,7 @@ pub type PipelineLayoutErrors = (
 /// Errors from [`Renderer::create_pipeline`](super::Renderer::create_pipeline).
 pub type PipelineErrors = (
     EmptyPipelineVertexData,
+    InvalidPipelineVertexInput,
     ShaderSourceCompileFailed,
     std::io::Error,
     BindlessHeapSetGap,
