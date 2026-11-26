@@ -1,4 +1,5 @@
-//! Pure per-frame expansion. Phase 1 does not wire this into execution.
+//! Pure per-frame expansion of a compiled graph; plain-data graphs execute
+//! the expanded steps.
 use super::compile::*;
 use super::desc::*;
 
@@ -67,6 +68,13 @@ pub(crate) struct ExpandedFrame {
 }
 
 pub(crate) struct ExecStep {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "backends derive barriers from command order; tests pin the template"
+        )
+    )]
     pub(crate) barrier_before: Option<BarrierKind>,
     pub(crate) leaf: LeafRef,
     pub(crate) tex: Vec<ResolvedTex>,

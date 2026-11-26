@@ -306,7 +306,13 @@ const CASES: &[Case] = &[
         file: "graphics_key_from_indirect_handle.rs",
         expectation: Expectation::Fails {
             code: "E0277",
-            snippets: &["GraphicsPipelineKey", "PipelineHandle<GraphicsIndirect>"],
+            // rustc qualifies the marker's path, because plain-data
+            // `PipelineKind` has variants of the same names
+            snippets: &[
+                "GraphicsPipelineKey",
+                "PipelineHandle<",
+                "GraphicsIndirect>",
+            ],
         },
     },
     // Index buffer handles have private fields, so a caller cannot forge one

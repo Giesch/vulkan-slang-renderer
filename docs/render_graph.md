@@ -272,6 +272,21 @@ access and the resolver still routes it to the immutable/singleton storage.
 An `IndexBufferHandle` is affine like the others: the graph captures its
 `IndexBufferSlot`, and `execute` checks that slot like any buffer slot.
 
+A host without generated Rust element types creates buffers from packed
+bytes and a runtime element stride: `create_singleton_buffer_bytes(bytes,
+stride)`, `create_immutable_buffer_bytes(bytes, stride)`,
+`create_cpu_updated_buffer_bytes(len, stride)`, and
+`create_gpu_updated_buffer_bytes(len, stride)` return handles of the
+`BufferBytes` marker. Each rejects a zero stride, zero elements, or bytes
+that are not whole elements before allocating. Initialize CPU- and
+GPU-updated byte buffers at setup with `write_cpu_updated_bytes_all_frames` /
+`write_gpu_updated_bytes_all_frames`. `BufferBytes` is not `GPUWrite`, so the
+typed write methods cannot target these buffers. Every storage handle records
+its `element_stride()`, and every slot minted from a storage handle carries its
+length and stride, so `addr_at(i)` steps by the runtime stride rather than
+`size_of::<BufferBytes>()`, and plain-data graphs check bindings against the
+real allocation.
+
 `upload(slot)` is a node that copies a `Vec<T>` from the params tuple
 into the buffer each frame; the slot is a `CpuUpdatedSlot<T>`, or the storage
 buffer handle it is minted from. An oversized vector returns an error identifying
@@ -332,7 +347,78 @@ whose frame is a `Vec<N::Frame>` of the same length, checked at execution.
 The host creates the uniform buffer with `create_uniform_buffer_bytes` and the
 pipeline from a `RuntimeShader` (`shaders::runtime`) with
 `PipelineConfigBuilder::build_graphics`, which yields a
-`PipelineHandle<Graphics, NoPush>`. Indirect draws have no dynamic form.
+`PipelineHandle<Graphics, NoPush>`. Indirect draws have no dynamic form; use
+a plain-data graph. Compute pipelines for plain-data graphs come from a
+`RuntimeComputeShader::new(reflection_json, compute_spv)`.
+
+### Plain-data graphs
+
+`mltrs_render_graph::plain` (also `renderer::render_graph::plain`) executes a
+graph described as data, with no generated Rust shader types. It is the
+full-parity path for a plain-data host such as the Roc platform: compute
+dispatches, uploads, logical textures, buffer and external-texture bindings,
+push constants, `When` (optional) and `Repeat` scopes, direct and
+indexed-indirect draws, and picking.
+
+The host builds a `GraphDesc` and a `SchemaTable`, and binds every table row
+to a backend resource with `PlainBindings<I>`, in table order:
+
+```rust
+let bindings = PlainBindings {
+    buffers: vec![
+        PlainBuffer::singleton(&vertices),      // BufferKind::Singleton
+        PlainBuffer::index(&index_buffer),      // BufferKind::Index
+        PlainBuffer::cpu_updated(&particles),   // BufferKind::Storage, upload target
+        PlainBuffer::indirect_args(&commands),  // BufferKind::Immutable draw records
+    ],
+    uniforms: vec![PlainUniform::new(&params_buffer)],
+    pipelines: vec![PlainPipeline::graphics(&pipeline)],
+    imports: vec![sky_texture_handle],
+    picking: None,
+};
+let mut graph = PlainRenderGraph::new(desc, schemas, bindings)?.prepare(&mut renderer)?;
+graph.execute(frame, &[PlainValue::Bytes(&params_data), PlainValue::Count(3)])?;
+```
+
+`PlainRenderGraph::new` runs the same validation as `RenderGraph::new`, then
+checks each binding against its declaration: buffer kind, declared capacity
+and element size against the slot's length and stride, pipeline kind, and the
+uniform and push sizes each pipeline expects. Every buffer binding offset,
+including those of uniforms no command consumes, must lie inside the
+allocation's byte length (an overflowing length is an error). Distinct uniform
+declarations must bind distinct backend uniform buffers; share a buffer by
+sharing one `UniformId`. Every uniform and push schema, including a
+pipeline's, must carry a `SchemaLayout`. `I` is the backend's exact indirect record:
+`PlainBuffer::indirect_args` only accepts an `ImmutableSlot<I>`, `prepare`
+requires a backend whose `IndirectCommand` is `I`, and each indirect draw's
+byte offset must start a whole record whose command range fits the slot.
+
+`execute` takes one `PlainValue` per `ValueDecl`: `Count` for repeat counts,
+`Bytes` of exactly the schema size for uniform, push, and picking data,
+`Array { count, bytes }` for uploads, and `Absent` for an optional value the
+frame skips. Every value is checked against its declaration before anything
+is staged.
+
+Each `ValueDecl` names its `ValueScope`. A `When { gate }` value is present
+exactly when its gate is, and the gate is itself `When { gate }`; a frame that
+mixes present and absent values in one optional scope is an execution error.
+A skipped gate skips its `When` body, and its uploads and picking readback.
+A `Repeat { count }` value is read inside that repeat: an upload reading it
+is skipped on a zero-trip frame and otherwise staged once, since every trip
+writes the same bytes. Typed lowering assigns the same scopes, so `optional`
+and `repeat` nodes behave identically in both paths.
+
+Each block executes its compiled `AssemblyProgram` into a zeroed buffer of
+the schema's size: `Data` fields copy from the bytes value, texture fields
+resolve to the bindless handle of the physical image holding the version the
+command reads or writes, buffer fields to the flight slot's device address
+plus the binding offset, and external fields to the bound import handle.
+Padding stays zero, so plain-data staging is fully initialized. Inside a
+`Repeat`, push blocks resolve per iteration and texture cursors rotate per
+write; cursors commit only after a successful submission, as for typed graphs.
+
+Typed graphs record picking outside the description, so only plain-data
+graphs set `GraphDesc::picking`.
 
 Compute parameter blocks with resource bindings require
 `.with_param_bindings(bindings)` before the command can enter a graph.
@@ -395,6 +481,12 @@ The validator enforces these rules:
 - A repeat-body uniform block cannot reference a texture written by that
   repeat. Put that binding in the node's push block so it resolves again for
   each iteration.
+- A uniform block shared by several commands cannot reference a texture that
+  a command between its first and last consumer writes: the block is written
+  once before any command executes, so every consumer must resolve it to the
+  same version. Bind that texture through each command's push block.
+  Plain-data graphs stage a shared block once per frame and reject a frame in
+  which its consumers resolve it to different bytes.
 - Compute and upload nodes must precede the main raster pass. A `repeat` can
   contain compute and upload nodes, but no draw. `repeat` and `optional`
   scopes cannot nest in either combination.
@@ -405,12 +497,28 @@ The validator enforces these rules:
 - A reused uniform-buffer slot must resolve to the same data size and resource
   bindings at every node. Different sources for one slot are rejected.
 - Pipeline kinds, per-frame value kinds, parameter schemas, and binding kinds
-  must match their nodes. Resource IDs in uniform sources, push blocks, and
+  must match their nodes. Direct draws use `Graphics` pipelines and
+  indexed-indirect draws use `GraphicsIndirect` pipelines. Resource IDs in uniform sources, push blocks, and
   raster targets are checked at their declarations, including uniform
   sources that no node consumes.
-- An upload must target a storage buffer, and its declared maximum element
-  count must fit the buffer. Indirect draw arguments must use an immutable
-  buffer. Buffer byte offsets must fit in `u32`.
+- An upload must target a CPU-updated storage buffer, its declared maximum
+  element count must fit the buffer, and its element size must match the
+  buffer's. Indirect draw arguments must use an immutable buffer. Buffer byte
+  offsets must fit in `u32`. A buffer binding must use a slot and access its
+  buffer supports: index buffers have no address, only GPU-updated buffers
+  have a previous slot, and immutable and singleton buffers are read-only.
+- A push block, whether a pipeline or a command names it, is a nonzero
+  multiple of 4 bytes and at most 128 bytes (`vkCmdPushConstants` and
+  Vulkan's guaranteed push-constant size). At submission the renderer checks
+  each command's pipeline is live and its push payload matches the pipeline's
+  push range exactly, returning `DrawError` otherwise.
+- A value's scope names a self-gated optional gate or a top-level repeat
+  count, and values inside a repeat are not optional.
+- A schema field layout (plain-data graphs) keeps every field inside the
+  block, without overlap. Resource fields are 8 bytes: a bindless handle is a
+  Slang `uint2` and a buffer address a `uint64_t`. Each resource field
+  corresponds to exactly one layout field of the same kind. Data fields read
+  inside the block's bytes value, and a block with data fields must name one.
 - An indexed draw's indices must be an index buffer, and a `draw_index_range`
   range must fit in the slot's index count. Execution checks the range again
   against the live buffer's count.

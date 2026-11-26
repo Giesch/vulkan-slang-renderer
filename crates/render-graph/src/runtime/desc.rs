@@ -1,64 +1,80 @@
 //! Plain-data description consumed by render-graph validation and compilation.
+//!
+//! Typed nodes lower into these tables; a plain-data host (the Roc platform)
+//! builds them directly and executes them through [`crate::plain`]. Every id
+//! indexes the matching `GraphDesc` table (or the `SchemaTable`).
 
 pub use mltrs_render_graph::backend::GraphFormat;
 
 macro_rules! id {
     ($($name:ident),+ $(,)?) => {$(
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub(crate) struct $name(pub(crate) u32);
+        pub struct $name(pub u32);
     )+};
 }
 id!(
     TexId, BufferId, ImportId, ValueId, UniformId, PipelineId, SchemaId
 );
 
+/// A resource field's position in its schema's `resource_fields`; binding `i`
+/// of a uniform or push source carries `FieldKey(i)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct FieldKey(pub(crate) u16);
+pub struct FieldKey(pub u16);
 
 #[derive(Debug, Default)]
-pub(crate) struct GraphDesc {
-    pub(crate) textures: Vec<TexDecl>,
-    pub(crate) buffers: Vec<BufferDecl>,
-    pub(crate) imports: Vec<ImportDecl>,
-    pub(crate) values: Vec<ValueDecl>,
-    pub(crate) uniforms: Vec<UniformDecl>,
-    pub(crate) pipelines: Vec<PipelineDecl>,
-    pub(crate) uploads: Vec<UploadDesc>,
-    pub(crate) passes: Vec<PassDesc>,
+pub struct GraphDesc {
+    pub textures: Vec<TexDecl>,
+    pub buffers: Vec<BufferDecl>,
+    pub imports: Vec<ImportDecl>,
+    pub values: Vec<ValueDecl>,
+    pub uniforms: Vec<UniformDecl>,
+    pub pipelines: Vec<PipelineDecl>,
+    pub uploads: Vec<UploadDesc>,
+    pub passes: Vec<PassDesc>,
+    /// A picking readback after the main raster pass. Typed graphs record
+    /// picking outside the description, so only plain-data graphs set this.
+    pub picking: Option<PickingDesc>,
+}
+
+/// A picking readback whose cursor position arrives as an 8-byte
+/// `[f32; 2]` value each frame; an absent optional value skips the readback.
+#[derive(Debug)]
+pub struct PickingDesc {
+    pub cursor: ValueId,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct TexDecl {
-    pub(crate) name: String,
-    pub(crate) format: GraphFormat,
-    pub(crate) size: SizeClass,
-    pub(crate) usage: TexUsage,
+pub struct TexDecl {
+    pub name: String,
+    pub format: GraphFormat,
+    pub size: SizeClass,
+    pub usage: TexUsage,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum SizeClass {
+pub enum SizeClass {
     Fixed(u32, u32),
     Window,
     WindowDiv(u32),
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum TexUsage {
+pub enum TexUsage {
     Storage,
     Color,
     Depth,
 }
 
 #[derive(Debug)]
-pub(crate) struct BufferDecl {
-    pub(crate) name: String,
-    pub(crate) kind: BufferKind,
-    pub(crate) capacity: Option<u32>,
-    pub(crate) elem_size: Option<u32>,
+pub struct BufferDecl {
+    pub name: String,
+    pub kind: BufferKind,
+    pub capacity: Option<u32>,
+    pub elem_size: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum BufferKind {
+pub enum BufferKind {
     GpuUpdatedFlight,
     Singleton,
     Immutable,
@@ -68,19 +84,36 @@ pub(crate) enum BufferKind {
 }
 
 #[derive(Debug)]
-pub(crate) struct ImportDecl {
-    pub(crate) name: String,
+pub struct ImportDecl {
+    pub name: String,
 }
 
 #[derive(Debug)]
-pub(crate) struct ValueDecl {
-    pub(crate) name: String,
-    pub(crate) kind: ValueKind,
-    pub(crate) optional: bool,
+pub struct ValueDecl {
+    pub name: String,
+    pub kind: ValueKind,
+    /// The frame may supply [`crate::plain::PlainValue::Absent`].
+    pub optional: bool,
+    pub scope: ValueScope,
+}
+
+/// The control-flow scope a value belongs to. It decides when an upload or
+/// picking readback reading the value runs, and which values must be present
+/// together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueScope {
+    /// Outside any `When` or `Repeat`.
+    Top,
+    /// Inside the optional scope gated by `gate`: present exactly when the
+    /// gate is. The gate value is itself `When { gate }`.
+    When { gate: ValueId },
+    /// Inside the repeat whose trip count is `count`; an upload reading it is
+    /// skipped on a zero-trip frame.
+    Repeat { count: ValueId },
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum ValueKind {
+pub enum ValueKind {
     Count,
     Groups,
     Bytes { schema: SchemaId },
@@ -88,41 +121,44 @@ pub(crate) enum ValueKind {
 }
 
 #[derive(Debug)]
-pub(crate) struct UniformDecl {
-    pub(crate) name: String,
-    pub(crate) schema: SchemaId,
-    pub(crate) source: UniformSourceDesc,
+pub struct UniformDecl {
+    pub name: String,
+    pub schema: SchemaId,
+    pub source: UniformSourceDesc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UniformSourceDesc {
-    pub(crate) data: Option<ValueId>,
-    pub(crate) bindings: Vec<(FieldKey, ResourceRef)>,
+pub struct UniformSourceDesc {
+    pub data: Option<ValueId>,
+    pub bindings: Vec<(FieldKey, ResourceRef)>,
 }
 
 #[derive(Debug)]
-pub(crate) struct PipelineDecl {
-    pub(crate) name: String,
-    pub(crate) kind: PipelineKind,
-    pub(crate) params: SchemaId,
-    pub(crate) push: Option<SchemaId>,
+pub struct PipelineDecl {
+    pub name: String,
+    pub kind: PipelineKind,
+    pub params: SchemaId,
+    pub push: Option<SchemaId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum PipelineKind {
+pub enum PipelineKind {
     Compute,
+    /// Direct vertex-count and indexed draws.
     Graphics,
+    /// Indexed-indirect draws; the shader declares `SV_DrawIndex`.
+    GraphicsIndirect,
 }
 
 #[derive(Debug)]
-pub(crate) struct UploadDesc {
-    pub(crate) name: String,
-    pub(crate) buffer: BufferId,
-    pub(crate) value: ValueId,
+pub struct UploadDesc {
+    pub name: String,
+    pub buffer: BufferId,
+    pub value: ValueId,
 }
 
 #[derive(Debug)]
-pub(crate) enum PassDesc {
+pub enum PassDesc {
     Leaf(LeafPass),
     When {
         name: String,
@@ -137,7 +173,7 @@ pub(crate) enum PassDesc {
 }
 
 #[derive(Debug)]
-pub(crate) enum LeafPass {
+pub enum LeafPass {
     Compute(DispatchDesc),
     Raster(RasterDesc),
 }
@@ -207,36 +243,36 @@ impl LeafPass {
 }
 
 #[derive(Debug)]
-pub(crate) struct DispatchDesc {
-    pub(crate) name: String,
-    pub(crate) pipeline: PipelineId,
-    pub(crate) uniform: UniformId,
-    pub(crate) groups: GroupSource,
-    pub(crate) push: Option<PushDesc>,
+pub struct DispatchDesc {
+    pub name: String,
+    pub pipeline: PipelineId,
+    pub uniform: UniformId,
+    pub groups: GroupSource,
+    pub push: Option<PushDesc>,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum GroupSource {
+pub enum GroupSource {
     Fixed([u32; 3]),
     Value(ValueId),
 }
 
 #[derive(Debug)]
-pub(crate) struct PushDesc {
-    pub(crate) data: Option<ValueId>,
-    pub(crate) schema: SchemaId,
-    pub(crate) bindings: Vec<(FieldKey, ResourceRef)>,
+pub struct PushDesc {
+    pub data: Option<ValueId>,
+    pub schema: SchemaId,
+    pub bindings: Vec<(FieldKey, ResourceRef)>,
 }
 
 #[derive(Debug)]
-pub(crate) struct RasterDesc {
-    pub(crate) name: String,
-    pub(crate) targets: RasterTargets,
-    pub(crate) draws: Vec<DrawDesc>,
+pub struct RasterDesc {
+    pub name: String,
+    pub targets: RasterTargets,
+    pub draws: Vec<DrawDesc>,
 }
 
 #[derive(Debug)]
-pub(crate) enum RasterTargets {
+pub enum RasterTargets {
     Main,
     Offscreen {
         color: Vec<TexId>,
@@ -245,16 +281,16 @@ pub(crate) enum RasterTargets {
 }
 
 #[derive(Debug)]
-pub(crate) struct DrawDesc {
-    pub(crate) name: String,
-    pub(crate) pipeline: PipelineId,
-    pub(crate) uniform: UniformId,
-    pub(crate) call: DrawCall,
-    pub(crate) push: Option<PushDesc>,
+pub struct DrawDesc {
+    pub name: String,
+    pub pipeline: PipelineId,
+    pub uniform: UniformId,
+    pub call: DrawCall,
+    pub push: Option<PushDesc>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum DrawCall {
+pub enum DrawCall {
     VertexCount(u32),
     WholeIndexed {
         indices: BufferId,
@@ -284,14 +320,14 @@ impl DrawCall {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ResourceRef {
+pub enum ResourceRef {
     Tex(TexId, TexAccess),
     Buf(BufferRef, BufAccess),
     External(ImportId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TexAccess {
+pub enum TexAccess {
     Read,
     ReadPrevious,
     Write,
@@ -299,72 +335,72 @@ pub(crate) enum TexAccess {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BufAccess {
+pub enum BufAccess {
     Read,
     Mutate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BufferRef {
-    pub(crate) buffer: BufferId,
-    pub(crate) slot: SlotSel,
-    pub(crate) offset: u32,
-    pub(crate) range: Option<u32>,
+pub struct BufferRef {
+    pub buffer: BufferId,
+    pub slot: SlotSel,
+    pub offset: u32,
+    pub range: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SlotSel {
+pub enum SlotSel {
     Current,
     Previous,
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct SchemaTable {
-    pub(crate) schemas: Vec<SchemaDesc>,
+pub struct SchemaTable {
+    pub schemas: Vec<SchemaDesc>,
 }
 
 impl SchemaTable {
-    pub(crate) fn push(&mut self, schema: SchemaDesc) -> SchemaId {
+    pub fn push(&mut self, schema: SchemaDesc) -> SchemaId {
         let id = SchemaId(self.schemas.len() as u32);
         self.schemas.push(schema);
         id
     }
 
-    pub(crate) fn get(&self, id: SchemaId) -> Option<&SchemaDesc> {
+    pub fn get(&self, id: SchemaId) -> Option<&SchemaDesc> {
         self.schemas.get(id.0 as usize)
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct SchemaDesc {
-    pub(crate) name: String,
-    pub(crate) size: u32,
-    pub(crate) resource_fields: Vec<ResourceFieldKind>,
-    pub(crate) layout: Option<SchemaLayout>,
+pub struct SchemaDesc {
+    pub name: String,
+    pub size: u32,
+    pub resource_fields: Vec<ResourceFieldKind>,
+    pub layout: Option<SchemaLayout>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ResourceFieldKind {
+pub enum ResourceFieldKind {
     SampledTex,
     StorageTex,
     BufAddr,
 }
 
 #[derive(Debug)]
-pub(crate) struct SchemaLayout {
-    pub(crate) fields: Vec<SchemaField>,
+pub struct SchemaLayout {
+    pub fields: Vec<SchemaField>,
 }
 
 #[derive(Debug)]
-pub(crate) struct SchemaField {
-    pub(crate) key: FieldKey,
-    pub(crate) offset: u32,
-    pub(crate) len: u32,
-    pub(crate) kind: SchemaFieldKind,
+pub struct SchemaField {
+    pub key: FieldKey,
+    pub offset: u32,
+    pub len: u32,
+    pub kind: SchemaFieldKind,
 }
 
 #[derive(Debug)]
-pub(crate) enum SchemaFieldKind {
+pub enum SchemaFieldKind {
     Data { src_offset: u32 },
     SampledTex,
     StorageTex,

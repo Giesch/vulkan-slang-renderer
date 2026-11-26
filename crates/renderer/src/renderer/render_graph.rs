@@ -20,27 +20,45 @@ impl<T> From<&UniformBufferHandle<T>> for UniformSlot<T> {
     }
 }
 
+// slots take the handle's stride, not `size_of::<T>()`: a `BufferBytes`
+// buffer's element size is only known at runtime
 impl<T> From<&CpuUpdatedBufferHandle<T>> for CpuUpdatedSlot<T> {
     fn from(handle: &CpuUpdatedBufferHandle<T>) -> Self {
-        Self::from_backend(handle.index(), handle.len())
+        Self::from_backend_with_element_size(
+            handle.index(),
+            handle.len(),
+            handle.element_stride() as usize,
+        )
     }
 }
 
 impl<T> From<&GpuUpdatedBufferHandle<T>> for GpuUpdatedSlot<T> {
     fn from(handle: &GpuUpdatedBufferHandle<T>) -> Self {
-        Self::from_backend(handle.index())
+        Self::from_backend_with_element_size(
+            handle.index(),
+            handle.len(),
+            handle.element_stride() as usize,
+        )
     }
 }
 
 impl<T> From<&ImmutableBufferHandle<T>> for ImmutableSlot<T> {
     fn from(handle: &ImmutableBufferHandle<T>) -> Self {
-        Self::from_backend(handle.index(), handle.len())
+        Self::from_backend_with_element_size(
+            handle.index(),
+            handle.len(),
+            handle.element_stride() as usize,
+        )
     }
 }
 
 impl<T> From<&SingletonBufferHandle<T>> for SingletonSlot<T> {
     fn from(handle: &SingletonBufferHandle<T>) -> Self {
-        Self::from_backend(handle.index(), handle.len())
+        Self::from_backend_with_element_size(
+            handle.index(),
+            handle.len(),
+            handle.element_stride() as usize,
+        )
     }
 }
 

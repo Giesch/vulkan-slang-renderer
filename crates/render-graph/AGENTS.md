@@ -20,8 +20,13 @@ backend interfaces; graph does not depend on renderer, ash, vk-mem, SDL, or Slan
 - Retain upload staging as `MaybeUninit` bytes; do not read Rust padding as `u8`.
 - Dynamic nodes (`runtime/dynamic.rs`) lower through
   `LowerCtx` and validate like typed nodes. Their constructors take typed
-  pipeline keys so a draw call cannot name the wrong pipeline family. There is
-  no raw description ingestion.
+  pipeline keys so a draw call cannot name the wrong pipeline family.
+- Plain-data graphs (`runtime/plain.rs`) ingest a `GraphDesc` directly. They
+  run the same `validate`, then check every `PlainBindings` row against its
+  declaration before compiling to `AssemblyProgram`s. Bindings are minted from
+  typed slots and keys; indirect argument buffers only from `ImmutableSlot<I>`
+  of the backend's exact record. Validation and assembly agree that resource
+  fields are 8 bytes, and assembled blocks zero their padding.
 - Prepared graphs retain backend resource ownership. Preparation rejects extent
   limits before allocation; partial failures preserve backend registration policy.
 - Frame submission applies writes after the flight-slot wait. Commit texture

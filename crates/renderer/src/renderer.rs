@@ -1134,7 +1134,10 @@ impl Renderer {
         len: u32,
     ) -> anyhow::Result<CpuUpdatedBufferHandle<T>> {
         let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
-        Ok(self.storage_buffers.add(buffers_per_frame, len))
+
+        Ok(self
+            .storage_buffers
+            .add(buffers_per_frame, len, element_stride_of::<T>()))
     }
 
     pub fn create_immutable_buffer<T: GPUWrite>(
@@ -1142,7 +1145,10 @@ impl Renderer {
         len: u32,
     ) -> anyhow::Result<ImmutableBufferHandle<T>> {
         let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
-        Ok(self.storage_buffers.add_immutable(buffers_per_frame, len))
+
+        Ok(self
+            .storage_buffers
+            .add_immutable(buffers_per_frame, len, element_stride_of::<T>()))
     }
 
     /// Create and initialize an indirect argument buffer.
@@ -1162,7 +1168,10 @@ impl Renderer {
         len: u32,
     ) -> anyhow::Result<GpuUpdatedBufferHandle<T>> {
         let buffers_per_frame = self.create_storage_buffers_per_frame::<T>(len)?;
-        Ok(self.storage_buffers.add_gpu_updated(buffers_per_frame, len))
+
+        Ok(self
+            .storage_buffers
+            .add_gpu_updated(buffers_per_frame, len, element_stride_of::<T>()))
     }
 
     pub fn create_singleton_buffer<T: GPUWrite>(
@@ -1184,19 +1193,128 @@ impl Renderer {
             );
         }
 
-        Ok(self.singleton_buffers.add(raw_storage_buffer, len))
+        Ok(self
+            .singleton_buffers
+            .add(raw_storage_buffer, len, element_stride_of::<T>()))
+    }
+
+    /// A singleton buffer uploaded from already-packed elements of
+    /// `element_stride` bytes each, such as a plain-data host's vertices.
+    /// `bytes` must hold a whole, nonzero number of elements.
+    pub fn create_singleton_buffer_bytes(
+        &mut self,
+        bytes: &[u8],
+        element_stride: u32,
+    ) -> anyhow::Result<SingletonBufferHandle<BufferBytes>> {
+        let len = element_count_of_bytes(bytes, element_stride)?;
+        let raw_storage_buffer = self.create_raw_storage_buffer_sized(bytes.len() as u64)?;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                raw_storage_buffer.mapped_mem.cast(),
+                bytes.len(),
+            );
+        }
+
+        Ok(self
+            .singleton_buffers
+            .add(raw_storage_buffer, len, element_stride))
+    }
+
+    /// An immutable buffer whose every flight slot starts as `bytes`: a whole,
+    /// nonzero number of `element_stride`-byte elements.
+    pub fn create_immutable_buffer_bytes(
+        &mut self,
+        bytes: &[u8],
+        element_stride: u32,
+    ) -> anyhow::Result<ImmutableBufferHandle<BufferBytes>> {
+        let len = element_count_of_bytes(bytes, element_stride)?;
+        let buffers_per_frame = self.create_storage_buffers_per_frame_sized(bytes.len() as u64)?;
+        let handle = self
+            .storage_buffers
+            .add_immutable(buffers_per_frame, len, element_stride);
+        self.storage_buffers
+            .copy_bytes_all_frames(handle.index(), bytes)?;
+
+        Ok(handle)
+    }
+
+    /// A CPU-updated buffer of `len` elements of `element_stride` bytes, for
+    /// graph uploads of already-packed bytes. Initialize it with
+    /// [`Renderer::write_cpu_updated_bytes_all_frames`].
+    pub fn create_cpu_updated_buffer_bytes(
+        &mut self,
+        len: u32,
+        element_stride: u32,
+    ) -> anyhow::Result<CpuUpdatedBufferHandle<BufferBytes>> {
+        let byte_size = byte_size_of_elements(len, element_stride)?;
+        let buffers_per_frame = self.create_storage_buffers_per_frame_sized(byte_size)?;
+
+        Ok(self
+            .storage_buffers
+            .add(buffers_per_frame, len, element_stride))
+    }
+
+    /// A GPU-updated buffer of `len` elements of `element_stride` bytes.
+    /// Initialize it with [`Renderer::write_gpu_updated_bytes_all_frames`].
+    pub fn create_gpu_updated_buffer_bytes(
+        &mut self,
+        len: u32,
+        element_stride: u32,
+    ) -> anyhow::Result<GpuUpdatedBufferHandle<BufferBytes>> {
+        let byte_size = byte_size_of_elements(len, element_stride)?;
+        let buffers_per_frame = self.create_storage_buffers_per_frame_sized(byte_size)?;
+
+        Ok(self
+            .storage_buffers
+            .add_gpu_updated(buffers_per_frame, len, element_stride))
+    }
+
+    /// Setup-time initialization of the leading elements of every flight
+    /// slot. `bytes` must be whole elements that fit the buffer.
+    pub fn write_cpu_updated_bytes_all_frames(
+        &mut self,
+        buf: &mut CpuUpdatedBufferHandle<BufferBytes>,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        check_initial_bytes(bytes, buf.len(), buf.element_stride())?;
+
+        self.storage_buffers
+            .copy_bytes_all_frames(buf.index(), bytes)
+    }
+
+    /// Setup-time initialization of the leading elements of every flight
+    /// slot; the only CPU write path a GPU-updated buffer has, safe because
+    /// nothing is in flight yet. `bytes` must be whole elements that fit.
+    pub fn write_gpu_updated_bytes_all_frames(
+        &mut self,
+        buf: &mut GpuUpdatedBufferHandle<BufferBytes>,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        check_initial_bytes(bytes, buf.len(), buf.element_stride())?;
+
+        self.storage_buffers
+            .copy_bytes_all_frames(buf.index(), bytes)
     }
 
     fn create_storage_buffers_per_frame<T: GPUWrite>(
         &mut self,
         len: u32,
     ) -> anyhow::Result<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> {
+        self.create_storage_buffers_per_frame_sized(len as u64 * size_of::<T>() as u64)
+    }
+
+    fn create_storage_buffers_per_frame_sized(
+        &mut self,
+        buffer_size: u64,
+    ) -> anyhow::Result<[RawStorageBuffer; MAX_FRAMES_IN_FLIGHT]> {
         let mut buffers_per_frame: [Option<RawStorageBuffer>; MAX_FRAMES_IN_FLIGHT] =
             [const { None }; MAX_FRAMES_IN_FLIGHT];
         #[expect(clippy::needless_range_loop)]
         for i in 0..MAX_FRAMES_IN_FLIGHT {
-            buffers_per_frame[i] = Some(self.create_raw_storage_buffer::<T>(len)?);
+            buffers_per_frame[i] = Some(self.create_raw_storage_buffer_sized(buffer_size)?);
         }
+
         Ok(buffers_per_frame.map(Option::unwrap))
     }
 
@@ -1204,8 +1322,13 @@ impl Renderer {
         &mut self,
         len: u32,
     ) -> anyhow::Result<RawStorageBuffer> {
-        let buffer_size = (len as usize * std::mem::size_of::<T>()) as u64;
+        self.create_raw_storage_buffer_sized(len as u64 * size_of::<T>() as u64)
+    }
 
+    fn create_raw_storage_buffer_sized(
+        &mut self,
+        buffer_size: u64,
+    ) -> anyhow::Result<RawStorageBuffer> {
         let (buffer, allocation) = create_memory_buffer(
             &self.allocator,
             buffer_size,
@@ -1248,7 +1371,7 @@ impl Renderer {
         self.singleton_buffers.element_addr(singleton_buffer, index)
     }
 
-    pub fn write_cpu_updated_all_frames<T>(
+    pub fn write_cpu_updated_all_frames<T: GPUWrite>(
         &mut self,
         buf: &mut CpuUpdatedBufferHandle<T>,
         data: &[T],
@@ -1263,7 +1386,7 @@ impl Renderer {
         }
     }
 
-    pub fn write_immutable_all_frames<T>(
+    pub fn write_immutable_all_frames<T: GPUWrite>(
         &mut self,
         buf: &mut ImmutableBufferHandle<T>,
         data: &[T],
@@ -1283,7 +1406,7 @@ impl Renderer {
 
     /// setup-time initialization for a GPU-updated buffer; the only CPU write
     /// path it has, safe because nothing is in flight yet
-    pub fn write_gpu_updated_all_frames<T>(
+    pub fn write_gpu_updated_all_frames<T: GPUWrite>(
         &mut self,
         buf: &mut GpuUpdatedBufferHandle<T>,
         data: &[T],
@@ -5772,6 +5895,67 @@ impl ToVk for shaders::json::ReflectedStageFlags {
     }
 }
 
+/// The stride of a typed buffer's elements, which codegen asserts matches
+/// the shader's std430 array stride.
+fn element_stride_of<T>() -> u32 {
+    u32::try_from(size_of::<T>()).expect("a GPU element type is smaller than 4 GiB")
+}
+
+/// The byte size of `len` elements of `element_stride` bytes, rejecting an
+/// empty buffer, which vulkan cannot allocate.
+fn byte_size_of_elements(len: u32, element_stride: u32) -> anyhow::Result<u64> {
+    anyhow::ensure!(
+        element_stride > 0,
+        "a buffer element stride must be nonzero"
+    );
+    anyhow::ensure!(
+        len > 0,
+        "a storage buffer needs at least one element; vulkan cannot allocate an empty buffer"
+    );
+
+    u64::from(len)
+        .checked_mul(u64::from(element_stride))
+        .ok_or_else(|| anyhow::anyhow!("{len} elements of {element_stride} bytes overflow u64"))
+}
+
+/// The element count of `bytes`: a whole, nonzero number of
+/// `element_stride`-byte elements.
+fn element_count_of_bytes(bytes: &[u8], element_stride: u32) -> anyhow::Result<u32> {
+    anyhow::ensure!(
+        element_stride > 0,
+        "a buffer element stride must be nonzero"
+    );
+    anyhow::ensure!(
+        !bytes.is_empty(),
+        "a storage buffer needs at least one element; vulkan cannot allocate an empty buffer"
+    );
+    let whole_elements = bytes.len().is_multiple_of(element_stride as usize);
+    anyhow::ensure!(
+        whole_elements,
+        "{} bytes are not a whole number of {element_stride}-byte elements",
+        bytes.len()
+    );
+
+    Ok(u32::try_from(bytes.len() / element_stride as usize)?)
+}
+
+/// Setup-time initial bytes are whole elements that fit `len` of them.
+fn check_initial_bytes(bytes: &[u8], len: u32, element_stride: u32) -> anyhow::Result<()> {
+    let count = bytes.len() / element_stride as usize;
+    let whole_elements = bytes.len().is_multiple_of(element_stride as usize);
+    anyhow::ensure!(
+        whole_elements,
+        "{} bytes are not a whole number of {element_stride}-byte elements",
+        bytes.len()
+    );
+    anyhow::ensure!(
+        count <= len as usize,
+        "{count} initial elements do not fit a buffer of {len}"
+    );
+
+    Ok(())
+}
+
 /// the interface a game uses to update gpu resources during a renderer draw call
 pub struct Gpu<'f> {
     flight_slot: usize,
@@ -5781,7 +5965,11 @@ pub struct Gpu<'f> {
 }
 
 impl<'f> Gpu<'f> {
-    pub fn write_uniform<T>(&mut self, uniform_buffer: &mut UniformBufferHandle<T>, data: T) {
+    pub fn write_uniform<T: GPUWrite>(
+        &mut self,
+        uniform_buffer: &mut UniformBufferHandle<T>,
+        data: T,
+    ) {
         let mapped_mem = self
             .uniform_buffers
             .get_mapped_mem_for_frame(uniform_buffer, self.flight_slot);
@@ -5789,7 +5977,7 @@ impl<'f> Gpu<'f> {
         *mapped_mem = data;
     }
 
-    pub fn write_cpu_updated<T>(
+    pub fn write_cpu_updated<T: GPUWrite>(
         &mut self,
         storage_buffer: &mut CpuUpdatedBufferHandle<T>,
         data: &[T],
@@ -5806,7 +5994,7 @@ impl<'f> Gpu<'f> {
         }
     }
 
-    pub fn write_immutable<T>(
+    pub fn write_immutable<T: GPUWrite>(
         &mut self,
         immutable_buffer: &mut ImmutableBufferHandle<T>,
         data: &[T],
@@ -6431,9 +6619,47 @@ mod tests {
 
     use super::{
         BlendMode, CullMode, DepthCompare, GPUWrite, PushConstantBlock, PushConstantBytes,
-        RasterState, StencilSupport, range_in_bounds, vk_blend_state, vk_color_write_mask,
-        vk_cull_mode, vk_depth_compare, vk_stencil_state,
+        RasterState, StencilSupport, byte_size_of_elements, check_initial_bytes,
+        element_count_of_bytes, range_in_bounds, vk_blend_state, vk_color_write_mask, vk_cull_mode,
+        vk_depth_compare, vk_stencil_state,
     };
+
+    /// byte buffers are validated before any allocation
+    #[test]
+    fn byte_buffer_sizes_are_whole_nonzero_elements() {
+        assert_eq!(element_count_of_bytes(&[0; 48], 24).unwrap(), 2);
+        for (bytes, stride, expected) in [
+            (&[0u8; 48][..], 0, "stride must be nonzero"),
+            (&[], 24, "at least one element"),
+            (&[0; 50], 24, "not a whole number of 24-byte elements"),
+        ] {
+            let error = element_count_of_bytes(bytes, stride).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+
+        assert_eq!(byte_size_of_elements(3, 24).unwrap(), 72);
+        assert_eq!(
+            byte_size_of_elements(u32::MAX, u32::MAX).unwrap(),
+            u64::from(u32::MAX) * u64::from(u32::MAX)
+        );
+        for (len, stride, expected) in [(0, 24, "at least one element"), (3, 0, "nonzero")] {
+            let error = byte_size_of_elements(len, stride).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn initial_bytes_are_whole_elements_that_fit() {
+        check_initial_bytes(&[], 4, 8).unwrap();
+        check_initial_bytes(&[0; 32], 4, 8).unwrap();
+        for (bytes, expected) in [
+            (&[0u8; 12][..], "not a whole number of 8-byte elements"),
+            (&[0; 40], "5 initial elements do not fit a buffer of 4"),
+        ] {
+            let error = check_initial_bytes(bytes, 4, 8).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
 
     #[test]
     fn cull_mode_mapping() {

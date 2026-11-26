@@ -108,14 +108,20 @@ impl LowerCtx {
     fn value(&mut self, name: String, kind: ValueKind) -> ValueId {
         let id = ValueId(self.desc.values.len() as u32);
         let optional = matches!(self.scope, Scope::Optional { .. });
+        let scope = match &mut self.scope {
+            Scope::Top => ValueScope::Top,
+            Scope::Repeat { count, .. } => ValueScope::Repeat { count: *count },
+            // the scope's first value is its gate
+            Scope::Optional { first, .. } => ValueScope::When {
+                gate: *first.get_or_insert(id),
+            },
+        };
         self.desc.values.push(ValueDecl {
             name,
             kind,
             optional,
+            scope,
         });
-        if let Scope::Optional { first, .. } = &mut self.scope {
-            first.get_or_insert(id);
-        }
 
         id
     }
@@ -422,12 +428,11 @@ impl LowerCtx {
         let uniform = self.uniform(input);
         let params = self.desc.uniforms[uniform.0 as usize].schema;
         let push = self.push(push_input);
-        let pipeline = self.pipeline(
-            PipelineKind::Graphics,
-            index,
-            params,
-            push.as_ref().map(|push| push.schema),
-        );
+        let kind = match call {
+            LowerDrawCall::IndexedIndirect { .. } => PipelineKind::GraphicsIndirect,
+            _ => PipelineKind::Graphics,
+        };
+        let pipeline = self.pipeline(kind, index, params, push.as_ref().map(|push| push.schema));
         let call = match call {
             LowerDrawCall::VertexCount(x) => DrawCall::VertexCount(x),
             LowerDrawCall::WholeIndexed { indices } => DrawCall::WholeIndexed {
@@ -618,7 +623,7 @@ mod tests {
     use super::super::desc::{
         BufferKind, DrawCall, FieldKey, GraphFormat, LeafPass, PassDesc, PipelineKind,
         ResourceFieldKind, ResourceRef, SizeClass, SlotSel, TexAccess, TexDecl, TexId, TexUsage,
-        UniformId, ValueKind,
+        UniformId, ValueKind, ValueScope,
     };
     use super::super::validate::{GraphError, ScopeKind, validate};
     use super::super::{
@@ -921,6 +926,42 @@ mod tests {
             ValueKind::Array { .. }
         ));
         assert!(out.desc.values.iter().all(|value| value.optional));
+        assert!(
+            out.desc
+                .values
+                .iter()
+                .all(|decl| decl.scope == ValueScope::When { gate: *value })
+        );
+    }
+
+    /// a repeat's count is outside the repeat; its body's values are inside
+    #[test]
+    fn repeat_body_values_are_scoped_to_the_count() {
+        let mut cx = LowerCtx::new(vec![]);
+        cx.begin_repeat();
+        cx.upload(0, 8, 16);
+        cx.dispatch(0, GROUPS, uni(0, vec![]), None);
+        cx.end_repeat();
+        let out = cx.finish();
+
+        assert!(out.errors.is_empty());
+        let PassDesc::Repeat { count, .. } = &out.desc.passes[0] else {
+            panic!("expected a repeat pass")
+        };
+        assert_eq!(out.desc.values[count.0 as usize].scope, ValueScope::Top);
+        let body_scopes: Vec<_> = out
+            .desc
+            .values
+            .iter()
+            .filter(|decl| !std::ptr::eq(*decl, &out.desc.values[count.0 as usize]))
+            .map(|decl| decl.scope)
+            .collect();
+        assert_eq!(body_scopes.len(), 2);
+        assert!(
+            body_scopes
+                .iter()
+                .all(|scope| *scope == ValueScope::Repeat { count: *count })
+        );
     }
 
     /// the two slots of one GPU-updated buffer are one resource with two
@@ -1158,6 +1199,20 @@ mod tests {
         assert_eq!(index_buffer.kind, BufferKind::Index);
         assert_eq!(index_buffer.capacity, Some(36));
         assert_eq!(out.buffer_indices[whole.0 as usize], 4);
+        let kinds: Vec<_> = raster
+            .draws
+            .iter()
+            .map(|draw| out.desc.pipelines[draw.pipeline.0 as usize].kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                PipelineKind::Graphics,
+                PipelineKind::Graphics,
+                PipelineKind::Graphics,
+                PipelineKind::GraphicsIndirect,
+            ]
+        );
         assert!(validate(&out.desc, &out.schemas).is_ok());
     }
 

@@ -118,6 +118,35 @@ impl mltrs_render_graph::backend::FrameBackend for super::FrameRenderer<'_> {
                 gpu.storage_buffers.upload_target(index, gpu.flight_slot)
             }
         })?;
+        // Commands carry raw pipeline indices; check each against a live
+        // pipeline's push range before any of them is queued.
+        for (pipeline, _, constants) in batch.dispatches() {
+            let range = self
+                .renderer
+                .compute_pipelines
+                .push_constant_range(*pipeline);
+            let payload = constants.as_ref().map(|constants| constants.as_slice());
+            validate_push_constants("compute", *pipeline, range, payload)?;
+        }
+        for draw in batch.draws() {
+            let range = self
+                .renderer
+                .pipelines
+                .push_constant_range(draw.pipeline_index());
+            validate_push_constants(
+                "graphics",
+                draw.pipeline_index(),
+                range,
+                draw.push_constants().map(|constants| constants.as_slice()),
+            )?;
+        }
+        if let Some(pick) = batch.picking() {
+            let range = self
+                .renderer
+                .pipelines
+                .push_constant_range(pick.pipeline_index());
+            validate_push_constants("picking", pick.pipeline_index(), range, None)?;
+        }
         for (pipeline, groups, constants) in batch.dispatches() {
             self.queue_dispatch_raw(
                 ComputePipelineIndex::from_raw(*pipeline),
@@ -214,6 +243,40 @@ impl mltrs_render_graph::backend::FrameBackend for super::FrameRenderer<'_> {
             on_submitted,
         )
     }
+}
+
+/// A command's push payload must match its pipeline's push range exactly:
+/// present together, offset 0, and the same byte size. `range` is `None` when
+/// `pipeline` names no live pipeline.
+fn validate_push_constants(
+    family: &str,
+    pipeline: usize,
+    range: Option<Option<ash::vk::PushConstantRange>>,
+    payload: Option<&[u8]>,
+) -> Result<(), super::DrawError> {
+    let Some(range) = range else {
+        return Err(anyhow::anyhow!("{family} pipeline {pipeline} is not live").into());
+    };
+
+    let payload_len = payload.map(<[u8]>::len);
+    let matches = match (range, payload_len) {
+        (None, None) => true,
+        (Some(range), Some(len)) => range.offset == 0 && range.size as usize == len,
+        (Some(_), None) | (None, Some(_)) => false,
+    };
+    if !matches {
+        let expected = range.map_or("no push block".to_owned(), |range| {
+            format!("{} bytes at offset {}", range.size, range.offset)
+        });
+        let found = payload_len.map_or("none".to_owned(), |len| format!("{len} bytes"));
+        return Err(anyhow::anyhow!(
+            "{family} pipeline {pipeline} expects {expected} of push constants, but the \
+             command supplies {found}"
+        )
+        .into());
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -347,6 +410,34 @@ mod upload_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn push_payloads_match_their_pipeline_range() {
+        let range = |offset, size| {
+            Some(Some(
+                ash::vk::PushConstantRange::default()
+                    .offset(offset)
+                    .size(size),
+            ))
+        };
+        let check = |range, payload: Option<&[u8]>| {
+            validate_push_constants("compute", 3, range, payload).map_err(|e| e.to_string())
+        };
+
+        assert!(check(Some(None), None).is_ok());
+        assert!(check(range(0, 16), Some(&[0; 16])).is_ok());
+        for (range, payload, expected) in [
+            (None, None, "compute pipeline 3 is not live"),
+            (Some(None), Some(&[0u8; 4][..]), "expects no push block"),
+            (range(0, 16), None, "supplies none"),
+            (range(0, 16), Some(&[0; 12]), "16 bytes at offset 0"),
+            (range(4, 12), Some(&[0; 12]), "12 bytes at offset 4"),
+        ] {
+            let error = check(range, payload).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
     #[test]
     fn indirect_buffer_layout_ranges() {
         let valid = |offset, count, bytes, max| {

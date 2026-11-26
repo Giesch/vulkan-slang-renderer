@@ -99,6 +99,11 @@ pub(crate) enum GraphError {
         uniform: String,
         tex: String,
     },
+    SharedUniformRotatesTexture {
+        uniform: String,
+        writer: String,
+        tex: String,
+    },
     RasterInRepeat {
         repeat: String,
     },
@@ -180,6 +185,56 @@ pub(crate) enum GraphError {
     BufferOffsetOverflow {
         offset: u64,
     },
+    LayoutFieldOutOfBounds {
+        schema: String,
+        field: u16,
+        offset: u32,
+        len: u32,
+        size: u32,
+    },
+    LayoutFieldsOverlap {
+        schema: String,
+        first: u16,
+        second: u16,
+    },
+    LayoutResourceFieldSize {
+        schema: String,
+        field: u16,
+        len: u32,
+    },
+    LayoutResourceFieldMismatch {
+        schema: String,
+        field: u16,
+    },
+    LayoutDataWithoutValue {
+        block: String,
+    },
+    LayoutDataOutOfBounds {
+        block: String,
+        field: u16,
+        src_offset: u32,
+        len: u32,
+        data_size: u32,
+    },
+    PushConstantSize {
+        schema: String,
+        size: u32,
+    },
+    ValueScopeInvalid {
+        value: String,
+        reason: &'static str,
+    },
+    UploadElemSizeMismatch {
+        upload: String,
+        value_elem_size: u32,
+        buffer_elem_size: u32,
+    },
+    BufferAccessMismatch {
+        block: String,
+        field: u16,
+        kind: BufferKind,
+    },
+    PickingCursorShape,
 }
 
 impl fmt::Display for GraphError {
@@ -210,6 +265,16 @@ impl fmt::Display for GraphError {
             } => write!(
                 f,
                 "{repeat}: {uniform}'s uniform block references rotating texture {tex}; move the reference into the node's push block"
+            ),
+            Self::SharedUniformRotatesTexture {
+                uniform,
+                writer,
+                tex,
+            } => write!(
+                f,
+                "{uniform}'s uniform block is shared by several commands, but {writer} writes \
+                 texture {tex}, which the block references, between them; bind {tex} through \
+                 each command's push block instead"
             ),
             Self::RasterInRepeat { repeat } => {
                 write!(f, "a draw node cannot appear inside repeat {repeat}")
@@ -298,6 +363,71 @@ impl fmt::Display for GraphError {
             Self::BufferOffsetOverflow { offset } => {
                 write!(f, "buffer offset {offset} exceeds u32")
             }
+            Self::LayoutFieldOutOfBounds {
+                schema,
+                field,
+                offset,
+                len,
+                size,
+            } => write!(
+                f,
+                "schema {schema} field {field} [{offset}, {offset} + {len}) does not fit in its \
+                 {size}-byte block"
+            ),
+            Self::LayoutFieldsOverlap {
+                schema,
+                first,
+                second,
+            } => write!(f, "schema {schema} fields {first} and {second} overlap"),
+            Self::LayoutResourceFieldSize { schema, field, len } => write!(
+                f,
+                "schema {schema} resource field {field} is {len} bytes; handles and addresses \
+                 are 8 bytes"
+            ),
+            Self::LayoutResourceFieldMismatch { schema, field } => write!(
+                f,
+                "schema {schema} layout field {field} does not match its resource fields; each \
+                 resource field needs exactly one layout field of the same kind"
+            ),
+            Self::LayoutDataWithoutValue { block } => {
+                write!(f, "{block} lays out data fields but names no data value")
+            }
+            Self::LayoutDataOutOfBounds {
+                block,
+                field,
+                src_offset,
+                len,
+                data_size,
+            } => write!(
+                f,
+                "{block} data field {field} reads [{src_offset}, {src_offset} + {len}) past its \
+                 {data_size}-byte data value"
+            ),
+            Self::PushConstantSize { schema, size } => write!(
+                f,
+                "push block {schema} is {size} bytes; vkCmdPushConstants needs a nonzero \
+                 multiple of 4 of at most {MAX_PUSH_CONSTANT_BYTES}"
+            ),
+            Self::ValueScopeInvalid { value, reason } => {
+                write!(f, "value {value} has an invalid scope: {reason}")
+            }
+            Self::UploadElemSizeMismatch {
+                upload,
+                value_elem_size,
+                buffer_elem_size,
+            } => write!(
+                f,
+                "upload {upload} elements are {value_elem_size} bytes, but its buffer's elements \
+                 are {buffer_elem_size} bytes"
+            ),
+            Self::BufferAccessMismatch { block, field, kind } => write!(
+                f,
+                "{block} binding {field} names a {kind:?} buffer with an access or slot it does \
+                 not support"
+            ),
+            Self::PickingCursorShape => {
+                write!(f, "the picking cursor must be an 8-byte bytes value")
+            }
         }
     }
 }
@@ -312,6 +442,287 @@ pub(crate) fn validation_message(errors: &[GraphError]) -> String {
     }
 
     message
+}
+
+/// Vulkan's guaranteed `maxPushConstantsSize`.
+pub(crate) const MAX_PUSH_CONSTANT_BYTES: u32 = 128;
+
+/// The byte size of every resource field: a bindless `DescriptorHandle` is a
+/// Slang `uint2`, and a buffer device address is a `uint64_t`.
+pub(crate) const RESOURCE_FIELD_BYTES: u32 = 8;
+
+fn layout_resource_kind(kind: &SchemaFieldKind) -> Option<ResourceFieldKind> {
+    match kind {
+        SchemaFieldKind::Data { .. } => None,
+        SchemaFieldKind::SampledTex => Some(ResourceFieldKind::SampledTex),
+        SchemaFieldKind::StorageTex => Some(ResourceFieldKind::StorageTex),
+        SchemaFieldKind::BufAddr => Some(ResourceFieldKind::BufAddr),
+    }
+}
+
+/// A layout's fields fit in the block without overlapping, and its resource
+/// fields are 8-byte slots that correspond one-to-one with `resource_fields`.
+fn check_layout(schema: &SchemaDesc, errors: &mut Vec<GraphError>) {
+    let Some(layout) = &schema.layout else {
+        return;
+    };
+
+    let mut resource_seen = vec![false; schema.resource_fields.len()];
+    let mut spans = vec![];
+    for field in &layout.fields {
+        let end = field.offset.checked_add(field.len);
+        let fits = end.is_some_and(|end| end <= schema.size);
+        if !fits {
+            errors.push(GraphError::LayoutFieldOutOfBounds {
+                schema: schema.name.clone(),
+                field: field.key.0,
+                offset: field.offset,
+                len: field.len,
+                size: schema.size,
+            });
+        }
+        spans.push((field.offset, end.unwrap_or(u32::MAX), field.key.0));
+
+        let Some(kind) = layout_resource_kind(&field.kind) else {
+            continue;
+        };
+
+        if field.len != RESOURCE_FIELD_BYTES {
+            errors.push(GraphError::LayoutResourceFieldSize {
+                schema: schema.name.clone(),
+                field: field.key.0,
+                len: field.len,
+            });
+        }
+        let index = field.key.0 as usize;
+        let first_match = schema.resource_fields.get(index) == Some(&kind)
+            && resource_seen.get(index) == Some(&false);
+        if first_match {
+            resource_seen[index] = true;
+        } else {
+            errors.push(GraphError::LayoutResourceFieldMismatch {
+                schema: schema.name.clone(),
+                field: field.key.0,
+            });
+        }
+    }
+    for (index, seen) in resource_seen.iter().enumerate() {
+        if !seen {
+            errors.push(GraphError::LayoutResourceFieldMismatch {
+                schema: schema.name.clone(),
+                field: index as u16,
+            });
+        }
+    }
+
+    spans.sort();
+    let mut furthest: Option<(u32, u16)> = None;
+    for (start, end, key) in spans {
+        if let Some((furthest_end, furthest_key)) = furthest
+            && start < furthest_end
+        {
+            errors.push(GraphError::LayoutFieldsOverlap {
+                schema: schema.name.clone(),
+                first: furthest_key,
+                second: key,
+            });
+        }
+        let extends = furthest.is_none_or(|(furthest_end, _)| end > furthest_end);
+        if extends {
+            furthest = Some((end, key));
+        }
+    }
+}
+
+/// `vkCmdPushConstants` takes a nonzero size that is a multiple of 4, and
+/// Vulkan guarantees 128 bytes.
+fn push_size_valid(size: u32) -> bool {
+    size > 0 && size.is_multiple_of(4) && size <= MAX_PUSH_CONSTANT_BYTES
+}
+
+/// Every schema a pipeline or command uses as a push block, once each.
+fn check_push_sizes(desc: &GraphDesc, schemas: &SchemaTable, errors: &mut Vec<GraphError>) {
+    let mut push_schemas: Vec<SchemaId> = desc
+        .pipelines
+        .iter()
+        .filter_map(|pipeline| pipeline.push)
+        .chain(
+            desc.leaves()
+                .flat_map(LeafPass::commands)
+                .filter_map(|command| command.push.map(|push| push.schema)),
+        )
+        .collect();
+    push_schemas.sort_by_key(|schema| schema.0);
+    push_schemas.dedup();
+    for schema in push_schemas.iter().filter_map(|id| schemas.get(*id)) {
+        if !push_size_valid(schema.size) {
+            errors.push(GraphError::PushConstantSize {
+                schema: schema.name.clone(),
+                size: schema.size,
+            });
+        }
+    }
+}
+
+/// A value's scope names a gate or count of the right shape: a `When` gate is
+/// an optional value gated by itself, and a `Repeat` count is a top-level
+/// count. Values inside a repeat cannot be optional, as `repeat` and
+/// `optional` do not nest.
+fn check_value_scopes(desc: &GraphDesc, errors: &mut Vec<GraphError>) {
+    for value in &desc.values {
+        let reason = match value.scope {
+            ValueScope::Top => None,
+            ValueScope::When { gate } => match desc.values.get(gate.0 as usize) {
+                None => Some("its gate is undeclared"),
+                Some(_) if !value.optional => Some("a value in an optional scope must be optional"),
+                Some(gate_decl) if gate_decl.scope != (ValueScope::When { gate }) => {
+                    Some("its gate is not gated by itself")
+                }
+                Some(_) => None,
+            },
+            ValueScope::Repeat { count } => match desc.values.get(count.0 as usize) {
+                None => Some("its repeat count is undeclared"),
+                Some(_) if value.optional => Some("a value in a repeat cannot be optional"),
+                Some(count_decl)
+                    if !matches!(count_decl.kind, ValueKind::Count)
+                        || count_decl.scope != ValueScope::Top =>
+                {
+                    Some("its repeat count is not a top-level count")
+                }
+                Some(_) => None,
+            },
+        };
+        if let Some(reason) = reason {
+            errors.push(GraphError::ValueScopeInvalid {
+                value: value.name.clone(),
+                reason,
+            });
+        }
+    }
+}
+
+/// A layout's data fields read inside the block's bytes data value.
+fn check_layout_data(
+    block: &str,
+    schema: SchemaId,
+    data: Option<ValueId>,
+    desc: &GraphDesc,
+    schemas: &SchemaTable,
+    errors: &mut Vec<GraphError>,
+) {
+    let Some(layout) = schemas
+        .get(schema)
+        .and_then(|schema| schema.layout.as_ref())
+    else {
+        return;
+    };
+
+    let data_fields = layout.fields.iter().filter_map(|field| match field.kind {
+        SchemaFieldKind::Data { src_offset } => Some((field, src_offset)),
+        _ => None,
+    });
+    let Some(data) = data else {
+        if data_fields.count() > 0 {
+            errors.push(GraphError::LayoutDataWithoutValue {
+                block: block.into(),
+            });
+        }
+        return;
+    };
+
+    // a missing or mistyped value is reported where the value is checked
+    let data_size = desc
+        .values
+        .get(data.0 as usize)
+        .and_then(|value| match value.kind {
+            ValueKind::Bytes { schema } => schemas.get(schema),
+            _ => None,
+        })
+        .map(|data_schema| data_schema.size);
+    let Some(data_size) = data_size else {
+        return;
+    };
+
+    for (field, src_offset) in data_fields {
+        let fits = src_offset
+            .checked_add(field.len)
+            .is_some_and(|end| end <= data_size);
+        if !fits {
+            errors.push(GraphError::LayoutDataOutOfBounds {
+                block: block.into(),
+                field: field.key.0,
+                src_offset,
+                len: field.len,
+                data_size,
+            });
+        }
+    }
+}
+
+/// A buffer binding's slot and access must be ones its buffer kind provides:
+/// index buffers have no address, only GPU-updated buffers keep a previous
+/// slot, and immutable and singleton buffers are read-only.
+fn buffer_access_supported(kind: BufferKind, buffer: &BufferRef, access: BufAccess) -> bool {
+    match kind {
+        BufferKind::Index => false,
+        BufferKind::Singleton | BufferKind::Immutable => {
+            buffer.slot == SlotSel::Current && access == BufAccess::Read
+        }
+        BufferKind::Storage => buffer.slot == SlotSel::Current,
+        BufferKind::GpuUpdatedFlight => {
+            buffer.slot == SlotSel::Current || access == BufAccess::Read
+        }
+    }
+}
+
+/// A uniform block is written once on the CPU before any command executes,
+/// so every consumer must resolve it to the same bytes. A `Write` between a
+/// shared block's first and last consumer moves the version its texture
+/// references resolve to. A repeat body's own rotation is reported as
+/// [`GraphError::RepeatUniformRotatesTexture`] instead.
+fn check_shared_uniforms(desc: &GraphDesc, errors: &mut Vec<GraphError>) {
+    let commands: Vec<_> = desc.leaves().flat_map(LeafPass::commands).collect();
+    for (id, uniform) in desc.uniforms.iter().enumerate() {
+        let consumers: Vec<usize> = commands
+            .iter()
+            .enumerate()
+            .filter(|(_, command)| command.uniform.0 as usize == id)
+            .map(|(position, _)| position)
+            .collect();
+        let (Some(&first), Some(&last)) = (consumers.first(), consumers.last()) else {
+            continue;
+        };
+
+        let mut reported: Vec<TexId> = vec![];
+        for writer in &commands[first..last] {
+            for (_, resource) in writer.bindings(desc) {
+                let ResourceRef::Tex(tex, TexAccess::Write) = resource else {
+                    continue;
+                };
+
+                let referenced =
+                    uniform.source.bindings.iter().any(
+                        |(_, bound)| matches!(bound, ResourceRef::Tex(bound, _) if bound == tex),
+                    );
+                let tex_name = tex_name(desc, *tex);
+                let already_reported = reported.contains(tex) || errors.iter().any(|error| {
+                    matches!(
+                        error,
+                        GraphError::RepeatUniformRotatesTexture { uniform: name, tex: rotating, .. }
+                            if *name == uniform.name && *rotating == tex_name
+                    )
+                });
+                if referenced && !already_reported {
+                    reported.push(*tex);
+                    errors.push(GraphError::SharedUniformRotatesTexture {
+                        uniform: uniform.name.clone(),
+                        writer: writer.name.into(),
+                        tex: tex_name,
+                    });
+                }
+            }
+        }
+    }
 }
 
 fn tex_name(desc: &GraphDesc, tex: TexId) -> String {
@@ -461,26 +872,36 @@ pub(crate) fn validate(
     };
     // Resource ids are checked on the declaration that carries them: a
     // zero-consumer source is still checked, a shared source reports once.
-    let valid_bindings = |bindings: &[(FieldKey, ResourceRef)], errors: &mut Vec<GraphError>| {
-        for (_, resource) in bindings {
-            match resource {
-                ResourceRef::Tex(tex, _) => {
-                    valid(tex.0, desc.textures.len(), TableKind::Texture, errors);
-                }
-                ResourceRef::Buf(buffer, _) => {
-                    valid(
-                        buffer.buffer.0,
-                        desc.buffers.len(),
-                        TableKind::Buffer,
-                        errors,
-                    );
-                }
-                ResourceRef::External(import) => {
-                    valid(import.0, desc.imports.len(), TableKind::Import, errors);
+    let valid_bindings =
+        |block: &str, bindings: &[(FieldKey, ResourceRef)], errors: &mut Vec<GraphError>| {
+            for (key, resource) in bindings {
+                match resource {
+                    ResourceRef::Tex(tex, _) => {
+                        valid(tex.0, desc.textures.len(), TableKind::Texture, errors);
+                    }
+                    ResourceRef::Buf(buffer, access) => {
+                        if valid(
+                            buffer.buffer.0,
+                            desc.buffers.len(),
+                            TableKind::Buffer,
+                            errors,
+                        ) {
+                            let kind = desc.buffers[buffer.buffer.0 as usize].kind;
+                            if !buffer_access_supported(kind, buffer, *access) {
+                                errors.push(GraphError::BufferAccessMismatch {
+                                    block: block.into(),
+                                    field: key.0,
+                                    kind,
+                                });
+                            }
+                        }
+                    }
+                    ResourceRef::External(import) => {
+                        valid(import.0, desc.imports.len(), TableKind::Import, errors);
+                    }
                 }
             }
-        }
-    };
+        };
     let valid_command =
         |command: Command<'_>, expected: PipelineKind, errors: &mut Vec<GraphError>| {
             if valid(
@@ -519,7 +940,8 @@ pub(crate) fn validate(
                         found: kind(&value.kind),
                     });
                 }
-                valid_bindings(&push.bindings, errors);
+                valid_bindings(command.name, &push.bindings, errors);
+                check_layout_data(command.name, push.schema, push.data, desc, schemas, errors);
 
                 check_shape(command.name, push.schema, &push.bindings, schemas, errors)
             }
@@ -553,6 +975,11 @@ pub(crate) fn validate(
             _ => {}
         }
     }
+    for schema in &schemas.schemas {
+        check_layout(schema, &mut errors);
+    }
+    check_push_sizes(desc, schemas, &mut errors);
+    check_value_scopes(desc, &mut errors);
     for value in &desc.values {
         let schema = match value.kind {
             ValueKind::Bytes { schema } => Some(schema),
@@ -601,7 +1028,15 @@ pub(crate) fn validate(
                 found: kind(&desc.values[value.0 as usize].kind),
             })
         }
-        valid_bindings(&uniform.source.bindings, &mut errors);
+        valid_bindings(&uniform.name, &uniform.source.bindings, &mut errors);
+        check_layout_data(
+            &uniform.name,
+            uniform.schema,
+            uniform.source.data,
+            desc,
+            schemas,
+            &mut errors,
+        );
         check_shape(
             &uniform.name,
             uniform.schema,
@@ -626,18 +1061,31 @@ pub(crate) fn validate(
         if buffer_valid && value_valid {
             let buffer = &desc.buffers[upload.buffer.0 as usize];
             let value = &desc.values[upload.value.0 as usize];
-            if !matches!(buffer.kind, BufferKind::Storage | BufferKind::Immutable) {
+            // only CPU-updated storage takes per-frame writes; an immutable
+            // buffer is never written while a frame may read it
+            if buffer.kind != BufferKind::Storage {
                 errors.push(GraphError::UploadTargetKind {
                     upload: upload.name.clone(),
                     kind: match buffer.kind {
                         BufferKind::GpuUpdatedFlight => "gpu-updated",
                         BufferKind::Singleton => "singleton",
                         BufferKind::Index => "index",
-                        _ => "buffer",
+                        BufferKind::Immutable => "immutable",
+                        BufferKind::Storage => "storage",
                     },
                 })
             }
-            if let ValueKind::Array { max_len, .. } = value.kind {
+            if let ValueKind::Array { max_len, elem } = value.kind {
+                if let Some(buffer_elem_size) = buffer.elem_size
+                    && let Some(elem_schema) = schemas.get(elem)
+                    && elem_schema.size != buffer_elem_size
+                {
+                    errors.push(GraphError::UploadElemSizeMismatch {
+                        upload: upload.name.clone(),
+                        value_elem_size: elem_schema.size,
+                        buffer_elem_size,
+                    })
+                }
                 if let Some(cap) = buffer.capacity
                     && max_len > cap
                 {
@@ -670,10 +1118,16 @@ pub(crate) fn validate(
         }
         match pass {
             PassDesc::When { name, value, body } => {
-                if valid(value.0, desc.values.len(), TableKind::Value, &mut errors)
-                    && !desc.values[value.0 as usize].optional
-                {
-                    errors.push(GraphError::WhenGateNotOptional { when: name.clone() })
+                if valid(value.0, desc.values.len(), TableKind::Value, &mut errors) {
+                    let gate = &desc.values[value.0 as usize];
+                    if !gate.optional {
+                        errors.push(GraphError::WhenGateNotOptional { when: name.clone() })
+                    } else if gate.scope != (ValueScope::When { gate: *value }) {
+                        errors.push(GraphError::ValueScopeInvalid {
+                            value: gate.name.clone(),
+                            reason: "a when pass's gate must be gated by itself",
+                        })
+                    }
                 }
                 if body.iter().any(|leaf| matches!(leaf, LeafPass::Raster(_))) {
                     errors.push(GraphError::UnsupportedInPhase1 {
@@ -707,6 +1161,8 @@ pub(crate) fn validate(
                         _ => None,
                     })
                     .collect();
+                // a uniform shared by several body commands reports once
+                let mut reported: Vec<(UniformId, TexId)> = vec![];
                 for leaf in body {
                     if let LeafPass::Compute(compute) = leaf
                         && let Some(uniform) = desc.uniforms.get(compute.uniform.0 as usize)
@@ -714,7 +1170,9 @@ pub(crate) fn validate(
                         for (_, resource) in &uniform.source.bindings {
                             if let ResourceRef::Tex(tex, _) = resource
                                 && rotating.contains(tex)
+                                && !reported.contains(&(compute.uniform, *tex))
                             {
+                                reported.push((compute.uniform, *tex));
                                 errors.push(GraphError::RepeatUniformRotatesTexture {
                                     repeat: name.clone(),
                                     uniform: uniform.name.clone(),
@@ -851,7 +1309,11 @@ pub(crate) fn validate(
                         })
                     }
 
-                    valid_command(Command::from(draw), PipelineKind::Graphics, &mut errors);
+                    let expected = match draw.call {
+                        DrawCall::IndexedIndirect { .. } => PipelineKind::GraphicsIndirect,
+                        _ => PipelineKind::Graphics,
+                    };
+                    valid_command(Command::from(draw), expected, &mut errors);
                     validate_draw_indices(draw, desc, &mut errors);
                     if let DrawCall::IndexedIndirect { args, .. } = &draw.call
                         && valid(
@@ -870,6 +1332,29 @@ pub(crate) fn validate(
             }
         }
     }
+    if let Some(picking) = &desc.picking {
+        if valid(
+            picking.cursor.0,
+            desc.values.len(),
+            TableKind::Value,
+            &mut errors,
+        ) {
+            let cursor_is_8_bytes = match desc.values[picking.cursor.0 as usize].kind {
+                ValueKind::Bytes { schema } => schemas.get(schema).is_some_and(|s| s.size == 8),
+                _ => false,
+            };
+            if !cursor_is_8_bytes {
+                errors.push(GraphError::PickingCursorShape);
+            }
+        }
+        let has_draw = desc
+            .leaves()
+            .any(|leaf| matches!(leaf, LeafPass::Raster(raster) if !raster.draws.is_empty()));
+        if !has_draw {
+            errors.push(GraphError::PickingWithoutDraw);
+        }
+    }
+    check_shared_uniforms(desc, &mut errors);
     // Only a `Write` advances the run-state cursor, so a previous version
     // exists only for a texture some command writes; a mutate edits in place.
     for (tex, command) in prev_readers {
@@ -891,9 +1376,10 @@ pub(crate) fn validate(
 #[cfg(test)]
 mod tests {
     use super::super::desc::{
-        BufferId, BufferKind, DrawCall, GroupSource, LeafPass, PassDesc, PipelineKind,
-        RasterTargets, ResourceFieldKind, ResourceRef, SchemaDesc, SizeClass, TexAccess, TexId,
-        TexUsage, UniformDecl, UniformId, UniformSourceDesc, UploadDesc, ValueKind,
+        BufferId, BufferKind, DrawCall, FieldKey, GroupSource, LeafPass, PassDesc, PipelineKind,
+        RasterTargets, ResourceFieldKind, ResourceRef, SchemaDesc, SchemaField, SchemaFieldKind,
+        SchemaLayout, SizeClass, TexAccess, TexId, TexUsage, UniformDecl, UniformId,
+        UniformSourceDesc, UploadDesc, ValueKind,
     };
     use super::super::test_desc::{
         DescBuilder, bindings, mutate, raster, read, read_previous, write,
@@ -1124,6 +1610,72 @@ mod tests {
         builder.repeat("repeat1", vec![LeafPass::Compute(second)]);
 
         assert_eq!(builder.tex_phys(), vec![2, 2]);
+    }
+
+    /// two dispatches share one uniform block that samples a texture the
+    /// first writes through its push block: the second would restage the
+    /// block at the next version before the first executes
+    #[test]
+    fn shared_uniform_may_not_reference_a_texture_written_between_consumers() {
+        let mut builder = DescBuilder::new(1);
+        let shared = builder.uniform(&[read(0)]);
+        let mut first = builder.dispatch_with_push("d0", &[], &[write(0)]);
+        first.uniform = shared;
+        let mut second = builder.dispatch("d1", &[]);
+        second.uniform = shared;
+        builder.leaf(first);
+        builder.leaf(second);
+
+        assert_eq!(
+            builder.errors(),
+            vec![GraphError::SharedUniformRotatesTexture {
+                uniform: "uniform0".into(),
+                writer: "d0".into(),
+                tex: "tex0".into(),
+            }]
+        );
+    }
+
+    /// a write before the first consumer or after the last one moves no
+    /// consumer's version apart from another's
+    #[test]
+    fn shared_uniform_writes_outside_its_consumers_are_allowed() {
+        let mut builder = DescBuilder::new(1);
+        let shared = builder.uniform(&[read(0)]);
+        let before = builder.dispatch_with_push("before", &[], &[write(0)]);
+        let mut first = builder.dispatch("d0", &[]);
+        first.uniform = shared;
+        let mut second = builder.dispatch("d1", &[]);
+        second.uniform = shared;
+        let after = builder.dispatch_with_push("after", &[], &[write(0)]);
+        builder.leaf(before);
+        builder.leaf(first);
+        builder.leaf(second);
+        builder.leaf(after);
+
+        assert!(builder.validate().is_ok());
+    }
+
+    /// a repeat body's rotation reports once, as the repeat rule
+    #[test]
+    fn repeat_rotation_of_a_shared_uniform_reports_once() {
+        let mut builder = DescBuilder::new(1);
+        let shared = builder.uniform(&[read(0)]);
+        let mut first = builder.dispatch_with_push("d0", &[], &[write(0)]);
+        first.uniform = shared;
+        let mut second = builder.dispatch("d1", &[]);
+        second.uniform = shared;
+        builder.repeat(
+            "repeat0",
+            vec![LeafPass::Compute(first), LeafPass::Compute(second)],
+        );
+
+        let errors = builder.errors();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(matches!(
+            errors[0],
+            GraphError::RepeatUniformRotatesTexture { .. }
+        ));
     }
 
     #[test]
@@ -1837,6 +2389,530 @@ mod tests {
             UnsupportedFeature::GroupSourceValue.to_string(),
             "per-frame dispatch group counts (phase 3a, ledger S1)"
         );
+    }
+
+    fn layout_field(key: u16, offset: u32, len: u32, kind: SchemaFieldKind) -> SchemaField {
+        SchemaField {
+            key: FieldKey(key),
+            offset,
+            len,
+            kind,
+        }
+    }
+
+    /// a dispatch whose uniform schema carries `fields`; returns the builder
+    /// and the uniform's name
+    fn laid_out_dispatch(resources: &[ResourceRef], fields: Vec<SchemaField>) -> DescBuilder {
+        let mut builder = DescBuilder::new(2);
+        let dispatch = builder.dispatch("d0", resources);
+        let schema = builder.desc.uniforms[dispatch.uniform.0 as usize].schema;
+        builder.schemas.schemas[schema.0 as usize].layout = Some(SchemaLayout { fields });
+        builder.leaf(dispatch);
+
+        builder
+    }
+
+    #[test]
+    fn a_well_formed_layout_validates() {
+        let builder = laid_out_dispatch(
+            &[read(0)],
+            vec![
+                layout_field(0, 0, 8, SchemaFieldKind::SampledTex),
+                layout_field(1, 8, 4, SchemaFieldKind::Data { src_offset: 12 }),
+            ],
+        );
+
+        assert!(builder.validate().is_ok());
+    }
+
+    #[test]
+    fn layout_fields_must_fit_the_block() {
+        for (offset, len) in [(12, 8), (u32::MAX, 2)] {
+            let builder = laid_out_dispatch(
+                &[],
+                vec![layout_field(
+                    0,
+                    offset,
+                    len,
+                    SchemaFieldKind::Data { src_offset: 0 },
+                )],
+            );
+
+            assert!(
+                builder
+                    .errors()
+                    .contains(&GraphError::LayoutFieldOutOfBounds {
+                        schema: "uniform0".into(),
+                        field: 0,
+                        offset,
+                        len,
+                        size: 16,
+                    })
+            );
+        }
+    }
+
+    /// overlap is measured against the furthest earlier field, not only the
+    /// adjacent one
+    #[test]
+    fn layout_fields_must_not_overlap() {
+        let builder = laid_out_dispatch(
+            &[],
+            vec![
+                layout_field(0, 0, 12, SchemaFieldKind::Data { src_offset: 0 }),
+                layout_field(1, 4, 2, SchemaFieldKind::Data { src_offset: 0 }),
+                layout_field(2, 8, 4, SchemaFieldKind::Data { src_offset: 0 }),
+                layout_field(3, 12, 4, SchemaFieldKind::Data { src_offset: 0 }),
+            ],
+        );
+
+        assert_eq!(
+            builder.errors(),
+            vec![
+                GraphError::LayoutFieldsOverlap {
+                    schema: "uniform0".into(),
+                    first: 0,
+                    second: 1,
+                },
+                GraphError::LayoutFieldsOverlap {
+                    schema: "uniform0".into(),
+                    first: 0,
+                    second: 2,
+                },
+            ]
+        );
+    }
+
+    /// `DescriptorHandle` is a `uint2` and a device address a `uint64_t`
+    #[test]
+    fn resource_fields_are_eight_bytes() {
+        for kind in [SchemaFieldKind::SampledTex, SchemaFieldKind::StorageTex] {
+            let resource = match kind {
+                SchemaFieldKind::SampledTex => read(0),
+                _ => write(0),
+            };
+            let builder = laid_out_dispatch(&[resource], vec![layout_field(0, 0, 4, kind)]);
+
+            assert_eq!(
+                builder.errors(),
+                vec![GraphError::LayoutResourceFieldSize {
+                    schema: "uniform0".into(),
+                    field: 0,
+                    len: 4,
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn layout_resource_fields_match_the_resource_list() {
+        let missing = laid_out_dispatch(&[read(0)], vec![]);
+        assert_eq!(
+            missing.errors(),
+            vec![GraphError::LayoutResourceFieldMismatch {
+                schema: "uniform0".into(),
+                field: 0,
+            }]
+        );
+
+        let wrong_kind = laid_out_dispatch(
+            &[read(0)],
+            vec![layout_field(0, 0, 8, SchemaFieldKind::BufAddr)],
+        );
+        assert!(
+            wrong_kind
+                .errors()
+                .contains(&GraphError::LayoutResourceFieldMismatch {
+                    schema: "uniform0".into(),
+                    field: 0,
+                })
+        );
+
+        let duplicate = laid_out_dispatch(
+            &[read(0)],
+            vec![
+                layout_field(0, 0, 8, SchemaFieldKind::SampledTex),
+                layout_field(0, 8, 8, SchemaFieldKind::SampledTex),
+            ],
+        );
+        assert_eq!(
+            duplicate.errors(),
+            vec![GraphError::LayoutResourceFieldMismatch {
+                schema: "uniform0".into(),
+                field: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn data_fields_read_inside_the_data_value() {
+        let builder = laid_out_dispatch(
+            &[],
+            vec![layout_field(
+                0,
+                0,
+                8,
+                SchemaFieldKind::Data { src_offset: 12 },
+            )],
+        );
+
+        assert_eq!(
+            builder.errors(),
+            vec![GraphError::LayoutDataOutOfBounds {
+                block: "uniform0".into(),
+                field: 0,
+                src_offset: 12,
+                len: 8,
+                data_size: 16,
+            }]
+        );
+    }
+
+    #[test]
+    fn data_fields_need_a_data_value() {
+        let mut builder = laid_out_dispatch(
+            &[],
+            vec![layout_field(
+                0,
+                0,
+                4,
+                SchemaFieldKind::Data { src_offset: 0 },
+            )],
+        );
+        builder.desc.uniforms[0].source.data = None;
+
+        assert_eq!(
+            builder.errors(),
+            vec![GraphError::LayoutDataWithoutValue {
+                block: "uniform0".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn push_blocks_fit_the_guaranteed_budget() {
+        let mut builder = DescBuilder::new(1);
+        let dispatch = builder.dispatch_with_push("d0", &[], &[read(0)]);
+        let schema = dispatch.push.as_ref().unwrap().schema;
+        let pipeline = dispatch.pipeline;
+        builder.leaf(dispatch);
+        // the pipeline names the same schema; it still reports once
+        builder.desc.pipelines[pipeline.0 as usize].push = Some(schema);
+        for size in [4, 128] {
+            builder.schemas.schemas[schema.0 as usize].size = size;
+            assert!(builder.validate().is_ok(), "{size}");
+        }
+
+        for size in [0, 6, 132] {
+            builder.schemas.schemas[schema.0 as usize].size = size;
+            assert_eq!(
+                builder.errors(),
+                vec![GraphError::PushConstantSize {
+                    schema: "d0.push".into(),
+                    size,
+                }]
+            );
+        }
+    }
+
+    /// a pipeline's push schema is checked even when no command uses it
+    #[test]
+    fn unused_pipeline_push_blocks_are_checked() {
+        let mut builder = DescBuilder::new(0);
+        let dispatch = builder.dispatch("d0", &[]);
+        let schema = builder.schemas.push(SchemaDesc {
+            name: "orphan.push".into(),
+            size: 2,
+            resource_fields: vec![],
+            layout: None,
+        });
+        builder.desc.pipelines[dispatch.pipeline.0 as usize].push = Some(schema);
+
+        assert_eq!(
+            builder.errors(),
+            vec![GraphError::PushConstantSize {
+                schema: "orphan.push".into(),
+                size: 2,
+            }]
+        );
+    }
+
+    #[test]
+    fn value_scopes_name_well_formed_gates_and_counts() {
+        use super::super::desc::{ValueId, ValueScope};
+
+        let scope_error = |scope: ValueScope, optional: bool| {
+            let mut builder = DescBuilder::new(0);
+            let gate = builder.value(ValueKind::Count, true);
+            let count = builder.value(ValueKind::Count, false);
+            let groups = builder.value(ValueKind::Groups, false);
+            let value = builder.value(ValueKind::Count, optional);
+            builder.desc.values[value.0 as usize].scope = match scope {
+                ValueScope::When { gate: ValueId(0) } => ValueScope::When { gate },
+                ValueScope::Repeat { count: ValueId(1) } => ValueScope::Repeat { count },
+                ValueScope::Repeat { count: ValueId(2) } => ValueScope::Repeat { count: groups },
+                other => other,
+            };
+
+            builder.validate().err().unwrap_or_default()
+        };
+        let reason = |errors: Vec<GraphError>| match errors.as_slice() {
+            [GraphError::ValueScopeInvalid { reason, .. }] => *reason,
+            other => panic!("expected one scope error: {other:?}"),
+        };
+
+        assert!(scope_error(ValueScope::When { gate: ValueId(0) }, true).is_empty());
+        assert!(scope_error(ValueScope::Repeat { count: ValueId(1) }, false).is_empty());
+        assert_eq!(
+            reason(scope_error(ValueScope::When { gate: ValueId(0) }, false)),
+            "a value in an optional scope must be optional"
+        );
+        assert_eq!(
+            reason(scope_error(ValueScope::When { gate: ValueId(1) }, true)),
+            "its gate is not gated by itself"
+        );
+        assert_eq!(
+            reason(scope_error(ValueScope::When { gate: ValueId(9) }, true)),
+            "its gate is undeclared"
+        );
+        assert_eq!(
+            reason(scope_error(ValueScope::Repeat { count: ValueId(1) }, true)),
+            "a value in a repeat cannot be optional"
+        );
+        assert_eq!(
+            reason(scope_error(ValueScope::Repeat { count: ValueId(2) }, false)),
+            "its repeat count is not a top-level count"
+        );
+        assert_eq!(
+            reason(scope_error(ValueScope::Repeat { count: ValueId(9) }, false)),
+            "its repeat count is undeclared"
+        );
+    }
+
+    /// a when pass gates on a value that is gated by itself
+    #[test]
+    fn when_gates_are_self_gated() {
+        use super::super::desc::ValueScope;
+
+        let mut builder = DescBuilder::new(0);
+        let outer = builder.value(ValueKind::Count, true);
+        let dispatch = builder.dispatch("d0", &[]);
+        let gate = builder.when("when0", vec![LeafPass::Compute(dispatch)]);
+        builder.desc.values[gate.0 as usize].scope = ValueScope::When { gate: outer };
+
+        assert!(builder.errors().contains(&GraphError::ValueScopeInvalid {
+            value: format!("value{}", gate.0),
+            reason: "a when pass's gate must be gated by itself",
+        }));
+    }
+
+    /// direct draws and indexed-indirect draws use different pipeline kinds
+    #[test]
+    fn indirect_draws_need_graphics_indirect_pipelines() {
+        let mut builder = DescBuilder::new(0);
+        let indices = builder.buffer_decl(BufferKind::Index, Some(3));
+        let args = builder.buffer_decl(BufferKind::Immutable, Some(1));
+        let mut indirect = builder.draw("indirect", &[]);
+        indirect.call = DrawCall::IndexedIndirect {
+            indices: BufferId(indices),
+            args: match super::super::test_desc::buffer(args) {
+                ResourceRef::Buf(args, _) => args,
+                _ => unreachable!(),
+            },
+            draw_count: 1,
+        };
+        let mut direct = builder.draw("direct", &[]);
+        direct.pipeline = indirect.pipeline;
+        builder.leaf_raster(raster("main", vec![indirect, direct]));
+
+        assert_eq!(
+            builder.errors(),
+            vec![GraphError::PipelineKindMismatch {
+                command: "indirect".into(),
+                expected: PipelineKind::GraphicsIndirect,
+            }]
+        );
+
+        let PassDesc::Leaf(LeafPass::Raster(raster)) = &builder.desc.passes[0] else {
+            unreachable!()
+        };
+        let pipeline = raster.draws[0].pipeline;
+        builder.desc.pipelines[pipeline.0 as usize].kind = PipelineKind::GraphicsIndirect;
+        assert_eq!(
+            builder.errors(),
+            vec![GraphError::PipelineKindMismatch {
+                command: "direct".into(),
+                expected: PipelineKind::Graphics,
+            }]
+        );
+    }
+
+    #[test]
+    fn upload_to_immutable_rejects() {
+        let mut builder = DescBuilder::new(0);
+        let buffer = builder.buffer_decl(BufferKind::Immutable, Some(4));
+        let elem = builder.schemas.push(SchemaDesc {
+            name: "elem".into(),
+            size: 4,
+            resource_fields: vec![],
+            layout: None,
+        });
+        let value = builder.value(ValueKind::Array { elem, max_len: 4 }, false);
+        builder.desc.uploads.push(UploadDesc {
+            name: "upload0".into(),
+            buffer: BufferId(buffer),
+            value,
+        });
+
+        assert_eq!(
+            builder.errors(),
+            vec![GraphError::UploadTargetKind {
+                upload: "upload0".into(),
+                kind: "immutable",
+            }]
+        );
+    }
+
+    #[test]
+    fn upload_elements_match_the_buffer_stride() {
+        let mut builder = DescBuilder::new(0);
+        let buffer = builder.buffer_decl(BufferKind::Storage, Some(4));
+        let elem = builder.schemas.push(SchemaDesc {
+            name: "elem".into(),
+            size: 12,
+            resource_fields: vec![],
+            layout: None,
+        });
+        let value = builder.value(ValueKind::Array { elem, max_len: 4 }, false);
+        builder.desc.uploads.push(UploadDesc {
+            name: "upload0".into(),
+            buffer: BufferId(buffer),
+            value,
+        });
+
+        assert_eq!(
+            builder.errors(),
+            vec![GraphError::UploadElemSizeMismatch {
+                upload: "upload0".into(),
+                value_elem_size: 12,
+                buffer_elem_size: 4,
+            }]
+        );
+    }
+
+    #[test]
+    fn buffer_bindings_use_supported_slots_and_accesses() {
+        use super::super::desc::{BufAccess, BufferRef, SlotSel};
+
+        let cases = [
+            (BufferKind::Index, SlotSel::Current, BufAccess::Read, false),
+            (
+                BufferKind::Immutable,
+                SlotSel::Current,
+                BufAccess::Mutate,
+                false,
+            ),
+            (
+                BufferKind::Singleton,
+                SlotSel::Previous,
+                BufAccess::Read,
+                false,
+            ),
+            (
+                BufferKind::Storage,
+                SlotSel::Previous,
+                BufAccess::Read,
+                false,
+            ),
+            (
+                BufferKind::GpuUpdatedFlight,
+                SlotSel::Previous,
+                BufAccess::Mutate,
+                false,
+            ),
+            (
+                BufferKind::GpuUpdatedFlight,
+                SlotSel::Previous,
+                BufAccess::Read,
+                true,
+            ),
+            (
+                BufferKind::GpuUpdatedFlight,
+                SlotSel::Current,
+                BufAccess::Mutate,
+                true,
+            ),
+            (
+                BufferKind::Storage,
+                SlotSel::Current,
+                BufAccess::Mutate,
+                true,
+            ),
+            (
+                BufferKind::Immutable,
+                SlotSel::Current,
+                BufAccess::Read,
+                true,
+            ),
+        ];
+        for (kind, slot, access, supported) in cases {
+            let mut builder = DescBuilder::new(0);
+            let buffer = builder.buffer_decl(kind, Some(4));
+            let binding = ResourceRef::Buf(
+                BufferRef {
+                    buffer: BufferId(buffer),
+                    slot,
+                    offset: 0,
+                    range: None,
+                },
+                access,
+            );
+            let dispatch = builder.dispatch("d0", &[binding]);
+            builder.leaf(dispatch);
+
+            let expected = if supported {
+                vec![]
+            } else {
+                vec![GraphError::BufferAccessMismatch {
+                    block: "uniform0".into(),
+                    field: 0,
+                    kind,
+                }]
+            };
+            assert_eq!(
+                builder.validate().err().unwrap_or_default(),
+                expected,
+                "{kind:?} {slot:?} {access:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn picking_needs_an_eight_byte_cursor_and_a_draw() {
+        use super::super::desc::PickingDesc;
+
+        let mut builder = DescBuilder::new(0);
+        let cursor_schema = builder.schemas.push(SchemaDesc {
+            name: "cursor".into(),
+            size: 8,
+            resource_fields: vec![],
+            layout: None,
+        });
+        let cursor = builder.value(
+            ValueKind::Bytes {
+                schema: cursor_schema,
+            },
+            false,
+        );
+        builder.desc.picking = Some(PickingDesc { cursor });
+        assert_eq!(builder.errors(), vec![GraphError::PickingWithoutDraw]);
+
+        let draw = builder.draw("draw0", &[]);
+        builder.leaf_raster(raster("main", vec![draw]));
+        assert!(builder.validate().is_ok());
+
+        builder.schemas.schemas[cursor_schema.0 as usize].size = 4;
+        assert_eq!(builder.errors(), vec![GraphError::PickingCursorShape]);
     }
 
     #[test]

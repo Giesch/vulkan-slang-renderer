@@ -6,6 +6,12 @@ use ash::vk;
 use super::MAX_FRAMES_IN_FLIGHT;
 use super::addr::ImmutableAddr;
 
+/// The element marker of a storage buffer created from bytes with a runtime
+/// element stride. It is not `GPUWrite`, so typed writes cannot target it;
+/// use the renderer's `*_bytes` helpers and graph uploads instead.
+#[derive(Debug)]
+pub struct BufferBytes;
+
 /// A storage buffer the CPU can update during frame execution.
 ///
 /// Shader access is read-write; the name describes CPU update access, not memory placement.
@@ -13,6 +19,7 @@ use super::addr::ImmutableAddr;
 pub struct CpuUpdatedBufferHandle<T> {
     index: usize,
     len: u32,
+    element_stride: u32,
     _phantom_data: PhantomData<T>,
 }
 
@@ -20,6 +27,12 @@ pub struct CpuUpdatedBufferHandle<T> {
 impl<T> CpuUpdatedBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
+    }
+
+    /// Bytes per element: `size_of::<T>()`, or the runtime stride of a
+    /// `BufferBytes` buffer.
+    pub fn element_stride(&self) -> u32 {
+        self.element_stride
     }
 
     pub(super) fn index(&self) -> usize {
@@ -36,6 +49,7 @@ impl<T> CpuUpdatedBufferHandle<T> {
 pub struct ImmutableBufferHandle<T> {
     index: usize,
     len: u32,
+    element_stride: u32,
     _phantom_data: PhantomData<T>,
 }
 
@@ -45,8 +59,14 @@ impl<T> ImmutableBufferHandle<T> {
         self.len
     }
 
+    /// Bytes per element: `size_of::<T>()`, or the runtime stride of a
+    /// `BufferBytes` buffer.
+    pub fn element_stride(&self) -> u32 {
+        self.element_stride
+    }
+
     pub(super) fn element_byte_offset(&self, index: u32) -> u64 {
-        element_byte_offset(index, self.len, std::mem::size_of::<T>())
+        element_byte_offset(index, self.len, self.element_stride as usize)
     }
 
     pub(super) fn index(&self) -> usize {
@@ -63,6 +83,7 @@ impl<T> ImmutableBufferHandle<T> {
 pub struct SingletonBufferHandle<T> {
     index: usize,
     len: u32,
+    element_stride: u32,
     _phantom_data: PhantomData<T>,
 }
 
@@ -72,8 +93,14 @@ impl<T> SingletonBufferHandle<T> {
         self.len
     }
 
+    /// Bytes per element: `size_of::<T>()`, or the runtime stride of a
+    /// `BufferBytes` buffer.
+    pub fn element_stride(&self) -> u32 {
+        self.element_stride
+    }
+
     pub(super) fn element_byte_offset(&self, index: u32) -> u64 {
-        element_byte_offset(index, self.len, std::mem::size_of::<T>())
+        element_byte_offset(index, self.len, self.element_stride as usize)
     }
 
     pub(super) fn index(&self) -> usize {
@@ -100,6 +127,7 @@ impl<T> SingletonBufferHandle<T> {
 pub struct GpuUpdatedBufferHandle<T> {
     index: usize,
     len: u32,
+    element_stride: u32,
     _phantom_data: PhantomData<T>,
 }
 
@@ -107,6 +135,12 @@ pub struct GpuUpdatedBufferHandle<T> {
 impl<T> GpuUpdatedBufferHandle<T> {
     pub fn len(&self) -> u32 {
         self.len
+    }
+
+    /// Bytes per element: `size_of::<T>()`, or the runtime stride of a
+    /// `BufferBytes` buffer.
+    pub fn element_stride(&self) -> u32 {
+        self.element_stride
     }
 
     pub(super) fn index(&self) -> usize {
@@ -152,6 +186,7 @@ impl StorageBufferStorage {
         &mut self,
         buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
+        element_stride: u32,
     ) -> CpuUpdatedBufferHandle<T> {
         let buffers_per_frame = buffers_per_frame.map(|mut raw| {
             raw.graph_upload = true;
@@ -160,6 +195,7 @@ impl StorageBufferStorage {
         let handle = CpuUpdatedBufferHandle {
             index: self.0.len(),
             len,
+            element_stride,
             _phantom_data: PhantomData::<T>,
         };
 
@@ -197,6 +233,7 @@ impl StorageBufferStorage {
         &mut self,
         buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
+        element_stride: u32,
     ) -> ImmutableBufferHandle<T> {
         let buffers_per_frame = buffers_per_frame.map(|mut raw| {
             raw.graph_upload = false;
@@ -205,6 +242,7 @@ impl StorageBufferStorage {
         let handle = ImmutableBufferHandle {
             index: self.0.len(),
             len,
+            element_stride,
             _phantom_data: PhantomData::<T>,
         };
 
@@ -232,12 +270,13 @@ impl StorageBufferStorage {
     /// The address of a single element, for pointing a shader at one struct in
     /// the buffer rather than at its base.
     ///
-    /// The stride is `size_of::<T>()`, which is the slang std430 array stride
-    /// by an existing test rather than by assumption: codegen emits
-    /// `assert!(size_of::<T>() == expected_size)` and
+    /// The stride is `handle.element_stride()`, which is also what the
+    /// allocation was sized with. For a typed handle that is `size_of::<T>()`,
+    /// the slang std430 array stride by an existing test rather than by
+    /// assumption: codegen emits `assert!(size_of::<T>() == expected_size)` and
     /// `pointer_pointee_spirv_layout` checks that same number against the
-    /// emitted SPIR-V `ArrayStride`. It is also what
-    /// `create_storage_buffers_per_frame` sizes the allocation with.
+    /// emitted SPIR-V `ArrayStride`. For a `BufferBytes` handle it is the
+    /// `element_stride` its creator passed.
     pub(super) fn get_element_device_address_for_frame_immutable<T>(
         &self,
         handle: &ImmutableBufferHandle<T>,
@@ -291,6 +330,7 @@ impl StorageBufferStorage {
         &mut self,
         buffers_per_frame: [RawStorageBuffer; MAX_FRAMES_IN_FLIGHT],
         len: u32,
+        element_stride: u32,
     ) -> GpuUpdatedBufferHandle<T> {
         let buffers_per_frame = buffers_per_frame.map(|mut raw| {
             raw.graph_upload = false;
@@ -299,6 +339,7 @@ impl StorageBufferStorage {
         let handle = GpuUpdatedBufferHandle {
             index: self.0.len(),
             len,
+            element_stride,
             _phantom_data: PhantomData::<T>,
         };
 
@@ -360,8 +401,34 @@ impl StorageBufferStorage {
         })
     }
 
+    /// Setup-time initialization of every flight slot's leading bytes;
+    /// nothing may be in flight.
+    pub(super) fn copy_bytes_all_frames(
+        &mut self,
+        index: usize,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        let buffers_per_frame = self.0[index]
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("storage buffer slot {index} was dropped"))?;
+        for raw in buffers_per_frame {
+            anyhow::ensure!(
+                bytes.len() as u64 <= raw.byte_size,
+                "{} bytes do not fit in a {}-byte storage buffer",
+                bytes.len(),
+                raw.byte_size
+            );
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw.mapped_mem.cast(), bytes.len());
+            }
+        }
+
+        Ok(())
+    }
+
     pub(super) fn live_buffer(&self, index: usize, frame: usize) -> Option<(vk::Buffer, u64)> {
         let raw = self.0.get(index)?.as_ref()?.get(frame)?;
+
         Some((raw.buffer, raw.byte_size))
     }
 }
@@ -382,10 +449,16 @@ impl SingletonBufferStorage {
     }
 
     // this should not be callable after setup
-    pub fn add<T>(&mut self, buffer: RawStorageBuffer, len: u32) -> SingletonBufferHandle<T> {
+    pub fn add<T>(
+        &mut self,
+        buffer: RawStorageBuffer,
+        len: u32,
+        element_stride: u32,
+    ) -> SingletonBufferHandle<T> {
         let handle = SingletonBufferHandle {
             index: self.0.len(),
             len,
+            element_stride,
             _phantom_data: PhantomData::<T>,
         };
 
@@ -449,24 +522,35 @@ pub(super) fn element_byte_offset(index: u32, len: u32, stride: usize) -> u64 {
 mod tests {
     use std::marker::PhantomData;
 
-    use super::{ImmutableBufferHandle, SingletonBufferHandle, element_byte_offset};
+    use super::{BufferBytes, ImmutableBufferHandle, SingletonBufferHandle, element_byte_offset};
+    use crate::renderer::render_graph::{ImmutableSlot, SingletonSlot};
 
     /// a non-power-of-two size, so a shift-vs-multiply mistake would show
     type Elem24 = [u8; 24];
     const _: () = assert!(std::mem::size_of::<Elem24>() == 24);
 
+    fn singleton<T>(element_stride: u32) -> SingletonBufferHandle<T> {
+        SingletonBufferHandle {
+            index: 0,
+            len: 4,
+            element_stride,
+            _phantom_data: PhantomData,
+        }
+    }
+
+    fn immutable<T>(element_stride: u32) -> ImmutableBufferHandle<T> {
+        ImmutableBufferHandle {
+            index: 0,
+            len: 4,
+            element_stride,
+            _phantom_data: PhantomData,
+        }
+    }
+
     #[test]
-    fn handle_offsets_use_the_pointee_size_as_stride() {
-        let singleton = SingletonBufferHandle::<Elem24> {
-            index: 0,
-            len: 4,
-            _phantom_data: PhantomData,
-        };
-        let immutable = ImmutableBufferHandle::<Elem24> {
-            index: 0,
-            len: 4,
-            _phantom_data: PhantomData,
-        };
+    fn handle_offsets_use_the_element_stride() {
+        let singleton = singleton::<Elem24>(24);
+        let immutable = immutable::<Elem24>(24);
 
         for index in 0..4 {
             let expected = index as u64 * 24;
@@ -475,16 +559,35 @@ mod tests {
         }
     }
 
+    /// `BufferBytes` is zero-sized, so a byte buffer's slots must carry the
+    /// runtime stride or every `addr_at` would alias element 0
+    #[test]
+    fn byte_buffer_slots_keep_the_runtime_stride() {
+        let singleton = singleton::<BufferBytes>(24);
+        let immutable = immutable::<BufferBytes>(24);
+        let singleton_slot = SingletonSlot::from(&singleton);
+        let immutable_slot = ImmutableSlot::from(&immutable);
+
+        for index in 0..4 {
+            let expected = index as u64 * 24;
+            assert_eq!(singleton.element_byte_offset(index), expected);
+            assert_eq!(immutable.element_byte_offset(index), expected);
+            // the erased binding's offset is only observable through Debug
+            let offset = format!("byte_offset: {expected} ");
+            for binding in [
+                singleton_slot.addr_at(index).erased(),
+                immutable_slot.addr_at(index).erased(),
+            ] {
+                let binding = format!("{binding:?}");
+                assert!(binding.contains(&offset), "{binding}");
+            }
+        }
+    }
+
     #[test]
     #[should_panic(expected = "element index 4 out of bounds for buffer of 4 element(s)")]
     fn handle_bound_comes_from_its_own_len() {
-        let handle = SingletonBufferHandle::<Elem24> {
-            index: 0,
-            len: 4,
-            _phantom_data: PhantomData,
-        };
-
-        handle.element_byte_offset(4);
+        singleton::<Elem24>(24).element_byte_offset(4);
     }
 
     #[test]
