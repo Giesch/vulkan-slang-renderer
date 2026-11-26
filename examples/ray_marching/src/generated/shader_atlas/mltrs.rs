@@ -5,7 +5,7 @@
 use serde::Serialize;
 
 #[allow(unused_imports)]
-use mltrs::renderer::gpu_read::GPURead;
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 #[allow(unused_imports)]
 use mltrs::renderer::render_graph::GPUWrite;
 
@@ -26,11 +26,14 @@ const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
 impl GPURead for Projection {
     const GPU_SIZE: usize = 64;
 
-    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            bytes.len() == Self::GPU_SIZE,
-            "invalid GPU readback byte length for Projection"
-        );
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "Projection",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
 
         Ok(Self {
             matrix: GPURead::read_gpu(&bytes[0..64])?,

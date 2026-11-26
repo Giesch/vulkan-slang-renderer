@@ -16,7 +16,7 @@ use mltrs::renderer::{
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::ray_marching::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     RayMarching::run()
 }
 
@@ -55,7 +55,7 @@ impl Game for RayMarching {
         "Ray Marching"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -186,7 +186,9 @@ impl Game for RayMarching {
             resolution,
         );
 
-        self.graph.execute(renderer, &frame)
+        self.graph.execute(renderer, &frame)?;
+
+        Ok(())
     }
 }
 

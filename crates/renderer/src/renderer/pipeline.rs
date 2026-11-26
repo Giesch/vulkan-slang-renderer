@@ -439,7 +439,7 @@ pub(super) trait TypedVertexUpload {
         device: &ash::Device,
         command_pool: vk::CommandPool,
         graphics_queue: vk::Queue,
-    ) -> anyhow::Result<(vk::Buffer, vk_mem::Allocation)>;
+    ) -> Result<(vk::Buffer, vk_mem::Allocation), vk::Result>;
 }
 
 struct OwnedVertices<V>(Vec<V>);
@@ -455,7 +455,7 @@ impl<V: GPUWrite> TypedVertexUpload for OwnedVertices<V> {
         device: &ash::Device,
         command_pool: vk::CommandPool,
         graphics_queue: vk::Queue,
-    ) -> anyhow::Result<(vk::Buffer, vk_mem::Allocation)> {
+    ) -> Result<(vk::Buffer, vk_mem::Allocation), vk::Result> {
         super::create_vertex_buffer(allocator, device, command_pool, graphics_queue, &self.0)
     }
 }
@@ -506,36 +506,56 @@ fn attribute_keys(attributes: &[vk::VertexInputAttributeDescription]) -> Vec<Att
 impl<I, D: DrawCall, P> PipelineConfig<'_, I, D, P> {
     /// Checks the vertex source against the shader entry's vertex layout.
     /// Runs before any GPU allocation, so a rejected config leaks nothing.
-    pub(super) fn validate_vertex_input(&self) -> anyhow::Result<()> {
+    pub(super) fn validate_vertex_input(
+        &self,
+    ) -> eros::Result<
+        (),
+        (
+            super::EmptyPipelineVertexData,
+            super::InvalidPipelineVertexInput,
+        ),
+    > {
+        use super::{EmptyPipelineVertexData, InvalidPipelineVertexInput};
+        use eros::IntoUnion;
+
         let shader_name = self.shader.source_file_name();
         let shader_bindings = self.shader.vertex_binding_descriptions();
 
         if let Some(layout) = &self.typed_vertex_layout {
             let shader_attributes = self.shader.vertex_attribute_descriptions();
-            anyhow::ensure!(
-                binding_keys(&layout.bindings) == binding_keys(&shader_bindings),
-                "pipeline for {shader_name} was built for vertex type {} whose bindings \
-                 (binding, stride, input rate) {:?} differ from the shader's {:?}",
-                layout.type_name,
-                binding_keys(&layout.bindings),
-                binding_keys(&shader_bindings),
-            );
-            anyhow::ensure!(
-                attribute_keys(&layout.attributes) == attribute_keys(&shader_attributes),
-                "pipeline for {shader_name} was built for vertex type {} whose attributes \
-                 (location, binding, format, offset) {:?} differ from the shader's {:?}",
-                layout.type_name,
-                attribute_keys(&layout.attributes),
-                attribute_keys(&shader_attributes),
-            );
+            let bindings_match = binding_keys(&layout.bindings) == binding_keys(&shader_bindings);
+            if !bindings_match {
+                return Err(InvalidPipelineVertexInput::Bindings {
+                    shader: shader_name.to_owned(),
+                    vertex_type: layout.type_name,
+                    actual: binding_keys(&layout.bindings),
+                    expected: binding_keys(&shader_bindings),
+                })
+                .union();
+            }
+
+            let attributes_match =
+                attribute_keys(&layout.attributes) == attribute_keys(&shader_attributes);
+            if !attributes_match {
+                return Err(InvalidPipelineVertexInput::Attributes {
+                    shader: shader_name.to_owned(),
+                    vertex_type: layout.type_name,
+                    actual: attribute_keys(&layout.attributes),
+                    expected: attribute_keys(&shader_attributes),
+                })
+                .union();
+            }
         }
 
         match &self.vertex_config {
             VertexConfig::VertexAndIndexBuffers(vertices, indices) => {
-                anyhow::ensure!(
-                    !vertices.is_empty() && !indices.is_empty(),
-                    "pipeline for {shader_name} was given empty vertex data by `.with_vertices()`",
-                );
+                let empty_data = vertices.is_empty() || indices.is_empty();
+                if empty_data {
+                    return Err(EmptyPipelineVertexData {
+                        shader: shader_name.to_owned(),
+                    })
+                    .union();
+                }
             }
             VertexConfig::PackedBytes(bytes, indices) => {
                 let stride = shader_bindings
@@ -544,26 +564,31 @@ impl<I, D: DrawCall, P> PipelineConfig<'_, I, D, P> {
                     .unwrap_or(0);
                 let whole_vertices =
                     stride > 0 && !bytes.is_empty() && bytes.len().is_multiple_of(stride);
-                anyhow::ensure!(
-                    whole_vertices,
-                    "pipeline for {shader_name} was given {} vertex bytes, not a nonzero \
-                     multiple of the vertex stride {stride}",
-                    bytes.len(),
-                );
-                anyhow::ensure!(
-                    !indices.is_empty(),
-                    "pipeline for {shader_name} was given empty index data by \
-                     `.build_indexed_bytes()`",
-                );
+                if !whole_vertices {
+                    return Err(InvalidPipelineVertexInput::PackedBytes {
+                        shader: shader_name.to_owned(),
+                        bytes: bytes.len(),
+                        stride,
+                    })
+                    .union();
+                }
+
+                if indices.is_empty() {
+                    return Err(InvalidPipelineVertexInput::EmptyIndices {
+                        shader: shader_name.to_owned(),
+                    })
+                    .union();
+                }
             }
             VertexConfig::SharedMesh(_) => {}
             VertexConfig::VertexCount => {
-                anyhow::ensure!(
-                    shader_bindings.is_empty(),
-                    "pipeline for {shader_name} draws with a vertex count, but its shader \
-                     declares vertex input bindings {:?}",
-                    binding_keys(&shader_bindings),
-                );
+                if !shader_bindings.is_empty() {
+                    return Err(InvalidPipelineVertexInput::UnexpectedBindings {
+                        shader: shader_name.to_owned(),
+                        bindings: binding_keys(&shader_bindings),
+                    })
+                    .union();
+                }
             }
         }
 

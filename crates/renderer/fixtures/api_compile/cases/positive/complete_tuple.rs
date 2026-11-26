@@ -64,7 +64,8 @@ fn execute(
             SimParamsData { delta_time: 0.016 },
             RenderParamsData { particle_count: 4 },
         ),
-    )
+    )?;
+    Ok(())
 }
 
 fn main() {}

@@ -17,7 +17,7 @@ use crate::generated::shader_atlas::particle;
 use crate::generated::shader_atlas::particle_render;
 use crate::generated::shader_atlas::particles_compute;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     Particles::run()
 }
 
@@ -48,7 +48,7 @@ impl Game for Particles {
         (800, 800)
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -130,7 +130,8 @@ impl Game for Particles {
                     particle_count: NUM_PARTICLES,
                 },
             ),
-        )
+        )?;
+        Ok(())
     }
 }
 

@@ -42,7 +42,8 @@ fn execute(
     prepared: &mut PreparedRenderGraph<Graph>,
     frame: FrameRenderer<'_>,
 ) -> Result<(), DrawError> {
-    prepared.execute(frame, &(3, SimParamsData { delta_time: 0.016 }))
+    prepared.execute(frame, &(3, SimParamsData { delta_time: 0.016 }))?;
+    Ok(())
 }
 
 fn main() {}

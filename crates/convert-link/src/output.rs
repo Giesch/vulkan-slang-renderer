@@ -10,7 +10,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use eros::{IntoUnion, ReshapeUnion, context};
 use gx::model_manifest as mm;
 
 use crate::bmd::Model;
@@ -260,10 +260,14 @@ fn tev_stage(s: &mat3::TevStage) -> mm::TevStageState {
     }
 }
 
-pub fn write_files(converted: &Converted, baked: &BakedModel, out_dir: &Path) -> Result<()> {
-    let json = serde_json::to_string_pretty(&converted.manifest).context("serializing manifest")?;
-    let json_path = out_dir.join("link.manifest.json");
-    std::fs::write(&json_path, json).with_context(|| format!("writing {}", json_path.display()))?;
+#[context("write manifest and vertex/index/skin buffers to {}", out_dir.display())]
+pub fn write_files(
+    converted: &Converted,
+    baked: &BakedModel,
+    out_dir: &Path,
+) -> eros::Result<(), (serde_json::Error, std::io::Error)> {
+    let json = serde_json::to_string_pretty(&converted.manifest).union()?;
+    write_bin(out_dir, "link.manifest.json", json.as_bytes()).widen()?;
 
     // vtx.bin: interleaved LE f32 pos[3] nrm[3] uv[2].
     let mut vtx = Vec::with_capacity(baked.vertices.len() * 32);
@@ -272,14 +276,14 @@ pub fn write_files(converted: &Converted, baked: &BakedModel, out_dir: &Path) ->
             vtx.extend_from_slice(&f.to_le_bytes());
         }
     }
-    write_bin(out_dir, "link.vtx.bin", &vtx)?;
+    write_bin(out_dir, "link.vtx.bin", &vtx).widen()?;
 
     // idx.bin: LE u32 triangle list.
     let mut idx = Vec::with_capacity(converted.indices.len() * 4);
     for &i in &converted.indices {
         idx.extend_from_slice(&i.to_le_bytes());
     }
-    write_bin(out_dir, "link.idx.bin", &idx)?;
+    write_bin(out_dir, "link.idx.bin", &idx).widen()?;
 
     // skin.bin: per vertex 4×(u8 joint + LE f32 weight).
     let mut skin = Vec::with_capacity(baked.skin.len() * 20);
@@ -289,24 +293,25 @@ pub fn write_files(converted: &Converted, baked: &BakedModel, out_dir: &Path) ->
             skin.extend_from_slice(&weight.to_le_bytes());
         }
     }
-    write_bin(out_dir, "link.skin.bin", &skin)?;
+    write_bin(out_dir, "link.skin.bin", &skin).widen()?;
 
     Ok(())
 }
 
-fn write_bin(out_dir: &Path, name: &str, data: &[u8]) -> Result<()> {
-    let path = out_dir.join(name);
-    std::fs::write(&path, data).with_context(|| format!("writing {}", path.display()))
+#[context("write {}", out_dir.join(name).display())]
+fn write_bin(out_dir: &Path, name: &str, data: &[u8]) -> eros::Result<(), (std::io::Error,)> {
+    std::fs::write(out_dir.join(name), data).union()
 }
 
 /// Debug-only Wavefront OBJ + MTL: one `g`/`usemtl` group per batch, textured
 /// via each material's texmap slot 0. Excluded from golden hashes.
+#[context("write debug OBJ/MTL to {}", out_dir.display())]
 pub fn write_obj(
     model: &Model,
     baked: &BakedModel,
     converted: &Converted,
     out_dir: &Path,
-) -> Result<()> {
+) -> eros::Result<(), (std::io::Error,)> {
     let mut obj = String::new();
     writeln!(obj, "# Toon Link bind pose (debug export)").unwrap();
     writeln!(obj, "mtllib link.mtl").unwrap();

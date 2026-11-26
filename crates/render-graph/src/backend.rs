@@ -17,13 +17,18 @@ pub struct PhysicalImage {
 /// Allocates, clears and aliases physical graph textures.
 /// Partial failures retain the backend's existing registered-resource policy.
 pub trait PreparationBackend: BackendTypes {
+    /// The backend's own failure (allocation, clear, alias), which the graph
+    /// cannot name. It becomes the last member of
+    /// [`PrepareErrors`](crate::error::PrepareErrors). A backend that only has
+    /// an opaque failure can use [`eros::ErrorUnionAdapter`] (an adapted `AnyError` union).
+    type PrepareError: eros::SendSyncError;
     fn max_image_dimension_2d(&self) -> u32;
     fn prepare_image(
         &mut self,
         width: u32,
         height: u32,
         format: GraphFormat,
-    ) -> anyhow::Result<(PhysicalImage, Self::Resource)>;
+    ) -> Result<(PhysicalImage, Self::Resource), Self::PrepareError>;
 }
 
 /// Which backend buffer address a graph binding requires.
@@ -74,9 +79,16 @@ pub trait FrameLookup: BindingLookup {
 /// validate every staged destination against backend-owned liveness, logical byte
 /// capacity, mapping, and upload access metadata. Safe public slot constructors
 /// do not prove those properties.
+///
+/// The graph's own execution errors never pass through the backend: they are
+/// separate members of [`ExecuteErrors`](crate::error::ExecuteErrors).
 pub trait FrameBackend: Sized {
     type Backend: BackendTypes;
-    type Error: From<anyhow::Error>;
+    /// The backend's own wait/validation/submission/presentation failure,
+    /// which the graph cannot name. It becomes the last member of
+    /// [`ExecuteErrors`](crate::error::ExecuteErrors). A backend that only has
+    /// an opaque failure can use [`eros::ErrorUnionAdapter`] (an adapted `AnyError` union).
+    type Error: eros::SendSyncError;
     fn lookup(&self) -> &dyn FrameLookup;
     fn submit(
         self,

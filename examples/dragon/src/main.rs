@@ -11,7 +11,7 @@ use mltrs::renderer::{
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::dragon::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     Dragon::run()
 }
 
@@ -33,7 +33,7 @@ impl Game for Dragon {
         "Dragon Curve"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -70,6 +70,8 @@ impl Game for Dragon {
             _padding_0: Default::default(),
         };
 
-        self.graph.execute(renderer, &dragon_params)
+        self.graph.execute(renderer, &dragon_params)?;
+
+        Ok(())
     }
 }

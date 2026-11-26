@@ -12,7 +12,7 @@ use mltrs::renderer::{
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::basic_triangle::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     BasicTriangle::run()
 }
 
@@ -33,7 +33,7 @@ impl Game for BasicTriangle {
         "Basic Triangle"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -65,7 +65,9 @@ impl Game for BasicTriangle {
         let aspect_ratio = renderer.aspect_ratio();
         let mvp = make_basic_mvp_matrices(aspect_ratio);
 
-        self.graph.execute(renderer, &mvp)
+        self.graph.execute(renderer, &mvp)?;
+
+        Ok(())
     }
 }
 

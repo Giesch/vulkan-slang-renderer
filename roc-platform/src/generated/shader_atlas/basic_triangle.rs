@@ -10,6 +10,8 @@ use ash::vk;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
+#[allow(unused_imports)]
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 use mltrs::renderer::render_graph::GPUWrite;
 #[allow(unused)]
 use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
@@ -32,6 +34,12 @@ impl GPUWrite for Vertex {}
 pub struct Resources<'a> {
     pub matrices_buffer: &'a UniformBufferHandle<MVPMatrices>,
 }
+
+// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
+// must agree with this struct's Rust layout
+const _: () = assert!(std::mem::size_of::<Vertex>() == 32);
+const _: () = assert!(std::mem::offset_of!(Vertex, position) == 0);
+const _: () = assert!(std::mem::offset_of!(Vertex, color) == 12);
 
 impl VertexDescription for Vertex {
     fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {

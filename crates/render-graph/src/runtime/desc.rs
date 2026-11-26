@@ -65,6 +65,17 @@ pub(crate) enum BufferKind {
     Storage,
 }
 
+impl BufferKind {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::GpuUpdatedFlight => "GpuUpdatedFlight",
+            Self::Singleton => "Singleton",
+            Self::Immutable => "Immutable",
+            Self::Storage => "Storage",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ImportDecl {
     pub(crate) name: String,

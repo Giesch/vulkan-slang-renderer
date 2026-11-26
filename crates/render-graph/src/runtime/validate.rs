@@ -1,6 +1,7 @@
 //! Pure validation for the plain-data graph description.
 
 use super::desc::*;
+use crate::error::OversizedTexture;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,12 +115,6 @@ pub(crate) enum GraphError {
         width: u32,
         height: u32,
     },
-    TextureExtentTooLarge {
-        texture: String,
-        width: u32,
-        height: u32,
-        max: u32,
-    },
     PipelineKindMismatch {
         command: String,
         expected: PipelineKind,
@@ -217,15 +212,6 @@ impl fmt::Display for GraphError {
                 width,
                 height,
             } => write!(f, "texture {texture} has a zero extent: {width}x{height}"),
-            Self::TextureExtentTooLarge {
-                texture,
-                width,
-                height,
-                max,
-            } => write!(
-                f,
-                "texture {texture} extent {width}x{height} exceeds the device maximum {max}"
-            ),
             Self::PipelineKindMismatch { command, expected } => write!(
                 f,
                 "{command} uses the wrong pipeline kind; expected {expected:?}"
@@ -301,17 +287,16 @@ fn tex_name(desc: &GraphDesc, tex: TexId) -> String {
 
 /// `max` is the device's `maxImageDimension2D`; device-dependent checks stay
 /// out of [`validate`].
-pub(crate) fn extent_limit_errors(textures: &[TexDecl], max: u32) -> Vec<GraphError> {
+pub(crate) fn extent_limit_errors(textures: &[TexDecl], max: u32) -> Vec<OversizedTexture> {
     let mut errors = vec![];
     for tex in textures {
         if let SizeClass::Fixed(width, height) = tex.size
             && (width > max || height > max)
         {
-            errors.push(GraphError::TextureExtentTooLarge {
+            errors.push(OversizedTexture {
                 texture: tex.name.clone(),
                 width,
                 height,
-                max,
             })
         }
     }
@@ -1455,11 +1440,10 @@ mod tests {
         assert!(extent_limit_errors(&builder.desc.textures, 8).is_empty());
         assert_eq!(
             extent_limit_errors(&builder.desc.textures, 4),
-            vec![GraphError::TextureExtentTooLarge {
+            vec![crate::error::OversizedTexture {
                 texture: "tex0".into(),
                 width: 8,
                 height: 8,
-                max: 4,
             }]
         );
     }

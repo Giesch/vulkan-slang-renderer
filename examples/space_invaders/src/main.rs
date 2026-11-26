@@ -1,4 +1,7 @@
 use std::cmp::Ordering;
+use std::path::Path;
+
+use eros::context;
 
 mod generated;
 
@@ -18,7 +21,7 @@ use mltrs::renderer::{
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::space_invaders::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     SpaceInvaders::run()
 }
 
@@ -63,11 +66,15 @@ impl Game for SpaceInvaders {
         )
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
-        let sprite_atlas = load_sprite_atlas()?;
+        let sprite_atlas = load_sprite_atlas(&manifest_path![
+            "textures",
+            "space_invaders",
+            "sprite_sheet.json"
+        ])?;
 
         let player_animation_frames = get_animation_frames(&sprite_atlas, "ship");
         assert!(!player_animation_frames.is_empty());
@@ -627,19 +634,23 @@ fn flag_enabled(sprite: &Sprite, flag: u32) -> bool {
     (sprite.flags & flag) == flag
 }
 
-fn load_texture(renderer: &mut Renderer, file_name: &str) -> anyhow::Result<TextureHandle> {
+#[context("Load texture {file_name}")]
+fn load_texture(renderer: &mut Renderer, file_name: &str) -> eros::Result<TextureHandle> {
     let asset_name = format!("space_invaders/{file_name}");
     let file_path = manifest_path!["textures", asset_name.as_str()];
 
-    load_ktx2_texture(renderer, &file_path, TextureFilter::Nearest)
+    Ok(load_ktx2_texture(
+        renderer,
+        &file_path,
+        TextureFilter::Nearest,
+    )?)
 }
 
 // Aseprite integration
 
-fn load_sprite_atlas() -> anyhow::Result<SpriteAtlas> {
-    let sprite_atlas_path = manifest_path!["textures", "space_invaders", "sprite_sheet.json"];
-
-    let sprite_atlas_json = std::fs::read_to_string(&sprite_atlas_path)?;
+#[context("Load sprite atlas {}", path.display())]
+fn load_sprite_atlas(path: &Path) -> eros::Result<SpriteAtlas> {
+    let sprite_atlas_json = std::fs::read_to_string(path)?;
     let sprite_atlas: SpriteAtlas = serde_json::from_str(&sprite_atlas_json)?;
 
     Ok(sprite_atlas)

@@ -17,7 +17,7 @@ use serde::Serialize;
 pub use {{ import.use_path() }};
 {% endfor -%}
 #[allow(unused_imports)]
-use {{ import_root }}::renderer::gpu_read::GPURead;
+use {{ import_root }}::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 use {{ import_root }}::renderer::render_graph::GPUWrite;
 use {{ import_root }}::renderer::*;
 use {{ import_root }}::shaders::atlas::{ComputeShaderAtlasEntry, PrecompiledShader};

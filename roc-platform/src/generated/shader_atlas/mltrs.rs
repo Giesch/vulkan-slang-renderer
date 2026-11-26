@@ -5,6 +5,8 @@
 use serde::Serialize;
 
 #[allow(unused_imports)]
+use mltrs::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
+#[allow(unused_imports)]
 use mltrs::renderer::render_graph::GPUWrite;
 use mltrs::renderer::render_graph::*;
 
@@ -27,6 +29,26 @@ const _: () = assert!(std::mem::offset_of!(MVPMatrices, view) == 64);
 const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
 const _: () = assert!(std::mem::offset_of!(MVPMatrices, proj) == 128);
 const _: () = assert!(std::mem::size_of::<glam::Mat4>() == 64);
+
+impl GPURead for MVPMatrices {
+    const GPU_SIZE: usize = 192;
+
+    fn read_gpu(bytes: &[u8]) -> eros::Result<Self, GpuReadErrors> {
+        if bytes.len() != Self::GPU_SIZE {
+            return eros::IntoUnion::union(Err(GpuByteLengthMismatch {
+                type_name: "MVPMatrices",
+                expected: Self::GPU_SIZE,
+                actual: bytes.len(),
+            }));
+        }
+
+        Ok(Self {
+            model: GPURead::read_gpu(&bytes[0..64])?,
+            view: GPURead::read_gpu(&bytes[64..128])?,
+            proj: GPURead::read_gpu(&bytes[128..192])?,
+        })
+    }
+}
 
 /// Complete graph inputs before resource references resolve to GPU values.
 #[derive(Debug, Clone, Copy)]

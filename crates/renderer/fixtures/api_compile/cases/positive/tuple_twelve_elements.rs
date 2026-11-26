@@ -104,7 +104,8 @@ fn execute(
             SimParamsData { delta_time: 0.016 },
             SimParamsData { delta_time: 0.016 },
         ),
-    )
+    )?;
+    Ok(())
 }
 
 fn main() {}

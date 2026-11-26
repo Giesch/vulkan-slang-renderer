@@ -8,12 +8,18 @@
 pub mod bck;
 pub mod btk;
 pub mod btp;
+pub mod error;
 pub mod output;
 pub mod tracks;
 
-use anyhow::{Result, anyhow, bail};
+use eros::{IntoUnion, ReshapeUnion};
 
 use gx::animation_manifest::{AnimationClip, AnimationFormat, ClipData, ClipIdentity};
+
+use error::{
+    AnimationParseErrors, FourCcMismatch, HeaderErrors, InvalidJ3dHeader, KeyDataOutOfPool,
+    OutOfBounds, PoolErrors, RangeOverflow, ReadErrors,
+};
 
 /// The J3D1 file header of a single-chunk animation file.
 pub struct ChunkHeader {
@@ -27,57 +33,55 @@ pub struct ChunkHeader {
 /// the chunk 4CC at 0x20.
 pub fn j3d_single_chunk(
     data: &[u8],
-    what: &str,
-    expected_type: &str,
+    expected_type: &[u8; 4],
     expected_chunk: &[u8; 4],
-) -> Result<ChunkHeader> {
+) -> eros::Result<ChunkHeader, HeaderErrors> {
     if data.len() < 0x28 {
-        bail!(
-            "{what}: {} bytes is smaller than a J3D1 header + chunk tag",
-            data.len()
-        );
+        return Err(InvalidJ3dHeader::TooShort { len: data.len() }).union();
     }
-    if &data[0..4] != b"J3D1" {
-        bail!("{what}: bad magic {:?}, expected J3D1", &data[0..4]);
-    }
-    let file_type = &data[4..8];
-    if file_type != expected_type.as_bytes() {
-        bail!(
-            "{what}: file type {:?} does not match {expected_type:?}",
-            file_type
-        );
-    }
-    let length = u32_at(data, 8, "file length")? as usize;
+    let fourcc = |off: usize| -> [u8; 4] { data[off..off + 4].try_into().expect("4 bytes") };
+    let check = |field: &'static str, off: usize, expected: &[u8; 4]| {
+        let found = fourcc(off);
+        if &found == expected {
+            Ok(())
+        } else {
+            Err(FourCcMismatch {
+                field,
+                found,
+                expected: *expected,
+            })
+            .union()
+        }
+    };
+    check("magic", 0, b"J3D1")?;
+    check("file type", 4, expected_type)?;
+    let length = u32_at(data, 8, "file length").widen()? as usize;
     if length != data.len() {
-        bail!(
-            "{what}: header claims {length} bytes but file is {}",
-            data.len()
-        );
+        return Err(InvalidJ3dHeader::FileLength {
+            declared: length,
+            actual: data.len(),
+        })
+        .union();
     }
-    let nchunks = u32_at(data, 0xC, "chunk count")?;
+    let nchunks = u32_at(data, 0xC, "chunk count").widen()?;
     if nchunks != 1 {
-        bail!("{what}: expected exactly 1 chunk, found {nchunks}");
+        return Err(InvalidJ3dHeader::ChunkCount { found: nchunks }).union();
     }
-    if &data[0x20..0x24] != expected_chunk {
-        bail!(
-            "{what}: chunk {:?} does not match {:?}",
-            &data[0x20..0x24],
-            expected_chunk
-        );
-    }
-    let chunk_size = u32_at(data, 0x24, "chunk size")? as u64;
+    check("chunk", 0x20, expected_chunk)?;
+    let chunk_size = u32_at(data, 0x24, "chunk size").widen()? as u64;
     if chunk_size < 0x18 {
-        bail!("{what}: chunk size {chunk_size} is smaller than its own header");
+        return Err(InvalidJ3dHeader::ChunkTooSmall { size: chunk_size }).union();
     }
     // u64 arithmetic: a hostile 0xFFFFFFFF size word must not wrap on 32-bit
     // hosts before the bound is applied.
     let chunk_end = 0x20u64 + chunk_size;
     if chunk_end > data.len() as u64 + 0x20 {
-        bail!(
-            "{what}: chunk claims {chunk_size} bytes, ending {} bytes past the {}-byte file",
-            chunk_end - data.len() as u64,
-            data.len()
-        );
+        return Err(InvalidJ3dHeader::ChunkOverrun {
+            size: chunk_size,
+            past: chunk_end - data.len() as u64,
+            file_len: data.len(),
+        })
+        .union();
     }
     Ok(ChunkHeader {
         chunk_size: chunk_size as usize,
@@ -99,37 +103,51 @@ pub fn pool<'a>(
     off: usize,
     len: usize,
     what: &str,
-    clip: &str,
-) -> Result<&'a [u8]> {
-    let end = off
-        .checked_add(len)
-        .ok_or_else(|| anyhow!("{clip}: {what} range {off:#x}+{len} overflows"))?;
-    chunk.get(off..end).ok_or_else(|| {
-        anyhow!(
-            "{clip}: {what} at {off:#x} spans {len} bytes, past the {:#x}-byte chunk",
-            chunk.len()
-        )
-    })
+) -> eros::Result<&'a [u8], PoolErrors> {
+    let Some(end) = off.checked_add(len) else {
+        return Err(RangeOverflow {
+            what: what.to_string(),
+        })
+        .union();
+    };
+    chunk
+        .get(off..end)
+        .ok_or_else(|| out_of_bounds(chunk, off, len, what))
+        .union()
 }
 
-pub fn u8_at(data: &[u8], off: usize, what: &str) -> Result<u8> {
-    data.get(off)
-        .copied()
-        .ok_or_else(|| anyhow!("{what}: byte at {off:#x} out of bounds"))
+/// The [`OutOfBounds`] error for reading `len` bytes at `off` in `data`.
+pub fn out_of_bounds(data: &[u8], off: usize, len: usize, what: &str) -> OutOfBounds {
+    OutOfBounds {
+        what: what.to_string(),
+        offset: off,
+        len,
+        available: data.len(),
+    }
 }
 
-pub fn u16_at(data: &[u8], off: usize, what: &str) -> Result<u16> {
-    let b = data
-        .get(off..off + 2)
-        .ok_or_else(|| anyhow!("{what}: u16 at {off:#x} out of bounds"))?;
-    Ok(u16::from_be_bytes([b[0], b[1]]))
+fn bytes_at<const N: usize>(
+    data: &[u8],
+    off: usize,
+    what: &str,
+) -> eros::Result<[u8; N], ReadErrors> {
+    let bytes = off
+        .checked_add(N)
+        .and_then(|end| data.get(off..end))
+        .ok_or_else(|| out_of_bounds(data, off, N, what))?;
+    Ok(bytes.try_into().expect("N bytes"))
 }
 
-pub fn u32_at(data: &[u8], off: usize, what: &str) -> Result<u32> {
-    let b = data
-        .get(off..off + 4)
-        .ok_or_else(|| anyhow!("{what}: u32 at {off:#x} out of bounds"))?;
-    Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+pub fn u8_at(data: &[u8], off: usize, what: &str) -> eros::Result<u8, ReadErrors> {
+    bytes_at::<1>(data, off, what).map(|[b]| b)
+}
+
+pub fn u16_at(data: &[u8], off: usize, what: &str) -> eros::Result<u16, ReadErrors> {
+    bytes_at(data, off, what).map(u16::from_be_bytes)
+}
+
+pub fn u32_at(data: &[u8], off: usize, what: &str) -> eros::Result<u32, ReadErrors> {
+    bytes_at(data, off, what).map(u32::from_be_bytes)
 }
 
 /// Reachability check for one key descriptor against its pool (in words):
@@ -137,32 +155,35 @@ pub fn u32_at(data: &[u8], off: usize, what: &str) -> Result<u32> {
 pub fn check_descriptor(
     desc: tracks::KeyDescriptor,
     pool_words: usize,
-    elem: usize,
     what: &str,
-) -> Result<()> {
+) -> eros::Result<(), (KeyDataOutOfPool,)> {
     let stride = if desc.tangent_type == 0 { 3 } else { 4 };
     let words_needed = match desc.count {
         0 => return Ok(()),
         1 => 1,
         n => n as usize * stride,
     };
-    let _ = elem;
-    let end = desc.index as usize + words_needed;
+    let start = desc.index as usize;
+    let end = start + words_needed;
     if end > pool_words {
-        bail!(
-            "{what}: key data {index}..{end} exceeds the {pool_words}-word pool",
-            index = desc.index
-        );
+        return Err(KeyDataOutOfPool {
+            what: what.to_string(),
+            start,
+            end,
+            pool_words,
+        })
+        .union();
     }
     Ok(())
 }
 
 /// Parse one decompressed raw clip by format tag into a schema document.
+/// The per-format parser attaches the `archive/member` name as context.
 pub fn parse_clip(
     format: AnimationFormat,
     data: &[u8],
     identity: ClipIdentity,
-) -> Result<AnimationClip> {
+) -> eros::Result<AnimationClip, AnimationParseErrors> {
     let what = format!("{}/{}", identity.archive, identity.member);
     let data_result = match format {
         AnimationFormat::Bck => ClipData::Bck(bck::parse(data, &what)?),
@@ -212,6 +233,38 @@ mod tests {
         bad[0x20 + 0x14..0x20 + 0x18].copy_from_slice(&0xFFFFu32.to_be_bytes());
         assert!(btp::parse(&bad, "m.btp").is_err());
         // Every error is an error value; nothing above panics.
+    }
+
+    #[test]
+    fn errors_are_typed_and_carry_clip_context() {
+        let mut bad = super::bck::fixtures::build_bck();
+        bad[0x20..0x24].copy_from_slice(b"TPT1");
+        let identity = ClipIdentity {
+            archive: "LkAnm".into(),
+            member: "bcks/x.bck".into(),
+            entry_index: 0,
+            resource_id: 0,
+            sha256: String::new(),
+        };
+        let err = parse_clip(AnimationFormat::Bck, &bad, identity).unwrap_err();
+        // Display is the specific root error; Debug adds the clip context.
+        assert_eq!(
+            err.to_string(),
+            "chunk \"TPT1\" does not match expected \"ANK1\""
+        );
+        let report = format!("{err:#?}");
+        assert!(report.contains("Parse BCK LkAnm/bcks/x.bck"), "{report}");
+        let mismatch = err.narrow::<FourCcMismatch, _>().expect("FourCcMismatch");
+        assert_eq!(mismatch.field, "chunk");
+        assert_eq!(&mismatch.found, b"TPT1");
+
+        // A truncated file is a structural header error, not a 4CC one.
+        let short = super::btp::fixtures::build_btp();
+        let err = super::btp::parse(&short[..0x10], "m.btp").unwrap_err();
+        assert!(matches!(
+            err.narrow::<InvalidJ3dHeader, _>(),
+            Ok(InvalidJ3dHeader::TooShort { len: 0x10 })
+        ));
     }
 
     #[test]

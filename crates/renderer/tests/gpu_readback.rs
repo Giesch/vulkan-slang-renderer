@@ -24,7 +24,7 @@ fn generated_readback_executes_on_vulkan() {
     std::fs::write(
         temporary.join("Cargo.toml"),
         format!(
-            "[package]\nname = \"gpu-readback-check\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n[dependencies]\nmltrs-renderer = {{ path = {:?} }}\nfacet = {{ version = \"0.42\", features = [\"reflect\"] }}\nanyhow = \"1\"\nash = \"0.38\"\nglam = {{ version = \"0.33\", features = [\"serde\"] }}\nserde = {{ version = \"1\", features = [\"derive\"] }}\nserde_json = \"1\"\nsdl3 = {{ version = \"0.14.29\", features = [\"ash\", \"build-from-source-static\"] }}\npretty_env_logger = \"0.5\"\n[profile.dev.package.\"*\"]\nopt-level = 3\n",
+            "[package]\nname = \"gpu-readback-check\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n[dependencies]\nmltrs-renderer = {{ path = {:?} }}\nfacet = {{ version = \"0.42\", features = [\"reflect\"] }}\neros = \"0.9.0-rc.0\"\nash = \"0.38\"\nglam = {{ version = \"0.33\", features = [\"serde\"] }}\nserde = {{ version = \"1\", features = [\"derive\"] }}\nserde_json = \"1\"\nsdl3 = {{ version = \"0.14.29\", features = [\"ash\", \"build-from-source-static\"] }}\npretty_env_logger = \"0.5\"\n[profile.dev.package.\"*\"]\nopt-level = 3\n",
             renderer
         ),
     )

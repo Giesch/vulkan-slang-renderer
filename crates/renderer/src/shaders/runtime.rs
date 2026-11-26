@@ -4,6 +4,7 @@
 use std::ffi::CString;
 
 use ash::vk;
+use eros::{IntoUnion, ReshapeUnion};
 
 use crate::renderer::LayoutDescription;
 
@@ -12,6 +13,24 @@ use super::json::{
     ReflectedPipelineLayout, ReflectionJson, VertexFormat, VertexLayout,
     layout_bindings_from_pipeline_layout, vertex_layout,
 };
+
+/// A precompiled shader stage could not be decoded.
+#[derive(Debug, thiserror::Error)]
+#[error("{stage} SPIR-V is not a valid module: {source}")]
+pub struct InvalidSpirv {
+    pub stage: &'static str,
+    #[source]
+    pub source: std::io::Error,
+}
+
+/// Failures decoding runtime shader reflection and stage modules.
+pub type RuntimeShaderErrors = (
+    serde_json::Error,
+    super::json::MultipleVertexStructParameters,
+    super::json::NonVectorVertexField,
+    super::json::UnsupportedVertexFormat,
+    InvalidSpirv,
+);
 
 pub struct RuntimeShader {
     reflection: ReflectionJson,
@@ -28,13 +47,13 @@ impl RuntimeShader {
         reflection_json: &str,
         vertex_spv: &[u8],
         fragment_spv: &[u8],
-    ) -> anyhow::Result<Self> {
-        let reflection: ReflectionJson = serde_json::from_str(reflection_json)?;
-        let vertex_layout = vertex_layout(&reflection.vertex_entry_point)?;
+    ) -> eros::Result<Self, RuntimeShaderErrors> {
+        let reflection: ReflectionJson = serde_json::from_str(reflection_json).union()?;
+        let vertex_layout = vertex_layout(&reflection.vertex_entry_point).widen()?;
 
         Ok(Self {
-            vertex_spv: read_spv(vertex_spv, "vertex")?,
-            fragment_spv: read_spv(fragment_spv, "fragment")?,
+            vertex_spv: read_spv(vertex_spv, "vertex").widen()?,
+            fragment_spv: read_spv(fragment_spv, "fragment").widen()?,
             vertex_layout,
             reflection,
         })
@@ -47,10 +66,12 @@ impl RuntimeShader {
     }
 }
 
-fn read_spv(bytes: &[u8], stage: &str) -> anyhow::Result<Vec<u32>> {
+fn read_spv(bytes: &[u8], stage: &'static str) -> eros::Result<Vec<u32>, (InvalidSpirv,)> {
     let mut cursor = std::io::Cursor::new(bytes);
+
     ash::util::read_spv(&mut cursor)
-        .map_err(|err| anyhow::anyhow!("{stage} SPIR-V is not a valid module: {err}"))
+        .map_err(|source| InvalidSpirv { stage, source })
+        .union()
 }
 
 fn vk_format(format: VertexFormat) -> vk::Format {

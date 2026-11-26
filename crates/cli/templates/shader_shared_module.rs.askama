@@ -13,7 +13,7 @@ use serde::Serialize;
 use {{ import.use_path() }};
 {% endfor -%}
 #[allow(unused_imports)]
-use {{ import_root }}::renderer::gpu_read::GPURead;
+use {{ import_root }}::renderer::gpu_read::{GPURead, GpuByteLengthMismatch, GpuReadErrors, InvalidGpuEnumTag};
 {# a module holding only enums has no GPUWrite impl to emit -#}
 #[allow(unused_imports)]
 use {{ import_root }}::renderer::render_graph::GPUWrite;

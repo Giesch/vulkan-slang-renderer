@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use anyhow::Context;
+use eros::context;
 use glam::{Mat4, UVec4, Vec4};
 use gx::model_manifest::Manifest;
 use mltrs::renderer::{
@@ -47,11 +47,11 @@ pub struct SkinningAddrs {
 impl SkinningBuffers {
     /// Validate and upload the model's skin, and allocate the palette with
     /// every flight slot at the identity (bind pose).
-    pub fn new(renderer: &mut Renderer, dir: &Path, manifest: &Manifest) -> anyhow::Result<Self> {
+    pub fn new(renderer: &mut Renderer, dir: &Path, manifest: &Manifest) -> eros::Result<Self> {
         let skins = match load_skin(dir, manifest) {
             Ok(skins) => skins,
             Err(error) => {
-                let reason = format!("{error:#}");
+                let reason = format!("{error:#?}");
                 eprintln!("toon_link: animation disabled, rendering the static model: {reason}");
                 return Self::with_records(renderer, &rest_records(manifest), 1, Some(reason));
             }
@@ -70,7 +70,7 @@ impl SkinningBuffers {
         records: &[VertexSkinning],
         joint_count: usize,
         static_reason: Option<String>,
-    ) -> anyhow::Result<Self> {
+    ) -> eros::Result<Self> {
         let skinning = renderer.create_singleton_buffer(records)?;
         let identity = vec![
             SkinJoint {
@@ -131,11 +131,11 @@ impl SkinningBuffers {
     }
 }
 
-fn load_skin(dir: &Path, manifest: &Manifest) -> anyhow::Result<Vec<VertexSkin>> {
-    let path = dir.join(&manifest.buffers.skinning);
-    let bytes = std::fs::read(&path).with_context(|| path.display().to_string())?;
+#[context("Load vertex skin {}", dir.join(&manifest.buffers.skinning).display())]
+fn load_skin(dir: &Path, manifest: &Manifest) -> eros::Result<Vec<VertexSkin>> {
+    let bytes = std::fs::read(dir.join(&manifest.buffers.skinning))?;
 
-    validate_model_skin(manifest, &bytes).with_context(|| path.display().to_string())
+    validate_model_skin(manifest, &bytes)
 }
 
 /// The validated influences as the shader's std430 record.

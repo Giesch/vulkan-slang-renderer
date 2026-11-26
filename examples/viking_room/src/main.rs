@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use eros::Context;
+
 mod generated;
 
 use std::time::{Duration, Instant};
@@ -18,7 +20,7 @@ use mltrs::renderer::{
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::depth_texture::*;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> eros::Result<()> {
     VikingRoom::run()
 }
 
@@ -37,12 +39,13 @@ pub struct VikingRoom {
 impl VikingRoom {
     // From unknownue's rust version of the vulkan tutorial
     // https://github.com/unknownue/vulkan-tutorial-rust/blob/master/src/tutorials/27_model_loading.rs
-    fn load_vertices() -> anyhow::Result<(Vec<Vertex>, Vec<u32>)> {
+    fn load_vertices() -> eros::Result<(Vec<Vertex>, Vec<u32>)> {
         let file_path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "models", "viking_room.obj"]
             .iter()
             .collect();
 
-        let (mut models, _materials) = tobj::load_obj(file_path, &tobj::GPU_LOAD_OPTIONS)?;
+        let (mut models, _materials) = tobj::load_obj(&file_path, &tobj::GPU_LOAD_OPTIONS)
+            .with_context(|| format!("Load OBJ model {}", file_path.display()))?;
 
         debug_assert!(models.len() == 1);
         let model = models.remove(0);
@@ -90,7 +93,7 @@ impl Game for VikingRoom {
         "Viking Room"
     }
 
-    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self>
+    fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> eros::Result<Self>
     where
         Self: Sized,
     {
@@ -139,7 +142,9 @@ impl Game for VikingRoom {
         let mvp = make_mvp_matrices(elapsed, aspect_ratio);
         let params = DepthTextureParamsData { mvp };
 
-        self.graph.execute(renderer, &params)
+        self.graph.execute(renderer, &params)?;
+
+        Ok(())
     }
 }
 

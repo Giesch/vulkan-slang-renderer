@@ -6,6 +6,9 @@ Last verified: 2026-09-19
 
 - **`docs/`** — current reference material, kept up to date. Trust it, and update
   it when you change what it describes.
+- **[`docs/error_handling.md`](docs/error_handling.md)**: the eros
+  conventions. When to use typed sets and when AnyError, `#[context]`
+  placement and gotchas, and why context only shows in `{:#?}`.
 - **[`docs/toon_link.md`](docs/toon_link.md)** — Toon Link's independent GameCube
   and Modern rendering modes, controls, color policy, BCK skeletal animation
   playback, verification boundary, and hot-reload limitation.

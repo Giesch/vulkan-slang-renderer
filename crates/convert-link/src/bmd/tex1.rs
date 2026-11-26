@@ -6,9 +6,14 @@
 
 use std::path::Path;
 
+use eros::{Context, IntoUnion, context};
+
 use crate::be::BeReader;
 use crate::bmd::{BmdError, read_name_table};
 use crate::bti::{self, BtiTexture};
+
+/// Failures of [`emit`]: decoding a texture, encoding its PNG, or writing.
+pub type Tex1EmitErrors = (BmdError, image::ImageError, std::io::Error);
 
 #[derive(Debug)]
 pub struct Tex1<'a> {
@@ -51,18 +56,20 @@ pub fn parse(chunk: &[u8]) -> Result<Tex1<'_>, BmdError> {
 /// Emits `NN_<name>.png` (decoded) and `NN_<name>.bti` (standalone re-emit,
 /// GX bytes verbatim) for every entry. Names repeat in cl.bdl, so filenames
 /// are always index-prefixed.
-pub fn emit(tex1: &Tex1, tex_dir: &Path) -> anyhow::Result<()> {
-    use anyhow::Context;
-    std::fs::create_dir_all(tex_dir)?;
+#[context("emit TEX1 textures to {}", tex_dir.display())]
+pub fn emit(tex1: &Tex1, tex_dir: &Path) -> eros::Result<(), Tex1EmitErrors> {
+    std::fs::create_dir_all(tex_dir).union()?;
     for (i, entry) in tex1.entries.iter().enumerate() {
         let stem = format!("{i:02}_{}", entry.name);
         let png_path = tex_dir.join(format!("{stem}.png"));
-        let image = bti::decode(&entry.texture, &entry.name)?;
+        let image = bti::decode(&entry.texture, &entry.name).union()?;
         image
             .save(&png_path)
+            .union()
             .with_context(|| format!("writing {}", png_path.display()))?;
         let bti_path = tex_dir.join(format!("{stem}.bti"));
         std::fs::write(&bti_path, bti::write_standalone(&entry.texture))
+            .union()
             .with_context(|| format!("writing {}", bti_path.display()))?;
     }
     Ok(())

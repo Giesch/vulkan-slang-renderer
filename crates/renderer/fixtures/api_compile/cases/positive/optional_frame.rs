@@ -35,7 +35,8 @@ fn execute(
             position: Vec2::ZERO,
             velocity: Vec2::ZERO,
         }]),
-    )
+    )?;
+    Ok(())
 }
 
 fn main() {}
