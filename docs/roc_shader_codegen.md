@@ -254,7 +254,9 @@ column `i`).
 
 The separate `roc-platform` host still renders its Rust-owned shader and uses
 Rust bindings under `src/generated/`. The resource planner and render graph
-that consume `shader`, `UniformSpec`, and `BlockSchema` come later. Roc
+that consume `shader`, `UniformSpec`, and `BlockSchema` are described in
+[`roc_render_graph.md`](roc_render_graph.md); the host does not consume them
+yet. Roc
 codegen does not change runtime shader selection, hot reload, or
 platform/compiler pins.
 

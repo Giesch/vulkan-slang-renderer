@@ -165,7 +165,10 @@ selected compiler path/version, generates fresh fixtures, checks and formats
 every generated module through Roc, and evaluates imported SPIR-V bytes,
 reflection values, GPU byte packers, and block schemas from consumers. It also
 runs missing-file and false-byte negative controls, plus typecheck failures for
-mismatched uniform records, shader kinds, and binding pointee types. `ROC` defaults to `roc` on `PATH`; a missing or incompatible
+mismatched uniform records, shader kinds, and binding pointee types. It then
+runs `just roc-platform roc-test` and builds render graphs from the generated
+modules, with typecheck failures for render graph misuse (see
+[`roc_render_graph.md`](roc_render_graph.md)). `ROC` defaults to `roc` on `PATH`; a missing or incompatible
 compiler is a failure, not a skip. Generation itself never invokes Roc. Roc
 shader codegen was verified locally with `release-fast-42fbc4b0` and, after
 changing test app headers to relative platform paths, `release-fast-89d9ea97`.

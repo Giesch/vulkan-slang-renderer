@@ -164,7 +164,7 @@ renderdoc-view example="basic_triangle":
     qrenderdoc "$(ls -t "${captures[@]}" | head -n 1)"
 
 
-# run the real-Roc shader-codegen gate; excluded from test, run by pre-commit when `roc` is on PATH
+# run the real-Roc shader-codegen and platform render graph gates; excluded from test, run by pre-commit when `roc` is on PATH
 [unix]
 roc-codegen-test roc="roc":
     #!/usr/bin/env bash
@@ -180,6 +180,7 @@ roc-codegen-test roc="roc":
     ln -s "$selected" "$shim_dir/roc"
     PATH="$shim_dir:$PATH" cargo test -p mltrs-cli --test roc_codegen -- --ignored --nocapture
     PATH="$shim_dir:$PATH" cargo test -p mltrs-cli --lib emitted_all_variant_reflection_passes_real_roc -- --ignored --nocapture
+    PATH="$shim_dir:$PATH" {{just_executable()}} roc-platform roc-test
 
 # run the real-Roc gate when `roc` is on PATH; skip with a message otherwise
 [unix]
