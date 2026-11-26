@@ -18,8 +18,8 @@ Last verified: 2026-09-19
   public API and logical-value mapping, managed paths, safety boundaries, and
   compiler-independent versus real-Roc verification.
 - **[`docs/roc_render_graph.md`](docs/roc_render_graph.md)** — the pure-Roc
-  resource planner, render graph nodes, lowering, validation, and the
-  `HostGraph`/`Draw` wire form the platform host will consume.
+  resource planner, render graph nodes, lowering, validation, the
+  `HostGraph`/`Draw` wire form, and how the platform host executes it.
 - **`llm_notes/`** — historical plans and phase records, written before or during
   a piece of work. **Treat as possibly out of date**: much of it is a snapshot of
   what was believed at the time, some of it was superseded by the work it
@@ -111,8 +111,9 @@ cat examples/EXAMPLE/shaders/compiled/EXAMPLE.json | jq '.' # inspect reflection
 **Hot reload** is a runtime renderer setting, not a build-profile gate:
 `RendererConfig::shader_hot_reload`, which `Game::shader_hot_reload()` defaults
 to `cfg!(debug_assertions)`; `VKR_SHADER_HOT_RELOAD=1`/`=0` overrides it in any
-build. When on, the renderer watches the atlas's `SHADERS_SOURCE_DIR`,
-recompiles edited `.slang` sources, and swaps the rebuilt pipelines; a reload
+build. When on, the renderer watches `Game::shaders_source_dir()` (the
+atlas's `SHADERS_SOURCE_DIR` unless overridden, as the Roc host does with the
+dir its app supplies), recompiles edited `.slang` sources, and swaps the rebuilt pipelines; a reload
 that changes the reflected interface panics and asks for `just shaders` plus a
 rebuild. When off (or the source dir is empty), pipelines load the precompiled
 SPIR-V without invoking slang.
@@ -144,9 +145,10 @@ reflection JSON, and module-owned Roc types, GPU byte packers, render-graph
 block schemas (`*Data` / `*Bindings` splits), shader descriptors, and typed
 reflection in the tool-owned `Generated/` directory, rooted at
 `Generated/ShaderAtlas.roc`. Use `--language rust|roc` when both or neither
-project marker exists. Handles and addresses carry no GPU validity, and nothing
-renders from Roc yet; the separate `roc-platform` host continues to consume its
-generated Rust bindings. Generated Roc modules import
+project marker exists. Handles and addresses carry no GPU validity; a Roc app
+renders by building `ResourcePlanner` + `RenderGraph` graphs from those modules
+and handing them to `Game.new`, which the `roc-platform` host executes (see
+`docs/roc_render_graph.md`). Generated Roc modules import
 `pf.ShaderReflection` from `roc-platform/platform/`, so the app header must bind
 the platform as `pf`. Keep separate `--compiled-dir` values when retaining both
 Rust and Roc artifacts, because successful generation replaces managed output

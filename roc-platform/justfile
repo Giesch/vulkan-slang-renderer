@@ -18,11 +18,11 @@ exe example="basic-triangle": build
 test:
     bash ci/all_tests.sh
 
-# format-check, check, and test the platform's Roc modules and render graph tests
+# format-check the Roc sources, then check and test the platform modules and render graph tests
 roc-test:
     #!/usr/bin/env bash
     set -euo pipefail
-    roc fmt --check platform platform-tests
+    roc fmt --check platform platform-tests examples
     for module in platform/*.roc; do roc check "$module"; done
     for module in RasterState RenderGraphValidate; do roc test "platform/$module.roc"; done
     roc check --main=platform-tests/main.roc platform-tests/RenderGraphTests.roc

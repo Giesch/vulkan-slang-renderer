@@ -1,8 +1,9 @@
 # mltrs Roc platform
 
 A [Roc](https://www.roc-lang.org/) platform that renders with the mltrs
-renderer. A Roc app supplies a window title. The host opens the window and
-draws the basic triangle.
+renderer. A Roc app declares its GPU resources and render graphs in pure Roc
+and picks a graph and its values each frame. The host opens the window,
+creates the resources, and executes the graphs.
 
 The host ABI boilerplate, `build.sh`, and the platform module layout come from
 [roc-platform-template-rust](https://github.com/lukewilliamboswell/roc-platform-template-rust).
@@ -36,67 +37,89 @@ came from.
 
 ## Platform API
 
-An app provides a `game` record and gets a window:
+An app provides a `game`, built by `Game.new` from an `init!`, a set of
+validated render graphs, and a `draw` function:
 
 ```roc
 app [game] { pf: platform "../../platform/main.roc" }
 
 import pf.Game
+import pf.GraphSet
+import pf.RasterState
+import pf.RenderGraph
+import pf.ResourcePlanner
 
-game = {
-	init!,
-}
+import Generated/BasicTriangle
+import Generated/ShaderAtlas
+
+game = Game.new({ init!, graphs: graph, draw })
 
 init! : {} => Game.Init
-init! = |_| { window_title: "Basic Triangle from Roc!" }
+init! = |_| {
+	window_title: "Basic Triangle from Roc!",
+	shader_hot_reload: Bool.False,
+	shaders_source_dir: ShaderAtlas.shaders_source_dir,
+}
+
+draw : Game.Frame -> GraphSet.Submission(_)
+draw = |frame| graph.draw({ mvp: mvp_with_aspect_ratio(frame.aspect_ratio) })
+
+(planner1, vertices) = ResourcePlanner.singleton_buffer(ResourcePlanner.empty, "vertices", BasicTriangle.Vertex.packer, triangle)
+(planner2, indices) = ResourcePlanner.index_buffer(planner1, "indices", [0, 1, 2], 3)
+(planner3, params) = ResourcePlanner.uniform_buffer(planner2, "params", BasicTriangle.params)
+(planner4, pipeline) = ResourcePlanner.graphics_pipeline(planner3, { name: "basic_triangle", shader: BasicTriangle.shader, uniforms: { params: params }, raster: RasterState.default })
+
+node = RenderGraph.draw_indexed(pipeline, indices, params, { vertices: vertices.addr() })
+
+Ok(graph) = RenderGraph.new(planner4, node).map_ok(GraphSet.single)
 ```
 
-The host calls `init!` once, before it creates the window. `Stdout`, `Stderr`,
-and `Stdin` are also exposed. `ShaderReflection` exposes the shader reflection
-schema and the logical shader value types that generated Roc shader modules
-import as `pf.ShaderReflection`.
+`examples/basic-triangle/main.roc` is the full app. A graph that fails
+validation fails `roc check` at its top-level `Ok` destructure, so an invalid
+graph never reaches the host.
 
-`platform/InitConfig.roc` names both halves of that boundary:
+- `init!` runs once, before the host opens the window. `Game.Init` carries
+  the window title and the shader hot reload settings;
+  `Game.Init.titled(title)` leaves hot reload off.
+- `draw` runs every frame with `Game.Frame`: `aspect_ratio` (width over
+  height) and `elapsed` (seconds since startup).
+- `shader_hot_reload: Bool.True` makes the release host recompile the app's
+  slang sources from `shaders_source_dir` when they change and swap the
+  rebuilt pipelines. `VKR_SHADER_HOT_RELOAD=1`/`=0` overrides it at launch. A
+  relative dir resolves against the working directory, then the executable's
+  directory; a dir found in neither leaves hot reload off.
 
-- `InitConfig.Init` — the alias for the record an app returns. `requires` uses
-  it, so the shape has one definition. Aliases are structural, so an app
-  writes the record literally and never imports anything.
-- `InitConfig` — the nominal type `init_for_host!` wraps that record in before
-  the host reads it, so the generated glue names the Rust type. An anonymous
-  record reaches Rust as a structural hash (`AnonStruct2fe7803feeace153`), and
-  every field added to it renames the Rust type.
+[`../docs/roc_render_graph.md`](../docs/roc_render_graph.md) documents the
+resource planner, the nodes, validation, the `HostGraph` wire form, and how
+the host executes it. `Stdout` and `Stderr` are also exposed.
+`ShaderReflection` exposes the reflection schema and the logical shader value
+types that generated Roc shader modules import as `pf.ShaderReflection`.
 
-The module stays out of `exposes`. An app never names it.
+`mltrs shaders compile` generates an app's Roc shader modules when a project
+has `main.roc` (or passes `--language roc`): a tool-owned
+`Generated/ShaderAtlas.roc` tree with typed shader descriptors, block schemas,
+GPU byte packers, and reflection, importing SPIR-V from `shaders/compiled/`.
+The host has no shaders of its own; it builds every pipeline from the SPIR-V
+and reflection JSON a graph carries.
 
-Roc requires a module's top-level to be a nominal type, so `Init` is an
-associated alias of `InitConfig` rather than its own module, and it is spelled
-`InitConfig.Init` at every use.
-
-What the window draws is fixed: `src/game.rs` holds the basic triangle, ported
-from `examples/basic_triangle`. Roc controls the title and nothing else.
-
-`mltrs shaders compile` can separately generate app-side Roc shader data when a
-project has `main.roc` (or passes `--language roc`). It writes a tool-owned
-`Generated/ShaderAtlas.roc` tree with typed logical values/reflection, imports
-SPIR-V from `shaders/compiled/`, and imports `pf.ShaderReflection` from this
-platform. That codegen capability does not change this
-platform ABI or host: `src/game.rs` still consumes the Rust bindings under
-`src/generated/`, and generated Roc handles/addresses/resources have no GPU
-validity, ownership, lookup, dereference, upload, or memory-layout guarantee.
+The host-facing types (`Game.Init`, `Game.HostConfig`, `Game.Frame`,
+`GraphSet.Draw`, and everything a `HostGraph` holds) are nominal, so the
+generated glue gives each a stable Rust name. An anonymous record reaches Rust
+as a structural hash, and every field added to it renames the Rust type.
 
 ## Usage
 
 ```bash
 just roc-platform build                      # build the host archive
-just roc-platform run                        # run examples/basic-triangle/main.roc
+just roc-platform run                        # run examples/basic-triangle/main.roc from its directory
 just roc-platform exe                        # build a standalone executable
-just roc-platform test                       # build and run every example headlessly
+just roc-platform test                       # host CPU tests, Roc fixtures, and every example headlessly
+just roc-platform roc-test                   # format-check and test the platform's Roc modules
 just roc-platform bundle                     # bundle the platform into dist/
 just roc-platform bundle-test                # prove the bundle runs from a URL
 just roc-platform stubs                      # regenerate the committed link inputs
 just roc-platform licenses                   # regenerate platform/LICENSES
 just roc-platform glue                       # regenerate src/roc_platform_abi.rs
-just roc-platform rust-shaders               # regenerate host Rust bindings from shaders/source/
 just roc-platform roc-shaders                # regenerate every example's Roc shader modules and SPIR-V
 just roc-platform roc-shaders basic-triangle # regenerate one example's Roc shader modules and SPIR-V
 ```
@@ -104,8 +127,20 @@ just roc-platform roc-shaders basic-triangle # regenerate one example's Roc shad
 Each Roc example lives in `examples/<name>/`, with `main.roc`,
 `shaders/source/`, `shaders/compiled/`, and `Generated/ShaderAtlas.roc`.
 `run` and `exe` accept the directory name (default `basic-triangle`); `exe`
-writes `examples/<name>/main`. The example shader data is independent of the
-host shader files and is not yet used by the renderer.
+writes `examples/<name>/main`. `basic-triangle` draws an indexed triangle by
+vertex pulling. `creative-coding-sep-23` draws three triangles whose color
+pulses with `frame.elapsed`, with shader hot reload on; its `just watch`
+restarts it on Roc edits.
+
+The fixtures beside `examples/basic-triangle/main.roc` (`two_draws.roc`,
+`invalid_*.roc`, and the rest) are not examples: `ci/all_tests.sh` checks that
+each valid one passes `roc test` and each invalid one fails `roc check` for its
+one intended reason.
+
+`roc glue rust_glue` generates `src/roc_platform_abi.rs`, including the
+`roc_init_owned`, `roc_config_owned`, and `roc_draw_owned` wrappers that
+release every Roc allocation on drop. Run `just roc-platform glue` after
+changing a type `platform/main.roc` exposes to the host.
 
 ## Shipping
 
@@ -184,10 +219,12 @@ Three checks guard the committed artifacts:
 
 - `platform/main.roc` — the platform header: `requires`, `hosted`, and the
   link inputs for each target.
-- `platform/{Stdout,Stderr,Stdin}.roc` — app-facing effect modules.
-- `platform/Game.roc` — the `game` record an app provides and its `Init` alias.
-- `platform/InitConfig.roc` — internal: the `Init` alias an app returns and the
-  nominal type the host reads.
+- `platform/{Stdout,Stderr}.roc` — app-facing effect modules.
+- `platform/Game.roc` — `Game.new`, `Game.Init`, `Game.Frame`, and the
+  `Game.HostConfig` the host reads.
+- `platform/{ResourcePlanner,RenderGraph,GraphSet,RasterState}.roc` — the
+  render graph API apps use; `RenderGraphDesc`, `RenderGraphLower`,
+  `RenderGraphValidate`, and `ValidatedRenderGraph` lower and validate it.
 - `platform/Host.roc` — the hosted-effect boundary the modules above wrap.
 - `platform/ShaderReflection.roc` — the reflection schema and logical shader
   value types that generated Roc shader modules import.
@@ -200,11 +237,17 @@ Three checks guard the committed artifacts:
 - `stubs/*_stub.s` — the generated stub sources, committed for review.
 - `stubs/forward/` — the C sources behind `libc_forward.a`.
 - `src/lib.rs` — allocators, hosted-effect implementations, and `rust_main`.
-- `src/game.rs` — the `Game` impl the host runs.
+- `src/game.rs` — `RocGame`, the `Game` impl the host runs: resource creation
+  and per-frame graph execution.
+- `src/host_graph.rs` — the owned copy of each Roc `HostGraph`.
+- `src/graph_lifecycle.rs` — the setup and frame control flow.
+- `src/shaders_source_dir.rs` — resolves an app's `shaders_source_dir`.
 - `src/roc_platform_abi.rs` — generated by `roc glue rust_glue`. Do not edit.
-- `shaders/`, `src/generated/` — the host's Rust shader workflow.
-- `examples/basic-triangle/` — the Roc app, shader sources, compiled SPIR-V,
-  and generated Roc modules.
+- `tests/lifecycle/` — a separate cargo workspace that tests the host's CPU
+  logic without linking Roc.
+- `platform-tests/` — the platform's Roc tests and their test app.
+- `examples/<name>/` — the Roc apps, shader sources, compiled SPIR-V, and
+  generated Roc modules.
 
 ## Targets
 

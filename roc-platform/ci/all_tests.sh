@@ -9,8 +9,9 @@
 # directly, so the loop never drained the GPU.
 #
 # The host is a release build, so Vulkan validation is compiled out. This
-# script checks that the platform links, starts, and shuts down cleanly. It
-# does not check validation output; `just sweep` covers that for the renderer.
+# script checks that the platform links, starts, renders its graphs, and shuts
+# down cleanly, with shader hot reload forced off and on. It does not check
+# validation output; `just sweep` covers that for the renderer.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -67,39 +68,115 @@ else
     echo "PASS: generate.sh refuses a mismatched glibc floor"
 fi
 
+# The host's CPU orchestration builds without roc or the host's link inputs.
+echo ""
+echo "--- host CPU tests ---"
+if cargo test --manifest-path tests/lifecycle/Cargo.toml; then
+    echo "PASS: graph lifecycle and shaders_source_dir resolution"
+else
+    echo "FAIL(host CPU tests): cargo test failed"
+    failed=1
+fi
+
+# The fixtures live beside basic-triangle so they share its generated shader
+# modules. Each negative fixture is valid but for one mistake, so `roc check`
+# must report exactly one error, of the expected kind, at the expected site.
+check_rejects() {
+    local fixture=$1 kind=$2 site=$3 reason=$4
+    echo ""
+    echo "--- $fixture ---"
+    local out code
+    out=$(cd examples/basic-triangle && roc check "$fixture.roc" 2>&1)
+    code=$?
+    if [ $code -eq 0 ]; then
+        echo "FAIL($fixture): roc check accepted it"
+        failed=1
+    elif ! grep -q "1 error and" <<< "$out" || ! grep -qi "$kind" <<< "$out" || ! grep -qF "$site" <<< "$out"; then
+        echo "FAIL($fixture): roc check failed for another reason:"
+        sed 's/^/    /' <<< "$out"
+        failed=1
+    else
+        echo "PASS: $reason"
+    fi
+}
+
+check_accepts() {
+    local fixture=$1 reason=$2
+    echo ""
+    echo "--- $fixture ---"
+    if (cd examples/basic-triangle && roc check "$fixture.roc" && roc test "$fixture.roc"); then
+        echo "PASS: $reason"
+    else
+        echo "FAIL($fixture): roc check or roc test failed"
+        failed=1
+    fi
+}
+
+# A graph that fails validation fails `roc check` when its top-level Ok
+# destructure meets the Err during constant evaluation.
+check_rejects invalid_graph "non exhaustive destructure" "Ok(graphs)" \
+    "an index range past its index buffer fails compilation"
+check_rejects invalid_index_bounds "non exhaustive destructure" "Ok(graphs)" \
+    "an index past its vertex count fails compilation"
+
+check_accepts two_draws "two draws pack their values in declaration order"
+check_accepts tuple_render_graphs "tuple render graphs preserve value order at every arity"
+check_accepts local_graphs "selected graphs keep their set's type"
+
+# Frame values must match the render graph's frame type at the draw call.
+for fixture in invalid_values invalid_selected_values invalid_extra_values invalid_value_type; do
+    check_rejects "$fixture" "type mismatch" "draw(" "$fixture rejects an invalid frame value at draw"
+done
+
+# Game.new ties the draw function's submissions to the registered set.
+check_rejects invalid_game "type mismatch" "Game.new" \
+    "Game.new rejects a draw function submitting from another set"
+
+# Runs an example until the timeout's SIGTERM, which SDL turns into a clean quit.
+run_example() {
+    local label=$1 executable=$2
+    timeout --signal=TERM --preserve-status "$RUN_TIMEOUT" "$executable"
+    local code=$?
+
+    case $code in
+        0)
+            echo "PASS: $label"
+            ;;
+        143 | 137)
+            echo "FAIL(no clean teardown): $label died on a signal (exit $code)"
+            failed=1
+            ;;
+        101)
+            echo "FAIL(panic): $label"
+            failed=1
+            ;;
+        *)
+            echo "FAIL(exit $code): $label"
+            failed=1
+            ;;
+    esac
+}
+
 for roc_file in examples/*/main.roc; do
     example_dir=$(dirname "$roc_file")
     name=$(basename "$example_dir")
     echo ""
     echo "--- $name ---"
 
-    if ! (cd "$example_dir" && roc build --no-cache main.roc); then
+    if ! (cd "$example_dir" && roc test main.roc && roc build --no-cache main.roc); then
         echo "FAIL(build): $name"
         failed=1
         continue
     fi
 
-    timeout --signal=TERM --preserve-status "$RUN_TIMEOUT" "./$example_dir/main"
-    code=$?
-    rm -f "./$example_dir/main"
+    # Forced off, pipelines load the precompiled SPIR-V, whatever the app's
+    # Game.Init asks for.
+    VKR_SHADER_HOT_RELOAD=0 run_example "$name (precompiled shaders)" "./$example_dir/main"
 
-    case $code in
-        0)
-            echo "PASS: $name"
-            ;;
-        143 | 137)
-            echo "FAIL(no clean teardown): $name died on a signal (exit $code)"
-            failed=1
-            ;;
-        101)
-            echo "FAIL(panic): $name"
-            failed=1
-            ;;
-        *)
-            echo "FAIL(exit $code): $name"
-            failed=1
-            ;;
-    esac
+    # Forced on, every shader compiles from shaders_source_dir at startup,
+    # resolved here against the executable's directory.
+    VKR_SHADER_HOT_RELOAD=1 run_example "$name (shader hot reload)" "./$example_dir/main"
+    rm -f "./$example_dir/main"
 done
 
 echo ""
