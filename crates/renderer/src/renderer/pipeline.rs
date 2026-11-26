@@ -186,6 +186,15 @@ impl PipelineStorage {
         self.0[index.raw()].as_mut().unwrap()
     }
 
+    /// A live pipeline's push constant range; `None` if `index` names no
+    /// live pipeline. Graph commands carry raw indices, so this is checked
+    /// before recording.
+    pub fn push_constant_range(&self, index: usize) -> Option<Option<vk::PushConstantRange>> {
+        let pipeline = self.0.get(index)?.as_ref()?;
+
+        Some(pipeline.layout.push_constant_range)
+    }
+
     #[expect(unused)]
     pub fn take<T, P>(&mut self, handle: PipelineHandle<T, P>) -> RendererPipeline {
         self.0[handle.index].take().unwrap()
@@ -471,6 +480,15 @@ impl ComputePipelineStorage {
         index: ComputePipelineIndex,
     ) -> &mut ComputeRendererPipeline {
         self.0[index.raw()].as_mut().unwrap()
+    }
+
+    /// A live pipeline's push constant range; `None` if `index` names no
+    /// live pipeline. Graph commands carry raw indices, so this is checked
+    /// before recording.
+    pub fn push_constant_range(&self, index: usize) -> Option<Option<vk::PushConstantRange>> {
+        let pipeline = self.0.get(index)?.as_ref()?;
+
+        Some(pipeline.layout.push_constant_range)
     }
 
     pub fn take_all(&mut self) -> Vec<ComputeRendererPipeline> {

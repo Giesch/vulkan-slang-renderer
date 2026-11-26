@@ -272,6 +272,21 @@ access and the resolver still routes it to the immutable/singleton storage.
 An `IndexBufferHandle` is affine like the others: the graph captures its
 `IndexBufferSlot`, and `execute` checks that slot like any buffer slot.
 
+A host without generated Rust element types creates buffers from packed
+bytes and a runtime element stride: `create_singleton_buffer_bytes(bytes,
+stride)`, `create_immutable_buffer_bytes(bytes, stride)`,
+`create_cpu_updated_buffer_bytes(len, stride)`, and
+`create_gpu_updated_buffer_bytes(len, stride)` return handles of the
+`BufferBytes` marker. Each rejects a zero stride, zero elements, or bytes
+that are not whole elements before allocating. Initialize CPU- and
+GPU-updated byte buffers at setup with `write_cpu_updated_bytes_all_frames` /
+`write_gpu_updated_bytes_all_frames`. `BufferBytes` is not `GPUWrite`, so the
+typed write methods cannot target these buffers. Every storage handle records
+its `element_stride()`, and every slot minted from a storage handle carries its
+length and stride, so `addr_at(i)` steps by the runtime stride rather than
+`size_of::<BufferBytes>()`, and plain-data graphs check bindings against the
+real allocation.
+
 `upload(slot)` is a node that copies a `Vec<T>` from the params tuple
 into the buffer each frame; the slot is a `CpuUpdatedSlot<T>`, or the storage
 buffer handle it is minted from. An oversized vector returns an error identifying
@@ -333,7 +348,8 @@ The host creates the uniform buffer with `create_uniform_buffer_bytes` and the
 pipeline from a `RuntimeShader` (`shaders::runtime`) with
 `PipelineConfigBuilder::build_graphics`, which yields a
 `PipelineHandle<Graphics, NoPush>`. Indirect draws have no dynamic form; use
-a plain-data graph.
+a plain-data graph. Compute pipelines for plain-data graphs come from a
+`RuntimeComputeShader::new(reflection_json, compute_spv)`.
 
 ### Plain-data graphs
 
@@ -493,7 +509,9 @@ The validator enforces these rules:
   have a previous slot, and immutable and singleton buffers are read-only.
 - A push block, whether a pipeline or a command names it, is a nonzero
   multiple of 4 bytes and at most 128 bytes (`vkCmdPushConstants` and
-  Vulkan's guaranteed push-constant size).
+  Vulkan's guaranteed push-constant size). At submission the renderer checks
+  each command's pipeline is live and its push payload matches the pipeline's
+  push range exactly, returning `DrawError` otherwise.
 - A value's scope names a self-gated optional gate or a top-level repeat
   count, and values inside a repeat are not optional.
 - A schema field layout (plain-data graphs) keeps every field inside the
