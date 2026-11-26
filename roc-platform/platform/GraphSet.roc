@@ -28,11 +28,26 @@ GraphSet(args) :: {
 		is_eq : _
 	}
 
-	## What `draw` returns, tagged with the set it came from. The platform
+	## What `draw` returns, tagged with the set it came from: statically by
+	## `args`, and at runtime by the submitted graph's digest. The platform
 	## converts it into GPU commands.
-	Submission(args) :: Draw.{
+	Submission(args) :: { draw : Draw, fingerprint : List(U8) }.{
 		to_host : Submission(args) -> Draw
-		to_host = |Submission.(submitted)| submitted
+		to_host = |Submission.(submitted)| submitted.draw
+	}
+
+	## The submission's draw, if this set registered its graph. Two sets with
+	## the same `args` type share a `Submission` type, so a submission from
+	## the other set would execute this set's graph at that id with the other
+	## graph's values; accepting one crashes.
+	accept_submission : GraphSet(args), Submission(args) -> Draw
+	accept_submission = |graphs, Submission.(submitted)| {
+		graph_id = submitted.draw.graph_id
+		if graphs.fingerprints.get(graph_id.to_u64()) != Ok(submitted.fingerprint) {
+			crash "render graph: draw submitted a graph (id ${graph_id.to_str()}) from a set other than the one Game.new registered; draw from the registered set"
+		}
+
+		submitted.draw
 	}
 
 	## A selected graph keeps its set's type without its host assets.
@@ -108,5 +123,6 @@ GraphSet(args) :: {
 ## Defined outside `GraphSet` so its `draw` does not shadow `GraphSet.draw`.
 SelectedGraphOf(args, frame) :: GraphSet.ValidatedGraph(frame).{
 	draw : SelectedGraphOf(args, frame), frame -> GraphSet.Submission(args)
-	draw = |SelectedGraphOf.(graph), frame| GraphSet.Submission.(graph.to_draw(frame))
+	draw = |SelectedGraphOf.(graph), frame|
+		GraphSet.Submission.({ draw: graph.to_draw(frame), fingerprint: graph.fingerprint })
 }

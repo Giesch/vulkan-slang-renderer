@@ -1,6 +1,6 @@
 #language slang 2026
 
-module basic_triangle;
+module creative_coding;
 
 import mltrs;
 
@@ -9,12 +9,13 @@ struct Vertex {
     float3 color;
 }
 
-struct TriangleParams {
-    mltrs::MVPMatrices mvp;
+struct Params {
+    mltrs::MVPMatrices matrices;
     mltrs::ImmutableAddr<Vertex> vertices;
+    float time;
 }
 
-ParameterBlock<TriangleParams> params;
+ParameterBlock<Params> params;
 
 struct FragInput {
     float4 position : SV_POSITION;
@@ -24,12 +25,16 @@ struct FragInput {
 [shader("vertex")]
 FragInput vertexMain(uint vertexId : SV_VertexID) {
     let vertex = params.vertices[vertexId];
-    let position = params.mvp.project(vertex.position);
+    let position = params.matrices.project(vertex.position);
 
     return FragInput(position, vertex.color);
 }
 
 [shader("fragment")]
 float4 fragmentMain(FragInput fragVertex) {
-    return float4(fragVertex.color, 1.0);
+    let frequency = 1.0;
+    let wave = sin(params.time * frequency) * 0.5 + 0.5;
+    let magenta = float3(1.0, 0.0, 1.0);
+
+    return float4(fragVertex.color + wave * magenta, 1.0);
 }

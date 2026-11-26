@@ -1,0 +1,3 @@
+# restart on Roc edits; slang edits hot-reload in the running app
+watch:
+    watchexec --restart --watch main.roc --watch Generated -- roc main.roc

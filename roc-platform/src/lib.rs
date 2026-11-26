@@ -6,11 +6,14 @@
 use std::ffi::c_void;
 use std::io::{self, BufRead, Write};
 use std::mem::ManuallyDrop;
+use std::ptr::NonNull;
 
 use mltrs::game::Game;
 
 mod game;
-mod generated;
+mod graph_lifecycle;
+mod host_graph;
+mod shaders_source_dir;
 
 // `roc glue rust_glue` emits edition-2021 code: unsafe operations sit directly
 // in unsafe fn bodies, which edition 2024 rejects.
@@ -21,7 +24,7 @@ use crate::roc_platform_abi::{
     DefaultAllocators, DefaultHandlers, HostStderrLineResult, HostStderrLineResultPayload,
     HostStderrLineResultTag, HostStdinLineResult, HostStdinLineResultPayload,
     HostStdinLineResultTag, HostStdoutLineResult, HostStdoutLineResultPayload,
-    HostStdoutLineResultTag, RocHost, RocStr, make_roc_host, roc_init,
+    HostStdoutLineResultTag, RocHost, RocStr, make_roc_host,
 };
 
 static mut ROC_HOST: *mut RocHost = core::ptr::null_mut();
@@ -138,7 +141,7 @@ pub extern "C" fn roc_stdout_line(message: RocStr) -> HostStdoutLineResult {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn roc_alloc(length: usize, alignment: usize) -> *mut c_void {
+pub extern "C" fn roc_alloc(length: usize, alignment: usize) -> NonNull<c_void> {
     DefaultAllocators::roc_alloc(roc_host_ptr(), length, alignment)
 }
 
@@ -152,7 +155,7 @@ pub extern "C" fn roc_realloc(
     ptr: *mut c_void,
     new_length: usize,
     alignment: usize,
-) -> *mut c_void {
+) -> NonNull<c_void> {
     DefaultAllocators::roc_realloc(roc_host_ptr(), ptr, new_length, alignment)
 }
 
@@ -171,16 +174,6 @@ pub extern "C" fn roc_crashed(bytes: *const u8, len: usize) {
     DefaultHandlers::roc_crashed(roc_host_ptr(), bytes, len);
 }
 
-/// Call the app's `init!` and take ownership of the window title it returns.
-fn window_title_from_roc() -> String {
-    let config = unsafe { roc_init() };
-    let title = config.window_title.as_str().to_string();
-    // Safety: `roc_init` transfers the record to the host, and this is the only
-    // decref of its one field.
-    unsafe { config.window_title.decref(roc_host()) };
-    title
-}
-
 /// C-compatible main entry point for the Roc program.
 /// This is exported so the linker can find it.
 #[unsafe(no_mangle)]
@@ -190,18 +183,15 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const i8) -> i32 {
 
 /// Main entry point for the Roc program.
 pub fn rust_main() -> i32 {
+    // Roc allocates and frees through this host for the whole run: `draw`
+    // returns a fresh submission every frame.
     let mut roc_host = make_roc_host(core::ptr::null_mut());
     set_roc_host(&mut roc_host);
 
-    let title = window_title_from_roc();
+    let result = game::init_from_roc().and_then(|()| game::RocGame::run());
     set_roc_host(core::ptr::null_mut());
 
-    if game::set_window_title(title).is_err() {
-        eprintln!("roc host error: window title already set");
-        return 1;
-    }
-
-    match game::BasicTriangle::run() {
+    match result {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("{err:?}");

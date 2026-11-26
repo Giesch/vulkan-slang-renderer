@@ -17,9 +17,15 @@ pub fn write_app_main(generated: &Path) {
         }
     }
 
+    // The example imports its modules from `Generated/`; this app sits inside
+    // the freshly generated tree, beside them.
     let example =
         fs::read_to_string(repo.join("roc-platform/examples/basic-triangle/main.roc")).unwrap();
-    let body = example.split_once('\n').unwrap().1;
+    let body = example
+        .split_once('\n')
+        .unwrap()
+        .1
+        .replace("import Generated/", "import ");
     fs::write(
         generated.join("main.roc"),
         format!("app [game] {{ pf: platform \"../platform/main.roc\" }}\n{body}"),

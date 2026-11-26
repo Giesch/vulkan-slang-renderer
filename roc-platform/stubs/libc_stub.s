@@ -496,6 +496,26 @@ dup: ret
 dup2: ret
 
 .balign 8
+.globl epoll_create1
+.type epoll_create1, @function
+epoll_create1: ret
+
+.balign 8
+.globl epoll_ctl
+.type epoll_ctl, @function
+epoll_ctl: ret
+
+.balign 8
+.globl epoll_wait
+.type epoll_wait, @function
+epoll_wait: ret
+
+.balign 8
+.globl eventfd
+.type eventfd, @function
+eventfd: ret
+
+.balign 8
 .globl execvp
 .type execvp, @function
 execvp: ret
@@ -839,6 +859,11 @@ inotify_add_watch: ret
 .globl inotify_init1
 .type inotify_init1, @function
 inotify_init1: ret
+
+.balign 8
+.globl inotify_rm_watch
+.type inotify_rm_watch, @function
+inotify_rm_watch: ret
 
 .balign 8
 .globl ioctl

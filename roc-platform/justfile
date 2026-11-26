@@ -6,9 +6,9 @@ _default:
 build:
     bash build.sh
 
-# run a Roc example with the dev backend; roc watches the sources and hot-reloads on change
+# run a Roc example from its directory, where its shaders_source_dir resolves; roc watches the sources and hot-reloads on change
 run example="basic-triangle": build
-    roc "examples/{{example}}/main.roc"
+    cd "examples/{{example}}" && roc main.roc
 
 # build an optimized standalone executable for an example
 exe example="basic-triangle": build
@@ -18,24 +18,25 @@ exe example="basic-triangle": build
 test:
     bash ci/all_tests.sh
 
-# format-check, check, and test the platform's Roc modules and render graph tests
+# format-check the Roc sources, then check and test the platform modules and render graph tests
 roc-test:
     #!/usr/bin/env bash
     set -euo pipefail
-    roc fmt --check platform platform-tests
+    roc fmt --check platform platform-tests examples
     for module in platform/*.roc; do roc check "$module"; done
     for module in RasterState RenderGraphValidate; do roc test "platform/$module.roc"; done
     roc check --main=platform-tests/main.roc platform-tests/RenderGraphTests.roc
     roc test --main=platform-tests/main.roc platform-tests/RenderGraphTests.roc
     roc check --main=platform-tests/main.roc platform-tests/ForeignSelection.roc
-    # selecting or drawing another set's graph must crash, not submit a foreign graph id
+    # selecting, drawing, or submitting another set's graph must crash, not submit a foreign graph id
     if output="$(roc test --main=platform-tests/main.roc platform-tests/ForeignSelection.roc 2>&1)"; then
-        echo "ForeignSelection.roc should crash in GraphSet.select and GraphSet.draw" >&2
+        echo "ForeignSelection.roc should crash in GraphSet.select, GraphSet.draw, and Game.new's draw" >&2
         exit 1
     fi
     grep -q "GraphSet chose a graph (id 1) this set did not register" <<< "$output"
     grep -q "GraphSet chose a graph (id 0) this set did not register" <<< "$output"
-    grep -q "2 failed" <<< "$output"
+    grep -q "draw submitted a graph (id 0) from a set other than the one Game.new registered" <<< "$output"
+    grep -q "3 failed" <<< "$output"
 
 # bundle the platform into dist/<hash>.tar.zst
 bundle:
@@ -45,9 +46,10 @@ bundle:
 bundle-test:
     bash ci/bundle_test.sh
 
-# remove the cargo build output, the host archive, and the bundle
+# remove the cargo build output, the host test build output, the host archive, and the bundle
 clean:
     cargo clean
+    cargo clean --manifest-path tests/lifecycle/Cargo.toml
     rm -rf dist
     rm -f platform/targets/*/libhost.a
 
@@ -62,10 +64,6 @@ licenses:
 # regenerate src/roc_platform_abi.rs from platform/main.roc with the installed rust_glue shorthand
 glue:
     roc glue rust_glue ./src/ platform/main.roc
-
-# regenerate the shader bindings this crate compiles against
-rust-shaders:
-    cargo run -p mltrs-cli --manifest-path ../Cargo.toml -- shaders compile --crate-dir .
 
 # regenerate every example's Roc shader modules and SPIR-V, or one by name
 roc-shaders example="all":

@@ -7,8 +7,9 @@ lowering into the plain-data `GraphDesc` + `SchemaTable` that
 modules live in `roc-platform/platform/`; apps import the exposed ones as
 `pf.ResourcePlanner`, `pf.RenderGraph`, `pf.GraphSet`, and `pf.RasterState`.
 
-Nothing renders from Roc yet: `main.roc` still provides only `roc_init`, and
-the host does not consume `HostGraph` or `Draw` until the host ABI is wired.
+An app hands its graphs to the platform with `Game.new`; the host copies
+every `HostGraph` once at setup, creates its resources, and executes the graph
+each frame's `draw` selects (see [Host execution](#host-execution)).
 
 ## Building a graph
 
@@ -30,8 +31,12 @@ node = RenderGraph.draw_indexed(pipe, indices, params, { vertices: vertices.addr
 
 Ok(graph) = RenderGraph.new(planner4, node).map_ok(GraphSet.single)
 
+game = Game.new({ init!, graphs: graph, draw })
+
 draw = |frame| graph.draw({ mvp: mvp_with_aspect_ratio(frame.aspect_ratio) })
 ```
+
+`roc-platform/examples/basic-triangle/main.roc` is this graph in full.
 
 A single-field record must name its field: `{ params: params }`, not
 `{ params }`, which Roc parses as a block evaluating to `params`.
@@ -120,12 +125,84 @@ that id. Every type at this boundary, including each tag
 payload record, is nominal and non-polymorphic so `roc glue` names each Rust
 struct.
 
+## Game
+
+`platform/main.roc` requires a `game : Game`, built by `Game.new` from:
+
+- `init! : {} => Game.Init`, run once before the window opens. `Game.Init` is
+  `{ window_title, shader_hot_reload, shaders_source_dir }`;
+  `Game.Init.titled(title)` leaves hot reload off with no source dir.
+- `graphs : GraphSet(g)`, the registered render graphs.
+- `draw : Game.Frame -> GraphSet.Submission(g)`, called every frame with
+  `{ aspect_ratio, elapsed }` (width over height, and seconds since startup).
+
+`Game.new` ties `draw`'s submissions to the registered set's type, so drawing
+from a set of another type is a type error. Two sets of the same type share a
+`Submission` type, so each submission also carries its graph's digest, and
+`GraphSet.accept_submission` crashes when it does not match the registered
+set's graph at that id. The platform provides three entrypoints:
+`roc_init` (`Game.Init`), `roc_config` (`Game.HostConfig`, every graph's
+`HostGraph`, read once at setup without calling `draw`), and `roc_draw`
+(`GraphSet.Draw`).
+
+### Shader hot reload
+
+`shader_hot_reload: Bool.True` with `shaders_source_dir:
+ShaderAtlas.shaders_source_dir` makes the release host recompile the app's
+slang sources when they change, without rebuilding the host.
+`VKR_SHADER_HOT_RELOAD=1`/`=0` overrides `shader_hot_reload` at launch.
+`ShaderAtlas.shaders_source_dir` is relative to the Roc project root; the host
+resolves a relative dir against the working directory, then the executable's
+directory, so `just roc-platform run` (which runs from the example's
+directory) and a built `examples/<name>/main` launched from anywhere both find
+it. A dir found in neither place, or `""`, leaves hot reload off (with a
+warning under `RUST_LOG=warn`). A reload that changes a shader's reflected
+interface panics; regenerate `Generated/` and restart.
+
+## Host execution
+
+`roc-platform/src/host_graph.rs` copies each `HostGraph` out of Roc memory
+once, converting its description and schemas one-to-one into
+`mltrs_render_graph::plain::{GraphDesc, SchemaTable}`. `src/game.rs`
+(`RocGame`, whose atlas is `NoAtlas`) then creates each declaration with the
+renderer's byte-level constructors: `Singleton` and `Immutable` buffers from
+their packed bytes, `IndirectArgs` as `DrawIndexedIndirectCommand` records,
+`CpuUpdated` and `GpuUpdated` buffers of `len` elements initialized from their
+leading bytes, `Index` buffers through `create_index_buffer` (whose debug-build
+bounds scan repeats the Roc check), one uniform buffer per
+`HostUniformBuffer`, and each pipeline as a `RuntimeShader` or
+`RuntimeComputeShader` with its `RasterState`. A stencil raster state fails
+setup: the host does not request a stencil-capable depth buffer. Imported
+textures also fail setup: nothing supplies them yet.
+
+It binds those resources in a `PlainBindings`, prepares a
+`PlainRenderGraph`, and keeps every handle beside it for the game's lifetime.
+Each frame it calls `roc_draw` with `{ aspect_ratio, elapsed }` and executes
+the selected graph, borrowing the frame values from Roc's lists as
+`PlainValue`s. `src/graph_lifecycle.rs` holds that setup and frame control
+flow, tested without the host's link inputs by
+`roc-platform/tests/lifecycle/`.
+
 ## Verification
 
 `just roc-platform roc-test` format-checks and checks every platform module
 and runs the platform and `roc-platform/platform-tests/` expects, which build
 graphs from hand-written shader descriptors, then checks that
-`ForeignSelection.roc` crashes in both `GraphSet.select` and `GraphSet.draw`. `just roc-codegen-test` runs it
+`ForeignSelection.roc` crashes in `GraphSet.select`, `GraphSet.draw`, and a
+`Game.new` game whose `draw` submits from another set of the same type. `just roc-codegen-test` runs it
 too, and additionally builds graphs from freshly generated shader modules
 (`crates/cli/fixtures/roc_codegen/RenderGraphConsumer.roc`) and proves API
-misuse fails to typecheck (`RenderGraphNegative.roc` and its edits).
+misuse fails to typecheck (`RenderGraphNegative.roc` and its edits). It
+checks the basic-triangle example as the generated tree's app.
+
+`just roc-platform test` runs the host CPU tests and the fixtures beside
+`examples/basic-triangle/main.roc`: `two_draws.roc`, `tuple_render_graphs.roc`,
+and `local_graphs.roc` must pass `roc test`; `invalid_graph.roc` (an index
+range past its buffer) and `invalid_index_bounds.roc` (an index past its
+vertex count) must fail `roc check` at their top-level `Ok` destructure;
+`invalid_values.roc`, `invalid_selected_values.roc`,
+`invalid_extra_values.roc`, and `invalid_value_type.roc` must fail with a type
+mismatch at `draw`; and `invalid_game.roc` must fail at `Game.new`. It then
+builds `libhost.a`, builds every example, and runs each headlessly under
+lavapipe twice: with `VKR_SHADER_HOT_RELOAD=0` (precompiled SPIR-V) and with
+`VKR_SHADER_HOT_RELOAD=1` (shaders compiled from `shaders_source_dir`).

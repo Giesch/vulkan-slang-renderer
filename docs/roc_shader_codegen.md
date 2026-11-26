@@ -39,12 +39,14 @@ empty `ShaderAtlas.roc` and remove stale managed files. Keep distinct
 and output trees must be disjoint; output directories must not overlap each
 other or contain the project root.
 
-The checked-in Roc example is `roc-platform/examples/basic-triangle/main.roc`.
-Run `just roc-platform roc-shaders basic-triangle` to compile its
+The checked-in Roc examples are `roc-platform/examples/basic-triangle/` and
+`roc-platform/examples/creative-coding-sep-23/`. Run
+`just roc-platform roc-shaders basic-triangle` to compile an example's
 `shaders/source/` into its own `shaders/compiled/` and `Generated/` directories.
 `just roc-platform roc-shaders` with no argument compiles every
-`roc-platform/examples/*/` directory. The host retains its separate Rust shader
-sources and bindings.
+`roc-platform/examples/*/` directory. The host has no shaders of its own: it
+builds every pipeline at runtime from the SPIR-V and reflection JSON a graph
+carries.
 
 ## Public modules
 
@@ -53,8 +55,10 @@ Import `ShaderAtlas` from `Generated/ShaderAtlas.roc`. It exposes:
 - `shaders_source_dir : Str`, the shader source directory relative to the Roc
   project root (the directory containing `main.roc`), `/`-separated, such as
   `"shaders/source"` or `"../shared/shaders"`. It is absolute only when no
-  relative path exists (another Windows drive). A host resolves it against the
-  project root, so generated files stay machine-independent;
+  relative path exists (another Windows drive), so generated files stay
+  machine-independent. An app passes it to `Game.Init` for shader hot reload;
+  the `roc-platform` host resolves it against the working directory, then the
+  executable's directory;
 - `shader_names`, in deterministic source-name order;
 - one snake_case value per graphics or compute shader, in the same order, with
   complete typed reflection and `stages.vertex` and `stages.fragment`, or
@@ -252,13 +256,10 @@ guarantee. The `to_bytes` packers produce GPU bytes; the byte order of a
 matrix follows the shader's declared layout (row-major, so `row_i` holds glam
 column `i`).
 
-The separate `roc-platform` host still renders its Rust-owned shader and uses
-Rust bindings under `src/generated/`. The resource planner and render graph
-that consume `shader`, `UniformSpec`, and `BlockSchema` are described in
-[`roc_render_graph.md`](roc_render_graph.md); the host does not consume them
-yet. Roc
-codegen does not change runtime shader selection, hot reload, or
-platform/compiler pins.
+The resource planner and render graph that consume `shader`, `UniformSpec`,
+and `BlockSchema` are described in [`roc_render_graph.md`](roc_render_graph.md);
+the `roc-platform` host renders the graphs they build. Roc codegen does not
+change runtime shader selection, hot reload, or platform/compiler pins.
 
 ## Verification
 

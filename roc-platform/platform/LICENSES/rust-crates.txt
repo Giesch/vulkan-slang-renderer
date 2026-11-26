@@ -65,6 +65,7 @@ cargo metadata --locked.
   memchr                             2.8.3              Unlicense OR MIT
   mio                                1.2.2              MIT
   mltrs                              0.1.0              see the crate manifest
+  mltrs-render-graph                 0.1.0              see the crate manifest
   mltrs-renderer                     0.1.0              see the crate manifest
   mltrs-roc-platform                 0.1.0              see the crate manifest
   mltrs-slang-reflection             0.1.0              see the crate manifest
