@@ -5,8 +5,9 @@ mod generated;
 
 use mltrs::game::Game;
 use mltrs::renderer::{
-    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
-    ResourcePlanner, UniformBufferHandle, draw_indexed,
+    DrawError, DrawNode, FrameRenderer, IndexBufferHandle, PreparedRenderGraph, RenderGraph,
+    Renderer, ResourcePlanner, SingletonBufferHandle, SingletonSlot, UniformBufferHandle,
+    draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -16,13 +17,15 @@ fn main() -> Result<(), anyhow::Error> {
     BasicTriangle::run()
 }
 
-type TriangleGraph = PreparedRenderGraph<DrawNode<MVPMatrices>>;
+type TriangleGraph = PreparedRenderGraph<DrawNode<TriangleParams>>;
 
 pub struct BasicTriangle {
     graph: TriangleGraph,
-    /// The graph captured this buffer's slot at build time; the handle stays
-    /// here to keep the buffer alive.
-    _uniform_buffer: UniformBufferHandle<MVPMatrices>,
+    // The graph captured these buffers' slots at build time; the handles stay
+    // here to keep the buffers alive.
+    _uniform_buffer: UniformBufferHandle<TriangleParams>,
+    _vertex_buffer: SingletonBufferHandle<Vertex>,
+    _index_buffer: IndexBufferHandle,
 }
 
 impl Game for BasicTriangle {
@@ -37,27 +40,31 @@ impl Game for BasicTriangle {
     where
         Self: Sized,
     {
-        let uniform_buffer = renderer.create_uniform_buffer::<MVPMatrices>()?;
+        let uniform_buffer = renderer.create_uniform_buffer::<TriangleParams>()?;
+        let vertex_buffer = renderer.create_singleton_buffer(&VERTICES)?;
+        let index_buffer = renderer.create_index_buffer(&INDICES, vertex_buffer.len())?;
 
         let resources = Resources {
-            matrices_buffer: &uniform_buffer,
+            params_buffer: &uniform_buffer,
         };
 
-        let pipeline_config = shaders
-            .basic_triangle
-            .pipeline_config(resources)
-            .with_vertices(VERTICES.to_vec(), INDICES.to_vec());
+        let pipeline_config = shaders.basic_triangle.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
 
+        let bindings = TriangleParamsBindings {
+            vertices: SingletonSlot::from(&vertex_buffer).addr(),
+        };
         let graph = RenderGraph::new(
             ResourcePlanner::new(),
-            draw_indexed(&pipeline, &uniform_buffer, ()),
+            draw_indexed(&pipeline, &index_buffer, &uniform_buffer, bindings),
         )?
         .prepare(renderer)?;
 
         Ok(Self {
             graph,
             _uniform_buffer: uniform_buffer,
+            _vertex_buffer: vertex_buffer,
+            _index_buffer: index_buffer,
         })
     }
 
@@ -65,24 +72,25 @@ impl Game for BasicTriangle {
         let aspect_ratio = renderer.aspect_ratio();
         let mvp = make_basic_mvp_matrices(aspect_ratio);
 
-        self.graph.execute(renderer, &mvp)
+        self.graph.execute(renderer, &TriangleParamsData { mvp })
     }
 }
 
 const VERTICES: [Vertex; 3] = [
-    Vertex {
-        position: Vec3::new(-1.0, -1.0, 0.0),
-        color: Vec3::new(1.0, 0.0, 0.0),
-    },
-    Vertex {
-        position: Vec3::new(1.0, -1.0, 0.0),
-        color: Vec3::new(0.0, 1.0, 0.0),
-    },
-    Vertex {
-        position: Vec3::new(0.0, 1.0, 0.0),
-        color: Vec3::new(0.0, 0.0, 1.0),
-    },
+    vertex(Vec3::new(-1.0, -1.0, 0.0), Vec3::new(1.0, 0.0, 0.0)),
+    vertex(Vec3::new(1.0, -1.0, 0.0), Vec3::new(0.0, 1.0, 0.0)),
+    vertex(Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0)),
 ];
+
+/// a std430 `Vertex`, whose float3 fields each pad to 16 bytes
+const fn vertex(position: Vec3, color: Vec3) -> Vertex {
+    Vertex {
+        position,
+        _padding_0: [0; 4],
+        color,
+        _padding_1: [0; 4],
+    }
+}
 
 const INDICES: [u32; 3] = [0, 1, 2];
 

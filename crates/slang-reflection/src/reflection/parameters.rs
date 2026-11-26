@@ -31,6 +31,7 @@ pub fn reflect_entry_points(
 
     for entry_point in program_layout.entry_points() {
         let entry_point_name = entry_point.name().unwrap().to_string();
+        let is_vertex_stage = entry_point.stage() == slang::Stage::Vertex;
 
         let mut params = vec![];
         for param in entry_point.parameters() {
@@ -41,6 +42,15 @@ pub fn reflect_entry_points(
             let type_layout = param.type_layout().unwrap();
 
             let entry_point_param_json = match type_layout.kind() {
+                slang::TypeKind::Struct if is_vertex_stage => {
+                    let type_name = type_layout.name().unwrap_or("<unnamed>");
+                    anyhow::bail!(vertex_struct_input_message(
+                        &parameter_name,
+                        type_name,
+                        &entry_point_name,
+                    ))
+                }
+
                 slang::TypeKind::Struct => {
                     let fields =
                         reflect_struct_fields(type_layout, program_layout, &mut Vec::new())?;
@@ -126,6 +136,24 @@ pub fn reflect_entry_points(
     Ok(parameters)
 }
 
+/// The diagnostic for a varying struct parameter on a vertex entry point.
+/// Fixed-function vertex input is not supported; vertex data is pulled from a
+/// buffer device address instead.
+fn vertex_struct_input_message(
+    parameter_name: &str,
+    type_name: &str,
+    entry_point_name: &str,
+) -> String {
+    format!(
+        "vertex entry point '{entry_point_name}' takes the varying struct parameter \
+        '{parameter_name}' ({type_name}); vertex input structs are not supported. Accept \
+        `uint vertexId : SV_VertexID` instead, and pull the {type_name} through a \
+        `mltrs::ImmutableAddr<{type_name}>`, `mltrs::ReadAddr<{type_name}>`, or \
+        `mltrs::Addr<{type_name}>` field of a ParameterBlock or push constant block, \
+        indexed by vertexId"
+    )
+}
+
 /// Reflects the shader's global parameters: any number of `ParameterBlock<T>`
 /// globals, plus at most one `[[vk::push_constant]] ConstantBuffer<T>` block.
 fn reflect_global_parameters(
@@ -207,9 +235,8 @@ fn reflect_global_parameters(
 }
 
 /// An entry point parameter may only be a varying or a system value. Anything
-/// else is a binding that codegen never sees: it reads global parameters for
-/// `Resources`, and the *vertex* entry point's parameters for the vertex input
-/// type. Slang has two routes here, both silent:
+/// else is a binding that codegen never sees: it reads only global parameters
+/// for `Resources`. Slang has two routes here, both silent:
 ///
 /// - a `uniform` parameter becomes an implicit push constant range
 ///   (docs/user-guide/a2-01-spirv-target-specific.md). We require exactly one
@@ -297,7 +324,7 @@ fn reflect_struct_fields(
             let Some(binding) = binding.filter(Binding::occupies_bytes) else {
                 anyhow::bail!(
                     "enum field '{field_name}': enums are only supported in \
-                    uniform/pointee struct fields, not vertex inputs"
+                    uniform/pointee struct fields, not varying inputs"
                 );
             };
 
@@ -666,13 +693,13 @@ fn reflect_handle_field(
         );
     };
 
-    // A handle in a vertex-input position reflects as VaryingInput, and there is
-    // no vertex format for a descriptor index. Rejecting here rather than in the
+    // A handle in a varying-input position reflects as VaryingInput, and there
+    // is no varying format for a descriptor index. Rejecting here rather than in the
     // Vector arm is also what keeps the guard above ungated on the binding.
     let Some(binding) = binding.filter(Binding::occupies_bytes) else {
         anyhow::bail!(
             "handle field '{field_name}': texture handles are only supported in \
-            uniform/pointee struct fields, not vertex inputs"
+            uniform/pointee struct fields, not varying inputs"
         );
     };
 

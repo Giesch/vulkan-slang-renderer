@@ -46,6 +46,8 @@ struct ToonLinkParams {
     // skinning.slang.
     mltrs::ImmutableAddr<SkinJoint> palette;
     mltrs::ImmutableAddr<VertexSkinning> skinning;
+    // The bind-pose vertices, indexed by SV_VertexID like `skinning`.
+    mltrs::ImmutableAddr<Vertex> vertices;
 }
 
 // The variant names are the debug window's radio button labels, via
@@ -79,12 +81,6 @@ enum DebugMode : uint {
     IdentityTexMtx = 9,
 }
 
-struct Vertex {
-    float3 position;
-    float3 normal;
-    float2 uv0;
-};
-
 struct FragVertex {
     float4 position : SV_Position;
     float3 normal;
@@ -96,12 +92,13 @@ struct FragVertex {
     // `texcoord23` field. tev_ir.rs gates num_tex_gens at 2.
     float4 texcoord01;
     nointerpolation uint drawIndex;
-};
+}
 
 [shader("vertex")]
-FragVertex vertMain(Vertex vertex, uint vertexId : SV_VertexID, uint drawIndex : SV_DrawIndex) {
+FragVertex vertMain(uint vertexId : SV_VertexID, uint drawIndex : SV_DrawIndex) {
     // Skin in model space first: before projection, and before the XF unit
     // evaluates the color channel and the texgens from the normal.
+    let vertex = params.vertices[vertexId];
     let skinned = SkinnedVertex(params.palette, params.skinning[vertexId], vertex.position, vertex.normal);
     let position = params.mvp.project(skinned.position);
     let worldNormal = params.mvp.rotateDirection(skinned.normal);

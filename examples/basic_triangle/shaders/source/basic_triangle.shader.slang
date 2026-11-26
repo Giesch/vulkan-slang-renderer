@@ -4,21 +4,28 @@ module basic_triangle;
 
 import mltrs;
 
-ParameterBlock<mltrs::MVPMatrices> matrices;
-
 struct Vertex {
     float3 position;
     float3 color;
-};
+}
+
+struct TriangleParams {
+    mltrs::MVPMatrices mvp;
+    mltrs::ImmutableAddr<Vertex> vertices;
+}
+
+ParameterBlock<TriangleParams> params;
 
 struct FragInput {
     float4 position : SV_POSITION;
     float3 color;
-};
+}
 
 [shader("vertex")]
-FragInput vertexMain(Vertex vertex) {
-    let position = matrices.project(vertex.position);
+FragInput vertexMain(uint vertexId : SV_VertexID) {
+    let vertex = params.vertices[vertexId];
+    let position = params.mvp.project(vertex.position);
+
     return FragInput(position, vertex.color);
 }
 

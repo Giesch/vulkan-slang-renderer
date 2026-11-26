@@ -8,7 +8,6 @@ use std::ffi::CString;
 use std::io::Cursor;
 
 use ash::util::read_spv;
-use ash::vk;
 {% if enum_defs.len() > 0 -%}
 use facet::Facet;
 {% endif -%}
@@ -20,8 +19,6 @@ pub use {{ import.use_path() }};
 #[allow(unused_imports)]
 use {{ import_root }}::renderer::gpu_read::GPURead;
 use {{ import_root }}::renderer::render_graph::GPUWrite;
-#[allow(unused)]
-use {{ import_root }}::renderer::vertex_description::{NoVertex, VertexDescription};
 use {{ import_root }}::renderer::*;
 use {{ import_root }}::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use {{ import_root }}::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
@@ -107,37 +104,7 @@ impl {{ import_root }}::renderer::render_graph::PushConstantBlock for {{ push_co
 const _: () = assert!(std::mem::size_of::<{{ push_constant_type_name }}>() <= {{ push_constant_budget }});
 {% when None -%}
 {%- endmatch -%}
-{% for block in vertex_impl_blocks +%}
-// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
-// must agree with this struct's Rust layout
-const _: () = assert!(std::mem::size_of::<{{ block.type_name }}>() == {{ block.stride }});
-{%- for attr in block.attribute_descriptions %}
-const _: () = assert!(std::mem::offset_of!({{ block.type_name }}, {{ attr.field_name }}) == {{ attr.offset }});
-{%- endfor %}
-
-impl VertexDescription for {{ block.type_name }} {
-    fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
-        let binding_description = ash::vk::VertexInputBindingDescription::default()
-            .binding(0)
-            .stride(std::mem::size_of::<Self>() as u32)
-            .input_rate(ash::vk::VertexInputRate::VERTEX);
-
-        vec![binding_description]
-    }
-
-    fn attribute_descriptions() -> Vec<ash::vk::VertexInputAttributeDescription> {
-        vec![
-{%- for attr in block.attribute_descriptions %}
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!({{ block.type_name }}, {{ attr.field_name }}) as u32)
-                .format({{ attr.format }})
-                .binding(0)
-                .location({{ attr.location }}),
-{%- endfor %}
-        ]
-    }
-}
-{% endfor +%}
+{# keeps one blank line before the shader struct #}
 #[derive(Clone)]
 pub struct {{ shader_impl.shader_type_name }} {
     pub reflection_json: ReflectionJson,
@@ -233,24 +200,6 @@ impl {{ shader_impl.shader_type_name }} {
 impl ShaderAtlasEntry for {{ shader_impl.shader_type_name }} {
     fn source_file_name(&self) -> &str {
         &self.reflection_json.source_file_name
-    }
-
-    fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
-{%- match shader_impl.vertex_type_name -%}
-{%- when Some with (vertex_type_name) +%}
-        {{ vertex_type_name }}::binding_descriptions()
-{%- when None +%}
-        vec![]
-{%- endmatch +%}
-    }
-
-    fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription> {
-{%- match shader_impl.vertex_type_name -%}
-{%- when Some with (vertex_type_name) +%}
-        {{ vertex_type_name }}::attribute_descriptions()
-{%- when None +%}
-        vec![]
-{%- endmatch +%}
     }
 
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {

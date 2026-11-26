@@ -1,8 +1,3 @@
-/// The vertex interface of a pipeline with no vertex input, drawn with a
-/// vertex count: fullscreen quads, procedural geometry, etc. Uninhabited; it
-/// is neither a vertex type nor GPU data.
-pub enum NoVertex {}
-
 /// A marker for types that get written to GPU memory.
 ///
 /// This is the renderer module's version of `renderer::render_graph::GPUWrite`.

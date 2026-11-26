@@ -1,6 +1,6 @@
 //! Renders Toon Link from The Wind Waker.
 //!
-//! All 24 batches draw from one shared mesh, through 5 pipelines and one
+//! All 24 batches draw from one shared [`LinkMesh`], through 5 pipelines and one
 //! bindless `Material` buffer. They record as 7 `cmd_draw_indexed_indirect`
 //! commands, one per run of consecutive batches that share a pipeline. Each
 //! sub-draw resolves its material through `SV_DrawIndex`. See [`Run`].
@@ -50,11 +50,11 @@ use mltrs::shaders::atlas::ShaderAtlasRoot;
 // `mm::BlendMode` collide with the renderer's pipeline enums of the same name.
 use gx::model_manifest::{self as mm, Batch, Manifest, MaterialEntry, TextureEntry};
 use mltrs::renderer::{
-    BindlessHandle, BlendMode, CullMode, DepthCompare, DrawError, DrawIndexedIndirect,
-    FrameRenderer, GraphicsPipelineHandle, ImmutableBufferHandle, MeshHandle, PushBlock,
+    BindlessHandle, BlendMode, CullMode, DepthCompare, DrawError, FrameRenderer, GraphicsIndirect,
+    ImmutableAddr, ImmutableBufferHandle, IndexBufferHandle, PipelineHandle, PushBlock,
     RasterState, Renderer, RgbaPixels, Sampler2D, SamplerOptions, SingletonBufferHandle,
     StencilMode, TextureColorSpace, TextureFilter, TextureHandle, TextureOptions, TextureWrap,
-    TypedVertex, UniformBufferHandle,
+    UniformBufferHandle,
 };
 
 use crate::animation_player::{
@@ -545,6 +545,57 @@ fn load_vertices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<ModelVe
     Ok(vertices)
 }
 
+/// The converted mesh on the GPU, shared by both render modes. The shaders
+/// pull vertices from `vertices` through `params.vertices[SV_VertexID]`, and
+/// every batch's indirect command indexes `indices`.
+pub(crate) struct LinkMesh {
+    vertices: SingletonBufferHandle<Vertex>,
+    indices: IndexBufferHandle,
+}
+
+impl LinkMesh {
+    /// Load the converted mesh in `dir`, validate it against `manifest`, and
+    /// upload it.
+    fn load(renderer: &mut Renderer, dir: &Path, manifest: &Manifest) -> anyhow::Result<Self> {
+        let vertices = load_vertices(
+            &dir.join(&manifest.buffers.vertices),
+            manifest.buffers.vertex_count,
+        )?;
+        let indices = load_indices(
+            &dir.join(&manifest.buffers.indices),
+            manifest.buffers.index_count,
+        )?;
+
+        validate_manifest(manifest, &vertices, &indices)?;
+
+        let gpu_vertices: Vec<Vertex> = vertices
+            .iter()
+            .map(|vertex| Vertex {
+                position: vertex.position,
+                _padding_0: Default::default(),
+                normal: vertex.normal,
+                _padding_1: Default::default(),
+                uv0: vertex.uv0,
+                _padding_2: Default::default(),
+            })
+            .collect();
+        let vertices = renderer.create_singleton_buffer(&gpu_vertices)?;
+        let indices = renderer.create_index_buffer(&indices, vertices.len())?;
+
+        Ok(Self { vertices, indices })
+    }
+
+    /// The address the shaders read `params.vertices` from.
+    pub(crate) fn vertices_addr(&self, renderer: &FrameRenderer) -> ImmutableAddr<Vertex> {
+        renderer.singleton_addr(&self.vertices)
+    }
+
+    /// The index buffer every batch's indirect command indexes.
+    pub(crate) fn indices(&self) -> &IndexBufferHandle {
+        &self.indices
+    }
+}
+
 fn load_indices(path: &Path, expected_count: u32) -> anyhow::Result<Vec<u32>> {
     let bytes = read_records(path, expected_count, 4, "u32 indices")?;
     let indices = bytes
@@ -799,8 +850,7 @@ const EXPECTED_RASTER_STATES: usize = 5;
 /// `Manifest::materials`. Push order defines a [`MaterialSlot`].
 struct MaterialTable {
     /// One pipeline per distinct [`RasterState`], in first-use order.
-    pipelines:
-        Vec<GraphicsPipelineHandle<TypedVertex<Vertex>, DrawIndexedIndirect, PushBlock<MultiDraw>>>,
+    pipelines: Vec<PipelineHandle<GraphicsIndirect, PushBlock<MultiDraw>>>,
     /// Maps a `MaterialSlot` to an index into [`Self::pipelines`]. Many slots
     /// share one pipeline.
     pipeline_of_slot: Vec<usize>,
@@ -815,7 +865,6 @@ fn build_materials(
     renderer: &mut Renderer,
     shader: &Shader,
     manifest: &Manifest,
-    mesh: &MeshHandle<Vertex>,
     params_buffer: &UniformBufferHandle<ToonLinkParams>,
     textures: &[Option<TextureHandle>],
     dummy: &TextureHandle,
@@ -830,13 +879,12 @@ fn build_materials(
         let pipeline_index = match raster_states.iter().position(|&seen| seen == raster) {
             Some(index) => index,
             None => {
-                // Every pipeline shares the one params buffer and the one
-                // mesh. Only the raster state differs.
+                // Every pipeline shares the one params buffer, and every
+                // draw the one mesh. Only the raster state differs. The
+                // shader reads SV_DrawIndex, so the config is GraphicsIndirect.
                 let pipeline_config = shader
                     .pipeline_config(Resources { params_buffer })
-                    .with_shared_mesh(mesh)
-                    .with_raster_state(raster)
-                    .indirect();
+                    .with_raster_state(raster);
                 pipelines.push(renderer.create_pipeline(pipeline_config)?);
                 raster_states.push(raster);
                 pipelines.len() - 1
@@ -963,6 +1011,9 @@ pub struct ToonLink {
     /// One block for the whole example, shared by all 5 pipelines. It holds
     /// the frame globals, and `draw` uploads it.
     params_buffer: UniformBufferHandle<ToonLinkParams>,
+    /// The vertex and index buffers every run draws, shared with the Modern
+    /// mode under [`ToonLinkHost`].
+    mesh: Rc<LinkMesh>,
     /// One indirect command per batch, in `draw_order`.
     args_buffer: ImmutableBufferHandle<DrawIndexedIndirectCommand>,
     /// The material pointer of the matching args_buffer entry.
@@ -1020,6 +1071,7 @@ impl ToonLink {
 
         renderer.queue_draw_indexed_indirect_with_push_constants(
             &self.materials.pipelines[run.pipeline],
+            self.mesh.indices(),
             &self.args_buffer,
             run.first,
             run.count,
@@ -1066,29 +1118,27 @@ impl Game for ToonLink {
     {
         let dir = converted_dir();
         let manifest = load_manifest(&dir)?;
+        let mesh = Rc::new(LinkMesh::load(renderer, &dir, &manifest)?);
 
-        let vertices = load_vertices(
-            &dir.join(&manifest.buffers.vertices),
-            manifest.buffers.vertex_count,
-        )?;
-        let indices = load_indices(
-            &dir.join(&manifest.buffers.indices),
-            manifest.buffers.index_count,
-        )?;
+        Self::with_mesh(renderer, shaders, &dir, &manifest, mesh)
+    }
 
-        validate_manifest(&manifest, &vertices, &indices)?;
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+        self.draw_posed(renderer, None)
+    }
+}
 
-        let classic_vertices: Vec<_> = vertices
-            .iter()
-            .map(|vertex| Vertex {
-                position: vertex.position,
-                normal: vertex.normal,
-                uv0: vertex.uv0,
-            })
-            .collect();
-        let mesh = renderer.create_mesh(&classic_vertices, &indices)?;
-
-        let textures = load_textures(renderer, &dir, &manifest)?;
+impl ToonLink {
+    /// Set up the GameCube mode over an already uploaded `mesh`, which
+    /// [`ToonLinkHost`] shares with the Modern mode.
+    fn with_mesh(
+        renderer: &mut Renderer,
+        shaders: ShaderAtlas,
+        dir: &Path,
+        manifest: &Manifest,
+        mesh: Rc<LinkMesh>,
+    ) -> anyhow::Result<Self> {
+        let textures = load_textures(renderer, dir, manifest)?;
         let white_square = renderer.create_texture_with_options(
             "toon_link_white_square",
             RgbaPixels::new(1, 1, &[255; 4])?,
@@ -1106,15 +1156,14 @@ impl Game for ToonLink {
         let materials = build_materials(
             renderer,
             &shaders.toon_link,
-            &manifest,
-            &mesh,
+            manifest,
             &params_buffer,
             &textures,
             &white_square,
         )?;
         let materials_buffer = renderer.create_singleton_buffer(&materials.base)?;
 
-        let groups = group_batches(&manifest)?;
+        let groups = group_batches(manifest)?;
         let draw_order = groups.draw_order();
         // A dropped batch has no other symptom than a missing decal. See
         // `DrawGroups::draw_order`.
@@ -1126,7 +1175,7 @@ impl Game for ToonLink {
         );
 
         let draw_list = build_draw_list(
-            &manifest,
+            manifest,
             &draw_order,
             &materials,
             renderer,
@@ -1135,7 +1184,7 @@ impl Game for ToonLink {
         let args_buffer = renderer.create_indirect_buffer(&draw_list.commands)?;
         let individual_draw_buffer =
             renderer.create_singleton_buffer(&draw_list.individual_draws)?;
-        let skinning = SkinningBuffers::new(renderer, &dir, &manifest)?;
+        let skinning = SkinningBuffers::new(renderer, dir, manifest)?;
 
         let edit_state = EditState {
             fps: Label::new("FPS: --"),
@@ -1153,6 +1202,7 @@ impl Game for ToonLink {
             host_spin: None,
             materials,
             params_buffer,
+            mesh,
             args_buffer,
             individual_draw_buffer,
             runs: draw_list.runs,
@@ -1165,12 +1215,6 @@ impl Game for ToonLink {
         Ok(game)
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
-        self.draw_posed(renderer, None)
-    }
-}
-
-impl ToonLink {
     /// Draw with `palette` as this frame's joint palette, one
     /// `animated_world * inverse_bind_world` per skeleton joint. `None` is the
     /// bind pose (identity), used when there is no host or no player.
@@ -1219,7 +1263,7 @@ impl ToonLink {
             _padding_0: Default::default(),
             palette: skinning.palette,
             skinning: skinning.skinning,
-            _padding_1: Default::default(),
+            vertices: self.mesh.vertices_addr(&renderer),
         };
 
         let bind_pose;
@@ -1676,9 +1720,13 @@ impl Game for ToonLinkHost {
     }
 
     fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
-        let classic = ToonLink::setup(renderer, ShaderAtlas::init())?;
-        let modern = ToonLinkModern::setup(renderer, shaders)?;
-        let manifest = load_manifest(&converted_dir())?;
+        let dir = converted_dir();
+        let manifest = load_manifest(&dir)?;
+        // One upload of the mesh, drawn by whichever mode is selected.
+        let mesh = Rc::new(LinkMesh::load(renderer, &dir, &manifest)?);
+        let classic =
+            ToonLink::with_mesh(renderer, ShaderAtlas::init(), &dir, &manifest, mesh.clone())?;
+        let modern = ToonLinkModern::with_mesh(renderer, shaders, &dir, &manifest, mesh)?;
         let mut animation = AnimationHost::new(&manifest.skeleton, &catalog_path());
         // A mode that rejected its skin ignores every palette; playing a clip
         // into it would show a moving transport over a motionless model.

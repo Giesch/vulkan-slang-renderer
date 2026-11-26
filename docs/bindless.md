@@ -77,10 +77,9 @@ A push constant block is the per-draw and per-dispatch channel:
   `queue_draw_indexed_indirect_with_push_constants`,
   `queue_draw_vertex_count_with_push_constants`, or
   `dispatch_with_push_constants`. Every pipeline handle carries the block
-  type (`GraphicsPipelineHandle<I, D, PushBlock<P>>` versus
-  `GraphicsPipelineHandle<I, D, NoPush>` for graphics, and
-  `PipelineHandle<Compute, PushBlock<P>>` versus `PipelineHandle<Compute, NoPush>`
-  for compute), so a missing, extra, or wrong-type payload is a compile error.
+  type (`PipelineHandle<K, PushBlock<P>>` versus `PipelineHandle<K, NoPush>`,
+  where `K` is `Graphics`, `GraphicsIndirect`, or `Compute`), so a missing,
+  extra, or wrong-type payload is a compile error.
 - The payload is captured at queue time, so two dispatches of one pipeline
   in one frame each read the value in hand when they were queued.
 - A picking pipeline accepts only `NoPush` handles.

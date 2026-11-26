@@ -6,15 +6,12 @@ use std::ffi::CString;
 use std::io::Cursor;
 
 use ash::util::read_spv;
-use ash::vk;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
 #[allow(unused_imports)]
 use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
-#[allow(unused)]
-use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use mltrs::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
@@ -27,7 +24,7 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 pub struct DepthTextureParams {
     pub mvp: MVPMatrices,
     pub texture: BindlessHandle<Sampler2D>,
-    pub _padding_0: [u8; 8],
+    pub vertices: ImmutableAddr<Vertex>,
 }
 
 impl GPUWrite for DepthTextureParams {}
@@ -36,19 +33,51 @@ const _: () = assert!(std::mem::offset_of!(DepthTextureParams, mvp) == 0);
 const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
 const _: () = assert!(std::mem::offset_of!(DepthTextureParams, texture) == 192);
 const _: () = assert!(std::mem::size_of::<BindlessHandle<Sampler2D>>() == 8);
+const _: () = assert!(std::mem::offset_of!(DepthTextureParams, vertices) == 200);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<Vertex>>() == 8);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
 pub struct Vertex {
     pub position: glam::Vec3,
+    pub _padding_0: [u8; 4],
     pub color: glam::Vec3,
+    pub _padding_1: [u8; 4],
     pub tex_coord: glam::Vec2,
+    pub _padding_2: [u8; 8],
 }
 
 impl GPUWrite for Vertex {}
+const _: () = assert!(std::mem::size_of::<Vertex>() == 48);
+const _: () = assert!(std::mem::offset_of!(Vertex, position) == 0);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(Vertex, color) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(Vertex, tex_coord) == 32);
+const _: () = assert!(std::mem::size_of::<glam::Vec2>() == 8);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<DepthTextureParams>,
+}
+
+impl GPURead for Vertex {
+    const GPU_SIZE: usize = 48;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for Vertex"
+        );
+
+        Ok(Self {
+            position: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[0..12])?),
+            _padding_0: [0; 4],
+            color: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[16..28])?),
+            _padding_1: [0; 4],
+            tex_coord: GPURead::read_gpu(&bytes[32..40])?,
+            _padding_2: [0; 8],
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -59,6 +88,7 @@ pub struct DepthTextureParamsData {
 #[derive(Debug, Clone, Copy)]
 pub struct DepthTextureParamsBindings {
     pub texture: SampledTexBinding,
+    pub vertices: ImmutableBufferBinding<Vertex>,
 }
 
 impl GraphParamBindingSet for DepthTextureParamsBindings {
@@ -72,6 +102,7 @@ impl GraphParamBindingSet for DepthTextureParamsBindings {
 impl GraphBindingSet for DepthTextureParamsBindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.texture));
+        f(GraphBinding::Buffer(self.vertices.erased()));
     }
 }
 /// Complete graph inputs before resource references resolve to GPU values.
@@ -79,6 +110,7 @@ impl GraphBindingSet for DepthTextureParamsBindings {
 pub struct DepthTextureParamsInput {
     pub mvp: MVPMatrices,
     pub texture: SampledTexBinding,
+    pub vertices: ImmutableBufferBinding<Vertex>,
 }
 
 impl GraphShaderParams for DepthTextureParams {
@@ -90,6 +122,7 @@ impl GraphShaderParams for DepthTextureParams {
         Self::Input {
             mvp: data.mvp,
             texture: bindings.texture,
+            vertices: bindings.vertices,
         }
     }
 
@@ -97,7 +130,7 @@ impl GraphShaderParams for DepthTextureParams {
         Self {
             mvp: input.mvp,
             texture: resolver.sampled_tex(input.texture),
-            _padding_0: Default::default(),
+            vertices: resolver.immutable_buf(input.vertices),
         }
     }
 }
@@ -105,44 +138,7 @@ impl GraphShaderParams for DepthTextureParams {
 impl GraphBindingSet for DepthTextureParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::SampledTex(self.texture));
-    }
-}
-
-// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
-// must agree with this struct's Rust layout
-const _: () = assert!(std::mem::size_of::<Vertex>() == 32);
-const _: () = assert!(std::mem::offset_of!(Vertex, position) == 0);
-const _: () = assert!(std::mem::offset_of!(Vertex, color) == 12);
-const _: () = assert!(std::mem::offset_of!(Vertex, tex_coord) == 24);
-
-impl VertexDescription for Vertex {
-    fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
-        let binding_description = ash::vk::VertexInputBindingDescription::default()
-            .binding(0)
-            .stride(std::mem::size_of::<Self>() as u32)
-            .input_rate(ash::vk::VertexInputRate::VERTEX);
-
-        vec![binding_description]
-    }
-
-    fn attribute_descriptions() -> Vec<ash::vk::VertexInputAttributeDescription> {
-        vec![
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, position) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(0),
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, color) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(1),
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, tex_coord) as u32)
-                .format(ash::vk::Format::R32G32_SFLOAT)
-                .binding(0)
-                .location(2),
-        ]
+        f(GraphBinding::Buffer(self.vertices.erased()));
     }
 }
 
@@ -166,7 +162,7 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> IndexedPipelineConfig<'a, Vertex, NoPush> {
+    ) -> PipelineConfig<'a, Graphics, NoPush> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -188,7 +184,7 @@ impl Shader {
             uniform_buffer_handles,
             storage_texture_handles,
         }
-        .build_indexed()
+        .build_graphics()
     }
 
     fn vert_entry_point_name(&self) -> CString {
@@ -233,14 +229,6 @@ impl Shader {
 impl ShaderAtlasEntry for Shader {
     fn source_file_name(&self) -> &str {
         &self.reflection_json.source_file_name
-    }
-
-    fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
-        Vertex::binding_descriptions()
-    }
-
-    fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription> {
-        Vertex::attribute_descriptions()
     }
 
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {

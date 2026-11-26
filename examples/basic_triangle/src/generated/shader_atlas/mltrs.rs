@@ -8,7 +8,6 @@ use serde::Serialize;
 use mltrs::renderer::gpu_read::GPURead;
 #[allow(unused_imports)]
 use mltrs::renderer::render_graph::GPUWrite;
-use mltrs::renderer::render_graph::*;
 
 // glam must be built without its scalar-math feature (GPU layouts need align-16 Vec4)
 const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
@@ -45,38 +44,4 @@ impl GPURead for MVPMatrices {
             proj: GPURead::read_gpu(&bytes[128..192])?,
         })
     }
-}
-
-/// Complete graph inputs before resource references resolve to GPU values.
-#[derive(Debug, Clone, Copy)]
-pub struct MVPMatricesInput {
-    pub model: glam::Mat4,
-    pub view: glam::Mat4,
-    pub proj: glam::Mat4,
-}
-
-impl GraphShaderParams for MVPMatrices {
-    type Data = Self;
-    type Bindings = ();
-    type Input = MVPMatricesInput;
-
-    fn input(data: &Self::Data, _bindings: &Self::Bindings) -> Self::Input {
-        Self::Input {
-            model: data.model,
-            view: data.view,
-            proj: data.proj,
-        }
-    }
-
-    fn assemble_input(input: &Self::Input, _resolver: &BindingResolver<'_>) -> Self {
-        Self {
-            model: input.model,
-            view: input.view,
-            proj: input.proj,
-        }
-    }
-}
-
-impl GraphBindingSet for MVPMatricesInput {
-    fn visit(&self, _f: &mut dyn FnMut(GraphBinding)) {}
 }

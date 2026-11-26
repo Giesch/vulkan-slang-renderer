@@ -4,7 +4,7 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
     ResourcePlanner, UniformBufferHandle, draw_vertex_count,
 };
 
@@ -15,7 +15,7 @@ fn main() -> Result<(), anyhow::Error> {
     Dragon::run()
 }
 
-type DragonGraph = PreparedRenderGraph<DrawVertexCountNode<DragonParams>>;
+type DragonGraph = PreparedRenderGraph<DrawNode<DragonParams>>;
 
 struct Dragon {
     start_time: Instant,

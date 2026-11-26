@@ -34,9 +34,15 @@ impl PushConstantBytes {
 #[derive(Clone, Copy)]
 pub enum DrawCallConfig {
     VertexCount(u32),
-    IndexCount(u32),
-    IndexRange { first_index: u32, index_count: u32 },
-    IndexedIndirect(IndirectRequest),
+    Indexed {
+        index_buffer: usize,
+        first_index: u32,
+        index_count: u32,
+    },
+    IndexedIndirect {
+        index_buffer: usize,
+        request: IndirectRequest,
+    },
 }
 
 /// A typed indirect request erased only inside graph planning.

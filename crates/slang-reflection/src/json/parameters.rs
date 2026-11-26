@@ -103,6 +103,36 @@ pub enum StructField {
     DescriptorHandle(DescriptorHandleStructField),
 }
 
+impl EntryPoint {
+    /// Whether this entry point reads `SV_DrawIndex`. A vertex entry point that
+    /// does is drawn with indexed-indirect draws, and one that does not is
+    /// drawn with direct draws. Slang reflects the semantic name upper-cased.
+    pub fn declares_draw_index(&self) -> bool {
+        self.parameters.iter().any(|parameter| {
+            matches!(
+                parameter,
+                EntryPointParameter::Scalar(ScalarEntryPointParameter::Semantic(semantic))
+                    if semantic.semantic_name.eq_ignore_ascii_case("SV_DRAWINDEX")
+            )
+        })
+    }
+
+    /// The names of this entry point's varying struct parameters. A vertex
+    /// entry point must have none: vertex data is pulled through buffer
+    /// device addresses indexed by `SV_VertexID`.
+    pub fn struct_parameter_names(&self) -> Vec<&str> {
+        self.parameters
+            .iter()
+            .filter_map(|parameter| match parameter {
+                EntryPointParameter::Struct(struct_parameter) => {
+                    Some(struct_parameter.parameter_name.as_str())
+                }
+                EntryPointParameter::Scalar(_) => None,
+            })
+            .collect()
+    }
+}
+
 impl GlobalParameter {
     /// Whether this parameter declares a bindless texture handle anywhere
     pub fn declares_bindless_handle(&self) -> bool {
@@ -470,6 +500,7 @@ impl EnumTagType {
 
 #[cfg(test)]
 mod tests {
+    use super::super::ReflectionJson;
     use super::*;
 
     fn uniform(offset: usize, size: usize) -> Binding {
@@ -557,5 +588,54 @@ mod tests {
         });
 
         assert!(block(vec![pointer]).declares_bindless_handle());
+    }
+
+    fn basic_triangle() -> ReflectionJson {
+        serde_json::from_str(include_str!("../fixtures/basic_triangle.json")).unwrap()
+    }
+
+    fn semantic(parameter_name: &str, semantic_name: &str) -> EntryPointParameter {
+        EntryPointParameter::Scalar(ScalarEntryPointParameter::Semantic(
+            SemanticScalarEntryPointParameter {
+                parameter_name: parameter_name.to_string(),
+                semantic_name: semantic_name.to_string(),
+                scalar_type: ScalarType::Uint32,
+            },
+        ))
+    }
+
+    #[test]
+    fn a_vertex_id_only_entry_point_declares_no_draw_index() {
+        let reflection = basic_triangle();
+
+        assert!(!reflection.vertex_entry_point.declares_draw_index());
+        assert!(
+            reflection
+                .vertex_entry_point
+                .struct_parameter_names()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn draw_index_is_matched_case_insensitively() {
+        for semantic_name in ["SV_DRAWINDEX", "SV_DrawIndex"] {
+            let mut entry_point = basic_triangle().vertex_entry_point;
+            entry_point
+                .parameters
+                .push(semantic("drawIndex", semantic_name));
+
+            assert!(entry_point.declares_draw_index(), "{semantic_name}");
+        }
+    }
+
+    #[test]
+    fn struct_parameters_are_listed_by_name() {
+        let reflection = basic_triangle();
+
+        assert_eq!(
+            reflection.fragment_entry_point.struct_parameter_names(),
+            vec!["fragVertex"]
+        );
     }
 }

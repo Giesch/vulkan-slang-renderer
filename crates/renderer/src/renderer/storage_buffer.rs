@@ -431,12 +431,11 @@ impl SingletonBufferStorage {
 
 /// byte offset of element `index` in a buffer of `len` elements of `stride` bytes
 ///
-/// `assert!`, not `debug_assert!` — deliberately unlike the neighbouring bounds
-/// check in `queue_draw_index_range`. That one is debug-only because a bad index
-/// range renders garbage silently under `robustBufferAccess`; robust access
-/// covers descriptor-bound buffers and does *not* cover buffer device addresses,
-/// which bypass descriptor bounds checking entirely. An out-of-range element
-/// address is undefined behaviour and a plausible device loss, not a clamped read.
+/// `assert!`, not `debug_assert!`, like the index-range check in
+/// `queue_draw_index_range`: `robustBufferAccess` covers descriptor-bound
+/// buffers and does *not* cover buffer device addresses, which bypass
+/// descriptor bounds checking entirely. An out-of-range element address is
+/// undefined behaviour and a plausible device loss, not a clamped read.
 pub(super) fn element_byte_offset(index: u32, len: u32, stride: usize) -> u64 {
     assert!(
         index < len,

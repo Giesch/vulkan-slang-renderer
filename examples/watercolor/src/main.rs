@@ -13,9 +13,9 @@ use glam::{Vec2, Vec3, Vec4};
 use mltrs::editor::{Label, Slider};
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, ComputeNodeWithPush, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError,
-    DrawVertexCountNode, FrameRenderer, GraphFormat, LoopCount, OptionalNode, PreparedRenderGraph,
-    RenderGraph, Renderer, RepeatNode, ResourcePlanner, StorageTextureHandle, TextureHandle,
+    ComputeNode, ComputeNodeWithPush, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawNode,
+    FrameRenderer, GraphFormat, LoopCount, OptionalNode, PreparedRenderGraph, RenderGraph,
+    Renderer, RepeatNode, ResourcePlanner, StorageTextureHandle, TextureHandle,
     UniformBufferHandle, UploadNode, optional,
     render_graph::{dispatch, draw_vertex_count},
     repeat, upload,
@@ -86,7 +86,7 @@ type WcGraph = PreparedRenderGraph<(
     ComputeNode<wc_flow_outward_compute::Params>,
     ComputeNode<wc_advect_and_transfer_pigment_compute::Params>,
     ComputeNode<wc_capillary_flow_compute::Params>,
-    DrawVertexCountNode<paint_display::DisplayParams>,
+    DrawNode<paint_display::DisplayParams>,
 )>;
 
 struct Watercolor {

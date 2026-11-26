@@ -5,9 +5,9 @@ mod generated;
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawVertexCountNode,
-    FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
-    UniformBufferHandle, UploadNode, dispatch, draw_vertex_count, upload,
+    ComputeNode, CpuUpdatedBufferHandle, CpuUpdatedSlot, DrawError, DrawNode, FrameRenderer,
+    PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, UniformBufferHandle, UploadNode,
+    dispatch, draw_vertex_count, upload,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -22,7 +22,7 @@ fn main() -> Result<(), anyhow::Error> {
 type RecipesGraph = PreparedRenderGraph<(
     UploadNode<shared::Solution>,
     ComputeNode<recipes_compute::IngredientParams>,
-    DrawVertexCountNode<recipe_render::RenderParams>,
+    DrawNode<recipe_render::RenderParams>,
 )>;
 
 struct Recipes {

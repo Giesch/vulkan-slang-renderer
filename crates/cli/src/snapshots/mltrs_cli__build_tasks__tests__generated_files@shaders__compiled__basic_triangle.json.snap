@@ -8,54 +8,112 @@ info:
   "globalParameters": [
     {
       "kind": "parameterBlock",
-      "parameterName": "matrices",
+      "parameterName": "params",
       "elementType": {
-        "typeName": "MVPMatrices",
+        "typeName": "TriangleParams",
         "fields": [
           {
-            "kind": "matrix",
-            "fieldName": "model",
+            "kind": "struct",
+            "fieldName": "mvp",
             "binding": {
               "kind": "uniform",
               "offset": 0,
-              "size": 64
+              "size": 192
             },
-            "rowCount": 4,
-            "columnCount": 4,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
+            "structType": {
+              "typeName": "MVPMatrices",
+              "fields": [
+                {
+                  "kind": "matrix",
+                  "fieldName": "model",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "matrix",
+                  "fieldName": "view",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 64,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "matrix",
+                  "fieldName": "proj",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 128,
+                    "size": 64
+                  },
+                  "rowCount": 4,
+                  "columnCount": 4,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
             }
           },
           {
-            "kind": "matrix",
-            "fieldName": "view",
+            "kind": "pointer",
+            "fieldName": "vertices",
             "binding": {
               "kind": "uniform",
-              "offset": 64,
-              "size": 64
+              "offset": 192,
+              "size": 8
             },
-            "rowCount": 4,
-            "columnCount": 4,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "matrix",
-            "fieldName": "proj",
-            "binding": {
-              "kind": "uniform",
-              "offset": 128,
-              "size": 64
+            "pointeeType": {
+              "typeName": "Vertex",
+              "fields": [
+                {
+                  "kind": "vector",
+                  "fieldName": "position",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 0,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                },
+                {
+                  "kind": "vector",
+                  "fieldName": "color",
+                  "binding": {
+                    "kind": "uniform",
+                    "offset": 16,
+                    "size": 12
+                  },
+                  "elementCount": 3,
+                  "elementType": {
+                    "kind": "scalar",
+                    "scalarType": "float32"
+                  }
+                }
+              ]
             },
-            "rowCount": 4,
-            "columnCount": 4,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
+            "pointeeSize": 32,
+            "access": "immutable"
           }
         ]
       }
@@ -66,44 +124,10 @@ info:
     "stage": "vertex",
     "parameters": [
       {
-        "kind": "struct",
-        "parameterName": "vertex",
-        "binding": {
-          "kind": "varyingInput",
-          "index": 0,
-          "count": 2
-        },
-        "typeName": "Vertex",
-        "fields": [
-          {
-            "kind": "vector",
-            "fieldName": "position",
-            "binding": {
-              "kind": "varyingInput",
-              "index": 0,
-              "count": 1
-            },
-            "elementCount": 3,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          },
-          {
-            "kind": "vector",
-            "fieldName": "color",
-            "binding": {
-              "kind": "varyingInput",
-              "index": 1,
-              "count": 1
-            },
-            "elementCount": 3,
-            "elementType": {
-              "kind": "scalar",
-              "scalarType": "float32"
-            }
-          }
-        ]
+        "kind": "scalar",
+        "parameterName": "vertexId",
+        "semanticName": "SV_VERTEXID",
+        "scalarType": "uint32"
       }
     ]
   },
@@ -158,7 +182,7 @@ info:
             "descriptorType": "constantBuffer",
             "descriptorCount": 1,
             "stageFlags": "all",
-            "size": 192
+            "size": 208
           }
         ]
       }

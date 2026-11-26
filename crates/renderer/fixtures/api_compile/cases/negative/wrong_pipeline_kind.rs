@@ -1,14 +1,18 @@
-//! Negative control: a vertex-count pipeline key cannot drive an indexed
-//! draw. Every pipeline family has its own graph key type, so the mismatch
-//! is a compile error at the constructor, not a runtime surprise.
-//! (`draw_index_range` takes the same `DrawIndexedKey` family and gets its
-//! coverage through this same type distinction.)
+//! Negative control: a direct graphics pipeline key cannot drive an
+//! indexed-indirect draw. Every pipeline family has its own graph key type,
+//! so the mismatch is a compile error at the constructor, not a runtime
+//! surprise. (`draw_indexed` and `draw_index_range` take the same
+//! `GraphicsPipelineKey` family and get their coverage through this same type
+//! distinction.)
 
 #![allow(dead_code)]
 
-use mltrs_renderer::renderer::pipeline::{DrawVertexCount, GraphicsPipelineHandle, NoPush, NoVertex};
-use mltrs_renderer::renderer::render_graph::{DrawVertexCountKey, draw_indexed};
-use mltrs_renderer::renderer::{GpuUpdatedBufferHandle, GpuUpdatedSlot, UniformBufferHandle};
+use mltrs_renderer::renderer::pipeline::{Graphics, NoPush, PipelineHandle};
+use mltrs_renderer::renderer::render_graph::{GraphicsPipelineKey, draw_indexed_indirect};
+use mltrs_renderer::renderer::{
+    DrawIndexedIndirectCommand, GpuUpdatedBufferHandle, GpuUpdatedSlot, ImmutableBufferHandle,
+    IndexBufferHandle, UniformBufferHandle,
+};
 
 use render_graph_api_checks::generated::shader_atlas::particle::Particle;
 use render_graph_api_checks::generated::shader_atlas::render::{
@@ -16,13 +20,19 @@ use render_graph_api_checks::generated::shader_atlas::render::{
 };
 
 fn wrong(
-    render_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, NoPush>,
+    render_pipeline: &PipelineHandle<Graphics, NoPush>,
+    indices: &IndexBufferHandle,
     render_params: &UniformBufferHandle<RenderParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
+    args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
 ) {
-    let _ = draw_indexed(
-        DrawVertexCountKey::from(render_pipeline),
+    let _ = draw_indexed_indirect(
+        GraphicsPipelineKey::from(render_pipeline),
+        indices,
         render_params,
+        args,
+        0,
+        1,
         RenderParamsBindings {
             particles: GpuUpdatedSlot::from(particles).current().into(),
         },

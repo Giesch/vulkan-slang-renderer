@@ -334,7 +334,6 @@ fn add_top_level_rust_modules(
 struct GraphicsShaderData {
     shader_name: String,
     defs: GeneratedTypeDefs,
-    vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
     source_file_name: String,
     /// uniform-block element types plus the push block: the types that get a
@@ -348,67 +347,15 @@ fn collect_graphics_shader_data(
     type_to_module: &HashMap<String, String>,
 ) -> GraphicsShaderData {
     let mut defs = GeneratedTypeDefs::default();
-    let mut vertex_impl_blocks = vec![];
-
-    // NOTE vertex/index data is not a Resources field: whether a pipeline owns
-    // its buffers or borrows a shared mesh is a call-site decision, made with
-    // PipelineConfig::with_vertices / with_shared_mesh.
     let mut required_resources = vec![];
 
-    let mut vertex_type_name = None;
-    for vert_param in &reflection_json.vertex_entry_point.parameters {
-        match vert_param {
-            EntryPointParameter::Scalar(ScalarEntryPointParameter::Semantic(_)) => {}
-            EntryPointParameter::Scalar(ScalarEntryPointParameter::Bound(_)) => todo!(),
-
-            EntryPointParameter::Struct(struct_param) => {
-                vertex_type_name = Some(struct_param.type_name.to_string());
-
-                let mut generated_fields = vec![];
-                for field in &struct_param.fields {
-                    if let Some(generated_field) =
-                        gather_struct_defs(field, &mut defs, Some(Alignment::Std140))
-                    {
-                        generated_fields.push(generated_field);
-                    };
-                }
-
-                let def = GeneratedStructDefinition::gpu_layout(
-                    struct_param.type_name.to_string(),
-                    generated_fields,
-                    Some(Alignment::Std140),
-                    None,
-                );
-
-                let layout = vertex_layout(&reflection_json.vertex_entry_point)
-                    .expect("vertex layout")
-                    .expect("vertex entry point struct");
-                assert_eq!(
-                    layout.attributes.len(),
-                    def.fields.len(),
-                    "vertex layout attribute count disagrees with generated fields"
-                );
-                let attribute_descriptions = layout
-                    .attributes
-                    .iter()
-                    .map(|attribute| VertexAttributeDescription {
-                        field_name: attribute.field_name.to_snake_case(),
-                        format: vk_format_name(attribute.format).to_string(),
-                        location: attribute.location,
-                        offset: attribute.offset,
-                    })
-                    .collect();
-                let vert_block = VertexImplBlock {
-                    type_name: def.type_name.clone(),
-                    stride: layout.stride,
-                    attribute_descriptions,
-                };
-                vertex_impl_blocks.push(vert_block);
-
-                defs.struct_defs.push(def);
-            }
-        }
-    }
+    // reflection rejects varying struct inputs on the vertex entry point, so
+    // the only vertex-stage fact codegen needs is whether it reads SV_DrawIndex
+    let draw_kind = if reflection_json.vertex_entry_point.declares_draw_index() {
+        GraphicsDrawKind::GraphicsIndirect
+    } else {
+        GraphicsDrawKind::Graphics
+    };
 
     let mut push_constant_type_name = None;
     for global_parameter in &reflection_json.global_parameters {
@@ -460,7 +407,7 @@ fn collect_graphics_shader_data(
     let shader_impl = GeneratedShaderImpl {
         shader_name: shader_name.clone(),
         shader_type_name: "Shader".to_string(),
-        vertex_type_name,
+        draw_kind,
         push_constant_type_name,
         resources_texture_fields,
         resources_uniform_buffer_fields,
@@ -473,7 +420,6 @@ fn collect_graphics_shader_data(
     GraphicsShaderData {
         shader_name,
         defs,
-        vertex_impl_blocks,
         shader_impl,
         source_file_name: reflection_json.source_file_name.clone(),
         params_type_names,
@@ -511,7 +457,6 @@ fn render_graphics_shader_file(
         enum_defs: local.enum_defs,
         struct_defs: local.struct_defs,
         graph_split_defs,
-        vertex_impl_blocks: data.vertex_impl_blocks.clone(),
         shader_impl: data.shader_impl.clone(),
         push_constant_budget: MAX_PUSH_CONSTANT_BYTES,
     }
@@ -573,7 +518,6 @@ struct ShaderAtlasEntryModule {
     enum_defs: Vec<GeneratedEnumDefinition>,
     struct_defs: Vec<GeneratedStructDefinition>,
     graph_split_defs: Vec<GraphSplitDef>,
-    vertex_impl_blocks: Vec<VertexImplBlock>,
     shader_impl: GeneratedShaderImpl,
     push_constant_budget: usize,
 }
@@ -634,11 +578,21 @@ impl GeneratedComputeShaderImpl {
     }
 }
 
+/// Which draw calls a graphics pipeline accepts, decided by whether its vertex
+/// entry point reads `SV_DrawIndex`.
+#[derive(Clone, Copy)]
+enum GraphicsDrawKind {
+    /// direct vertex-count and indexed draws
+    Graphics,
+    /// indexed-indirect draws
+    GraphicsIndirect,
+}
+
 #[derive(Clone)]
 struct GeneratedShaderImpl {
     shader_name: String,
     shader_type_name: String,
-    vertex_type_name: Option<String>,
+    draw_kind: GraphicsDrawKind,
     push_constant_type_name: Option<String>,
     resources_texture_fields: Vec<String>,
     resources_uniform_buffer_fields: Vec<String>,
@@ -646,31 +600,28 @@ struct GeneratedShaderImpl {
 }
 
 impl GeneratedShaderImpl {
-    /// What `pipeline_config()` returns. An indexed shader hands back an
-    /// `IndexedPipelineConfig`, which is not yet a `PipelineConfig`: the caller
-    /// has to pick a vertex source first. A shader with no vertex input is
-    /// already complete.
+    /// What `pipeline_config()` returns. The push slot is always printed, so a
+    /// generated entry never leans on `PipelineConfig`'s default.
     fn config_return_type(&self) -> String {
         let push_slot = match &self.push_constant_type_name {
             Some(block) => format!("PushBlock<{block}>"),
             None => "NoPush".to_string(),
         };
 
-        match &self.vertex_type_name {
-            Some(vertex_type_name) => {
-                format!("IndexedPipelineConfig<'a, {vertex_type_name}, {push_slot}>")
-            }
-            None => format!("PipelineConfig<'a, NoVertex, DrawVertexCount, {push_slot}>"),
-        }
+        let draw_marker = match self.draw_kind {
+            GraphicsDrawKind::Graphics => "Graphics",
+            GraphicsDrawKind::GraphicsIndirect => "GraphicsIndirect",
+        };
+
+        format!("PipelineConfig<'a, {draw_marker}, {push_slot}>")
     }
 
     /// The matching `PipelineConfigBuilder` terminal call. Must stay in sync
-    /// with [`Self::config_return_type`] — both key off `vertex_type_name`.
+    /// with [`Self::config_return_type`] — both key off `draw_kind`.
     fn build_method(&self) -> &str {
-        if self.vertex_type_name.is_some() {
-            "build_indexed"
-        } else {
-            "build_vertex_count"
+        match self.draw_kind {
+            GraphicsDrawKind::Graphics => "build_graphics",
+            GraphicsDrawKind::GraphicsIndirect => "build_graphics_indirect",
         }
     }
 }
@@ -1726,36 +1677,6 @@ fn write_generated_file(config: &Config, source_file: &GeneratedFile) -> anyhow:
     Ok(())
 }
 
-#[derive(Clone)]
-struct VertexImplBlock {
-    type_name: String,
-    /// the stride `vertex_layout` defines; asserted against `size_of`
-    stride: u32,
-    attribute_descriptions: Vec<VertexAttributeDescription>,
-}
-
-#[derive(Clone)]
-struct VertexAttributeDescription {
-    field_name: String,
-    format: String,
-    location: u32,
-    /// the offset `vertex_layout` defines; asserted against `offset_of!`
-    offset: u32,
-}
-
-fn vk_format_name(format: VertexFormat) -> &'static str {
-    match format {
-        VertexFormat::R32Sfloat => "ash::vk::Format::R32_SFLOAT",
-        VertexFormat::R32G32Sfloat => "ash::vk::Format::R32G32_SFLOAT",
-        VertexFormat::R32G32B32Sfloat => "ash::vk::Format::R32G32B32_SFLOAT",
-        VertexFormat::R32G32B32A32Sfloat => "ash::vk::Format::R32G32B32A32_SFLOAT",
-        VertexFormat::R32Sint => "ash::vk::Format::R32_SINT",
-        VertexFormat::R32G32B32A32Sint => "ash::vk::Format::R32G32B32A32_SINT",
-        VertexFormat::R32Uint => "ash::vk::Format::R32_UINT",
-        VertexFormat::R32G32B32A32Uint => "ash::vk::Format::R32G32B32A32_UINT",
-    }
-}
-
 struct RequiredResource {
     field_name: String,
     resource_type: RequiredResourceType,
@@ -2214,10 +2135,9 @@ fn shared_imports_for_shader(
         for field in &def.fields {
             for (module_name, module) in shared_modules {
                 for module_def in &module.struct_defs {
-                    // Check exact match or contained within generic type (e.g., CpuUpdatedBufferHandle<Cube>)
-                    if field.type_name == module_def.type_name
-                        || field.type_name.contains(&module_def.type_name)
-                    {
+                    // exact match, or named inside a generic or array type
+                    // (e.g., ImmutableAddr<Cube>, [Cube; 4])
+                    if names_type(&field.type_name, &module_def.type_name) {
                         imports
                             .entry(module_name.clone())
                             .or_default()
@@ -2250,6 +2170,14 @@ fn shared_imports_for_shader(
         .collect()
 }
 
+/// Whether the Rust type `type_name` names `target` as a whole identifier:
+/// `ImmutableAddr<VertexSkinning>` names `VertexSkinning` but not `Vertex`.
+fn names_type(type_name: &str, target: &str) -> bool {
+    type_name
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|identifier| identifier == target)
+}
+
 /// Determine cross-module imports for a shared module.
 /// For example, ray_march_camera.rs needs to import Projection from projection.rs.
 fn cross_module_imports(
@@ -2266,7 +2194,9 @@ fn cross_module_imports(
                     continue;
                 }
                 for other_def in &other.struct_defs {
-                    if field.type_name == other_def.type_name {
+                    // exact match, or named inside a generic or array type
+                    // (e.g., ImmutableAddr<Projection>, [Projection; 4])
+                    if names_type(&field.type_name, &other_def.type_name) {
                         imports
                             .entry(other_module.clone())
                             .or_default()
@@ -2364,6 +2294,49 @@ mod tests {
                 insta::assert_snapshot!(content);
             });
         });
+    }
+
+    #[test]
+    fn names_type_matches_whole_identifiers_only() {
+        assert!(names_type("Vertex", "Vertex"));
+        assert!(names_type("ImmutableAddr<Vertex>", "Vertex"));
+        assert!(names_type("[Vertex; 4]", "Vertex"));
+        assert!(names_type("CpuUpdatedBufferHandle<Cube>", "Cube"));
+        assert!(!names_type("ImmutableAddr<VertexSkinning>", "Vertex"));
+        assert!(!names_type("SkinVertex", "Vertex"));
+    }
+
+    #[test]
+    fn cross_module_imports_follow_pointer_and_array_fields() {
+        let module = GeneratedTypeDefs {
+            struct_defs: vec![graph_test_def(
+                "Scene",
+                &[
+                    ("camera", "ImmutableAddr<Camera>"),
+                    ("lights", "[Light; 4]"),
+                    ("skins", "ImmutableAddr<LightSkin>"),
+                ],
+            )],
+            enum_defs: vec![],
+        };
+        let other = GeneratedTypeDefs {
+            struct_defs: vec![
+                graph_test_def("Camera", &[]),
+                graph_test_def("Light", &[]),
+                graph_test_def("Unused", &[]),
+            ],
+            enum_defs: vec![],
+        };
+        let shared_modules = BTreeMap::from([
+            ("scene".to_string(), module.clone()),
+            ("view".to_string(), other),
+        ]);
+
+        let imports = cross_module_imports("scene", &module, &shared_modules);
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].module_name, "view");
+        assert_eq!(imports[0].type_names, vec!["Camera", "Light"]);
     }
 
     fn graph_test_def(name: &str, fields: &[(&str, &str)]) -> GeneratedStructDefinition {
@@ -3059,6 +3032,85 @@ mod tests {
         // natural layout would put InnerA.v at 4
         assert_eq!(member_offsets(member_types[4]), vec![(0, 0), (1, 16)]);
         assert_eq!(member_offsets(member_types[6]), vec![(0, 0), (1, 8)]);
+    }
+
+    /// Vertex pulling reads `float3`-bearing vertex structs through
+    /// `ImmutableAddr<T>`. Pins the emitted std430 offsets and pointer strides
+    /// of the three tricky shapes in vertex_pulling_float3.shader.slang; the
+    /// generated `offset_of!` / `size_of` asserts pin the Rust side of the same
+    /// numbers when `alignment_tests` compiles the check crate.
+    #[cfg(not(windows))]
+    #[test]
+    fn vertex_pulling_float3_spirv_layout() {
+        use rspirv::dr::Operand;
+        use rspirv::spirv::{Decoration, Op, StorageClass};
+
+        let search_path = manifest_path(["fixtures", "alignment"]);
+        let reflected = prepare_reflected_shader(
+            "vertex_pulling_float3.shader.slang",
+            search_path.to_str().unwrap(),
+        )
+        .unwrap();
+        assert!(
+            reflected
+                .reflection_json
+                .vertex_entry_point
+                .declares_draw_index()
+        );
+
+        let module = rspirv::dr::load_bytes(&reflected.vertex_shader.shader_bytecode)
+            .expect("failed to parse SPIR-V");
+
+        let struct_ids: Vec<u32> = module
+            .types_global_values
+            .iter()
+            .filter(|inst| inst.class.opcode == Op::TypeStruct)
+            .map(|inst| inst.result_id.unwrap())
+            .collect();
+        let array_stride = |target_id: u32| {
+            module
+                .annotations
+                .iter()
+                .filter(|inst| inst.class.opcode == Op::Decorate)
+                .find_map(|inst| match inst.operands.as_slice() {
+                    [
+                        Operand::IdRef(target),
+                        Operand::Decoration(Decoration::ArrayStride),
+                        Operand::LiteralBit32(stride),
+                    ] if *target == target_id => Some(*stride),
+                    _ => None,
+                })
+                .expect("no ArrayStride on a PhysicalStorageBuffer pointer type")
+        };
+
+        // (member offsets, pointer stride) of every struct-pointee BDA pointer
+        let mut pointee_layouts: Vec<(Vec<(u32, u32)>, u32)> = module
+            .types_global_values
+            .iter()
+            .filter(|inst| inst.class.opcode == Op::TypePointer)
+            .filter_map(|inst| match inst.operands.as_slice() {
+                [
+                    Operand::StorageClass(StorageClass::PhysicalStorageBuffer),
+                    Operand::IdRef(pointee),
+                ] if struct_ids.contains(pointee) => Some((
+                    member_offsets(&module, *pointee),
+                    array_stride(inst.result_id.unwrap()),
+                )),
+                _ => None,
+            })
+            .collect();
+        pointee_layouts.sort();
+
+        assert_eq!(
+            pointee_layouts,
+            vec![
+                // TailVertex: the float tail-packs into the float3's pad
+                (vec![(0, 0), (1, 12)], 16),
+                // PairVertex and WideVertex: the second member aligns to 16
+                (vec![(0, 0), (1, 16)], 32),
+                (vec![(0, 0), (1, 16)], 32),
+            ],
+        );
     }
 
     /// The pointer-chain twin of `pointer_pointee_spirv_layout`: a pointer
@@ -3773,21 +3825,52 @@ float4 fragMain() : SV_Target {
     }
 
     // The guard that recovers the enum sits before the layout-kind match, so it
-    // also intercepts vertex inputs, where there is no uniform binding to carry.
+    // also intercepts varying inputs, where there is no uniform binding to carry.
     #[cfg(not(windows))]
     #[test]
-    fn enum_vertex_inputs_are_rejected() {
+    fn enum_varying_inputs_are_rejected() {
         let source = r#"#language slang 2026
 
-module enum_vertex_input;
+module enum_varying_input;
 
 enum Bad : uint {
     Only = 0,
 }
 
+struct Varying {
+    float3 color;
+    Bad bad;
+}
+
+[shader("vertex")]
+float4 vertMain(uint vertexId : SV_VertexID) : SV_Position {
+    return float4(1.0);
+}
+
+[shader("fragment")]
+float4 fragMain(Varying varying) : SV_Target {
+    return float4(varying.color, 1.0);
+}
+"#;
+        let message = reflect_rejected_shader("enum_varying_input", source);
+        assert!(
+            message.contains("enum field 'bad'") && message.contains("not varying inputs"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    // Vertex data is pulled through buffer device addresses; a varying struct
+    // on the vertex entry point would need fixed-function vertex input, which
+    // the renderer no longer has. The diagnostic names the replacement.
+    #[cfg(not(windows))]
+    #[test]
+    fn vertex_struct_inputs_are_rejected() {
+        let source = r#"#language slang 2026
+
+module vertex_struct_input;
+
 struct Vertex {
     float3 position;
-    Bad bad;
 }
 
 [shader("vertex")]
@@ -3800,9 +3883,14 @@ float4 fragMain() : SV_Target {
     return float4(1.0);
 }
 "#;
-        let message = reflect_rejected_shader("enum_vertex_input", source);
+        let message = reflect_rejected_shader("vertex_struct_input", source);
         assert!(
-            message.contains("enum field 'bad'") && message.contains("not vertex inputs"),
+            message.contains("vertex entry point 'vertMain'")
+                && message.contains("'vertex' (Vertex)")
+                && message.contains("uint vertexId : SV_VertexID")
+                && message.contains("mltrs::ImmutableAddr<Vertex>")
+                && message.contains("mltrs::ReadAddr<Vertex>")
+                && message.contains("mltrs::Addr<Vertex>"),
             "unexpected error message: {message}"
         );
     }
@@ -3901,33 +3989,33 @@ float4 fragMain(float2 uv) : SV_Target {
     }
 
     // The handle guard sits before the layout-kind match and is deliberately not
-    // gated on the binding, so it also intercepts vertex inputs — where there is
+    // gated on the binding, so it also intercepts varying inputs — where there is
     // no uniform binding and the Vector arm would have accepted the uint2.
     #[cfg(not(windows))]
     #[test]
-    fn handle_vertex_inputs_are_rejected() {
+    fn handle_varying_inputs_are_rejected() {
         let source = r#"#language slang 2026
 
-module handle_vertex_input;
+module handle_varying_input;
 
-struct Vertex {
-    float3 position;
+struct Varying {
+    float3 color;
     Sampler2D.Handle tex;
 }
 
 [shader("vertex")]
-float4 vertMain(Vertex vertex) : SV_Position {
-    return float4(vertex.position, 1.0);
+float4 vertMain(uint vertexId : SV_VertexID) : SV_Position {
+    return float4(1.0);
 }
 
 [shader("fragment")]
-float4 fragMain() : SV_Target {
-    return float4(1.0);
+float4 fragMain(Varying varying) : SV_Target {
+    return float4(varying.color, 1.0);
 }
 "#;
-        let message = reflect_rejected_shader("handle_vertex_input", source);
+        let message = reflect_rejected_shader("handle_varying_input", source);
         assert!(
-            message.contains("handle field 'tex'") && message.contains("not vertex inputs"),
+            message.contains("handle field 'tex'") && message.contains("not varying inputs"),
             "unexpected error message: {message}"
         );
     }
@@ -4199,13 +4287,9 @@ float4 fragMain(uniform Tint t) : SV_Target {
         );
     }
 
-    // The pre-existing bug, older than push constants and reachable without them:
-    // collect_graphics_shader_data treats *any* struct parameter on the vertex
-    // entry point as the vertex input type. Every field here has a vk::Format, so
-    // the `todo!()` in that format match does not fire and this would silently
-    // generate an `impl VertexDescription` for a push constant block. The guard
-    // returning an Err — rather than the test panicking — is what proves the
-    // rejection came from the binding category and not from the format match.
+    // A `uniform` struct on the vertex entry point must be rejected by its
+    // binding category, which names the implicit push constant range, rather
+    // than by the vertex struct input rule.
     #[cfg(not(windows))]
     #[test]
     fn a_vertex_entry_point_uniform_is_rejected() {
@@ -4311,9 +4395,8 @@ void computeMain(uint3 tid : SV_DispatchThreadID, uniform Texture2D<float4> tex)
 
     // A struct wrapping the descriptor is the same hole with a different shape:
     // its only category is the descriptor's, so nothing about the parameter says
-    // "uniform". On the vertex entry point it is also the vertex-input confusion
-    // again — collect_graphics_shader_data would take a struct parameter here as
-    // the vertex input type.
+    // "uniform". The descriptor category, not the vertex struct input rule, must
+    // be what rejects it.
     #[cfg(not(windows))]
     #[test]
     fn a_vertex_entry_point_descriptor_struct_is_rejected() {

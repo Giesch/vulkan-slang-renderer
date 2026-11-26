@@ -7,11 +7,9 @@
 
 #![allow(dead_code)]
 
-use mltrs_renderer::renderer::pipeline::{
-    Compute, DrawVertexCount, GraphicsPipelineHandle, NoPush, NoVertex, PipelineHandle,
-};
+use mltrs_renderer::renderer::pipeline::{Compute, Graphics, NoPush, PipelineHandle};
 use mltrs_renderer::renderer::render_graph::{
-    ComputeNode, ComputePipelineKey, DrawVertexCountKey, DrawVertexCountNode, PreparedRenderGraph,
+    ComputeNode, ComputePipelineKey, DrawNode, GraphicsPipelineKey, PreparedRenderGraph,
     RenderGraph, ResourcePlanner, dispatch, draw_vertex_count,
 };
 use mltrs_renderer::renderer::{
@@ -26,14 +24,14 @@ use render_graph_api_checks::generated::shader_atlas::sim_compute::{
     SimParams, SimParamsBindings, SimParamsData,
 };
 
-pub type Graph = (ComputeNode<SimParams>, DrawVertexCountNode<RenderParams>);
+pub type Graph = (ComputeNode<SimParams>, DrawNode<RenderParams>);
 
 /// Logical construction needs no renderer at all.
 fn logical_construction(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
-    render_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, NoPush>,
+    render_pipeline: &PipelineHandle<Graphics, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
 ) -> RenderGraph<Graph> {
     let slots = GpuUpdatedSlot::from(particles);
@@ -50,7 +48,7 @@ fn logical_construction(
                 particles_out: slots.current(),
             }),
             draw_vertex_count(
-                DrawVertexCountKey::from(render_pipeline),
+                GraphicsPipelineKey::from(render_pipeline),
                 render_params,
                 6,
                 RenderParamsBindings {

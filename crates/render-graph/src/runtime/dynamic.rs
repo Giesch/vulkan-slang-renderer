@@ -6,11 +6,11 @@
 //! packed bytes. It lowers through the same `LowerCtx` and validates under
 //! the same rules as a typed node.
 
-use crate::commands::{DrawCallConfig, PendingDrawCommand};
+use crate::commands::PendingDrawCommand;
 
 use super::lower::{LowerCtx, LowerDrawCall, UniformInput};
 use super::{
-    BackendTypes, DrawIndexedKey, DrawVertexCountKey, GraphBinding, GraphNode, NoPush, PlanCtx,
+    BackendTypes, GraphBinding, GraphNode, GraphicsPipelineKey, IndexBufferSlot, NoPush, PlanCtx,
     UniformSlot, compatible,
 };
 
@@ -18,18 +18,25 @@ use super::{
 /// record is checked against the backend at the type level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DynDrawCall {
-    WholeIndexed,
-    IndexRange { first_index: u32, index_count: u32 },
+    WholeIndexed {
+        indices: IndexBufferSlot,
+    },
+    IndexRange {
+        indices: IndexBufferSlot,
+        first_index: u32,
+        index_count: u32,
+    },
     VertexCount(u32),
 }
 
 /// A draw whose uniform parameter block arrives as packed bytes each frame.
 ///
-/// The constructors take the pipeline family's key, so a whole-indexed or
-/// index-range draw cannot name a vertex-count pipeline. Each key is backend
-/// integration: its index must name a live pipeline of that family with no
-/// push block, and the uniform slot a live uniform buffer of exactly
-/// `gpu_size` bytes.
+/// The constructors take a direct graphics pipeline key, so a dynamic draw
+/// cannot name a compute or indirect pipeline. Each key is backend
+/// integration: its index must name a live graphics pipeline with no push
+/// block, and the uniform slot a live uniform buffer of exactly `gpu_size`
+/// bytes. An index range past the end of its index buffer is a
+/// `RenderGraph::new` error.
 pub struct DynDrawNode {
     pipeline_index: usize,
     uniform_index: usize,
@@ -39,9 +46,10 @@ pub struct DynDrawNode {
 }
 
 impl DynDrawNode {
-    /// Draws the pipeline's whole index buffer.
+    /// Draws every index in `indices`.
     pub fn indexed<T>(
-        pipeline: impl Into<DrawIndexedKey<NoPush>>,
+        pipeline: impl Into<GraphicsPipelineKey<NoPush>>,
+        indices: impl Into<IndexBufferSlot>,
         uniform: impl Into<UniformSlot<T>>,
         gpu_size: u32,
     ) -> Self {
@@ -49,13 +57,16 @@ impl DynDrawNode {
             pipeline.into().index(),
             uniform.into().index,
             gpu_size,
-            LowerDrawCall::WholeIndexed,
+            LowerDrawCall::WholeIndexed {
+                indices: indices.into(),
+            },
         )
     }
 
-    /// Draws `index_count` indices starting at `first_index`.
+    /// Draws `index_count` indices of `indices`, starting at `first_index`.
     pub fn index_range<T>(
-        pipeline: impl Into<DrawIndexedKey<NoPush>>,
+        pipeline: impl Into<GraphicsPipelineKey<NoPush>>,
+        indices: impl Into<IndexBufferSlot>,
         uniform: impl Into<UniformSlot<T>>,
         gpu_size: u32,
         first_index: u32,
@@ -66,15 +77,16 @@ impl DynDrawNode {
             uniform.into().index,
             gpu_size,
             LowerDrawCall::IndexRange {
+                indices: indices.into(),
                 first_index,
                 index_count,
             },
         )
     }
 
-    /// Draws `vertex_count` vertices with no vertex input.
+    /// Draws `vertex_count` vertices with no index buffer.
     pub fn vertex_count<T>(
-        pipeline: impl Into<DrawVertexCountKey<NoPush>>,
+        pipeline: impl Into<GraphicsPipelineKey<NoPush>>,
         uniform: impl Into<UniformSlot<T>>,
         gpu_size: u32,
         vertex_count: u32,
@@ -104,11 +116,13 @@ impl DynDrawNode {
 
     pub fn call(&self) -> DynDrawCall {
         match self.call {
-            LowerDrawCall::WholeIndexed => DynDrawCall::WholeIndexed,
+            LowerDrawCall::WholeIndexed { indices } => DynDrawCall::WholeIndexed { indices },
             LowerDrawCall::IndexRange {
+                indices,
                 first_index,
                 index_count,
             } => DynDrawCall::IndexRange {
+                indices,
                 first_index,
                 index_count,
             },
@@ -152,30 +166,7 @@ impl GraphNode for DynDrawNode {
         cx.stage_uniform_bytes(self.uniform_index, frame_data);
 
         let pipeline_index = self.pipeline_index;
-        let draw_call = match self.call {
-            LowerDrawCall::VertexCount(vertex_count) => DrawCallConfig::VertexCount(vertex_count),
-            LowerDrawCall::WholeIndexed => {
-                DrawCallConfig::IndexCount(cx.whole_index_count(pipeline_index))
-            }
-            LowerDrawCall::IndexRange {
-                first_index,
-                index_count,
-            } => {
-                let whole = cx.whole_index_count(pipeline_index);
-                anyhow::ensure!(
-                    super::range_in_bounds(first_index, index_count, whole),
-                    "render graph: index range [{first_index}, {first_index} + {index_count}) \
-                     is out of bounds (index count {whole})",
-                );
-                DrawCallConfig::IndexRange {
-                    first_index,
-                    index_count,
-                }
-            }
-            LowerDrawCall::IndexedIndirect { .. } => {
-                unreachable!("dynamic nodes have no indirect constructor")
-            }
-        };
+        let draw_call = cx.draw_call(self.call)?;
         cx.draws.push(PendingDrawCommand {
             pipeline_index,
             draw_call,
@@ -195,14 +186,16 @@ mod tests {
 
     #[test]
     fn dynamic_draws_lower_into_one_main_pass() {
+        let indices = IndexBufferSlot::from_backend(2, 36);
         let nodes = vec![
             DynDrawNode::indexed(
-                DrawIndexedKey::<NoPush>::new(3),
+                GraphicsPipelineKey::<NoPush>::new(3),
+                indices,
                 UniformSlot::<()>::from_backend(7),
                 192,
             ),
             DynDrawNode::vertex_count(
-                DrawVertexCountKey::<NoPush>::new(4),
+                GraphicsPipelineKey::<NoPush>::new(4),
                 UniformSlot::<()>::from_backend(8),
                 16,
                 3,
@@ -210,20 +203,23 @@ mod tests {
         ];
         let graph = RenderGraph::new(ResourcePlanner::new(), nodes).unwrap();
         assert_eq!(graph.uniform_slots, vec![7, 8]);
-        assert_eq!(graph.nodes[0].call(), DynDrawCall::WholeIndexed);
+        assert_eq!(graph.nodes[0].call(), DynDrawCall::WholeIndexed { indices });
         assert_eq!(graph.nodes[1].call(), DynDrawCall::VertexCount(3));
     }
 
     #[test]
     fn one_slot_with_two_sizes_is_a_source_conflict() {
+        let indices = IndexBufferSlot::from_backend(2, 36);
         let nodes = vec![
             DynDrawNode::indexed(
-                DrawIndexedKey::<NoPush>::new(3),
+                GraphicsPipelineKey::<NoPush>::new(3),
+                indices,
                 UniformSlot::<()>::from_backend(7),
                 192,
             ),
             DynDrawNode::indexed(
-                DrawIndexedKey::<NoPush>::new(3),
+                GraphicsPipelineKey::<NoPush>::new(3),
+                indices,
                 UniformSlot::<()>::from_backend(7),
                 64,
             ),
@@ -232,5 +228,21 @@ mod tests {
             panic!("conflicting sizes were accepted");
         };
         assert!(err.to_string().contains("uniform slot 7"), "{err}");
+    }
+
+    #[test]
+    fn an_index_range_past_the_index_buffer_is_rejected() {
+        let nodes = vec![DynDrawNode::index_range(
+            GraphicsPipelineKey::<NoPush>::new(3),
+            IndexBufferSlot::from_backend(2, 36),
+            UniformSlot::<()>::from_backend(7),
+            192,
+            30,
+            7,
+        )];
+        let Err(err) = RenderGraph::new(ResourcePlanner::new(), nodes) else {
+            panic!("an out-of-bounds index range was accepted");
+        };
+        assert!(err.to_string().contains("out of bounds"), "{err}");
     }
 }

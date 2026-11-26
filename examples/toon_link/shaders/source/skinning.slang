@@ -66,6 +66,16 @@ module skinning;
 
 import mltrs;
 
+// One converted bind-pose vertex in model space, shared by both render modes.
+// Both shaders pull it through `params.vertices[SV_VertexID]` from the one
+// vertex buffer the Rust side uploads for both modes.
+// std430, 48 bytes; pointee of `mltrs::ImmutableAddr<Vertex>`.
+public struct Vertex {
+    public float3 position;
+    public float3 normal;
+    public float2 uv0;
+}
+
 // One entry of the joint palette: `animated_world * inverse_bind_world`.
 // std430, 64 bytes; pointee of `mltrs::ImmutableAddr<SkinJoint>`.
 public struct SkinJoint {

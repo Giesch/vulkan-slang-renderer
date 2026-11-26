@@ -9,8 +9,9 @@ use mltrs::game::Game;
 use mltrs::ktx::load_ktx2_texture;
 use mltrs::manifest_path;
 use mltrs::renderer::{
-    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
-    ResourcePlanner, TextureFilter, TextureHandle, UniformBufferHandle, draw_indexed,
+    DrawError, DrawNode, FrameRenderer, IndexBufferHandle, PreparedRenderGraph, RenderGraph,
+    Renderer, ResourcePlanner, SingletonBufferHandle, SingletonSlot, TextureFilter, TextureHandle,
+    UniformBufferHandle, draw_indexed,
 };
 
 use crate::generated::shader_atlas::ShaderAtlas;
@@ -27,55 +28,69 @@ pub struct DepthTextureGame {
     graph: DepthTextureGraph,
     /// Bound into the graph at build time; kept here for ownership.
     _texture: TextureHandle,
-    /// The graph captured this buffer's slot at build time; the handle stays
-    /// here to keep the buffer alive.
+    // The graph captured these buffers' slots at build time; the handles stay
+    // here to keep the buffers alive.
     _params_buffer: UniformBufferHandle<DepthTextureParams>,
+    _vertex_buffer: SingletonBufferHandle<Vertex>,
+    _index_buffer: IndexBufferHandle,
 }
 
 // two squares at different z values,
 // each in clockwise order
 const VERTICES: [Vertex; 8] = [
-    Vertex {
-        position: Vec3::new(-0.5, -0.5, 0.0),
-        color: Vec3::new(1.0, 0.0, 0.0),
-        tex_coord: Vec2::new(1.0, 0.0),
-    },
-    Vertex {
-        position: Vec3::new(0.5, -0.5, 0.0),
-        color: Vec3::new(0.0, 1.0, 0.0),
-        tex_coord: Vec2::new(0.0, 0.0),
-    },
-    Vertex {
-        position: Vec3::new(0.5, 0.5, 0.0),
-        color: Vec3::new(0.0, 0.0, 1.0),
-        tex_coord: Vec2::new(0.0, 1.0),
-    },
-    Vertex {
-        position: Vec3::new(-0.5, 0.5, 0.0),
-        color: Vec3::new(1.0, 1.0, 1.0),
-        tex_coord: Vec2::new(1.0, 1.0),
-    },
-    Vertex {
-        position: Vec3::new(-0.5, -0.5, -0.5),
-        color: Vec3::new(1.0, 0.0, 0.0),
-        tex_coord: Vec2::new(1.0, 0.0),
-    },
-    Vertex {
-        position: Vec3::new(0.5, -0.5, -0.5),
-        color: Vec3::new(0.0, 1.0, 0.0),
-        tex_coord: Vec2::new(0.0, 0.0),
-    },
-    Vertex {
-        position: Vec3::new(0.5, 0.5, -0.5),
-        color: Vec3::new(0.0, 0.0, 1.0),
-        tex_coord: Vec2::new(0.0, 1.0),
-    },
-    Vertex {
-        position: Vec3::new(-0.5, 0.5, -0.5),
-        color: Vec3::new(1.0, 1.0, 1.0),
-        tex_coord: Vec2::new(1.0, 1.0),
-    },
+    vertex(
+        Vec3::new(-0.5, -0.5, 0.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec2::new(1.0, 0.0),
+    ),
+    vertex(
+        Vec3::new(0.5, -0.5, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec2::new(0.0, 0.0),
+    ),
+    vertex(
+        Vec3::new(0.5, 0.5, 0.0),
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec2::new(0.0, 1.0),
+    ),
+    vertex(
+        Vec3::new(-0.5, 0.5, 0.0),
+        Vec3::new(1.0, 1.0, 1.0),
+        Vec2::new(1.0, 1.0),
+    ),
+    vertex(
+        Vec3::new(-0.5, -0.5, -0.5),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec2::new(1.0, 0.0),
+    ),
+    vertex(
+        Vec3::new(0.5, -0.5, -0.5),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec2::new(0.0, 0.0),
+    ),
+    vertex(
+        Vec3::new(0.5, 0.5, -0.5),
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec2::new(0.0, 1.0),
+    ),
+    vertex(
+        Vec3::new(-0.5, 0.5, -0.5),
+        Vec3::new(1.0, 1.0, 1.0),
+        Vec2::new(1.0, 1.0),
+    ),
 ];
+
+/// a std430 `Vertex`, whose float3 fields each pad to 16 bytes
+const fn vertex(position: Vec3, color: Vec3, tex_coord: Vec2) -> Vertex {
+    Vertex {
+        position,
+        _padding_0: [0; 4],
+        color,
+        _padding_1: [0; 4],
+        tex_coord,
+        _padding_2: [0; 8],
+    }
+}
 
 // 2 quads of clockwise triangles,
 // using the vertices above
@@ -105,19 +120,21 @@ impl Game for DepthTextureGame {
         let resources = Resources {
             params_buffer: &params_buffer,
         };
-        let pipeline_config = shaders
-            .depth_texture
-            .pipeline_config(resources)
-            .with_vertices(VERTICES.to_vec(), INDICES.to_vec());
+        let pipeline_config = shaders.depth_texture.pipeline_config(resources);
         let pipeline = renderer.create_pipeline(pipeline_config)?;
+
+        let vertex_buffer = renderer.create_singleton_buffer(&VERTICES)?;
+        let index_buffer = renderer.create_index_buffer(&INDICES, vertex_buffer.len())?;
 
         let graph = RenderGraph::new(
             ResourcePlanner::new(),
             draw_indexed(
                 &pipeline,
+                &index_buffer,
                 &params_buffer,
                 DepthTextureParamsBindings {
                     texture: texture.bindless_handle().into(),
+                    vertices: SingletonSlot::from(&vertex_buffer).addr(),
                 },
             ),
         )?
@@ -130,6 +147,8 @@ impl Game for DepthTextureGame {
             graph,
             _texture: texture,
             _params_buffer: params_buffer,
+            _vertex_buffer: vertex_buffer,
+            _index_buffer: index_buffer,
         })
     }
 

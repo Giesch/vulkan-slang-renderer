@@ -6,15 +6,12 @@ use std::ffi::CString;
 use std::io::Cursor;
 
 use ash::util::read_spv;
-use ash::vk;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
 #[allow(unused_imports)]
 use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
-#[allow(unused)]
-use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use mltrs::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
@@ -24,46 +21,111 @@ const _: () = assert!(std::mem::align_of::<glam::Vec4>() == 16);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[repr(C, align(16))]
+pub struct TriangleParams {
+    pub mvp: MVPMatrices,
+    pub vertices: ImmutableAddr<Vertex>,
+    pub _padding_0: [u8; 8],
+}
+
+impl GPUWrite for TriangleParams {}
+const _: () = assert!(std::mem::size_of::<TriangleParams>() == 208);
+const _: () = assert!(std::mem::offset_of!(TriangleParams, mvp) == 0);
+const _: () = assert!(std::mem::size_of::<MVPMatrices>() == 192);
+const _: () = assert!(std::mem::offset_of!(TriangleParams, vertices) == 192);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<Vertex>>() == 8);
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[repr(C, align(16))]
 pub struct Vertex {
     pub position: glam::Vec3,
+    pub _padding_0: [u8; 4],
     pub color: glam::Vec3,
+    pub _padding_1: [u8; 4],
 }
 
 impl GPUWrite for Vertex {}
-
-pub struct Resources<'a> {
-    pub matrices_buffer: &'a UniformBufferHandle<MVPMatrices>,
-}
-
-// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
-// must agree with this struct's Rust layout
 const _: () = assert!(std::mem::size_of::<Vertex>() == 32);
 const _: () = assert!(std::mem::offset_of!(Vertex, position) == 0);
-const _: () = assert!(std::mem::offset_of!(Vertex, color) == 12);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
+const _: () = assert!(std::mem::offset_of!(Vertex, color) == 16);
+const _: () = assert!(std::mem::size_of::<glam::Vec3>() == 12);
 
-impl VertexDescription for Vertex {
-    fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
-        let binding_description = ash::vk::VertexInputBindingDescription::default()
-            .binding(0)
-            .stride(std::mem::size_of::<Self>() as u32)
-            .input_rate(ash::vk::VertexInputRate::VERTEX);
+pub struct Resources<'a> {
+    pub params_buffer: &'a UniformBufferHandle<TriangleParams>,
+}
 
-        vec![binding_description]
+impl GPURead for Vertex {
+    const GPU_SIZE: usize = 32;
+
+    fn read_gpu(bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            bytes.len() == Self::GPU_SIZE,
+            "invalid GPU readback byte length for Vertex"
+        );
+
+        Ok(Self {
+            position: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[0..12])?),
+            _padding_0: [0; 4],
+            color: glam::Vec3::from_array(<[f32; 3] as GPURead>::read_gpu(&bytes[16..28])?),
+            _padding_1: [0; 4],
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TriangleParamsData {
+    pub mvp: MVPMatrices,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TriangleParamsBindings {
+    pub vertices: ImmutableBufferBinding<Vertex>,
+}
+
+impl GraphParamBindingSet for TriangleParamsBindings {
+    type Pending = PendingParamBindings<Self>;
+
+    fn pending() -> Self::Pending {
+        Self::Pending::new()
+    }
+}
+
+impl GraphBindingSet for TriangleParamsBindings {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.vertices.erased()));
+    }
+}
+/// Complete graph inputs before resource references resolve to GPU values.
+#[derive(Debug, Clone, Copy)]
+pub struct TriangleParamsInput {
+    pub mvp: MVPMatrices,
+    pub vertices: ImmutableBufferBinding<Vertex>,
+}
+
+impl GraphShaderParams for TriangleParams {
+    type Data = TriangleParamsData;
+    type Bindings = TriangleParamsBindings;
+    type Input = TriangleParamsInput;
+
+    fn input(data: &Self::Data, bindings: &Self::Bindings) -> Self::Input {
+        Self::Input {
+            mvp: data.mvp,
+            vertices: bindings.vertices,
+        }
     }
 
-    fn attribute_descriptions() -> Vec<ash::vk::VertexInputAttributeDescription> {
-        vec![
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, position) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(0),
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, color) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(1),
-        ]
+    fn assemble_input(input: &Self::Input, resolver: &BindingResolver<'_>) -> Self {
+        Self {
+            mvp: input.mvp,
+            vertices: resolver.immutable_buf(input.vertices),
+            _padding_0: Default::default(),
+        }
+    }
+}
+
+impl GraphBindingSet for TriangleParamsInput {
+    fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
+        f(GraphBinding::Buffer(self.vertices.erased()));
     }
 }
 
@@ -87,7 +149,7 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> IndexedPipelineConfig<'a, Vertex, NoPush> {
+    ) -> PipelineConfig<'a, Graphics, NoPush> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -96,7 +158,7 @@ impl Shader {
 
         #[rustfmt::skip]
         let uniform_buffer_handles = vec![
-            RawUniformBufferHandle::from_typed(resources.matrices_buffer),
+            RawUniformBufferHandle::from_typed(resources.params_buffer),
         ];
 
         #[rustfmt::skip]
@@ -109,7 +171,7 @@ impl Shader {
             uniform_buffer_handles,
             storage_texture_handles,
         }
-        .build_indexed()
+        .build_graphics()
     }
 
     fn vert_entry_point_name(&self) -> CString {
@@ -154,14 +216,6 @@ impl Shader {
 impl ShaderAtlasEntry for Shader {
     fn source_file_name(&self) -> &str {
         &self.reflection_json.source_file_name
-    }
-
-    fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
-        Vertex::binding_descriptions()
-    }
-
-    fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription> {
-        Vertex::attribute_descriptions()
     }
 
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {

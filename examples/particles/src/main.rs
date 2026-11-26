@@ -6,9 +6,8 @@ use glam::{Vec2, Vec4};
 
 use mltrs::game::*;
 use mltrs::renderer::{
-    ComputeNode, DrawError, DrawVertexCountNode, FrameRenderer, GpuUpdatedBufferHandle,
-    GpuUpdatedSlot, PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner,
-    UniformBufferHandle,
+    ComputeNode, DrawError, DrawNode, FrameRenderer, GpuUpdatedBufferHandle, GpuUpdatedSlot,
+    PreparedRenderGraph, RenderGraph, Renderer, ResourcePlanner, UniformBufferHandle,
     render_graph::{dispatch, draw_vertex_count},
 };
 
@@ -25,7 +24,7 @@ const NUM_PARTICLES: u32 = 4096;
 
 type ParticlesGraph = PreparedRenderGraph<(
     ComputeNode<particles_compute::SimParams>,
-    DrawVertexCountNode<particle_render::RenderParams>,
+    DrawNode<particle_render::RenderParams>,
 )>;
 
 struct Particles {

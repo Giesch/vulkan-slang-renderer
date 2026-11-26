@@ -165,19 +165,19 @@ path = "cases/negative/external_compatible_with_impl.rs"
 name = "negative_indirect_request_fields"
 path = "cases/negative/indirect_request_fields.rs"
 [[bin]]
-name = "positive_vertex_interfaces"
-path = "cases/positive/vertex_interfaces.rs"
+name = "positive_vertex_pulling"
+path = "cases/positive/vertex_pulling.rs"
 [[bin]]
-name = "negative_mismatched_typed_mesh"
-path = "cases/negative/mismatched_typed_mesh.rs"
+name = "negative_graphics_config_for_indirect_shader"
+path = "cases/negative/graphics_config_for_indirect_shader.rs"
 [[bin]]
-name = "negative_runtime_builder_typed_methods"
-path = "cases/negative/runtime_builder_typed_methods.rs"
+name = "negative_graphics_key_from_indirect_handle"
+path = "cases/negative/graphics_key_from_indirect_handle.rs"
 [[bin]]
-name = "negative_no_vertex_indexed_key"
-path = "cases/negative/no_vertex_indexed_key.rs"
+name = "negative_forge_index_buffer_handle"
+path = "cases/negative/forge_index_buffer_handle.rs"
 [[bin]]
-name = "negative_relabel_graphics_handle"
-path = "cases/negative/relabel_graphics_handle.rs"
+name = "negative_relabel_pipeline_handle"
+path = "cases/negative/relabel_pipeline_handle.rs"
 
 [workspace]

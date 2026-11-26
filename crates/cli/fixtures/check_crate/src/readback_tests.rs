@@ -1,5 +1,5 @@
 use crate::generated::readback_compute::{ReadbackOutput, ReadbackTag};
-use crate::generated::{std140_vec3_padding, std430_vec3_padding};
+use crate::generated::{std140_vec3_padding, std430_vec3_padding, vertex_pulling_float3};
 use crate::renderer::gpu_read::GPURead;
 
 /// `float3 a; float b; float3 c; float d;` with a distinct value in every
@@ -93,4 +93,33 @@ fn reflected_readback_rejects_wrong_lengths_and_unknown_tags() {
     let error = ReadbackOutput::read_gpu(&bytes).unwrap_err().to_string();
     assert!(error.contains("ReadbackTag"), "{error}");
     assert!(error.contains("999"), "{error}");
+}
+
+/// `[1.0, 2.0, ..., 8.0]` as std430 bytes, one distinct value per 4-byte slot.
+fn counting_floats(count: usize) -> Vec<u8> {
+    (1..=count)
+        .flat_map(|value| (value as f32).to_le_bytes())
+        .collect()
+}
+
+/// Vertex-pulling pointees with a float3 first member: a second float3 or a
+/// float4 aligns to 16, while a lone float tail-packs at 12.
+#[test]
+fn float3_vertex_pointees_decode_at_their_std430_offsets() {
+    use vertex_pulling_float3::{PairVertex, TailVertex, WideVertex};
+
+    assert_eq!(PairVertex::GPU_SIZE, 32);
+    let pair = PairVertex::read_gpu(&counting_floats(8)).unwrap();
+    assert_eq!(pair.position, glam::vec3(1.0, 2.0, 3.0));
+    assert_eq!(pair.color, glam::vec3(5.0, 6.0, 7.0));
+
+    assert_eq!(TailVertex::GPU_SIZE, 16);
+    let tail = TailVertex::read_gpu(&counting_floats(4)).unwrap();
+    assert_eq!(tail.position, glam::vec3(1.0, 2.0, 3.0));
+    assert_eq!(tail.scale, 4.0);
+
+    assert_eq!(WideVertex::GPU_SIZE, 32);
+    let wide = WideVertex::read_gpu(&counting_floats(8)).unwrap();
+    assert_eq!(wide.position, glam::vec3(1.0, 2.0, 3.0));
+    assert_eq!(wide.color, glam::vec4(5.0, 6.0, 7.0, 8.0));
 }

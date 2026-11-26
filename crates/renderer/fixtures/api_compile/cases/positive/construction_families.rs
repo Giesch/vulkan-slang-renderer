@@ -9,17 +9,17 @@
 #![allow(dead_code)]
 
 use mltrs_renderer::renderer::pipeline::{
-    Compute, DrawIndexed, DrawIndexedIndirect, DrawVertexCount, GraphicsPipelineHandle, NoPush,
-    NoVertex, PickingPipelineHandle, PipelineHandle, PushBlock, RuntimeVertex,
+    Compute, Graphics, GraphicsIndirect, NoPush, PickingPipelineHandle, PipelineHandle, PushBlock,
 };
 use mltrs_renderer::renderer::render_graph::{
-    self, ComputeNode, ComputePipelineKey, DrawIndexedIndirectKey, DrawIndexedKey,
-    DrawVertexCountKey, DrawVertexCountNode, GraphShaderParams, CpuUpdatedSlot, UniformSlot, dispatch,
+    self, ComputeNode, ComputePipelineKey, CpuUpdatedSlot, DrawNode, GraphShaderParams,
+    GraphicsIndirectPipelineKey, GraphicsPipelineKey, IndexBufferSlot, UniformSlot, dispatch,
     draw_index_range, draw_indexed, draw_indexed_indirect, draw_vertex_count,
 };
 use mltrs_renderer::renderer::{
-    DrawIndexedIndirectCommand, GpuUpdatedBufferHandle, GpuUpdatedSlot, ImmutableBufferHandle,
-    ImmutableSlot, PickingCursor, Renderer, CpuUpdatedBufferHandle, UniformBufferHandle,
+    CpuUpdatedBufferHandle, DrawIndexedIndirectCommand, GpuUpdatedBufferHandle, GpuUpdatedSlot,
+    ImmutableBufferHandle, ImmutableSlot, IndexBufferHandle, PickingCursor, Renderer,
+    UniformBufferHandle,
 };
 
 fn upload_indirect_commands(
@@ -77,7 +77,7 @@ fn no_push_families(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
-    render_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, NoPush>,
+    render_pipeline: &PipelineHandle<Graphics, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
     picking_pipeline: &PickingPipelineHandle,
     storage: &CpuUpdatedBufferHandle<Particle>,
@@ -101,11 +101,10 @@ fn logical_then_prepared(
     sim_pipeline: &PipelineHandle<Compute, NoPush>,
     sim_params: &UniformBufferHandle<SimParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
-    render_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, NoPush>,
+    render_pipeline: &PipelineHandle<Graphics, NoPush>,
     render_params: &UniformBufferHandle<RenderParams>,
     renderer: &mut Renderer,
-) -> render_graph::PreparedRenderGraph<(ComputeNode<SimParams>, DrawVertexCountNode<RenderParams>)>
-{
+) -> render_graph::PreparedRenderGraph<(ComputeNode<SimParams>, DrawNode<RenderParams>)> {
     let graph = render_graph::RenderGraph::new(
         render_graph::ResourcePlanner::new(),
         (
@@ -116,7 +115,7 @@ fn logical_then_prepared(
             )
             .with_param_bindings(sim_bindings(particles)),
             draw_vertex_count(
-                DrawVertexCountKey::from(render_pipeline),
+                GraphicsPipelineKey::from(render_pipeline),
                 render_params,
                 6,
                 RenderParamsBindings {
@@ -132,26 +131,29 @@ fn logical_then_prepared(
 
 /// The indexed draw families with an indirect argument buffer.
 fn indexed_families(
-    render_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexed, NoPush>,
+    render_pipeline: &PipelineHandle<Graphics, NoPush>,
+    indices: &IndexBufferHandle,
     render_params: &UniformBufferHandle<RenderParams>,
     particles: &GpuUpdatedBufferHandle<Particle>,
-    indirect_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexedIndirect, NoPush>,
+    indirect_pipeline: &PipelineHandle<GraphicsIndirect, NoPush>,
     indirect_params: &UniformBufferHandle<RenderParams>,
     args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
 ) {
     let bindings = RenderParamsBindings {
         particles: GpuUpdatedSlot::from(particles).current().into(),
     };
-    let _ = draw_indexed(render_pipeline, render_params, bindings);
+    let _ = draw_indexed(render_pipeline, indices, render_params, bindings);
     let _ = draw_index_range(
-        DrawIndexedKey::from(render_pipeline),
+        GraphicsPipelineKey::from(render_pipeline),
+        IndexBufferSlot::from(indices),
         render_params,
         0,
         6,
         bindings,
     );
     let _ = draw_indexed_indirect(
-        DrawIndexedIndirectKey::from(indirect_pipeline),
+        GraphicsIndirectPipelineKey::from(indirect_pipeline),
+        indices,
         indirect_params,
         args,
         0,
@@ -168,11 +170,12 @@ fn push_families(
     push_pipeline: &PipelineHandle<Compute, PushBlock<ScalePush>>,
     push_params: &UniformBufferHandle<ScaleParams>,
     items: &CpuUpdatedBufferHandle<OtherElement>,
-    vertex_push_pipeline: &GraphicsPipelineHandle<NoVertex, DrawVertexCount, PushBlock<ScalePush>>,
+    vertex_push_pipeline: &PipelineHandle<Graphics, PushBlock<ScalePush>>,
     vertex_push_params: &UniformBufferHandle<ScaleParams>,
-    indexed_push_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexed, PushBlock<ScalePush>>,
+    indexed_push_pipeline: &PipelineHandle<Graphics, PushBlock<ScalePush>>,
+    indices: &IndexBufferHandle,
     indexed_push_params: &UniformBufferHandle<ScaleParams>,
-    indirect_push_pipeline: &GraphicsPipelineHandle<RuntimeVertex, DrawIndexedIndirect, PushBlock<ScalePush>>,
+    indirect_push_pipeline: &PipelineHandle<GraphicsIndirect, PushBlock<ScalePush>>,
     indirect_push_params: &UniformBufferHandle<ScaleParams>,
     args: &ImmutableBufferHandle<DrawIndexedIndirectCommand>,
 ) {
@@ -188,13 +191,15 @@ fn push_families(
     let _ = draw_vertex_count(vertex_push_pipeline, vertex_push_params, 6, params)
         .with_push_constant(push_input());
     let _ = draw_indexed(
-        DrawIndexedKey::from(indexed_push_pipeline),
+        GraphicsPipelineKey::from(indexed_push_pipeline),
+        indices,
         indexed_push_params,
         params,
     )
     .with_push_constant(push_input());
     let _ = draw_index_range(
-        DrawIndexedKey::from(indexed_push_pipeline),
+        GraphicsPipelineKey::from(indexed_push_pipeline),
+        indices,
         indexed_push_params,
         0,
         6,
@@ -203,6 +208,7 @@ fn push_families(
     .with_push_constant(push_input());
     let _ = draw_indexed_indirect(
         indirect_push_pipeline,
+        IndexBufferSlot::from(indices),
         indirect_push_params,
         ImmutableSlot::from(args),
         0,

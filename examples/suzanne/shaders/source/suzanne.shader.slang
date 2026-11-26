@@ -12,16 +12,18 @@ struct SuzanneParams {
     Sampler2D.Handle texture0;
     Sampler2D.Handle texture1;
     Sampler2D.Handle texture2;
+    mltrs::ImmutableAddr<Vertex> vertices;
 }
 
 struct Vertex {
     float3 position;
     float3 color;
     float2 texCoord;
-};
+}
 
 [shader("vertex")]
-FragVertex vertMain(Vertex vertex) {
+FragVertex vertMain(uint vertexId : SV_VertexID) {
+    let vertex = params.vertices[vertexId];
     let position = params.mvp.project(vertex.position);
 
     return FragVertex(position, vertex.color, vertex.texCoord);
@@ -31,7 +33,7 @@ struct FragVertex {
     float4 position : SV_Position;
     float3 color;
     float2 texCoord;
-};
+}
 
 [shader("fragment")]
 float4 fragMain(FragVertex fragVertex) : SV_TARGET {

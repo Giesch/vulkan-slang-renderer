@@ -103,9 +103,8 @@ macro_rules! graph_pipeline_key {
 
 graph_pipeline_key!(
     ComputePipelineKey,
-    DrawVertexCountKey,
-    DrawIndexedKey,
-    DrawIndexedIndirectKey,
+    GraphicsPipelineKey,
+    GraphicsIndirectPipelineKey,
 );
 
 /// A `Copy` construction key for a picking pipeline.
@@ -448,6 +447,29 @@ pub struct SingletonSlot<T> {
     index: usize,
     len: u32,
     _elem: PhantomData<fn() -> T>,
+}
+
+/// A `Copy` key for a hardware index buffer of `u32` indices. Indexed draws
+/// bind it; vertex data itself is pulled through a buffer address binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexBufferSlot {
+    index: usize,
+    index_count: u32,
+}
+
+impl IndexBufferSlot {
+    /// Backend integration: index and count must describe a live index buffer.
+    pub fn from_backend(index: usize, index_count: u32) -> Self {
+        Self { index, index_count }
+    }
+
+    pub fn index(self) -> usize {
+        self.index
+    }
+
+    pub fn index_count(self) -> u32 {
+        self.index_count
+    }
 }
 
 // manual impls: derives would add spurious `T: ...` bounds
@@ -993,10 +1015,10 @@ pub struct DrawNode<S: GraphShaderParams, P = ()> {
     push: P,
 }
 
-pub type DrawVertexCountNode<S> = DrawNode<S, ()>;
-
+/// Draws `vertex_count` vertices with no index buffer; the shader reads
+/// `SV_VertexID` to pull its vertex data.
 pub fn draw_vertex_count<S: GraphShaderParams, P: GraphPipelinePush>(
-    pipeline: impl Into<DrawVertexCountKey<P>>,
+    pipeline: impl Into<GraphicsPipelineKey<P>>,
     params_buffer: impl Into<UniformSlot<S>>,
     vertex_count: u32,
     bindings: S::Bindings,
@@ -1010,22 +1032,29 @@ pub fn draw_vertex_count<S: GraphShaderParams, P: GraphPipelinePush>(
     }
 }
 
+/// Draws every index in `indices`.
 pub fn draw_indexed<S: GraphShaderParams, P: GraphPipelinePush>(
-    pipeline: impl Into<DrawIndexedKey<P>>,
+    pipeline: impl Into<GraphicsPipelineKey<P>>,
+    indices: impl Into<IndexBufferSlot>,
     params_buffer: impl Into<UniformSlot<S>>,
     bindings: S::Bindings,
 ) -> DrawNode<S, P::Pending> {
     DrawNode {
         pipeline_index: pipeline.into().index(),
         uniform: params_buffer.into(),
-        call: LowerDrawCall::WholeIndexed,
+        call: LowerDrawCall::WholeIndexed {
+            indices: indices.into(),
+        },
         bindings,
         push: P::pending(),
     }
 }
 
+/// Draws `index_count` indices of `indices`, starting at `first_index`. A
+/// range past the end of the index buffer is a [`RenderGraph::new`] error.
 pub fn draw_index_range<S: GraphShaderParams, P: GraphPipelinePush>(
-    pipeline: impl Into<DrawIndexedKey<P>>,
+    pipeline: impl Into<GraphicsPipelineKey<P>>,
+    indices: impl Into<IndexBufferSlot>,
     params_buffer: impl Into<UniformSlot<S>>,
     first_index: u32,
     index_count: u32,
@@ -1035,6 +1064,7 @@ pub fn draw_index_range<S: GraphShaderParams, P: GraphPipelinePush>(
         pipeline_index: pipeline.into().index(),
         uniform: params_buffer.into(),
         call: LowerDrawCall::IndexRange {
+            indices: indices.into(),
             first_index,
             index_count,
         },
@@ -1044,6 +1074,7 @@ pub fn draw_index_range<S: GraphShaderParams, P: GraphPipelinePush>(
 }
 
 fn indirect_call<I: crate::backend::IndexedIndirectArgs>(
+    indices: IndexBufferSlot,
     args: ImmutableSlot<I>,
     first_command: u32,
     draw_count: u32,
@@ -1063,6 +1094,7 @@ fn indirect_call<I: crate::backend::IndexedIndirectArgs>(
     );
 
     LowerDrawCall::IndexedIndirect {
+        indices,
         args_index: args.index,
         byte_offset: element_byte_offset(first_command, args.len, size_of::<I>()),
         draw_count,
@@ -1107,7 +1139,8 @@ pub fn draw_indexed_indirect<
     P: GraphPipelinePush,
     I: crate::backend::IndexedIndirectArgs,
 >(
-    pipeline: impl Into<DrawIndexedIndirectKey<P>>,
+    pipeline: impl Into<GraphicsIndirectPipelineKey<P>>,
+    indices: impl Into<IndexBufferSlot>,
     params_buffer: impl Into<UniformSlot<S>>,
     args: impl Into<ImmutableSlot<I>>,
     first_command: u32,
@@ -1115,7 +1148,7 @@ pub fn draw_indexed_indirect<
     bindings: S::Bindings,
 ) -> IndirectDrawNode<S, P::Pending, I> {
     let args = args.into();
-    let call = indirect_call(args, first_command, draw_count);
+    let call = indirect_call(indices.into(), args, first_command, draw_count);
 
     IndirectDrawNode {
         args,
@@ -1151,36 +1184,7 @@ impl<S: GraphShaderParams + GPUWrite, P: GraphPush> GraphNode for DrawNode<S, P>
         let value = S::assemble(frame_data, &self.bindings, &cx.resolver());
         cx.stage_uniform(self.uniform, &value);
         let push_constants = self.push.payload(&cx.resolver()).bytes;
-        let draw_call = match self.call {
-            LowerDrawCall::VertexCount(vertex_count) => DrawCallConfig::VertexCount(vertex_count),
-            LowerDrawCall::WholeIndexed => {
-                DrawCallConfig::IndexCount(cx.whole_index_count(pipeline_index))
-            }
-            LowerDrawCall::IndexRange {
-                first_index,
-                index_count,
-            } => {
-                // debug-only: a release-build out-of-range draw renders
-                // garbage silently under robustBufferAccess
-                debug_assert!(
-                    range_in_bounds(
-                        first_index,
-                        index_count,
-                        cx.whole_index_count(pipeline_index)
-                    ),
-                    "index range [{first_index}, {first_index} + {index_count}) out of bounds \
-                     (index count {})",
-                    cx.whole_index_count(pipeline_index),
-                );
-                DrawCallConfig::IndexRange {
-                    first_index,
-                    index_count,
-                }
-            }
-            LowerDrawCall::IndexedIndirect { request, .. } => {
-                DrawCallConfig::IndexedIndirect(request)
-            }
-        };
+        let draw_call = cx.draw_call(self.call)?;
         cx.draws.push(PendingDrawCommand {
             pipeline_index,
             draw_call,
@@ -1564,9 +1568,44 @@ impl PlanCtx<'_> {
         }
     }
 
-    /// The index count of a pipeline's whole vertex/index source.
-    fn whole_index_count(&self, pipeline_index: usize) -> u32 {
-        self.renderer.whole_index_count(pipeline_index)
+    /// Resolves a lowered draw call against the live index buffers. The
+    /// backend's index count is authoritative: [`RenderGraph::new`] checked
+    /// index ranges against the count the slot was minted with.
+    fn draw_call(&self, call: LowerDrawCall) -> anyhow::Result<DrawCallConfig> {
+        let draw_call = match call {
+            LowerDrawCall::VertexCount(vertex_count) => DrawCallConfig::VertexCount(vertex_count),
+            LowerDrawCall::WholeIndexed { indices } => DrawCallConfig::Indexed {
+                index_buffer: indices.index,
+                first_index: 0,
+                index_count: self.renderer.index_count(indices.index),
+            },
+            LowerDrawCall::IndexRange {
+                indices,
+                first_index,
+                index_count,
+            } => {
+                let whole = self.renderer.index_count(indices.index);
+                anyhow::ensure!(
+                    range_in_bounds(first_index, index_count, whole),
+                    "render graph: index range [{first_index}, {first_index} + {index_count}) \
+                     is out of bounds for index buffer {} ({whole} indices)",
+                    indices.index,
+                );
+                DrawCallConfig::Indexed {
+                    index_buffer: indices.index,
+                    first_index,
+                    index_count,
+                }
+            }
+            LowerDrawCall::IndexedIndirect {
+                indices, request, ..
+            } => DrawCallConfig::IndexedIndirect {
+                index_buffer: indices.index,
+                request,
+            },
+        };
+
+        Ok(draw_call)
     }
 
     fn stage_uniform<S>(&mut self, slot: UniformSlot<S>, value: &S) {
@@ -1729,7 +1768,10 @@ impl<N: GraphNode, B: BackendTypes> PreparedRenderGraph<N, B> {
         for slot in &self.buffer_slots {
             let live = match slot.kind {
                 desc::BufferKind::Singleton => lookup.singleton_live(slot.index),
-                _ => lookup.storage_live(slot.index),
+                desc::BufferKind::Index => lookup.index_buffer_live(slot.index),
+                desc::BufferKind::GpuUpdatedFlight
+                | desc::BufferKind::Immutable
+                | desc::BufferKind::Storage => lookup.storage_live(slot.index),
             };
             anyhow::ensure!(
                 live,
@@ -1821,13 +1863,20 @@ mod tests {
         fn uniform_live(&self, _: usize) -> bool {
             false
         }
+
         fn storage_live(&self, _: usize) -> bool {
             false
         }
+
         fn singleton_live(&self, _: usize) -> bool {
             false
         }
-        fn whole_index_count(&self, _: usize) -> u32 {
+
+        fn index_buffer_live(&self, _: usize) -> bool {
+            false
+        }
+
+        fn index_count(&self, _: usize) -> u32 {
             0
         }
     }
@@ -2210,7 +2259,7 @@ mod tests {
     #[test]
     fn indirect_offsets_use_uploaded_record_size() {
         let args = indirect_args(4);
-        let call = indirect_call(args, 2, 1);
+        let call = indirect_call(IndexBufferSlot::from_backend(1, 36), args, 2, 1);
         let LowerDrawCall::IndexedIndirect {
             byte_offset,
             request,
@@ -2235,13 +2284,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "an indirect draw needs at least one command")]
     fn indirect_zero_count_panics() {
-        indirect_call(indirect_args(4), 0, 0);
+        indirect_call(IndexBufferSlot::from_backend(1, 36), indirect_args(4), 0, 0);
     }
 
     #[test]
     #[should_panic(expected = "out of bounds")]
     fn indirect_range_panics() {
-        indirect_call(indirect_args(4), 2, 3);
+        indirect_call(IndexBufferSlot::from_backend(1, 36), indirect_args(4), 2, 3);
     }
 
     #[test]

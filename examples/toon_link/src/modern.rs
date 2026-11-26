@@ -1,4 +1,6 @@
 //! Independent linear-light renderer. No TEV packing or classic raster policy.
+use std::path::Path;
+use std::rc::Rc;
 use std::time::Instant;
 
 use anyhow::Context;
@@ -9,12 +11,12 @@ use mltrs::editor::{Checkbox, RGBPicker, Slider};
 use mltrs::game::Game;
 use mltrs::renderer::render_graph::DrawIndexedIndirectCommand;
 use mltrs::renderer::{
-    BlendMode, CullMode, DepthCompare, DrawError, DrawIndexedIndirect, FrameRenderer,
-    GraphicsPipelineHandle, ImmutableBufferHandle, PushBlock, RasterState, Renderer, RgbaPixels,
-    SingletonBufferHandle, StencilMode, TextureColorSpace, TextureHandle, TypedVertex,
-    UniformBufferHandle,
+    BlendMode, CullMode, DepthCompare, DrawError, FrameRenderer, GraphicsIndirect,
+    ImmutableBufferHandle, PipelineHandle, PushBlock, RasterState, Renderer, RgbaPixels,
+    SingletonBufferHandle, StencilMode, TextureColorSpace, TextureHandle, UniformBufferHandle,
 };
 
+use crate::LinkMesh;
 use crate::generated::shader_atlas::ShaderAtlas;
 use crate::generated::shader_atlas::toon_link_modern::*;
 use crate::skinning::SkinningBuffers;
@@ -508,11 +510,7 @@ fn modern_texture_options(
     Ok(options)
 }
 
-type ModernPipeline = GraphicsPipelineHandle<
-    TypedVertex<ModernVertex>,
-    DrawIndexedIndirect,
-    PushBlock<ModernMultiDraw>,
->;
+type ModernPipeline = PipelineHandle<GraphicsIndirect, PushBlock<ModernMultiDraw>>;
 
 pub struct ToonLinkModern {
     start_time: Instant,
@@ -520,6 +518,9 @@ pub struct ToonLinkModern {
     pub edit_state: ModernEditState,
     pipelines: Vec<ModernPipeline>,
     params_buffer: UniformBufferHandle<ModernParams>,
+    /// The vertex and index buffers every draw reads, shared with the
+    /// GameCube mode under `ToonLinkHost`.
+    mesh: Rc<LinkMesh>,
     args_buffer: ImmutableBufferHandle<DrawIndexedIndirectCommand>,
     draws: SingletonBufferHandle<ModernIndividualDraw>,
     pipeline_order: Vec<usize>,
@@ -567,6 +568,27 @@ impl Game for ToonLinkModern {
     fn setup(renderer: &mut Renderer, shaders: ShaderAtlas) -> anyhow::Result<Self> {
         let dir = crate::converted_dir();
         let manifest = crate::load_manifest(&dir)?;
+        let mesh = Rc::new(LinkMesh::load(renderer, &dir, &manifest)?);
+
+        Self::with_mesh(renderer, shaders, &dir, &manifest, mesh)
+    }
+
+    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
+        self.draw_posed(renderer, None)
+    }
+}
+
+impl ToonLinkModern {
+    /// Set up the Modern mode over an already uploaded `mesh`, which
+    /// `ToonLinkHost` shares with the GameCube mode. The CPU geometry is
+    /// still loaded here, for the mask/composite coverage checks.
+    pub(crate) fn with_mesh(
+        renderer: &mut Renderer,
+        shaders: ShaderAtlas,
+        dir: &Path,
+        manifest: &Manifest,
+        mesh: Rc<LinkMesh>,
+    ) -> anyhow::Result<Self> {
         let vertices = crate::load_vertices(
             &dir.join(&manifest.buffers.vertices),
             manifest.buffers.vertex_count,
@@ -575,16 +597,7 @@ impl Game for ToonLinkModern {
             &dir.join(&manifest.buffers.indices),
             manifest.buffers.index_count,
         )?;
-        let prepared = prepare_geometry(&manifest, &vertices, &indices)?;
-        let vertices: Vec<_> = vertices
-            .iter()
-            .map(|v| ModernVertex {
-                position: v.position,
-                normal: v.normal,
-                uv0: v.uv0,
-            })
-            .collect();
-        let mesh = renderer.create_mesh(&vertices, &indices)?;
+        let prepared = prepare_geometry(manifest, &vertices, &indices)?;
         let mut textures = Vec::new();
         for (i, entry) in manifest.textures.iter().enumerate() {
             let matches_albedo_or_pupil = prepared
@@ -664,7 +677,6 @@ impl Game for ToonLinkModern {
                     .pipeline_config(Resources {
                         params_buffer: &params_buffer,
                     })
-                    .with_shared_mesh(&mesh)
                     .with_raster_state(RasterState {
                         blend,
                         cull,
@@ -672,8 +684,7 @@ impl Game for ToonLinkModern {
                         depth_write,
                         color_write,
                         stencil: stencil_mode,
-                    })
-                    .indirect(),
+                    }),
             )?;
             pipelines.push(pipeline);
 
@@ -720,7 +731,7 @@ impl Game for ToonLinkModern {
 
         let args_buffer = renderer.create_indirect_buffer(&commands)?;
         let draws = renderer.create_singleton_buffer(&draws)?;
-        let skinning = SkinningBuffers::new(renderer, &dir, &manifest)?;
+        let skinning = SkinningBuffers::new(renderer, dir, manifest)?;
 
         Ok(Self {
             start_time: Instant::now(),
@@ -728,6 +739,7 @@ impl Game for ToonLinkModern {
             edit_state: ModernEditState::default(),
             pipelines,
             params_buffer,
+            mesh,
             args_buffer,
             draws,
             pipeline_order,
@@ -736,12 +748,6 @@ impl Game for ToonLinkModern {
         })
     }
 
-    fn draw(&mut self, renderer: FrameRenderer) -> Result<(), DrawError> {
-        self.draw_posed(renderer, None)
-    }
-}
-
-impl ToonLinkModern {
     /// Draw with `palette` as this frame's joint palette, one
     /// `animated_world * inverse_bind_world` per skeleton joint. `None` is the
     /// bind pose (identity), used when there is no host or no player.
@@ -785,12 +791,15 @@ impl ToonLinkModern {
             diagnostic: data.diagnostic,
             palette: skinning.palette,
             skinning: skinning.skinning,
+            vertices: self.mesh.vertices_addr(&renderer),
+            _padding_0: Default::default(),
         };
 
         for (index, &pipeline) in self.pipeline_order.iter().enumerate() {
             let first = index as u32;
             renderer.queue_draw_indexed_indirect_with_push_constants(
                 &self.pipelines[pipeline],
+                self.mesh.indices(),
                 &self.args_buffer,
                 first,
                 1,

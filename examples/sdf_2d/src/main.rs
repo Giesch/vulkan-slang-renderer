@@ -5,7 +5,7 @@ mod generated;
 use mltrs::env_config::EnvConfig;
 use mltrs::game::*;
 use mltrs::renderer::{
-    DrawError, DrawVertexCountNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
+    DrawError, DrawNode, FrameRenderer, PreparedRenderGraph, RenderGraph, Renderer,
     ResourcePlanner, UniformBufferHandle, draw_vertex_count,
 };
 use serde::Deserialize;
@@ -29,7 +29,7 @@ fn main() -> Result<(), anyhow::Error> {
     SDF2D::run()
 }
 
-type Sdf2dGraph = PreparedRenderGraph<DrawVertexCountNode<SDF2DParams>>;
+type Sdf2dGraph = PreparedRenderGraph<DrawNode<SDF2DParams>>;
 
 struct SDF2D {
     start_time: Instant,

@@ -127,6 +127,15 @@ pub(crate) enum GraphError {
     IndirectArgsNotImmutable {
         draw: String,
     },
+    DrawIndicesNotIndexBuffer {
+        draw: String,
+    },
+    IndexRangeOutOfBounds {
+        draw: String,
+        first_index: u32,
+        index_count: u32,
+        capacity: u32,
+    },
     WhenGateNotOptional {
         when: String,
     },
@@ -233,6 +242,19 @@ impl fmt::Display for GraphError {
             Self::IndirectArgsNotImmutable { draw } => {
                 write!(f, "draw {draw}'s indirect argument buffer is not immutable")
             }
+            Self::DrawIndicesNotIndexBuffer { draw } => {
+                write!(f, "draw {draw}'s indices are not an index buffer")
+            }
+            Self::IndexRangeOutOfBounds {
+                draw,
+                first_index,
+                index_count,
+                capacity,
+            } => write!(
+                f,
+                "draw {draw}'s index range [{first_index}, {first_index} + {index_count}) is out \
+                 of bounds for an index buffer of {capacity} indices"
+            ),
             Self::WhenGateNotOptional { when } => write!(f, "when {when} gate is not optional"),
             Self::ValueKindMismatch {
                 value,
@@ -374,6 +396,50 @@ fn check_shape(
             errors.push(GraphError::BindingKindMismatch {
                 uniform: name.into(),
                 field: key.0,
+            });
+        }
+    }
+}
+
+/// An indexed draw must name an index buffer, and an index sub-range must fit
+/// in it. The index count is the buffer's `capacity`.
+fn validate_draw_indices(draw: &DrawDesc, desc: &GraphDesc, errors: &mut Vec<GraphError>) {
+    let Some(indices) = draw.call.index_buffer() else {
+        return;
+    };
+
+    let Some(buffer) = desc.buffers.get(indices.0 as usize) else {
+        errors.push(GraphError::IdOutOfRange {
+            table: TableKind::Buffer,
+            id: indices.0,
+        });
+        return;
+    };
+
+    let is_index_buffer = buffer.kind == BufferKind::Index;
+    if !is_index_buffer {
+        errors.push(GraphError::DrawIndicesNotIndexBuffer {
+            draw: draw.name.clone(),
+        });
+        return;
+    }
+
+    if let DrawCall::IndexRange {
+        first_index,
+        index_count,
+        ..
+    } = draw.call
+    {
+        let capacity = buffer.capacity.unwrap_or(0);
+        let in_bounds = first_index
+            .checked_add(index_count)
+            .is_some_and(|end| end <= capacity);
+        if !in_bounds {
+            errors.push(GraphError::IndexRangeOutOfBounds {
+                draw: draw.name.clone(),
+                first_index,
+                index_count,
+                capacity,
             });
         }
     }
@@ -566,6 +632,7 @@ pub(crate) fn validate(
                     kind: match buffer.kind {
                         BufferKind::GpuUpdatedFlight => "gpu-updated",
                         BufferKind::Singleton => "singleton",
+                        BufferKind::Index => "index",
                         _ => "buffer",
                     },
                 })
@@ -785,6 +852,7 @@ pub(crate) fn validate(
                     }
 
                     valid_command(Command::from(draw), PipelineKind::Graphics, &mut errors);
+                    validate_draw_indices(draw, desc, &mut errors);
                     if let DrawCall::IndexedIndirect { args, .. } = &draw.call
                         && valid(
                             args.buffer.0,
@@ -823,9 +891,9 @@ pub(crate) fn validate(
 #[cfg(test)]
 mod tests {
     use super::super::desc::{
-        BufferKind, DrawCall, GroupSource, LeafPass, PassDesc, PipelineKind, RasterTargets,
-        ResourceFieldKind, ResourceRef, SchemaDesc, SizeClass, TexAccess, TexId, TexUsage,
-        UniformDecl, UniformId, UniformSourceDesc, UploadDesc, ValueKind,
+        BufferId, BufferKind, DrawCall, GroupSource, LeafPass, PassDesc, PipelineKind,
+        RasterTargets, ResourceFieldKind, ResourceRef, SchemaDesc, SizeClass, TexAccess, TexId,
+        TexUsage, UniformDecl, UniformId, UniformSourceDesc, UploadDesc, ValueKind,
     };
     use super::super::test_desc::{
         DescBuilder, bindings, mutate, raster, read, read_previous, write,
@@ -1361,14 +1429,15 @@ mod tests {
         )));
     }
 
-    /// the only draw-call variant that names a buffer; indirect args must be
-    /// immutable, because the graph does not version them
+    /// indirect args must be immutable, because the graph does not version them
     #[test]
     fn indirect_args_must_be_immutable() {
         let mut builder = DescBuilder::new(0);
+        let indices = builder.buffer_decl(BufferKind::Index, Some(3));
         let buffer = builder.buffer_decl(BufferKind::Storage, Some(4));
         let mut draw = builder.draw("draw0", &[]);
         draw.call = DrawCall::IndexedIndirect {
+            indices: BufferId(indices),
             args: match super::super::test_desc::buffer(buffer) {
                 ResourceRef::Buf(args, _) => args,
                 _ => unreachable!(),
@@ -1382,6 +1451,26 @@ mod tests {
             builder
                 .errors()
                 .contains(&GraphError::IndirectArgsNotImmutable {
+                    draw: "draw0".into(),
+                })
+        );
+    }
+
+    /// an indexed draw's indices must name a hardware index buffer
+    #[test]
+    fn draw_indices_must_be_an_index_buffer() {
+        let mut builder = DescBuilder::new(0);
+        let storage = builder.buffer_decl(BufferKind::Storage, Some(4));
+        let mut draw = builder.draw("draw0", &[]);
+        draw.call = DrawCall::WholeIndexed {
+            indices: BufferId(storage),
+        };
+        builder.leaf_raster(raster("main", vec![draw]));
+
+        assert!(
+            builder
+                .errors()
+                .contains(&GraphError::DrawIndicesNotIndexBuffer {
                     draw: "draw0".into(),
                 })
         );

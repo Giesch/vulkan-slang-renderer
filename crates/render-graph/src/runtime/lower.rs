@@ -1,7 +1,9 @@
 //! Lowering from sealed typed nodes into the plain-data description.
 use super::desc::*;
 use super::validate::{GraphError, ScopeKind};
-use super::{BufferBindingKind, GraphBinding, SampledRef, StorageRef, StorageTexAccess};
+use super::{
+    BufferBindingKind, GraphBinding, IndexBufferSlot, SampledRef, StorageRef, StorageTexAccess,
+};
 use std::collections::HashMap;
 
 pub(crate) struct LowerOutput {
@@ -30,12 +32,16 @@ pub struct PushInput {
 #[derive(Clone, Copy)]
 pub(crate) enum LowerDrawCall {
     VertexCount(u32),
-    WholeIndexed,
+    WholeIndexed {
+        indices: IndexBufferSlot,
+    },
     IndexRange {
+        indices: IndexBufferSlot,
         first_index: u32,
         index_count: u32,
     },
     IndexedIndirect {
+        indices: IndexBufferSlot,
         args_index: usize,
         byte_offset: u64,
         draw_count: u32,
@@ -150,6 +156,16 @@ impl LowerCtx {
         self.buffers.insert(key, id);
 
         id
+    }
+
+    /// Interns an index buffer, recording its index count as the capacity.
+    fn index_buffer(&mut self, indices: IndexBufferSlot) -> BufferId {
+        self.intern_buffer(
+            BufferKind::Index,
+            indices.index(),
+            Some(indices.index_count()),
+            None,
+        )
     }
 
     fn intern_import(&mut self, raw: u64) -> ImportId {
@@ -414,22 +430,29 @@ impl LowerCtx {
         );
         let call = match call {
             LowerDrawCall::VertexCount(x) => DrawCall::VertexCount(x),
-            LowerDrawCall::WholeIndexed => DrawCall::WholeIndexed,
+            LowerDrawCall::WholeIndexed { indices } => DrawCall::WholeIndexed {
+                indices: self.index_buffer(indices),
+            },
             LowerDrawCall::IndexRange {
+                indices,
                 first_index,
                 index_count,
             } => DrawCall::IndexRange {
+                indices: self.index_buffer(indices),
                 first_index,
                 index_count,
             },
             LowerDrawCall::IndexedIndirect {
+                indices,
                 args_index,
                 byte_offset,
                 draw_count,
                 ..
             } => {
+                let indices = self.index_buffer(indices);
                 let args_buffer = self.intern_buffer(BufferKind::Immutable, args_index, None, None);
                 DrawCall::IndexedIndirect {
+                    indices,
                     args: BufferRef {
                         buffer: args_buffer,
                         slot: SlotSel::Current,
@@ -598,7 +621,9 @@ mod tests {
         UniformId, ValueKind,
     };
     use super::super::validate::{GraphError, ScopeKind, validate};
-    use super::super::{BufferBindingKind, GraphBinding, GraphTex, RawBufferBinding};
+    use super::super::{
+        BufferBindingKind, GraphBinding, GraphTex, IndexBufferSlot, RawBufferBinding,
+    };
     use super::{LowerCtx, LowerDrawCall, LowerOutput, PushInput, UniformInput};
 
     const GROUPS: [u32; 3] = [1, 1, 1];
@@ -1003,7 +1028,14 @@ mod tests {
     fn top_level_draws_coalesce_into_one_raster_pass() {
         let mut cx = LowerCtx::new(vec![]);
         cx.draw(0, LowerDrawCall::VertexCount(3), uni(0, vec![]), None);
-        cx.draw(1, LowerDrawCall::WholeIndexed, uni(1, vec![]), None);
+        cx.draw(
+            1,
+            LowerDrawCall::WholeIndexed {
+                indices: IndexBufferSlot::from_backend(0, 3),
+            },
+            uni(1, vec![]),
+            None,
+        );
         let out = cx.finish();
 
         assert_eq!(out.desc.passes.len(), 1);
@@ -1056,12 +1088,19 @@ mod tests {
 
     #[test]
     fn draw_call_variants_lower_one_to_one() {
+        let indices = IndexBufferSlot::from_backend(4, 36);
         let mut cx = LowerCtx::new(vec![]);
         cx.draw(0, LowerDrawCall::VertexCount(6), uni(0, vec![]), None);
-        cx.draw(1, LowerDrawCall::WholeIndexed, uni(1, vec![]), None);
+        cx.draw(
+            1,
+            LowerDrawCall::WholeIndexed { indices },
+            uni(1, vec![]),
+            None,
+        );
         cx.draw(
             2,
             LowerDrawCall::IndexRange {
+                indices,
                 first_index: 3,
                 index_count: 9,
             },
@@ -1071,6 +1110,7 @@ mod tests {
         cx.draw(
             3,
             LowerDrawCall::IndexedIndirect {
+                indices,
                 args_index: 7,
                 byte_offset: 32,
                 draw_count: 5,
@@ -1087,23 +1127,65 @@ mod tests {
             panic!("expected one raster pass")
         };
         assert!(matches!(raster.draws[0].call, DrawCall::VertexCount(6)));
-        assert!(matches!(raster.draws[1].call, DrawCall::WholeIndexed));
+        let DrawCall::WholeIndexed { indices: whole } = raster.draws[1].call else {
+            panic!("expected a whole indexed draw")
+        };
         assert!(matches!(
             raster.draws[2].call,
             DrawCall::IndexRange {
+                indices: range,
                 first_index: 3,
                 index_count: 9,
-            }
+            } if range == whole
         ));
-        let DrawCall::IndexedIndirect { args, draw_count } = &raster.draws[3].call else {
+        let DrawCall::IndexedIndirect {
+            indices: indirect,
+            args,
+            draw_count,
+        } = &raster.draws[3].call
+        else {
             panic!("expected an indirect draw")
         };
+        assert_eq!(*indirect, whole, "one index buffer interns once");
         assert_eq!(*draw_count, 5);
         assert_eq!(args.offset, 32);
         assert_eq!(args.slot, SlotSel::Current);
         assert_eq!(
             out.desc.buffers[args.buffer.0 as usize].kind,
             BufferKind::Immutable
+        );
+        let index_buffer = &out.desc.buffers[whole.0 as usize];
+        assert_eq!(index_buffer.kind, BufferKind::Index);
+        assert_eq!(index_buffer.capacity, Some(36));
+        assert_eq!(out.buffer_indices[whole.0 as usize], 4);
+        assert!(validate(&out.desc, &out.schemas).is_ok());
+    }
+
+    #[test]
+    fn an_index_range_past_the_index_count_is_rejected() {
+        let indices = IndexBufferSlot::from_backend(0, 12);
+        let mut cx = LowerCtx::new(vec![]);
+        cx.draw(
+            0,
+            LowerDrawCall::IndexRange {
+                indices,
+                first_index: 6,
+                index_count: 7,
+            },
+            uni(0, vec![]),
+            None,
+        );
+        let out = cx.finish();
+
+        let errors = validate(&out.desc, &out.schemas).err().unwrap();
+        assert_eq!(
+            errors,
+            vec![GraphError::IndexRangeOutOfBounds {
+                draw: "draw0".into(),
+                first_index: 6,
+                index_count: 7,
+                capacity: 12,
+            }]
         );
     }
 

@@ -6,18 +6,15 @@ use std::ffi::CString;
 use std::io::Cursor;
 
 use ash::util::read_spv;
-use ash::vk;
 use facet::Facet;
 use serde::Serialize;
 
 pub use super::mltrs::MVPMatrices;
-pub use super::skinning::{SkinJoint, VertexSkinning};
+pub use super::skinning::{SkinJoint, Vertex, VertexSkinning};
 pub use super::tev::{GXAlphaCompare, GXLights, GXTevColorOverride, TevParams};
 #[allow(unused_imports)]
 use mltrs::renderer::gpu_read::GPURead;
 use mltrs::renderer::render_graph::GPUWrite;
-#[allow(unused)]
-use mltrs::renderer::vertex_description::{NoVertex, VertexDescription};
 use mltrs::renderer::*;
 use mltrs::shaders::atlas::{PrecompiledShader, PrecompiledShaders, ShaderAtlasEntry};
 use mltrs::shaders::json::{ReflectedPipelineLayout, ReflectionJson};
@@ -129,7 +126,7 @@ pub struct ToonLinkParams {
     pub _padding_0: [u8; 4],
     pub palette: ImmutableAddr<SkinJoint>,
     pub skinning: ImmutableAddr<VertexSkinning>,
-    pub _padding_1: [u8; 8],
+    pub vertices: ImmutableAddr<Vertex>,
 }
 
 impl GPUWrite for ToonLinkParams {}
@@ -146,16 +143,8 @@ const _: () = assert!(std::mem::offset_of!(ToonLinkParams, palette) == 328);
 const _: () = assert!(std::mem::size_of::<ImmutableAddr<SkinJoint>>() == 8);
 const _: () = assert!(std::mem::offset_of!(ToonLinkParams, skinning) == 336);
 const _: () = assert!(std::mem::size_of::<ImmutableAddr<VertexSkinning>>() == 8);
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[repr(C, align(16))]
-pub struct Vertex {
-    pub position: glam::Vec3,
-    pub normal: glam::Vec3,
-    pub uv0: glam::Vec2,
-}
-
-impl GPUWrite for Vertex {}
+const _: () = assert!(std::mem::offset_of!(ToonLinkParams, vertices) == 344);
+const _: () = assert!(std::mem::size_of::<ImmutableAddr<Vertex>>() == 8);
 
 pub struct Resources<'a> {
     pub params_buffer: &'a UniformBufferHandle<ToonLinkParams>,
@@ -231,6 +220,7 @@ pub struct ToonLinkParamsData {
 pub struct ToonLinkParamsBindings {
     pub palette: ImmutableBufferBinding<SkinJoint>,
     pub skinning: ImmutableBufferBinding<VertexSkinning>,
+    pub vertices: ImmutableBufferBinding<Vertex>,
 }
 
 impl GraphParamBindingSet for ToonLinkParamsBindings {
@@ -245,6 +235,7 @@ impl GraphBindingSet for ToonLinkParamsBindings {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.palette.erased()));
         f(GraphBinding::Buffer(self.skinning.erased()));
+        f(GraphBinding::Buffer(self.vertices.erased()));
     }
 }
 /// Complete graph inputs before resource references resolve to GPU values.
@@ -256,6 +247,7 @@ pub struct ToonLinkParamsInput {
     pub debug_mode: DebugMode,
     pub palette: ImmutableBufferBinding<SkinJoint>,
     pub skinning: ImmutableBufferBinding<VertexSkinning>,
+    pub vertices: ImmutableBufferBinding<Vertex>,
 }
 
 impl GraphShaderParams for ToonLinkParams {
@@ -271,6 +263,7 @@ impl GraphShaderParams for ToonLinkParams {
             debug_mode: data.debug_mode,
             palette: bindings.palette,
             skinning: bindings.skinning,
+            vertices: bindings.vertices,
         }
     }
 
@@ -283,7 +276,7 @@ impl GraphShaderParams for ToonLinkParams {
             _padding_0: Default::default(),
             palette: resolver.immutable_buf(input.palette),
             skinning: resolver.immutable_buf(input.skinning),
-            _padding_1: Default::default(),
+            vertices: resolver.immutable_buf(input.vertices),
         }
     }
 }
@@ -292,50 +285,13 @@ impl GraphBindingSet for ToonLinkParamsInput {
     fn visit(&self, f: &mut dyn FnMut(GraphBinding)) {
         f(GraphBinding::Buffer(self.palette.erased()));
         f(GraphBinding::Buffer(self.skinning.erased()));
+        f(GraphBinding::Buffer(self.vertices.erased()));
     }
 }
 
 impl mltrs::renderer::render_graph::PushConstantBlock for MultiDraw {}
 // 128 bytes is the vulkan-guaranteed maxPushConstantsSize
 const _: () = assert!(std::mem::size_of::<MultiDraw>() <= 128);
-
-// the shared vertex layout rule (mltrs_slang_reflection::json::vertex_layout)
-// must agree with this struct's Rust layout
-const _: () = assert!(std::mem::size_of::<Vertex>() == 32);
-const _: () = assert!(std::mem::offset_of!(Vertex, position) == 0);
-const _: () = assert!(std::mem::offset_of!(Vertex, normal) == 12);
-const _: () = assert!(std::mem::offset_of!(Vertex, uv0) == 24);
-
-impl VertexDescription for Vertex {
-    fn binding_descriptions() -> Vec<ash::vk::VertexInputBindingDescription> {
-        let binding_description = ash::vk::VertexInputBindingDescription::default()
-            .binding(0)
-            .stride(std::mem::size_of::<Self>() as u32)
-            .input_rate(ash::vk::VertexInputRate::VERTEX);
-
-        vec![binding_description]
-    }
-
-    fn attribute_descriptions() -> Vec<ash::vk::VertexInputAttributeDescription> {
-        vec![
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, position) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(0),
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, normal) as u32)
-                .format(ash::vk::Format::R32G32B32_SFLOAT)
-                .binding(0)
-                .location(1),
-            ash::vk::VertexInputAttributeDescription::default()
-                .offset(std::mem::offset_of!(Vertex, uv0) as u32)
-                .format(ash::vk::Format::R32G32_SFLOAT)
-                .binding(0)
-                .location(2),
-        ]
-    }
-}
 
 #[derive(Clone)]
 pub struct Shader {
@@ -357,7 +313,7 @@ impl Shader {
     pub fn pipeline_config<'a>(
         &self,
         resources: Resources<'a>,
-    ) -> IndexedPipelineConfig<'a, Vertex, PushBlock<MultiDraw>> {
+    ) -> PipelineConfig<'a, GraphicsIndirect, PushBlock<MultiDraw>> {
         // NOTE each of these must be in descriptor set layout order in the reflection json
 
         #[rustfmt::skip]
@@ -379,7 +335,7 @@ impl Shader {
             uniform_buffer_handles,
             storage_texture_handles,
         }
-        .build_indexed()
+        .build_graphics_indirect()
     }
 
     fn vert_entry_point_name(&self) -> CString {
@@ -424,14 +380,6 @@ impl Shader {
 impl ShaderAtlasEntry for Shader {
     fn source_file_name(&self) -> &str {
         &self.reflection_json.source_file_name
-    }
-
-    fn vertex_binding_descriptions(&self) -> Vec<vk::VertexInputBindingDescription> {
-        Vertex::binding_descriptions()
-    }
-
-    fn vertex_attribute_descriptions(&self) -> Vec<vk::VertexInputAttributeDescription> {
-        Vertex::attribute_descriptions()
     }
 
     fn layout_bindings(&self) -> Vec<Vec<LayoutDescription>> {
