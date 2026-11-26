@@ -804,7 +804,7 @@ mod tests {
     #[ignore = "needs Vulkan (lavapipe) and SDL offscreen; run `just toon_link test-skinning-gpu`"]
     fn skinning_gpu_oracle() {
         use mltrs::env_config::EnvConfig;
-        use mltrs::renderer::{MaxMSAASamples, debug};
+        use mltrs::renderer::{MaxMSAASamples, RendererConfig, debug};
         use mltrs::shaders::atlas::ShaderAtlasRoot;
 
         use crate::generated::shader_atlas::ShaderAtlas;
@@ -812,8 +812,6 @@ mod tests {
             OracleCase, OracleOutput, Resources, SkinningOracleParams, SkinningOraclePush,
         };
 
-        // Validation layers exist only in debug builds; `Renderer::init`'s
-        // `#[cfg(debug_assertions)]` argument below does not compile otherwise.
         let sdl = sdl3::init().expect("SDL init (set SDL_VIDEODRIVER=offscreen)");
         let video = sdl.video().expect("SDL video subsystem");
         let window = video
@@ -822,17 +820,13 @@ mod tests {
             .hidden()
             .build()
             .expect("SDL Vulkan window");
-        let mut renderer = Renderer::init(
-            window,
-            EnvConfig::from_env(),
-            false,
-            1.0,
-            MaxMSAASamples::Off,
-            false,
-            #[cfg(debug_assertions)]
-            ShaderAtlas::SHADERS_SOURCE_DIR,
-        )
-        .expect("Vulkan renderer (set VK_ICD_FILENAMES to lavapipe)");
+        let renderer_config = RendererConfig {
+            max_msaa_samples: MaxMSAASamples::Off,
+            shaders_source_dir: ShaderAtlas::SHADERS_SOURCE_DIR.into(),
+            ..RendererConfig::default()
+        };
+        let mut renderer = Renderer::init(window, EnvConfig::from_env(), renderer_config)
+            .expect("Vulkan renderer (set VK_ICD_FILENAMES to lavapipe)");
         let shaders = ShaderAtlas::init();
 
         let palette = oracle_palette();

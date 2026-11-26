@@ -4,7 +4,7 @@ use generated::shader_atlas::readback_compute::{
     ReadbackOutput, ReadbackPush, ReadbackTag, Resources, Shader,
 };
 use mltrs_renderer::env_config::EnvConfig;
-use mltrs_renderer::renderer::{MaxMSAASamples, Renderer, debug};
+use mltrs_renderer::renderer::{MaxMSAASamples, Renderer, RendererConfig, debug};
 
 fn main() -> anyhow::Result<()> {
     anyhow::ensure!(cfg!(debug_assertions), "validation requires a debug build");
@@ -16,16 +16,12 @@ fn main() -> anyhow::Result<()> {
         .vulkan()
         .hidden()
         .build()?;
-    let mut renderer = Renderer::init(
-        window,
-        EnvConfig::from_env(),
-        false,
-        1.0,
-        MaxMSAASamples::Off,
-        false,
-        #[cfg(debug_assertions)]
-        concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source"),
-    )?;
+    let renderer_config = RendererConfig {
+        max_msaa_samples: MaxMSAASamples::Off,
+        shaders_source_dir: concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/source").into(),
+        ..RendererConfig::default()
+    };
+    let mut renderer = Renderer::init(window, EnvConfig::from_env(), renderer_config)?;
     let shader = Shader::init();
     let mut params = renderer
         .create_uniform_buffer::<generated::shader_atlas::readback_compute::ReadbackInput>()?;

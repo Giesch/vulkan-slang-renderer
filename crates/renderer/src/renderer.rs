@@ -135,6 +135,32 @@ pub enum MaxMSAASamples {
     Off,
 }
 
+/// The application's choices for [`Renderer::init`]. Environment overrides
+/// arrive separately, in [`EnvConfig`].
+#[derive(Debug, Clone)]
+pub struct RendererConfig {
+    pub enable_egui: bool,
+    /// Clamped to `0.25..=1.0`.
+    pub render_scale: f32,
+    pub max_msaa_samples: MaxMSAASamples,
+    pub needs_stencil: bool,
+    /// Absolute path of the slang source dir the shaders were generated from;
+    /// empty when there is none.
+    pub shaders_source_dir: PathBuf,
+}
+
+impl Default for RendererConfig {
+    fn default() -> Self {
+        Self {
+            enable_egui: false,
+            render_scale: 1.0,
+            max_msaa_samples: MaxMSAASamples::default(),
+            needs_stencil: false,
+            shaders_source_dir: PathBuf::new(),
+        }
+    }
+}
+
 pub struct Renderer {
     // fields that are created once
     /// the environment, parsed once at startup; see `env_config`
@@ -144,7 +170,7 @@ pub struct Renderer {
     height: f32,
     total_frames: usize,
     #[cfg(debug_assertions)]
-    shaders_source_dir: &'static std::path::Path,
+    shaders_source_dir: PathBuf,
     /// `None` when the atlas has no slang source dir to watch
     #[cfg(debug_assertions)]
     shader_watcher: Option<shader_watcher::ShaderChanges>,
@@ -294,22 +320,18 @@ impl Renderer {
     pub fn init(
         window: Window,
         env: EnvConfig,
-        enable_egui: bool,
-        render_scale: f32,
-        max_msaa_samples: MaxMSAASamples,
-        needs_stencil: bool,
-        #[cfg(debug_assertions)] shaders_source_dir: &'static str,
+        config: RendererConfig,
     ) -> Result<Self, anyhow::Error> {
         #[cfg(debug_assertions)]
-        let shaders_source_dir = std::path::Path::new(shaders_source_dir);
+        let shaders_source_dir = config.shaders_source_dir;
         #[cfg(debug_assertions)]
         let shader_watcher = if shaders_source_dir.as_os_str().is_empty() {
             None
         } else {
-            Some(shader_watcher::watch(shaders_source_dir)?)
+            Some(shader_watcher::watch(&shaders_source_dir)?)
         };
 
-        let render_scale = render_scale.clamp(0.25, 1.0);
+        let render_scale = config.render_scale.clamp(0.25, 1.0);
 
         let (window_width, window_height) = window.size();
         let aspect_ratio = window_width as f32 / window_height as f32;
@@ -383,7 +405,7 @@ impl Renderer {
         let descriptor_heap = DescriptorHeap::new(&device)?;
 
         let msaa_samples =
-            get_max_usable_sample_count(physical_device_properties, max_msaa_samples);
+            get_max_usable_sample_count(physical_device_properties, config.max_msaa_samples);
 
         let graphics_queue = unsafe { device.get_device_queue(queue_family_indices.graphics, 0) };
         let presentation_queue =
@@ -409,9 +431,9 @@ impl Renderer {
         let (image_available, render_finished, frame_timeline) =
             create_sync_objects(&device, &swapchain_images)?;
 
-        let depth_format = find_depth_format(&instance, physical_device, needs_stencil);
+        let depth_format = find_depth_format(&instance, physical_device, config.needs_stencil);
 
-        let egui = if enable_egui {
+        let egui = if config.enable_egui {
             Some(EguiIntegration::new(
                 &instance,
                 physical_device,
@@ -1388,7 +1410,7 @@ impl Renderer {
             self.descriptor_heap.layout(),
             &*picking_config.shader,
             #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            &self.shaders_source_dir,
         )?;
 
         // picking renders ids into a uint target with no depth attachment, so
@@ -1473,7 +1495,7 @@ impl Renderer {
             self.descriptor_heap.layout(),
             &*config.shader,
             #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            &self.shaders_source_dir,
         )?;
 
         let shader_module = {
@@ -1597,7 +1619,7 @@ impl Renderer {
             self.descriptor_heap.layout(),
             &*config.shader,
             #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            &self.shaders_source_dir,
         )?;
 
         let pipeline = create_graphics_pipeline(
@@ -3040,7 +3062,7 @@ impl Renderer {
             self.descriptor_heap.layout(),
             &*self.pipelines.get_by_index(pipeline_index).shader,
             #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            &self.shaders_source_dir,
         ) {
             Ok(shaders) => shaders,
             Err(e) => {
@@ -3096,7 +3118,7 @@ impl Renderer {
             self.descriptor_heap.layout(),
             &*compute_pipeline.shader,
             #[cfg(debug_assertions)]
-            self.shaders_source_dir,
+            &self.shaders_source_dir,
         ) {
             Ok(layout) => layout,
             Err(e) => {

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use facet::Facet;
@@ -5,7 +6,7 @@ use sdl3::keyboard::Scancode as SDLScancode;
 
 use crate::app::App;
 use crate::env_config::{EnvConfig, exit_code};
-use crate::renderer::{self, DrawError, FrameRenderer, Renderer};
+use crate::renderer::{self, DrawError, FrameRenderer, Renderer, RendererConfig};
 use crate::shaders::atlas::ShaderAtlasRoot;
 
 const DEFAULT_FRAME_DELAY: Duration = Duration::from_millis(15); // about 60 fps
@@ -133,16 +134,14 @@ pub trait Game {
             None => compute_render_scale_for_display(&window),
         };
         let max_msaa_samples = Self::max_msaa_samples();
-        let mut renderer = Renderer::init(
-            window,
-            env.clone(),
+        let renderer_config = RendererConfig {
             enable_egui,
             render_scale,
             max_msaa_samples,
-            Self::needs_stencil(),
-            #[cfg(debug_assertions)]
-            Self::Atlas::SHADERS_SOURCE_DIR,
-        )?;
+            needs_stencil: Self::needs_stencil(),
+            shaders_source_dir: PathBuf::from(Self::Atlas::SHADERS_SOURCE_DIR),
+        };
+        let mut renderer = Renderer::init(window, env.clone(), renderer_config)?;
         let game = Self::setup(&mut renderer, Self::Atlas::init())?;
         let app = App::init(renderer, game)?;
 
