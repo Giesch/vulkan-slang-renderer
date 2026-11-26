@@ -83,6 +83,8 @@ fn real_roc_codegen_gate() {
 
     for name in [
         "roc_shared.shader.slang",
+        "roc_blocks.shader.slang",
+        "roc_no_blocks.shader.slang",
         "ownership.shader.slang",
         "ownership_shared.slang",
         "ownership_leaf.slang",
@@ -99,7 +101,11 @@ fn real_roc_codegen_gate() {
             .current_dir(std::env::temp_dir()),
         "fresh Roc generation",
     );
-    for name in ["SyntheticReflection.roc", "SyntheticConsumer.roc"] {
+    for name in [
+        "SyntheticReflection.roc",
+        "SyntheticConsumer.roc",
+        "BlockConsumer.roc",
+    ] {
         copy_fixture_from("roc_codegen", name, &generated);
     }
     write_app_main(&generated);
@@ -115,6 +121,8 @@ fn real_roc_codegen_gate() {
         "OwnershipShared.roc",
         "Particle.roc",
         "Particles.roc",
+        "RocBlocks.roc",
+        "RocNoBlocks.roc",
         "RocShared.roc",
         "ShaderAtlas.roc",
         "VertexPullingFloat3.roc",
@@ -219,6 +227,65 @@ expect List.sublist(local_params.to_bytes(), {{ start: 16, len: 4 }}) == [7, 0, 
         String::from_utf8_lossy(&synthetic.stdout),
         String::from_utf8_lossy(&synthetic.stderr)
     );
+
+    let blocks = roc_test(roc, &generated, &generated.join("BlockConsumer.roc"));
+    assert!(
+        blocks.status.success()
+            && String::from_utf8_lossy(&blocks.stdout).contains("All (42) tests passed"),
+        "{}{}",
+        String::from_utf8_lossy(&blocks.stdout),
+        String::from_utf8_lossy(&blocks.stderr)
+    );
+
+    // The uniform record and binding wrappers are checked statically.
+    for (name, mismatch) in [
+        (
+            "MissingUniform",
+            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema) })",
+        ),
+        (
+            "SwappedUniforms",
+            "graphics_slots(RocBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.params.schema), params: UniformSlot.new(1, RocBlocks.tint.schema) })",
+        ),
+        (
+            "ExtraUniform",
+            "graphics_slots(RocNoBlocks.shader, { tint: UniformSlot.new(0, RocBlocks.tint.schema) })",
+        ),
+        (
+            "IndirectAsDirect",
+            "graphics_slots(VertexPullingFloat3.shader, { params: UniformSlot.new(0, VertexPullingFloat3.params.schema) })",
+        ),
+        (
+            "WrongPointee",
+            "(VertexPullingFloat3.PullParams.schema.extract_bindings)({ pairs: tail_binding, tails: tail_binding, wides: ImmutableBufferBinding.new(target) })",
+        ),
+    ] {
+        let negative = generated.join(format!("{name}.roc"));
+        fs::write(
+            &negative,
+            format!(
+                "import pf.ShaderReflection exposing [GraphicsShader, ImmutableBufferBinding, UniformSlot]\nimport RocBlocks\nimport RocNoBlocks\nimport VertexPullingFloat3\n\n{name} := {{}}\n\ngraphics_slots : GraphicsShader(uniforms, push), uniforms -> List(U32)\ngraphics_slots = |shader, uniforms| (shader.uniform_slots)(uniforms)\n\ntarget = {{ buffer: 0, slot: Current, offset: 0 }}\n\ntail_binding : ImmutableBufferBinding(VertexPullingFloat3.TailVertex)\ntail_binding = ImmutableBufferBinding.new(target)\n\nexpect {mismatch} == []\n"
+            ),
+        )
+        .unwrap();
+        let checked = Command::new(roc)
+            .arg("check")
+            .arg(format!("--main={}", generated.join("main.roc").display()))
+            .arg(&negative)
+            .current_dir(std::env::temp_dir())
+            .output()
+            .expect("failed to execute roc check");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&checked.stdout),
+            String::from_utf8_lossy(&checked.stderr)
+        );
+        assert!(
+            !checked.status.success() && text.contains("type mismatch"),
+            "{name} should fail to typecheck:\n{text}"
+        );
+        fs::remove_file(negative).unwrap();
+    }
 
     let missing = compiled.join("basic_triangle.vert.spv");
     let saved = fs::read(&missing).unwrap();

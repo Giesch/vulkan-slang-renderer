@@ -2,12 +2,14 @@
 source: crates/cli/tests/shaders_compile.rs
 expression: text
 ---
-import pf.ShaderReflection exposing [ComputeReflection, ElementPacker, PointerAddress, StructType]
+import pf.ShaderReflection exposing [BlockSchema, BufferBinding, ComputeReflection, ComputeShader, ElementPacker, NoPush, PointerAddress, ReadBufferBinding, StructType, UniformSlot, UniformSpec]
+
+import Particle
 
 import "../compiled with space/particles.comp.spv" as compute_bytes : List(U8)
 import "../compiled with space/particles.comp.json" as reflection_json : Str
 
-## Generated shader types, GPU byte packers, and reflection.
+## Generated shader types, GPU byte packers, block schemas, and reflection.
 Particles := {}.{
 	SimParams := {
 		particles_in : PointerAddress,
@@ -31,6 +33,50 @@ Particles := {}.{
 			)
 
 		packer : ElementPacker(SimParams)
+		packer = { stride: gpu_size, to_bytes }
+
+		schema : BlockSchema(SimParamsData, SimParamsBindings)
+		schema = {
+			name: "SimParams",
+			gpu_size: 32,
+			data_size: 4,
+			resource_fields: [BufAddr, BufAddr],
+			fields: [
+				{ key: 0, offset: 0, len: 8, kind: BufAddr },
+				{ key: 1, offset: 8, len: 8, kind: BufAddr },
+				{ key: 2, offset: 16, len: 4, kind: Data({ src_offset: 0 }) },
+			],
+			pack_data: SimParamsData.to_bytes,
+			extract_bindings: |bindings| [
+				(0, bindings.particles_in.erase()),
+				(1, bindings.particles_out.erase()),
+			],
+		}
+	}
+
+	SimParamsBindings : {
+		particles_in : ReadBufferBinding(Particle.Particle),
+		particles_out : BufferBinding(Particle.Particle),
+	}
+
+	SimParamsData := {
+		delta_time : F32,
+	}.{
+		is_eq : _
+
+		gpu_size : U32
+		gpu_size = 4
+
+		to_bytes : SimParamsData -> List(U8)
+		to_bytes = |value|
+			ShaderReflection.pack(
+				gpu_size.to_u64(),
+				[
+					(0, ShaderReflection.f32_bytes(value.delta_time)),
+				],
+			)
+
+		packer : ElementPacker(SimParamsData)
 		packer = { stride: gpu_size, to_bytes }
 	}
 
@@ -155,5 +201,28 @@ Particles := {}.{
 
 	stages = {
 		compute: compute_bytes,
+	}
+
+	sim_params : UniformSpec(SimParamsData, SimParamsBindings)
+	sim_params = {
+		parameter_name: "simParams",
+		index: 0,
+		schema: SimParams.schema,
+	}
+
+	shader : ComputeShader(
+		{
+			sim_params : UniformSlot(SimParamsData, SimParamsBindings),
+		},
+		NoPush,
+	)
+	shader = ComputeShader.{
+		name: "particles",
+		compute_spv: compute_bytes,
+		reflection_json,
+		reflection,
+		workgroup_size: reflection.workgroup_size,
+		uniform_slots: |slots| [slots.sim_params.index()],
+		push: NoPush.{},
 	}
 }

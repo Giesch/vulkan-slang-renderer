@@ -12,7 +12,7 @@ import "{{ import.path }}" as {{ import.stage }}_bytes : List(U8)
 import "{{ path }}" as reflection_json : Str
 {% endif -%}
 {% endif %}
-## Generated shader types, GPU byte packers, and reflection.
+## Generated shader types, GPU byte packers, block schemas, and reflection.
 {{ module }} := {}.{
 {%- for definition in logical_definitions %}
 {{ definition }}
@@ -28,6 +28,52 @@ import "{{ path }}" as reflection_json : Str
 {%- for stage in stages %}
         {{ stage }}: {{ stage }}_bytes,
 {%- endfor %}
+    }
+{%- endif %}
+{%- for block in blocks %}
+{%- match block.kind %}
+{%- when BlockKind::Uniform with { index } %}
+
+    {{ block.value }} : UniformSpec({{ block.data_type }}, {{ block.bindings_type }})
+    {{ block.value }} = {
+        parameter_name: {{ block.parameter_name }},
+        index: {{ index }},
+        schema: {{ block.schema }},
+    }
+{%- when BlockKind::Push %}
+
+    {{ block.value }} : PushSpec({{ block.data_type }}, {{ block.bindings_type }})
+    {{ block.value }} = PushSpec.{
+        parameter_name: {{ block.parameter_name }},
+        schema: {{ block.schema }},
+    }
+{%- endmatch %}
+{%- endfor %}
+{%- if let Some(shader) = shader %}
+
+    shader : {{ shader.kind }}(
+        {{ self.uniforms_type() }},
+        {{ shader.push_type }},
+    )
+    shader = {{ shader.kind }}.{
+        name: {{ shader.name }},
+{%- if shader.kind == "ComputeShader" %}
+        compute_spv: compute_bytes,
+        reflection_json,
+        reflection,
+        workgroup_size: reflection.workgroup_size,
+{%- else %}
+        vertex_spv: vertex_bytes,
+        fragment_spv: fragment_bytes,
+        reflection_json,
+        reflection,
+{%- endif %}
+{%- if self.uniforms().is_empty() %}
+        uniform_slots: |_| [],
+{%- else %}
+        uniform_slots: |slots| [{{ self.slot_indices() }}],
+{%- endif %}
+        push: {{ shader.push_value }},
     }
 {%- endif %}
 }

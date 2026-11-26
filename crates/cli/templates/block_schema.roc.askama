@@ -1,0 +1,22 @@
+schema : {{ schema_type }}
+schema = {
+    name: {{ name }},
+    gpu_size: {{ gpu_size }},
+    data_size: {{ data_size }},
+    resource_fields: [{{ resource_fields|join(", ") }}],
+    fields: [
+{%- for field in fields %}
+        { key: {{ field.key }}, offset: {{ field.offset }}, len: {{ field.len }}, kind: {{ field.kind }} },
+{%- endfor %}
+    ],
+    pack_data: {{ pack_data }},
+{%- if extracts.is_empty() %}
+    extract_bindings: |_| [],
+{%- else %}
+    extract_bindings: |bindings| [
+{%- for extract in extracts %}
+        ({{ extract.key }}, bindings.{{ extract.member }}.erase()),
+{%- endfor %}
+    ],
+{%- endif %}
+}

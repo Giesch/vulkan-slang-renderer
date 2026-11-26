@@ -4,7 +4,7 @@ expression: "synthetic_module(\"GeneratedSyntheticGraphics\", \"GraphicsReflecti
 ---
 import pf.ShaderReflection exposing [GraphicsReflection, StructType]
 
-## Generated shader types, GPU byte packers, and reflection.
+## Generated shader types, GPU byte packers, block schemas, and reflection.
 GeneratedSyntheticGraphics := {}.{
     nested_type : StructType
     nested_type = StructType.{

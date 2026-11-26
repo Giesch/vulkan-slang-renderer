@@ -1,7 +1,11 @@
+{%- if alias -%}
+{{ name }} : {{ body }}
+{%- else -%}
 {{ name }} := {{ body }}.{
     is_eq : _
-{%- if let Some(associated) = associated %}
+{%- for block in associated %}
 
-{{ associated }}
-{%- endif %}
+{{ block }}
+{%- endfor %}
 }
+{%- endif -%}

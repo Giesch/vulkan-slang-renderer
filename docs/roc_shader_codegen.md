@@ -63,9 +63,47 @@ Import `ShaderAtlas` from `Generated/ShaderAtlas.roc`. It exposes:
 ### Shader modules
 
 Each shader gets `Generated/<Shader>.roc`. Besides its types (below), it
-exposes `reflection : GraphicsReflection` or `ComputeReflection`, preserving
-original reflected source, entry-point names, and compute workgroup dimensions,
-and `stages`.
+exposes:
+
+- `reflection : GraphicsReflection` or `ComputeReflection`, preserving original
+  reflected source, entry-point names, and compute workgroup dimensions;
+- `stages`;
+- one value per `ParameterBlock` global, named after the parameter
+  (`BasicTriangle.params` for `ParameterBlock<TriangleParams> params`), of type
+  `UniformSpec(data, bindings)`: the parameter name, its position among the
+  shader's parameter blocks in descriptor-set-layout order, and the element
+  type's `schema`;
+- one `PushSpec(data, bindings)` value for a `[[vk::push_constant]]` block,
+  named after the parameter;
+- `shader`, the pipeline descriptor.
+
+`shader` is a `GraphicsShader(uniforms, push)` for a graphics shader, a
+`GraphicsIndirectShader(uniforms, push)` when the vertex entry point reads
+`SV_DrawIndex`, and a `ComputeShader(uniforms, push)` for a compute shader. The
+three are distinct nominal types, so a pipeline constructor accepts only its
+own kind. Each carries the shader's snake_case `name`, its SPIR-V
+(`vertex_spv` and `fragment_spv`, or `compute_spv`), `reflection_json`,
+`reflection`, compute `workgroup_size`, `push`, and `uniform_slots`.
+
+`uniforms` is a closed record with one `UniformSlot(data, bindings)` field per
+parameter block, named like the module values, and `{}` for none:
+
+```roc
+shader : GraphicsShader(
+    {
+        params : UniformSlot(TriangleParamsData, TriangleParamsBindings),
+    },
+    NoPush,
+)
+```
+
+`uniform_slots : uniforms -> List(U32)` returns the slots' indices in
+descriptor-set-layout order. A record with a missing, extra, or differently
+typed slot fails to typecheck, for zero, one, or many parameter blocks. `push`
+is `NoPush` or the module's `PushSpec`. A parameter named `reflection`,
+`stages`, `shader`, `reflection_json`, or a stage import (`vertex_bytes`,
+`fragment_bytes`, `compute_bytes`), or one that collides with a
+`<snake_type>_type` value, fails generation.
 
 Each shader module also exposes one `<snake_type>_type : StructType` value per
 reflected struct type: parameter-block and push-constant element types, nested
@@ -89,7 +127,21 @@ defines:
   emitted as `U64`; enum values remain `I64`, with their signed/unsigned tag
   kind;
 - the logical vector, matrix, address, and handle types with their
-  little-endian `to_bytes`, and `ElementPacker(elem)`.
+  little-endian `to_bytes`, and `ElementPacker(elem)`;
+- the binding vocabulary: `SampledTexBinding`, `StorageTexBinding`, and
+  `BufferBinding(elem)`, `ReadBufferBinding(elem)`, and
+  `ImmutableBufferBinding(elem)` for `mltrs::Addr<T>`, `ReadAddr<T>`, and
+  `ImmutableAddr<T>` fields. They are opaque: `new` builds one from a
+  `SampledTexSource`, `StorageTexSource`, or `BufferTarget` (a declared buffer
+  index, `Current` or `Previous` slot, and byte offset), and `erase` turns one
+  into a `GraphBinding`. `BufferBinding` and `ImmutableBufferBinding` widen to
+  a `ReadBufferBinding` of the same buffer with `as_read`. A buffer binding's
+  `elem` is checked against the field's pointee type;
+- the block descriptors `BlockSchema`, `SchemaField`, `SchemaFieldKind`,
+  `ResourceFieldKind`, `UniformSpec`, `PushSpec`, `NoPush`, and the opaque
+  `UniformSlot(data, bindings)` (`new`, `index`, `schema`);
+- the shader descriptors `GraphicsShader`, `GraphicsIndirectShader`, and
+  `ComputeShader`.
 
 ### Types and packers
 
@@ -144,11 +196,43 @@ row names the exposed, unqualified form:
 | texture/storage resource | not supported; generation fails. Declare a `.Handle` field instead. |
 | enum | nominal tag union with an associated `tag : <Enum> -> U32/I32` function |
 
+### Render-graph split
+
+Every parameter-block and push-block element type splits into per-frame data
+and build-time bindings, mirroring Rust's `GraphShaderParams` split, and gets an
+associated `schema : BlockSchema(data, bindings)`:
+
+- A type without pointer or handle fields is its own data; `bindings` is `{}`.
+  Its schema copies each field from its reflected offset (`src_offset` equals
+  `offset`), and `data_size` equals `gpu_size`.
+- A type with pointer or handle fields gets a `<Type>Bindings` record alias,
+  with one binding wrapper per pointer or handle field (`vertices :
+  ImmutableBufferBinding(Vertex)`), and, when data fields remain, a nominal
+  `<Type>Data` with only the data fields, packed compactly in declaration
+  order with its own `gpu_size`, `to_bytes`, and `packer`. Without data
+  fields, `data` is `{}`.
+
+A `BlockSchema` carries the type's `name`, `gpu_size`, `data_size`, and
+`resource_fields`, and its `fields` sorted by `offset`. Binding field `i` is the
+`i`th pointer or handle field in declaration order, with key `i` and an 8-byte
+`SampledTex`, `StorageTex`, or `BufAddr` kind matching `resource_fields`; data
+fields take the keys after them. `pack_data` produces exactly `data_size`
+bytes; `extract_bindings` returns `(key, GraphBinding)` pairs in key order. The
+fields satisfy the render graph's layout checks: they do not overlap, fit in
+`gpu_size`, and read inside `data_size`. A block whose `data_size` is 0 has no
+`Data` fields and lowers with no data value (`data: None`).
+
+A data field whose nested struct contains a pointer or handle fails generation
+(flatten it into the block), as does a generated `<Type>Data` or
+`<Type>Bindings` name that collides with another type. A parameter block of 0
+bytes fails generation, as does a push block that is empty, not a multiple of
+4 bytes, or larger than the 128 bytes Vulkan guarantees.
+
 The `ShaderReflection` type names a module may expose and the Roc builtin
 modules and types (`List`, `Str`, `Result`, `U32`, ...) are reserved: a shader
 struct, shader file, or shared Slang module named `Float3`, `Float4x4`,
-`PointerAddress`, `ElementPacker`, `List`, or any other of them fails
-generation.
+`PointerAddress`, `BlockSchema`, `GraphicsShader`, `List`, or any other of them
+fails generation.
 
 Original reflected spelling is retained in reflection data. Generated nonempty
 records use multiline fields with trailing commas. One blank line separates
@@ -166,21 +250,27 @@ matrix follows the shader's declared layout (row-major, so `row_i` holds glam
 column `i`).
 
 The separate `roc-platform` host still renders its Rust-owned shader and uses
-Rust bindings under `src/generated/`. Roc codegen does not change runtime
-shader selection, hot reload, or platform/compiler pins.
+Rust bindings under `src/generated/`. The resource planner and render graph
+that consume `shader`, `UniformSpec`, and `BlockSchema` come later. Roc
+codegen does not change runtime shader selection, hot reload, or
+platform/compiler pins.
 
 ## Verification
 
 `just test` covers generation, schemas, names, paths, manifests, stale cleanup,
-safety checks, std430 float3 pointee packers, and Rust regressions without
-requiring Roc.
+safety checks, std430 float3 pointee packers, block splits, and Rust regressions
+without requiring Roc.
 
 `just roc-codegen-test [ROC]` is the explicit real-compiler gate. It reports the
-selected executable/version, generates fresh graphics and compute fixtures,
-checks and formats every module against `roc-platform/platform/main.roc` as the
-app's platform, and evaluates full imported SPIR-V contents, representative
-reflection, module-owned types, and packer output from a consumer running in
-another working directory. It also proves missing imports and false byte
-expectations fail. `ROC` defaults to `roc` on
+selected executable/version, generates fresh graphics, graphics-indirect, and
+compute fixtures, checks and formats every module against
+`roc-platform/platform/main.roc` as the app's platform, and evaluates full
+imported SPIR-V contents and representative reflection from a consumer running
+in another working directory. A block consumer evaluates float3 pointee bytes,
+compact data packing, binding extraction, and reassembles every split block
+from its schema to the exact bytes of the full type's `to_bytes`. It also
+proves missing imports and false byte expectations fail, and that a wrong
+uniform record, a graphics-indirect shader in a graphics pipeline, or a binding
+with another pointee type fails to typecheck. `ROC` defaults to `roc` on
 `PATH`; missing/incompatible compilers fail rather than skip. `just pre-commit`
 runs this gate when `roc` is on `PATH`.

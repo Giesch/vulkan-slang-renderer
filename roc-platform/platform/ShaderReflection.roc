@@ -226,6 +226,185 @@ ShaderReflection := {}.{
 	## Every generated struct with a GPU layout exposes one as `packer`.
 	ElementPacker(elem) : { stride : U32, to_bytes : elem -> List(U8) }
 
+	## The texture a sampled binding reads: a logical graph texture's latest
+	## version, the version before its latest write, or an imported texture.
+	SampledTexSource : [Read(U32), ReadPrevious(U32), Imported(U32)]
+
+	## The logical graph texture a storage binding writes, and how: `Write`
+	## produces the next version, `Mutate` edits the current one in place.
+	StorageTexSource : [Write(U32), Mutate(U32)]
+
+	## The buffer slot a buffer binding addresses. Only GPU-updated buffers
+	## keep a `Previous` slot.
+	BufferSlot : [Current, Previous]
+
+	## A buffer binding's declared buffer, slot, and the byte offset of the
+	## bound element.
+	BufferTarget : { buffer : U32, slot : BufferSlot, offset : U32 }
+
+	## Whether a shader may write through a buffer binding.
+	BufferAccess : [Read, Mutate]
+
+	## One type-erased binding, as a block schema's `extract_bindings`
+	## reports it next to its field key.
+	GraphBinding : [
+		SampledTex(SampledTexSource),
+		StorageTex(StorageTexSource),
+		Buffer(BufferTarget, BufferAccess),
+	]
+
+	## A sampled texture for a `Sampler2D.Handle` field.
+	SampledTexBinding :: { source : SampledTexSource }.{
+		new : SampledTexSource -> SampledTexBinding
+		new = |source| SampledTexBinding.{ source }
+
+		erase : SampledTexBinding -> GraphBinding
+		erase = |binding| SampledTex(binding.source)
+	}
+
+	## A storage texture for a `RWTexture2D.Handle` field.
+	StorageTexBinding :: { source : StorageTexSource }.{
+		new : StorageTexSource -> StorageTexBinding
+		new = |source| StorageTexBinding.{ source }
+
+		erase : StorageTexBinding -> GraphBinding
+		erase = |binding| StorageTex(binding.source)
+	}
+
+	## A read-write buffer of `elem` for a `mltrs::Addr<T>` field.
+	BufferBinding(elem) :: { target : BufferTarget }.{
+		new : BufferTarget -> BufferBinding(elem)
+		new = |target| BufferBinding.{ target }
+
+		erase : BufferBinding(elem) -> GraphBinding
+		erase = |binding| Buffer(binding.target, Mutate)
+
+		## Bind the same buffer to a `mltrs::ReadAddr<T>` field.
+		as_read : BufferBinding(elem) -> ReadBufferBinding(elem)
+		as_read = |binding| ReadBufferBinding.new(binding.target)
+	}
+
+	## A read-only buffer of `elem` for a `mltrs::ReadAddr<T>` field.
+	ReadBufferBinding(elem) :: { target : BufferTarget }.{
+		new : BufferTarget -> ReadBufferBinding(elem)
+		new = |target| ReadBufferBinding.{ target }
+
+		erase : ReadBufferBinding(elem) -> GraphBinding
+		erase = |binding| Buffer(binding.target, Read)
+	}
+
+	## A buffer of `elem` the GPU never writes, for a `mltrs::ImmutableAddr<T>`
+	## field.
+	ImmutableBufferBinding(elem) :: { target : BufferTarget }.{
+		new : BufferTarget -> ImmutableBufferBinding(elem)
+		new = |target| ImmutableBufferBinding.{ target }
+
+		erase : ImmutableBufferBinding(elem) -> GraphBinding
+		erase = |binding| Buffer(binding.target, Read)
+
+		## Bind the same buffer to a `mltrs::ReadAddr<T>` field.
+		as_read : ImmutableBufferBinding(elem) -> ReadBufferBinding(elem)
+		as_read = |binding| ReadBufferBinding.new(binding.target)
+	}
+
+	## The resource kind of each binding field, indexed by field key.
+	ResourceFieldKind : [SampledTex, StorageTex, BufAddr]
+
+	## Where a schema field's bytes come from: `src_offset` into the packed
+	## per-frame data, or a resolved 8-byte binding.
+	SchemaFieldKind : [Data({ src_offset : U32 }), SampledTex, StorageTex, BufAddr]
+
+	## One field of a GPU block: `len` bytes at `offset`. A binding field's
+	## `key` indexes `resource_fields`; data fields take the keys after them.
+	SchemaField : { key : U16, offset : U32, len : U32, kind : SchemaFieldKind }
+
+	## How a parameter block or push block splits into per-frame `data` and
+	## build-time `bindings`, and how the two assemble into `gpu_size` bytes.
+	##
+	## `pack_data` produces exactly `data_size` bytes. A block without data
+	## fields has `data_size` 0 and no `Data` fields, so it lowers with no
+	## data value.
+	BlockSchema(data, bindings) : {
+		name : Str,
+		gpu_size : U32,
+		data_size : U32,
+		resource_fields : List(ResourceFieldKind),
+		fields : List(SchemaField),
+		pack_data : data -> List(U8),
+		extract_bindings : bindings -> List((U16, GraphBinding)),
+	}
+
+	## A shader's `ParameterBlock` global: its position among the shader's
+	## parameter blocks, in descriptor-set-layout order, and its schema.
+	UniformSpec(data, bindings) : {
+		parameter_name : Str,
+		index : U32,
+		schema : BlockSchema(data, bindings),
+	}
+
+	## A declared uniform buffer for one parameter block's schema.
+	UniformSlot(data, bindings) :: {
+		index : U32,
+		schema : BlockSchema(data, bindings),
+	}.{
+		new : U32, BlockSchema(data, bindings) -> UniformSlot(data, bindings)
+		new = |slot_index, block_schema|
+			UniformSlot.{ index: slot_index, schema: block_schema }
+
+		index : UniformSlot(data, bindings) -> U32
+		index = |slot| slot.index
+
+		schema : UniformSlot(data, bindings) -> BlockSchema(data, bindings)
+		schema = |slot| slot.schema
+	}
+
+	## A shader's push-constant block.
+	PushSpec(data, bindings) := {
+		parameter_name : Str,
+		schema : BlockSchema(data, bindings),
+	}
+
+	## The push type of a shader without a push-constant block.
+	NoPush := {}
+
+	## A graphics shader drawn with direct vertex-count or indexed draws.
+	## `uniform_slots` maps one `UniformSlot` per parameter block, in a
+	## record named after the parameters, to slot indices in
+	## descriptor-set-layout order.
+	GraphicsShader(uniforms, push) := {
+		name : Str,
+		vertex_spv : List(U8),
+		fragment_spv : List(U8),
+		reflection_json : Str,
+		reflection : GraphicsReflection,
+		uniform_slots : uniforms -> List(U32),
+		push : push,
+	}
+
+	## A graphics shader whose vertex entry point reads `SV_DrawIndex`, drawn
+	## with indexed-indirect draws.
+	GraphicsIndirectShader(uniforms, push) := {
+		name : Str,
+		vertex_spv : List(U8),
+		fragment_spv : List(U8),
+		reflection_json : Str,
+		reflection : GraphicsReflection,
+		uniform_slots : uniforms -> List(U32),
+		push : push,
+	}
+
+	## A compute shader; `workgroup_size` is its threads per workgroup, from
+	## `[numthreads]`.
+	ComputeShader(uniforms, push) := {
+		name : Str,
+		compute_spv : List(U8),
+		reflection_json : Str,
+		reflection : ComputeReflection,
+		workgroup_size : { x : U32, y : U32, z : U32 },
+		uniform_slots : uniforms -> List(U32),
+		push : push,
+	}
+
 	## A physical buffer address.
 	PointerAddress := U64.{
 		is_eq : _

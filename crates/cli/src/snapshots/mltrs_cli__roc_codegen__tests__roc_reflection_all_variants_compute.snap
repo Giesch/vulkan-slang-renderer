@@ -4,7 +4,7 @@ expression: "synthetic_module(\"GeneratedSyntheticCompute\", \"ComputeReflection
 ---
 import pf.ShaderReflection exposing [ComputeReflection]
 
-## Generated shader types, GPU byte packers, and reflection.
+## Generated shader types, GPU byte packers, block schemas, and reflection.
 GeneratedSyntheticCompute := {}.{
     reflection : ComputeReflection
     reflection = {

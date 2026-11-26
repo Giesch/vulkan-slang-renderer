@@ -137,7 +137,8 @@ mltrs shaders compile      # Cargo.toml selects Rust: SPIR-V + JSON + src/genera
 ```
 
 For a Roc project, a directly contained `main.roc` selects Roc codegen: SPIR-V,
-reflection JSON, and module-owned Roc types, GPU byte packers, and typed
+reflection JSON, and module-owned Roc types, GPU byte packers, render-graph
+block schemas (`*Data` / `*Bindings` splits), shader descriptors, and typed
 reflection in the tool-owned `Generated/` directory, rooted at
 `Generated/ShaderAtlas.roc`. Use `--language rust|roc` when both or neither
 project marker exists. Handles and addresses carry no GPU validity, and nothing

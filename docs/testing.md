@@ -163,8 +163,9 @@ name/path validation, and replacement safety without invoking a Roc compiler.
 when `roc` is on `PATH` and skips it with a message otherwise. It reports the
 selected compiler path/version, generates fresh fixtures, checks and formats
 every generated module through Roc, and evaluates imported SPIR-V bytes,
-reflection values, and GPU byte packers from consumers. It also runs
-missing-file and false-byte negative controls. `ROC` defaults to `roc` on `PATH`; a missing or incompatible
+reflection values, GPU byte packers, and block schemas from consumers. It also
+runs missing-file and false-byte negative controls, plus typecheck failures for
+mismatched uniform records, shader kinds, and binding pointee types. `ROC` defaults to `roc` on `PATH`; a missing or incompatible
 compiler is a failure, not a skip. Generation itself never invokes Roc. Roc
 shader codegen was verified locally with `release-fast-42fbc4b0` and, after
 changing test app headers to relative platform paths, `release-fast-89d9ea97`.
