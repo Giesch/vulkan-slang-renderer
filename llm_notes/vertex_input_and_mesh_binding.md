@@ -1,6 +1,14 @@
 # Vertex input types and independent mesh binding
 
-Date: 2026-11-08. Status: proposed; no implementation in this note.
+> **SUPERSEDED by [vertex_pulling_and_index_buffers.md](vertex_pulling_and_index_buffers.md)**
+> (2026-11-18). Retained for historical context only. Phase 1 was implemented
+> on `roc-graphs/runtime-shaders` (`64f25fe`), and Phase 2 was never started;
+> the superseding plan starts a fresh stack from `main` that removes
+> fixed-function Vulkan vertex input (`VertexDescription`, `MeshHandle<V>`,
+> `TypedVertex<V>`, `RuntimeVertex`, `NoVertex`, and `vertex_layout`) in favor
+> of BDA vertex pulling plus untyped hardware index buffers.
+
+Date: 2026-11-08. Status: superseded (Phase 1 implemented on `64f25fe`; replaced before Phase 2).
 
 This is the revised option 2 from the VertexBytes discussion: erase upload
 storage while retaining the pipeline's vertex interface through construction
